@@ -6,6 +6,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "./",
   envDir: "../..",
+  server: {
+    proxy: {
+      "/api": "http://127.0.0.1:18080",
+      "/v1": "http://127.0.0.1:18080",
+    },
+  },
   build: {
     chunkSizeWarningLimit: 1800,
   },

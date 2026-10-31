@@ -1,0 +1,6 @@
+{
+  "name": "@app/auth-sdk",
+  "version": "0.5.7",
+  "source": "SEO-Backend-SDK/dist/auth-sdk.tgz",
+  "sha256": "658f403c56a46c4ef9bf9fc74600a28d2af8c559d59f58fe426ad65b43f95f9d"
+}

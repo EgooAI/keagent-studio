@@ -585,7 +585,7 @@ export function advanceWorkspace(source: Workspace): Workspace {
   return changed ? state : source;
 }
 
-export const demoApi = {
+const mockApi = {
   async getWorkspace() {
     return withWorkspaceLock(() => clone(readWorkspace()));
   },
@@ -1114,3 +1114,83 @@ export const demoApi = {
     });
   },
 };
+
+export const isLive = import.meta.env?.VITE_API_MODE !== "mock";
+export interface SessionUser {
+  userId: string;
+  sessionId: string;
+  name: string;
+  email: string;
+  role: string;
+}
+declare global {
+  interface Window {
+    desktop?: {
+      platform: string;
+      mode: string;
+      request: (method: string, args?: unknown[]) => Promise<unknown>;
+    };
+  }
+}
+export async function serviceRequest<T>(
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    credentials: "include",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    if (response.status === 401)
+      window.dispatchEvent(new Event("keagent:unauthorized"));
+    throw new Error(data.error?.message || data.message || "请求失败");
+  }
+  return data as T;
+}
+export async function authRequest<T>(
+  method: string,
+  args: unknown[] = [],
+): Promise<T> {
+  if (window.desktop?.request)
+    return (await window.desktop.request(method, args)) as T;
+  if (method === "session") return serviceRequest<T>("/api/session");
+  if (method === "login")
+    return serviceRequest<T>("/api/auth/sign-in/email", args[0]);
+  if (method === "logout") return serviceRequest<T>("/api/auth/sign-out", {});
+  throw new Error("未知身份操作");
+}
+const remoteListeners = new Set<() => void>();
+export const demoApi: typeof mockApi = isLive
+  ? new Proxy(mockApi, {
+      get(_target, name: keyof typeof mockApi) {
+        if (name === "tick") return async () => {};
+        if (name === "subscribe")
+          return (listener: () => void) => {
+            remoteListeners.add(listener);
+            const timer = window.setInterval(listener, 10000);
+            return () => {
+              remoteListeners.delete(listener);
+              clearInterval(timer);
+            };
+          };
+        return async (...args: unknown[]) => {
+          try {
+            const value = window.desktop?.request
+              ? await window.desktop.request(name, args)
+              : name === "getWorkspace"
+                ? await serviceRequest("/v1/workspace")
+                : await serviceRequest(`/v1/commands/${name}`, args);
+            if (name !== "getWorkspace") remoteListeners.forEach((fn) => fn());
+            return value;
+          } catch (error) {
+            if (error instanceof Error && error.message.includes("重新登录"))
+              window.dispatchEvent(new Event("keagent:unauthorized"));
+            throw error;
+          }
+        };
+      },
+    })
+  : mockApi;

@@ -1,0 +1,6 @@
+{
+  "name": "@keagent/control",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "next dev --hostname 127.0.0.1 --port 8080", "build": "next build", "start": "next start --hostname 127.0.0.1 --port 8080", "setup": "node --env-file-if-exists=../../.env.local setup.mjs" }
+}

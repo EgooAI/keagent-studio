@@ -40,7 +40,7 @@ import {
   Users,
   Workflow,
 } from "lucide-react";
-import { demoApi } from "@keagent/api-client";
+import { demoApi, isLive } from "@keagent/api-client";
 import { stageLabels } from "@keagent/shared-types";
 import { useUiStore, useWorkspace } from "./lib/workspace";
 import { StatusTag, formatDate } from "./components/common";
@@ -79,7 +79,7 @@ const navigation = [
   { path: "/leads", label: "AI 获客", icon: Users },
 ];
 
-export default function App() {
+export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const { data, error, isPending } = useWorkspace();
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -172,7 +172,7 @@ export default function App() {
             </Avatar>
             <span>
               <strong>{data?.profile.name ?? "演示经纪人"}</strong>
-              <small>演示工作区</small>
+              <small>{isLive ? "云端工作区" : "演示工作区"}</small>
             </span>
             <Tag variant="filled">V1</Tag>
           </div>
@@ -186,9 +186,21 @@ export default function App() {
             <strong>{current?.label ?? "设置"}</strong>
           </div>
           <div className="header-actions">
-            <span className="demo-indicator">Mock 演示</span>
+            {onLogout && (
+              <Button
+                onClick={() =>
+                  void onLogout().catch((e: Error) => message.error(e.message))
+                }
+                icon={<LogOut size={16} />}
+              >
+                退出登录
+              </Button>
+            )}
+            <span className="demo-indicator">
+              {isLive ? "云端联调" : "Mock 演示"}
+            </span>
             <span className="cloud-state">
-              <Cloud size={16} /> 本地模拟数据
+              <Cloud size={16} /> {isLive ? "云端业务数据" : "本地模拟数据"}
             </span>
             <Button
               className="task-center-button"
@@ -293,7 +305,11 @@ export default function App() {
           )}
           <footer className="app-footer">
             <span>KeAgent Studio</span>
-            <span>前端交互演示 · 房源、生成与平台结果均为模拟</span>
+            <span>
+              {isLive
+                ? "云端联调 · 未接入的能力会明确提示"
+                : "前端交互演示 · 房源、生成与平台结果均为模拟"}
+            </span>
           </footer>
         </main>
       </div>

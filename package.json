@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.33.3",
   "scripts": {
+    "dev:control": "node scripts/service.mjs control",
+    "dev:cloud": "node scripts/service.mjs cloud",
+    "setup:auth": "node scripts/service.mjs setup",
+    "dev:backend": "concurrently -k \"pnpm dev:control\" \"pnpm dev:cloud\"",
     "dev:web": "pnpm --filter @keagent/desktop dev",
     "dev:desktop": "concurrently -k \"pnpm dev:web\" \"wait-on http://127.0.0.1:5173 && electron apps/desktop/electron/main.cjs\"",
     "dev:admin": "pnpm --filter @keagent/admin dev",
@@ -38,9 +42,12 @@
     }
   },
   "dependencies": {
+    "@app/auth-sdk": "file:vendor\\auth-sdk.tgz",
     "@tanstack/react-query": "^5.105.0",
     "antd": "^6.6.8",
     "lucide-react": "^1.65.0",
+    "next": "16.3.4",
+    "pg": "8.22.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
@@ -51,6 +58,7 @@
     "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",

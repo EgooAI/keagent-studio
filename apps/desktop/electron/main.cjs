@@ -61,7 +61,7 @@ function createWindow() {
         const heading = await window.webContents.executeJavaScript(
           `new Promise((resolve, reject) => { const deadline = Date.now() + 10000; const check = () => { const heading = document.querySelector('h1'); if (heading) resolve(heading.textContent); else if (Date.now() > deadline) reject(new Error('Renderer did not mount')); else setTimeout(check, 100); }; check(); })`,
         );
-        if (!heading.includes("创作工作台"))
+        if (!heading.includes("创作工作台") && !heading.includes("登录"))
           throw new Error("Unexpected renderer content: " + heading);
         console.log("Electron renderer verified: " + heading);
         app.quit();
@@ -76,6 +76,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  require("./auth.cjs").registerAuth();
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);
     const root = path.resolve(__dirname, "../dist");

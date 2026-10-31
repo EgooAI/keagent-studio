@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     environment: "node",
+    env: { VITE_API_MODE: "mock" },
   },
   resolve: {
     alias: {

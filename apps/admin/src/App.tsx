@@ -42,7 +42,8 @@ import {
   UploadCloud,
   Users,
 } from "lucide-react";
-import { demoApi } from "@keagent/api-client";
+import { demoApi, isLive } from "@keagent/api-client";
+import LiveAdmin from "./LiveAdmin";
 import type { ProductionTask } from "@keagent/shared-types";
 import { stageLabels, statusLabels } from "@keagent/shared-types";
 import ResourcesPanel from "./ResourcesPanel";
@@ -825,7 +826,7 @@ export default function App() {
         <QueryClientProvider client={queryClient}>
           <HashRouter>
             <AdminBoundary>
-              <AdminWorkspace />
+              {isLive ? <LiveAdmin /> : <AdminWorkspace />}
             </AdminBoundary>
           </HashRouter>
         </QueryClientProvider>

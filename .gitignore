@@ -9,3 +9,5 @@ output/
 .impeccable/review/
 .impeccable/config.local.json
 *.tsbuildinfo
+.next/
+services/cloud/cloud.exe

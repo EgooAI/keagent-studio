@@ -5,6 +5,12 @@ export default defineConfig({
   plugins: [react()],
   base: "./",
   envDir: "../..",
+  server: {
+    proxy: {
+      "/api": "http://127.0.0.1:18080",
+      "/v1": "http://127.0.0.1:18080",
+    },
+  },
   publicDir: "../desktop/public",
   build: { chunkSizeWarningLimit: 1800 },
 });
