@@ -1,0 +1,624 @@
+import { useState } from "react";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import {
+  App,
+  Button,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Segmented,
+  Select,
+  Table,
+  Tag,
+  Upload,
+} from "antd";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Building2,
+  FileUp,
+  LayoutGrid,
+  List,
+  MapPin,
+  Play,
+  Plus,
+  Search,
+  Upload as UploadIcon,
+} from "lucide-react";
+import { demoApi } from "@keagent/api-client";
+import type { ImportResult, Property } from "@keagent/shared-types";
+import { useWorkspace } from "../lib/workspace";
+import {
+  PageHeader,
+  PropertyPhoto,
+  StatusTag,
+  formatDate,
+  formatPrice,
+} from "../components/common";
+import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
+
+export default function PropertiesPage() {
+  const { data } = useWorkspace();
+  const { message } = App.useApp();
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [view, setView] = useState("grid");
+  const [searchParams] = useSearchParams();
+  const [importOpen, setImportOpen] = useState(
+    searchParams.get("import") === "1",
+  );
+  const [manualOpen, setManualOpen] = useState(false);
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  if (!data) return null;
+  const publishedIds = new Set(
+    data.publishTasks
+      .filter((p) => p.status === "published")
+      .map(
+        (p) => data.tasks.find((t) => t.id === p.productionTaskId)?.propertyId,
+      ),
+  );
+  const filtered = data.properties.filter(
+    (p) =>
+      `${p.title}${p.community}${p.propertyNumber}${p.district}`.includes(
+        search,
+      ) &&
+      (filter === "all" ||
+        (filter === "published"
+          ? publishedIds.has(p.id)
+          : !publishedIds.has(p.id))),
+  );
+  async function addProperty() {
+    try {
+      const values = await form.validateFields();
+      setSaving(true);
+      await demoApi.createProperty({
+        ...values,
+        priceCents: Math.round(values.price * 1000000),
+        importStatus: "incomplete",
+        videoCount: 0,
+      });
+      setManualOpen(false);
+      form.resetFields();
+      message.success("房源已保存，请继续补充素材");
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <>
+      <PageHeader
+        title="房源中心"
+        description="把房源资料准备好，让每一次创作都有据可依。"
+        actions={
+          <>
+            <Button
+              icon={<Plus size={16} />}
+              onClick={() => setManualOpen(true)}
+            >
+              手动添加
+            </Button>
+            <Button
+              type="primary"
+              icon={<UploadIcon size={16} />}
+              onClick={() => setImportOpen(true)}
+            >
+              导入房源
+            </Button>
+          </>
+        }
+      />
+      <div className="property-toolbar">
+        <div className="filter-pills" role="group" aria-label="房源发布分类">
+          {[
+            ["all", "全部房源"],
+            ["unpublished", "未发布过"],
+            ["published", "已发布过"],
+          ].map(([key, label]) => (
+            <button
+              className={filter === key ? "active" : ""}
+              key={key}
+              onClick={() => setFilter(key)}
+            >
+              {label}
+              <span>
+                {key === "all"
+                  ? data.properties.length
+                  : key === "published"
+                    ? publishedIds.size
+                    : data.properties.length - publishedIds.size}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="toolbar-right">
+          <Input
+            aria-label="搜索房源"
+            placeholder="搜索房源号、小区或区域"
+            prefix={<Search size={16} />}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            allowClear
+          />
+          <Segmented
+            value={view}
+            onChange={(v) => setView(String(v))}
+            options={[
+              {
+                value: "grid",
+                icon: <LayoutGrid size={16} />,
+                label: <span className="sr-only">卡片视图</span>,
+              },
+              {
+                value: "table",
+                icon: <List size={16} />,
+                label: <span className="sr-only">表格视图</span>,
+              },
+            ]}
+          />
+        </div>
+      </div>
+      <div className="list-caption">
+        <span>共 {filtered.length} 套房源</span>
+        <span>房源资料为演示内容，不构成真实交易信息</span>
+      </div>
+      {!filtered.length ? (
+        <div className="panel empty-panel">
+          <Empty description="没有匹配的房源">
+            <Button
+              onClick={() => {
+                setSearch("");
+                setFilter("all");
+              }}
+            >
+              清除筛选
+            </Button>
+          </Empty>
+        </div>
+      ) : view === "grid" ? (
+        <div className="property-grid">
+          {filtered.map((property) => (
+            <article className="property-card" key={property.id}>
+              <Link
+                to={`/properties/${property.id}`}
+                className="property-image-link"
+              >
+                <PropertyPhoto property={property} />
+                <span
+                  className={`photo-state ${publishedIds.has(property.id) ? "published" : ""}`}
+                >
+                  {publishedIds.has(property.id) ? "已发布过" : "未发布过"}
+                </span>
+                <span className="media-count">
+                  <Play size={11} fill="currentColor" /> {property.videoCount}{" "}
+                  段视频
+                </span>
+              </Link>
+              <div className="property-card-body">
+                <div className="property-title">
+                  <Link to={`/properties/${property.id}`}>
+                    {property.community}
+                  </Link>
+                  <strong>{formatPrice(property.priceCents)}</strong>
+                </div>
+                <p className="property-summary">
+                  {property.layout}
+                  <span />
+                  {property.areaSqm} m²
+                  <span />
+                  {property.district}
+                </p>
+                <p className="property-description">{property.title}</p>
+                <p className="muted property-number">
+                  房源号 {property.propertyNumber}
+                </p>
+                <div className="property-tags">
+                  {property.sellingPoints.slice(0, 3).map((point) => (
+                    <span key={point}>{point}</span>
+                  ))}
+                </div>
+                <div className="property-card-footer">
+                  <span>
+                    {property.importStatus === "ready"
+                      ? "素材已就绪"
+                      : "待补充素材"}
+                  </span>
+                  <Link
+                    to={`/studio/create?propertyId=${property.id}`}
+                    className="text-link"
+                  >
+                    创建视频 <ArrowUpRight size={14} />
+                  </Link>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="panel">
+          <Table
+            rowKey="id"
+            dataSource={filtered}
+            pagination={{ pageSize: 8 }}
+            columns={[
+              {
+                title: "房源",
+                render: (_, p: Property) => (
+                  <Link to={`/properties/${p.id}`} className="table-property">
+                    <PropertyPhoto property={p} />
+                    <span>
+                      {p.community}
+                      <small>{p.propertyNumber}</small>
+                    </span>
+                  </Link>
+                ),
+              },
+              { title: "户型", dataIndex: "layout" },
+              { title: "面积", render: (_, p: Property) => `${p.areaSqm} m²` },
+              {
+                title: "总价",
+                render: (_, p: Property) => formatPrice(p.priceCents),
+              },
+              {
+                title: "发布",
+                render: (_, p: Property) => (
+                  <Tag>{publishedIds.has(p.id) ? "已发布过" : "未发布过"}</Tag>
+                ),
+              },
+              {
+                title: "操作",
+                render: (_, p: Property) => (
+                  <Link to={`/studio/create?propertyId=${p.id}`}>创建视频</Link>
+                ),
+              },
+            ]}
+          />
+        </div>
+      )}
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <Modal
+        title="手动添加房源"
+        open={manualOpen}
+        onCancel={() => setManualOpen(false)}
+        onOk={addProperty}
+        confirmLoading={saving}
+        okText="保存房源"
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="propertyNumber"
+            label="房源号"
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="community"
+            label="小区名称"
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item name="title" label="房源描述" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <div className="form-two">
+            <Form.Item
+              name="price"
+              label="总价（万元）"
+              rules={[{ required: true }]}
+            >
+              <InputNumber min={1} style={{ width: "100%" }} />
+            </Form.Item>
+            <Form.Item
+              name="areaSqm"
+              label="面积（平方米）"
+              rules={[{ required: true }]}
+            >
+              <InputNumber min={1} style={{ width: "100%" }} />
+            </Form.Item>
+          </div>
+          <p className="muted">
+            新房源会标记为待补充素材，详情页中可继续完善。
+          </p>
+        </Form>
+      </Modal>
+    </>
+  );
+}
+
+function ImportModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { message } = App.useApp();
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ImportResult>();
+  async function submit(numbers = input.split(/[\s,，;；]+/).filter(Boolean)) {
+    if (!numbers.length) {
+      message.warning("请输入至少一个房源号");
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await demoApi.importProperties(numbers);
+      setResult(next);
+      if (next.imported) message.success(`已导入 ${next.imported} 套演示房源`);
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function readFile(file: File) {
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error("文件不能超过 5 MB");
+      let rows: unknown[][];
+      if (file.name.toLowerCase().endsWith(".xlsx")) {
+        const { default: readXlsxFile } =
+          await import("read-excel-file/browser");
+        const sheets = await readXlsxFile(file);
+        rows = sheets[0]?.data ?? [];
+      } else if (file.name.toLowerCase().endsWith(".csv")) {
+        rows = parseCsv(await file.text());
+      } else {
+        throw new Error("请选择 .csv 或 .xlsx 文件");
+      }
+      setInput(propertyNumbersFromRows(rows).join("\n"));
+      setResult(undefined);
+      message.success("文件已读取，请检查房源号后开始导入");
+    } catch (error) {
+      message.error((error as Error).message);
+    }
+    return false;
+  }
+  return (
+    <Modal
+      title="导入房源"
+      open={open}
+      onCancel={onClose}
+      width={620}
+      footer={
+        <>
+          <Button onClick={onClose}>关闭</Button>
+          <Button type="primary" loading={busy} onClick={() => submit()}>
+            开始模拟导入
+          </Button>
+        </>
+      }
+    >
+      <p className="muted">
+        暂未连接贝壳接口。输入房源号可体验模拟查询，也可上传 CSV / Excel 文件。
+      </p>
+      <Form layout="vertical">
+        <Form.Item label="房源号（每行一个，自动去除空行与重复）">
+          <Input.TextArea
+            aria-label="房源号列表"
+            rows={7}
+            placeholder={"例如：\nSH10990312\nSH10990313\nSH10990314"}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setResult(undefined);
+            }}
+          />
+        </Form.Item>
+      </Form>
+      <Upload
+        beforeUpload={readFile}
+        accept=".csv,.xlsx"
+        showUploadList={false}
+      >
+        <Button icon={<FileUp size={16} />}>从 CSV / Excel 读取</Button>
+      </Upload>
+      <span className="muted inline-note">支持首列或“房源号”列，最大 5 MB</span>
+      {busy && <p role="status">正在校验并获取模拟房源资料…</p>}
+      {result && (
+        <div className="import-result" role="status">
+          <strong>本次导入完成</strong>
+          <p>
+            成功 {result.imported} 套 · 重复 {result.duplicates} 套 · 失败{" "}
+            {result.failed.length} 套
+          </p>
+          {result.failed.length > 0 && (
+            <>
+              <p>失败项：{result.failed.join("、")}</p>
+              <Button size="small" onClick={() => submit(result.failed)}>
+                重试失败项
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+export function PropertyDetailPage() {
+  const { propertyId } = useParams();
+  const { data } = useWorkspace();
+  const { message } = App.useApp();
+  const navigate = useNavigate();
+  const [editing, setEditing] = useState(false);
+  const [form] = Form.useForm();
+  const property = data?.properties.find((p) => p.id === propertyId);
+  if (!data) return null;
+  if (!property)
+    return (
+      <Empty description="房源不存在">
+        <Button onClick={() => navigate("/properties")}>返回房源中心</Button>
+      </Empty>
+    );
+  const tasks = data.tasks.filter((t) => t.propertyId === property.id);
+  async function save() {
+    try {
+      const values = await form.validateFields();
+      await demoApi.updateProperty(property!.id, values);
+      setEditing(false);
+      message.success("房源资料已更新，历史任务快照保持不变");
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    }
+  }
+  return (
+    <>
+      <Link className="back-link" to="/properties">
+        <ArrowLeft size={16} /> 房源中心
+      </Link>
+      <PageHeader
+        title={property.community}
+        description={`${property.city} · ${property.district} · 房源号 ${property.propertyNumber}`}
+        actions={
+          <>
+            <Button
+              onClick={() => {
+                form.setFieldsValue(property);
+                setEditing(true);
+              }}
+            >
+              编辑房源
+            </Button>
+            <Button
+              type="primary"
+              onClick={() =>
+                navigate(`/studio/create?propertyId=${property.id}`)
+              }
+            >
+              创建视频任务 <ArrowUpRight size={16} />
+            </Button>
+          </>
+        }
+      />
+      <div className="property-detail-grid">
+        <div>
+          <div className="property-hero">
+            <PropertyPhoto property={property} />
+          </div>
+          <div className="panel detail-info">
+            <h2>{property.title}</h2>
+            <div className="property-facts">
+              <div>
+                <strong>{formatPrice(property.priceCents)}</strong>
+                <span>总价</span>
+              </div>
+              <div>
+                <strong>{property.layout}</strong>
+                <span>户型</span>
+              </div>
+              <div>
+                <strong>{property.areaSqm} m²</strong>
+                <span>建筑面积</span>
+              </div>
+            </div>
+            <p>{property.description}</p>
+            <div className="property-tags">
+              {property.sellingPoints.map((p) => (
+                <span key={p}>{p}</span>
+              ))}
+            </div>
+            <p className="muted">
+              <MapPin size={14} /> {property.city} {property.district} ·
+              资料核验 {formatDate(property.lastVerifiedAt)}
+            </p>
+          </div>
+        </div>
+        <div>
+          <section className="panel detail-info">
+            <h2>房源素材</h2>
+            <p className="muted">
+              {property.videoCount} 段视频 · {property.images.length} 张示例图片
+            </p>
+            <div className="asset-grid">
+              {property.images.map((image, i) => (
+                <img
+                  key={`${image}-${i}`}
+                  src={image}
+                  alt={`房源图片 ${i + 1}`}
+                />
+              ))}
+            </div>
+            <Upload
+              accept="image/*,video/*"
+              showUploadList={false}
+              beforeUpload={async (file) => {
+                if (file.size > 100 * 1024 * 1024) {
+                  message.error("单个演示文件最大100 MB");
+                  return false;
+                }
+                await demoApi.updateProperty(property.id, {
+                  videoCount:
+                    property.videoCount +
+                    (file.type.startsWith("video/") ? 1 : 0),
+                  importStatus: "ready",
+                });
+                message.info(
+                  `已登记 ${file.name} 的演示素材信息，文件未上传或保存`,
+                );
+                return false;
+              }}
+            >
+              <Button icon={<Plus size={16} />}>添加演示素材</Button>
+            </Upload>
+          </section>
+          <section className="panel detail-info">
+            <h2>关联生成任务</h2>
+            {tasks.length ? (
+              tasks.map((task) => (
+                <Link
+                  to={`/studio/tasks/${task.id}`}
+                  className="related-task"
+                  key={task.id}
+                >
+                  <span>
+                    {task.configSnapshot.videoMode === "avatar"
+                      ? "经纪人露脸"
+                      : "纯口播"}
+                    <small>{formatDate(task.createdAt)}</small>
+                  </span>
+                  <StatusTag status={task.status} />
+                </Link>
+              ))
+            ) : (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="还没有生成任务"
+              />
+            )}
+          </section>
+        </div>
+      </div>
+      <Modal
+        title="编辑房源资料"
+        open={editing}
+        onCancel={() => setEditing(false)}
+        onOk={save}
+        okText="保存修改"
+      >
+        <Form layout="vertical" form={form}>
+          <Form.Item name="title" label="房源标题" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="description" label="房源说明">
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item name="community" label="小区" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
+  );
+}

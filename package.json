@@ -1,0 +1,67 @@
+{
+  "name": "keagent-studio",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.33.3",
+  "scripts": {
+    "dev:web": "pnpm --filter @keagent/desktop dev",
+    "dev:desktop": "concurrently -k \"pnpm dev:web\" \"wait-on http://127.0.0.1:5173 && electron apps/desktop/electron/main.cjs\"",
+    "dev:admin": "pnpm --filter @keagent/admin dev",
+    "build": "pnpm --filter @keagent/desktop build && pnpm --filter @keagent/admin build",
+    "typecheck": "tsc --noEmit",
+    "lint": "pnpm typecheck && prettier --check \"apps/**/*.{ts,tsx,css,cjs,html}\" \"packages/**/*.{ts,json}\" \"tests/**/*.ts\" \"*.{json,ts}\"",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "package:desktop": "pnpm --filter @keagent/desktop build && electron-builder --dir",
+    "preview": "pnpm --filter @keagent/desktop preview"
+  },
+  "build": {
+    "appId": "com.keagent.studio",
+    "productName": "KeAgent Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "apps/desktop/dist/**/*",
+      "apps/desktop/electron/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "apps/desktop/electron/main.cjs"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.105.0",
+    "antd": "^6.6.8",
+    "lucide-react": "^1.65.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
+    "read-excel-file": "^9.3.14",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "wait-on": "^9.5.1"
+  }
+}

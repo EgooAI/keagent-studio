@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+.env
+.env.local
+playwright-report/
+test-results/
+output/
+.impeccable/review/
+.impeccable/config.local.json
+*.tsbuildinfo

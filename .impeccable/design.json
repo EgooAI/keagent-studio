@@ -1,0 +1,571 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-30T11:30:46.845Z",
+  "title": "Design System: KeAgent Studio",
+  "extensions": {
+    "typographyMeta": {
+      "headline": {
+        "displayName": "桌面页面标题",
+        "purpose": "页面首要标题；窄窗口缩至22px。"
+      },
+      "title": {
+        "displayName": "区域标题",
+        "purpose": "面板和主要内容区标题。"
+      },
+      "body": {
+        "displayName": "标准正文",
+        "purpose": "桌面正文和标准控件；行高取已安装Ant Design主题实际结果。"
+      },
+      "label": {
+        "displayName": "表单标签",
+        "purpose": "桌面字段标签。"
+      },
+      "secondary": {
+        "displayName": "通用次要文字",
+        "purpose": "说明与元数据的通用样式。"
+      },
+      "admin-headline": {
+        "displayName": "后台页面标题",
+        "purpose": "保留后台的25px标题与系统字体栈。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "filter-selected",
+        "value": "0 1px 4px #1d334810",
+        "purpose": "白色选中过滤项的轻微抬升。"
+      },
+      {
+        "name": "selection-outline",
+        "value": "0 0 0 1px #2563eb",
+        "purpose": "房源与资源卡片的选中描边。"
+      },
+      {
+        "name": "primary-button",
+        "value": "none",
+        "purpose": "桌面主按钮明确取消主色阴影。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "custom-state",
+        "value": "0.18s ease",
+        "purpose": "桌面导航背景、文字与卡片边框。"
+      },
+      {
+        "name": "control-state",
+        "value": "0.2s cubic-bezier(0.645, 0.045, 0.355, 1)",
+        "purpose": "已安装Ant Design主题的标准按钮状态过渡。"
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "桌面prefers-reduced-motion:reduce下的动画与过渡时长。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "desktop-wide-min",
+        "value": "1650px"
+      },
+      {
+        "name": "desktop-compact-max",
+        "value": "1300px"
+      },
+      {
+        "name": "desktop-stacked-max",
+        "value": "1080px"
+      },
+      {
+        "name": "desktop-icon-rail-max",
+        "value": "760px"
+      },
+      {
+        "name": "admin-collapsed-max",
+        "value": "991px"
+      },
+      {
+        "name": "admin-single-column-max",
+        "value": "700px"
+      }
+    ],
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "操作蓝",
+        "canonical": "#2563eb",
+        "tonalRamp": [
+          "oklch(15% 0.2152 262.88)",
+          "oklch(27% 0.2152 262.88)",
+          "oklch(39% 0.2152 262.88)",
+          "oklch(51% 0.2152 262.88)",
+          "oklch(63% 0.2152 262.88)",
+          "oklch(75% 0.2152 262.88)",
+          "oklch(87% 0.2152 262.88)",
+          "oklch(95% 0.2152 262.88)"
+        ]
+      },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "操作蓝悬停",
+        "canonical": "#4f8af7",
+        "tonalRamp": [
+          "oklch(15% 0.1742 261.48)",
+          "oklch(27% 0.1742 261.48)",
+          "oklch(39% 0.1742 261.48)",
+          "oklch(51% 0.1742 261.48)",
+          "oklch(63% 0.1742 261.48)",
+          "oklch(75% 0.1742 261.48)",
+          "oklch(87% 0.1742 261.48)",
+          "oklch(95% 0.1742 261.48)"
+        ]
+      },
+      "primary-active": {
+        "role": "primary",
+        "displayName": "操作蓝按下",
+        "canonical": "#1647c4",
+        "tonalRamp": [
+          "oklch(15% 0.2014 263.75)",
+          "oklch(27% 0.2014 263.75)",
+          "oklch(39% 0.2014 263.75)",
+          "oklch(51% 0.2014 263.75)",
+          "oklch(63% 0.2014 263.75)",
+          "oklch(75% 0.2014 263.75)",
+          "oklch(87% 0.2014 263.75)",
+          "oklch(95% 0.2014 263.75)"
+        ]
+      },
+      "selected-bg": {
+        "role": "primary",
+        "displayName": "选择浅蓝",
+        "canonical": "#eaf1ff",
+        "tonalRamp": [
+          "oklch(15% 0.0203 264.47)",
+          "oklch(27% 0.0203 264.47)",
+          "oklch(39% 0.0203 264.47)",
+          "oklch(51% 0.0203 264.47)",
+          "oklch(63% 0.0203 264.47)",
+          "oklch(75% 0.0203 264.47)",
+          "oklch(87% 0.0203 264.47)",
+          "oklch(95% 0.0203 264.47)"
+        ]
+      },
+      "selected-ink": {
+        "role": "primary",
+        "displayName": "选择蓝字",
+        "canonical": "#245bd1",
+        "tonalRamp": [
+          "oklch(15% 0.1916 262.75)",
+          "oklch(27% 0.1916 262.75)",
+          "oklch(39% 0.1916 262.75)",
+          "oklch(51% 0.1916 262.75)",
+          "oklch(63% 0.1916 262.75)",
+          "oklch(75% 0.1916 262.75)",
+          "oklch(87% 0.1916 262.75)",
+          "oklch(95% 0.1916 262.75)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "深蓝墨色",
+        "canonical": "#1b2b44",
+        "tonalRamp": [
+          "oklch(15% 0.0509 259.04)",
+          "oklch(27% 0.0509 259.04)",
+          "oklch(39% 0.0509 259.04)",
+          "oklch(51% 0.0509 259.04)",
+          "oklch(63% 0.0509 259.04)",
+          "oklch(75% 0.0509 259.04)",
+          "oklch(87% 0.0509 259.04)",
+          "oklch(95% 0.0509 259.04)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "冷灰次要文字",
+        "canonical": "#65738a",
+        "tonalRamp": [
+          "oklch(15% 0.0397 260.31)",
+          "oklch(27% 0.0397 260.31)",
+          "oklch(39% 0.0397 260.31)",
+          "oklch(51% 0.0397 260.31)",
+          "oklch(63% 0.0397 260.31)",
+          "oklch(75% 0.0397 260.31)",
+          "oklch(87% 0.0397 260.31)",
+          "oklch(95% 0.0397 260.31)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "冷灰画布",
+        "canonical": "#f6f8fb",
+        "tonalRamp": [
+          "oklch(15% 0.0045 258.32)",
+          "oklch(27% 0.0045 258.32)",
+          "oklch(39% 0.0045 258.32)",
+          "oklch(51% 0.0045 258.32)",
+          "oklch(63% 0.0045 258.32)",
+          "oklch(75% 0.0045 258.32)",
+          "oklch(87% 0.0045 258.32)",
+          "oklch(95% 0.0045 258.32)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "白色工作面",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(27% 0.0000 0.00)",
+          "oklch(39% 0.0000 0.00)",
+          "oklch(51% 0.0000 0.00)",
+          "oklch(63% 0.0000 0.00)",
+          "oklch(75% 0.0000 0.00)",
+          "oklch(87% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "细线灰",
+        "canonical": "#e3e8f0",
+        "tonalRamp": [
+          "oklch(15% 0.0121 259.82)",
+          "oklch(27% 0.0121 259.82)",
+          "oklch(39% 0.0121 259.82)",
+          "oklch(51% 0.0121 259.82)",
+          "oklch(63% 0.0121 259.82)",
+          "oklch(75% 0.0121 259.82)",
+          "oklch(87% 0.0121 259.82)",
+          "oklch(95% 0.0121 259.82)"
+        ]
+      },
+      "control-border": {
+        "role": "neutral",
+        "displayName": "控件边框灰",
+        "canonical": "#dee4ed",
+        "tonalRamp": [
+          "oklch(15% 0.0138 258.35)",
+          "oklch(27% 0.0138 258.35)",
+          "oklch(39% 0.0138 258.35)",
+          "oklch(51% 0.0138 258.35)",
+          "oklch(63% 0.0138 258.35)",
+          "oklch(75% 0.0138 258.35)",
+          "oklch(87% 0.0138 258.35)",
+          "oklch(95% 0.0138 258.35)"
+        ]
+      },
+      "soft-surface": {
+        "role": "neutral",
+        "displayName": "柔灰工作面",
+        "canonical": "#f7f9fc",
+        "tonalRamp": [
+          "oklch(15% 0.0045 258.32)",
+          "oklch(27% 0.0045 258.32)",
+          "oklch(39% 0.0045 258.32)",
+          "oklch(51% 0.0045 258.32)",
+          "oklch(63% 0.0045 258.32)",
+          "oklch(75% 0.0045 258.32)",
+          "oklch(87% 0.0045 258.32)",
+          "oklch(95% 0.0045 258.32)"
+        ]
+      },
+      "segmented-bg": {
+        "role": "neutral",
+        "displayName": "分段灰底",
+        "canonical": "#f1f4f9",
+        "tonalRamp": [
+          "oklch(15% 0.0074 260.73)",
+          "oklch(27% 0.0074 260.73)",
+          "oklch(39% 0.0074 260.73)",
+          "oklch(51% 0.0074 260.73)",
+          "oklch(63% 0.0074 260.73)",
+          "oklch(75% 0.0074 260.73)",
+          "oklch(87% 0.0074 260.73)",
+          "oklch(95% 0.0074 260.73)"
+        ]
+      },
+      "tag-bg": {
+        "role": "neutral",
+        "displayName": "标签灰底",
+        "canonical": "#f2f5f9",
+        "tonalRamp": [
+          "oklch(15% 0.0062 255.47)",
+          "oklch(27% 0.0062 255.47)",
+          "oklch(39% 0.0062 255.47)",
+          "oklch(51% 0.0062 255.47)",
+          "oklch(63% 0.0062 255.47)",
+          "oklch(75% 0.0062 255.47)",
+          "oklch(87% 0.0062 255.47)",
+          "oklch(95% 0.0062 255.47)"
+        ]
+      },
+      "tag-ink": {
+        "role": "neutral",
+        "displayName": "标签灰字",
+        "canonical": "#667990",
+        "tonalRamp": [
+          "oklch(15% 0.0422 253.39)",
+          "oklch(27% 0.0422 253.39)",
+          "oklch(39% 0.0422 253.39)",
+          "oklch(51% 0.0422 253.39)",
+          "oklch(63% 0.0422 253.39)",
+          "oklch(75% 0.0422 253.39)",
+          "oklch(87% 0.0422 253.39)",
+          "oklch(95% 0.0422 253.39)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "焦点蓝",
+        "canonical": "#8ab0ff",
+        "tonalRamp": [
+          "oklch(15% 0.1216 264.09)",
+          "oklch(27% 0.1216 264.09)",
+          "oklch(39% 0.1216 264.09)",
+          "oklch(51% 0.1216 264.09)",
+          "oklch(63% 0.1216 264.09)",
+          "oklch(75% 0.1216 264.09)",
+          "oklch(87% 0.1216 264.09)",
+          "oklch(95% 0.1216 264.09)"
+        ]
+      },
+      "price": {
+        "role": "semantic",
+        "displayName": "陶土价格色",
+        "canonical": "#aa4c2b",
+        "tonalRamp": [
+          "oklch(15% 0.1323 39.30)",
+          "oklch(27% 0.1323 39.30)",
+          "oklch(39% 0.1323 39.30)",
+          "oklch(51% 0.1323 39.30)",
+          "oklch(63% 0.1323 39.30)",
+          "oklch(75% 0.1323 39.30)",
+          "oklch(87% 0.1323 39.30)",
+          "oklch(95% 0.1323 39.30)"
+        ]
+      },
+      "demo-bg": {
+        "role": "semantic",
+        "displayName": "琥珀模拟浅底",
+        "canonical": "#fff6e5",
+        "tonalRamp": [
+          "oklch(15% 0.0244 83.42)",
+          "oklch(27% 0.0244 83.42)",
+          "oklch(39% 0.0244 83.42)",
+          "oklch(51% 0.0244 83.42)",
+          "oklch(63% 0.0244 83.42)",
+          "oklch(75% 0.0244 83.42)",
+          "oklch(87% 0.0244 83.42)",
+          "oklch(95% 0.0244 83.42)"
+        ]
+      },
+      "demo-ink": {
+        "role": "semantic",
+        "displayName": "琥珀模拟文字",
+        "canonical": "#a66612",
+        "tonalRamp": [
+          "oklch(15% 0.1207 65.88)",
+          "oklch(27% 0.1207 65.88)",
+          "oklch(39% 0.1207 65.88)",
+          "oklch(51% 0.1207 65.88)",
+          "oklch(63% 0.1207 65.88)",
+          "oklch(75% 0.1207 65.88)",
+          "oklch(87% 0.1207 65.88)",
+          "oklch(95% 0.1207 65.88)"
+        ]
+      },
+      "error-ink": {
+        "role": "semantic",
+        "displayName": "错误陶红",
+        "canonical": "#b75243",
+        "tonalRamp": [
+          "oklch(15% 0.1343 30.38)",
+          "oklch(27% 0.1343 30.38)",
+          "oklch(39% 0.1343 30.38)",
+          "oklch(51% 0.1343 30.38)",
+          "oklch(63% 0.1343 30.38)",
+          "oklch(75% 0.1343 30.38)",
+          "oklch(87% 0.1343 30.38)",
+          "oklch(95% 0.1343 30.38)"
+        ]
+      },
+      "admin-ink": {
+        "role": "neutral",
+        "displayName": "后台墨色",
+        "canonical": "#111827",
+        "tonalRamp": [
+          "oklch(15% 0.0318 264.66)",
+          "oklch(27% 0.0318 264.66)",
+          "oklch(39% 0.0318 264.66)",
+          "oklch(51% 0.0318 264.66)",
+          "oklch(63% 0.0318 264.66)",
+          "oklch(75% 0.0318 264.66)",
+          "oklch(87% 0.0318 264.66)",
+          "oklch(95% 0.0318 264.66)"
+        ]
+      },
+      "admin-muted": {
+        "role": "neutral",
+        "displayName": "后台次要灰",
+        "canonical": "#667085",
+        "tonalRamp": [
+          "oklch(15% 0.0350 265.11)",
+          "oklch(27% 0.0350 265.11)",
+          "oklch(39% 0.0350 265.11)",
+          "oklch(51% 0.0350 265.11)",
+          "oklch(63% 0.0350 265.11)",
+          "oklch(75% 0.0350 265.11)",
+          "oklch(87% 0.0350 265.11)",
+          "oklch(95% 0.0350 265.11)"
+        ]
+      },
+      "admin-canvas": {
+        "role": "neutral",
+        "displayName": "后台画布",
+        "canonical": "#f7f8fa",
+        "tonalRamp": [
+          "oklch(15% 0.0029 264.54)",
+          "oklch(27% 0.0029 264.54)",
+          "oklch(39% 0.0029 264.54)",
+          "oklch(51% 0.0029 264.54)",
+          "oklch(63% 0.0029 264.54)",
+          "oklch(75% 0.0029 264.54)",
+          "oklch(87% 0.0029 264.54)",
+          "oklch(95% 0.0029 264.54)"
+        ]
+      },
+      "admin-line": {
+        "role": "neutral",
+        "displayName": "后台分隔线",
+        "canonical": "#e7ebf0",
+        "tonalRamp": [
+          "oklch(15% 0.0080 253.85)",
+          "oklch(27% 0.0080 253.85)",
+          "oklch(39% 0.0080 253.85)",
+          "oklch(51% 0.0080 253.85)",
+          "oklch(63% 0.0080 253.85)",
+          "oklch(75% 0.0080 253.85)",
+          "oklch(87% 0.0080 253.85)",
+          "oklch(95% 0.0080 253.85)"
+        ]
+      },
+      "admin-focus": {
+        "role": "primary",
+        "displayName": "后台焦点蓝",
+        "canonical": "#93b4f5",
+        "tonalRamp": [
+          "oklch(15% 0.1005 263.45)",
+          "oklch(27% 0.1005 263.45)",
+          "oklch(39% 0.1005 263.45)",
+          "oklch(51% 0.1005 263.45)",
+          "oklch(63% 0.1005 263.45)",
+          "oklch(75% 0.1005 263.45)",
+          "oklch(87% 0.1005 263.45)",
+          "oklch(95% 0.1005 263.45)"
+        ]
+      }
+    }
+  },
+  "components": [
+    {
+      "name": "主按钮",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "桌面主要任务操作，纯蓝底白字且不带主色阴影。",
+      "html": "<button class=\"ds-btn-primary\">创建视频任务</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 15px;border:1px solid var(--blue,#2563eb);border-radius:8px;background:var(--blue,#2563eb);color:#fff;font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:14px;font-weight:400;line-height:1.5714285714285714;box-shadow:none;cursor:pointer;transition:all .2s cubic-bezier(.645,.045,.355,1)}.ds-btn-primary:hover{background:#4f8af7;border-color:#4f8af7}.ds-btn-primary:active{background:#1647c4;border-color:#1647c4}.ds-btn-primary:focus-visible{outline:3px solid #8ab0ff;outline-offset:3px}"
+    },
+    {
+      "name": "次按钮",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "与主操作并列的常规白底操作。",
+      "html": "<button class=\"ds-btn-default\">保存配置</button>",
+      "css": ".ds-btn-default{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 15px;border:1px solid #dee4ed;border-radius:8px;background:#fff;color:var(--ink,#1b2b44);font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:14px;font-weight:400;line-height:1.5714285714285714;box-shadow:0 2px 0 rgba(0,0,0,.02);cursor:pointer;transition:all .2s cubic-bezier(.645,.045,.355,1)}.ds-btn-default:hover{color:#4f8af7;border-color:#4f8af7}.ds-btn-default:active{color:#1647c4;border-color:#1647c4}.ds-btn-default:focus-visible{outline:3px solid #8ab0ff;outline-offset:3px}"
+    },
+    {
+      "name": "文本输入",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "继承桌面主题的标准单行字段。",
+      "html": "<label class=\"ds-field\">房源名称<input class=\"ds-input\" placeholder=\"输入小区或房源号\" /></label>",
+      "css": ".ds-field{display:grid;gap:10px;color:var(--ink,#1b2b44);font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:12px;font-weight:550}.ds-input{height:38px;padding:7px 11px;border:1px solid #dee4ed;border-radius:8px;background:#fff;color:var(--ink,#1b2b44);font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:14px;line-height:1.5714285714285714;transition:all .2s;caret-color:var(--blue,#2563eb)}.ds-input:hover{border-color:#4f8af7}.ds-input:focus{border-color:var(--blue,#2563eb);box-shadow:0 0 0 2px rgba(5,122,255,.06);outline:0}.ds-input:focus-visible{outline:3px solid #8ab0ff;outline-offset:3px}.ds-input:disabled{color:rgba(0,0,0,.25);background:rgba(0,0,0,.04);cursor:not-allowed}"
+    },
+    {
+      "name": "当前导航",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "图标、文字与浅蓝选中面共同标明当前位置。",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item\" href=\"#properties\" aria-current=\"page\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z\"/><path d=\"M9 21v-8h6v8\"/></svg><span>房源中心</span></a></nav>",
+      "css": ".ds-nav{width:192px;font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif}.ds-nav-item{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:7px;background:#eaf1ff;color:#245bd1;font-size:13px;font-weight:650;text-decoration:none;transition:background .18s ease,color .18s ease}.ds-nav-item:hover{color:var(--blue,#2563eb)}.ds-nav-item:focus-visible{outline:3px solid #8ab0ff;outline-offset:3px}"
+    },
+    {
+      "name": "房源特征标签",
+      "kind": "chip",
+      "refersTo": "property-tag",
+      "description": "低强调元数据，不争夺主操作颜色。",
+      "html": "<span class=\"ds-property-tag\">近地铁</span>",
+      "css": ".ds-property-tag{display:inline-block;padding:4px 6px;border-radius:3px;color:#667990;background:#f2f5f9;font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;font-size:10px}"
+    },
+    {
+      "name": "工作面板",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "默认白底、细边框与圆角构成工作区域。",
+      "html": "<section class=\"ds-panel\"><h2 class=\"ds-panel-title\">视频配置</h2><p class=\"ds-panel-note\">为已选房源设置制作方式。</p></section>",
+      "css": ".ds-panel{min-width:0;background:#fff;border:1px solid var(--line,#e3e8f0);border-radius:10px;padding:24px;color:var(--ink,#1b2b44);font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif}.ds-panel-title{margin:0 0 8px;font-size:17px;font-weight:620;line-height:1.5}.ds-panel-note{margin:0;color:var(--muted,#65738a);font-size:13px;line-height:1.65}"
+    },
+    {
+      "name": "房源选择入口",
+      "kind": "button",
+      "refersTo": "property-selection",
+      "description": "配置中以虚线框容纳当前选择摘要与编辑动作。",
+      "html": "<button class=\"ds-property-select\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><path d=\"M12 5v14M5 12h14\"/></svg><span><strong>选择要制作的房源</strong><small>可一次选择多个房源</small></span><span class=\"ds-select-edit\">选择</span></button>",
+      "css": ".ds-property-select{display:flex;align-items:center;gap:14px;width:100%;min-height:84px;background:#fafcff;border:1px dashed #bed0ea;border-radius:8px;padding:16px;text-align:left;color:#57749c;font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;cursor:pointer}.ds-property-select>span:nth-child(2){flex:1}.ds-property-select strong{display:block;font-size:12px;font-weight:550;color:#385473}.ds-property-select small{display:block;margin-top:6px;color:var(--muted,#65738a);font-size:10px}.ds-select-edit{font-size:11px}.ds-property-select:hover{border-color:var(--blue,#2563eb);background:#f6f9ff}.ds-property-select:focus-visible{outline:3px solid #8ab0ff;outline-offset:3px}"
+    },
+    {
+      "name": "选中房源卡",
+      "kind": "custom",
+      "description": "多选弹窗用蓝色边框与同色描边呈现选中，资料仍可直接读取。",
+      "html": "<button class=\"ds-property-choice\" aria-pressed=\"true\"><div class=\"ds-choice-body\"><div><strong>滨江花园</strong><span class=\"ds-choice-check\" aria-label=\"已选中\">✓</span></div><p>房源号 FJ-0001 · 3室2厅 · 108㎡</p></div></button>",
+      "css": ".ds-property-choice{display:flex;flex-direction:column;width:100%;padding:0;text-align:left;border:1px solid var(--blue,#2563eb);border-radius:8px;box-shadow:0 0 0 1px var(--blue,#2563eb);background:#fff;overflow:hidden;color:var(--ink,#1b2b44);font-family:\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;cursor:pointer}.ds-choice-body{padding:13px;width:100%}.ds-choice-body>div{display:flex;justify-content:space-between;gap:7px}.ds-choice-body strong{font-size:13px}.ds-choice-check{color:var(--blue,#2563eb)}.ds-choice-body p{margin:8px 0 0;color:var(--muted,#65738a);font-size:11px;line-height:1.8}.ds-property-choice:focus-visible{outline:3px solid #8ab0ff;outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "清晰的工作台",
+    "overview": "白色工作面承载内容，冷灰背景分开工作区域，蓝色指出选择和下一步操作。系统中文字体、轻边框与紧凑但有留白的表单，让经纪人可以持续扫描房源、配置和任务状态。\n\n界面的精确感来自一致的对齐、清楚的状态文字和真实房源照片。Electron 桌面与独立后台延续同一工作感；后台保留其已实现的中性色与字体回退栈。品牌表达服从操作，不增加装饰性渐变或无关展示。",
+    "keyCharacteristics": [
+      "白色面板与冷灰页面形成清楚的区域层级。",
+      "蓝色同时用于主操作、当前导航与明确的选择状态。",
+      "系统中文字体配合紧凑标签，数字优先清楚对齐。",
+      "房源照片呈现内容，轻边框组织界面。"
+    ],
+    "rules": [
+      {
+        "name": "The Shared Muted Rule",
+        "body": "桌面次要文字优先复用 `muted`；对新增的小号文字，先检查实际背景上的对比度。",
+        "section": "colors"
+      },
+      {
+        "name": "The Flat Work Surface Rule",
+        "body": "普通工作面不添加悬浮大阴影；使用已存在的底色、边框和间距区分区域。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** 用白色工作面、细边框和冷灰底色组织层级。",
+      "**Do** 让蓝色表示主操作、当前位置和明确的选中状态。",
+      "**Do** 复用系统字体与现有 Ant Design 控件，保留可见焦点和文字状态。",
+      "**Do** 让真实房源照片和可辨认的元数据成为内容主体。",
+      "**Do** 在紧凑窗口中保留工厂摘要与可触达的提交操作。"
+    ],
+    "donts": [
+      "**Don't** 给工作界面加入装饰性渐变、无关统计墙或大面积装饰阴影。",
+      "**Don't** 把照片上用于保证文字可读的遮罩误用为页面装饰渐变。",
+      "**Don't** 将所有状态都替换为主色，或只用颜色表达成功、失败和审核。",
+      "**Don't** 为新增次要文字随意选取更浅的灰色。",
+      "**Don't** 把桌面和后台的实际中性色差异当作尚未实现的统一主题。"
+    ]
+  }
+}

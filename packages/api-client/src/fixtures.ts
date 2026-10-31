@@ -1,0 +1,310 @@
+import type {
+  ProductionConfig,
+  ProductionTask,
+  Property,
+  Resource,
+  Workspace,
+} from "@keagent/shared-types";
+
+export const defaultConfig: ProductionConfig = {
+  propertyIds: [],
+  videoMode: "voiceover",
+  promptTemplate: { id: "prompt-1", version: "1.0.0" },
+  videoTemplate: { id: "video-1", version: "1.0.0" },
+  styleTemplate: { id: "style-1", version: "1.0.0" },
+  coverTemplate: { id: "cover-1", version: "1.0.0" },
+  subtitleTemplate: { id: "subtitle-1", version: "1.0.0" },
+  voiceId: "voice-1",
+  requireScriptReview: true,
+  aspectRatio: "9:16",
+  outputResolution: "1080p",
+};
+
+export function createInitialWorkspace(): Workspace {
+  const now = new Date().toISOString();
+  const homes = [
+    [
+      "仁恒滨江园",
+      "浦东新区",
+      "3室2厅",
+      128,
+      1280,
+      "滨江生活，装下全家人的理想",
+    ],
+    [
+      "万科翡翠滨江",
+      "浦东新区",
+      "3室2厅",
+      112,
+      960,
+      "通透三房，让阳光成为日常",
+    ],
+    ["绿地海珀黄浦", "黄浦区", "2室2厅", 89, 820, "把城市的繁华，留在窗外"],
+    ["中海建国里", "黄浦区", "3室2厅", 118, 1080, "梧桐街区里的舒适三房"],
+    ["瑞虹新城悦庭", "虹口区", "2室2厅", 93, 780, "在成熟社区，遇见新的生活"],
+    ["大华公园城市", "宝山区", "3室2厅", 105, 580, "公园旁的一家三口新提案"],
+    ["古北壹号", "闵行区", "4室2厅", 186, 2180, "宽敞四房，留给生活更多可能"],
+    ["保利天悦", "徐汇区", "2室1厅", 76, 650, "给年轻家庭的第一份答案"],
+  ] as const;
+  const properties: Property[] = homes.map(
+    ([community, district, layout, areaSqm, price, title], i) => ({
+      id: `property-${i + 1}`,
+      propertyNumber: `10710883${String(i + 1).padStart(4, "0")}`,
+      title,
+      city: "上海",
+      district,
+      community,
+      priceCents: price * 1_000_000,
+      areaSqm,
+      layout,
+      description: `${community}示例房源，${layout}，建筑面积约${areaSqm}平方米。实际信息以最新核验为准。本资料仅用于产品交互演示。`,
+      sellingPoints: [
+        "南北通透",
+        "采光充足",
+        i % 2 ? "生活配套成熟" : "近公园步道",
+      ],
+      image: `/media/interior-${(i % 4) + 1}.jpg`,
+      images: [1, 2, 3].map((n) => `/media/interior-${((i + n) % 4) + 1}.jpg`),
+      videoCount: i === 7 ? 0 : (i % 3) + 1,
+      importStatus: i === 7 ? "incomplete" : "ready",
+      lastVerifiedAt: now,
+    }),
+  );
+  const resourceRows: [string, Resource["type"], string, string, boolean][] = [
+    ["video-1", "video", "简约带看", "简约专业", true],
+    ["video-2", "video", "城市生活", "生活化", true],
+    ["video-3", "video", "高端住宅", "高端质感", false],
+    ["video-4", "video", "快节奏探房", "快节奏带看", false],
+    ["style-1", "style", "自然留白", "简约专业", true],
+    ["style-2", "style", "暖调生活", "生活化", true],
+    ["style-3", "style", "经典深色", "高端质感", false],
+    ["cover-1", "cover", "房源信息卡", "简约专业", true],
+    ["cover-2", "cover", "生活提案", "生活化", false],
+    ["prompt-1", "prompt", "专业房源介绍", "房源介绍", true],
+    ["prompt-2", "prompt", "生活化口播", "生活方式", true],
+    ["subtitle-1", "subtitle", "清晰双行字幕", "基础字幕", true],
+  ];
+  const resources: Resource[] = resourceRows.map(
+    ([id, type, name, category, installed], i) => ({
+      id,
+      type,
+      name,
+      category,
+      installed,
+      description: `${name} · 清楚呈现房源与生活细节`,
+      version: "1.0.0",
+      thumbnail: `/media/interior-${(i % 4) + 1}.jpg`,
+      compatibleModes: ["voiceover", "avatar"],
+      downloadStatus: installed ? "installed" : "idle",
+      downloadProgress: installed ? 100 : 0,
+      published: true,
+      sizeMb: 6 + i * 2,
+    }),
+  );
+  const task = (
+    i: number,
+    status: ProductionTask["status"],
+    stage: ProductionTask["stage"],
+  ): ProductionTask => ({
+    id: `task-${i}`,
+    batchId: `batch-${i}`,
+    propertyId: properties[i - 1].id,
+    propertySnapshot: structuredClone(properties[i - 1]),
+    configSnapshot: {
+      ...structuredClone(defaultConfig),
+      propertyIds: [properties[i - 1].id],
+    },
+    status,
+    stage,
+    script: `今天带大家看一套${properties[i - 1].community}的${properties[i - 1].layout}。${properties[i - 1].sellingPoints.join("，")}，建筑面积约${properties[i - 1].areaSqm}平方米。喜欢这种生活方式，欢迎进一步了解。\n\n【模拟文案，房源信息仅作演示】`,
+    scriptRevision: 1,
+    productionRevision: 1,
+    createdAt: new Date(Date.now() - i * 3_600_000).toISOString(),
+    progress: status === "succeeded" ? 100 : 0,
+    ...(status === "succeeded"
+      ? {
+          approvedRevision: 1,
+          completedAt: now,
+          videoUrl: "/media/demo-property.mp4",
+          coverUrl: properties[i - 1].image,
+        }
+      : {}),
+    ...(status === "failed"
+      ? {
+          approvedRevision: 1,
+          error: "模拟合成失败：演示一次可独立恢复的任务，请点击重试。",
+        }
+      : {}),
+  });
+  const tasks = [
+    task(1, "succeeded", "cover"),
+    task(2, "awaiting_review", "script"),
+    task(3, "failed", "render"),
+  ];
+  return {
+    schemaVersion: 1,
+    properties,
+    resources,
+    tasks,
+    batches: tasks.map((t) => ({
+      id: t.batchId,
+      configSnapshot: structuredClone(t.configSnapshot),
+      taskIds: [t.id],
+      createdAt: t.createdAt,
+    })),
+    publishTasks: [
+      {
+        id: "publish-1",
+        productionTaskId: "task-1",
+        productionRevision: 1,
+        platform: "douyin",
+        accountId: "account-douyin",
+        title: "滨江生活的理想答案",
+        description: "示例发布记录，仅用于演示。",
+        hashtags: ["上海房产"],
+        status: "published",
+        createdAt: tasks[0].createdAt,
+        progress: 100,
+      },
+    ],
+    voices: [
+      {
+        id: "voice-1",
+        name: "我的声音",
+        description: "温和自然 · 模拟克隆音色",
+        status: "ready",
+        isDefault: true,
+      },
+      {
+        id: "voice-2",
+        name: "知性女声",
+        description: "清晰明亮 · 系统示例音色",
+        status: "ready",
+        isDefault: false,
+      },
+      {
+        id: "voice-3",
+        name: "沉稳男声",
+        description: "专业舒缓 · 系统示例音色",
+        status: "ready",
+        isDefault: false,
+      },
+    ],
+    avatars: [
+      {
+        id: "avatar-1",
+        name: "我的工作形象",
+        image: "/media/agent.svg",
+        status: "ready",
+        isDefault: true,
+      },
+      {
+        id: "avatar-2",
+        name: "休闲形象",
+        image: "/media/agent.svg",
+        status: "ready",
+        isDefault: false,
+      },
+    ],
+    accounts: [
+      {
+        id: "account-douyin",
+        platform: "douyin",
+        name: "林悦说房 · 演示账号",
+        connected: true,
+        lastCheckedAt: now,
+      },
+      {
+        id: "account-xiaohongshu",
+        platform: "xiaohongshu",
+        name: "林悦的沪上生活 · 演示账号",
+        connected: true,
+        lastCheckedAt: now,
+      },
+    ],
+    profile: {
+      name: "林悦",
+      brokerage: "沪上置业 · 滨江门店",
+      city: "上海",
+      regions: "浦东新区、黄浦区",
+      phone: "138****2026",
+      introduction: "认真发现每一套房子的生活价值。",
+      defaults: structuredClone(defaultConfig),
+    },
+    draft: structuredClone(defaultConfig),
+    leads: [
+      [
+        "小陈",
+        "预算800万左右，浦东有合适的三房吗？",
+        "high",
+        "约800万元",
+        "浦东新区",
+        "三房，适合一家三口",
+      ],
+      [
+        "安安",
+        "这套房的采光怎么样，周末可以看看吗？",
+        "high",
+        "未识别",
+        "未识别",
+        "关注采光，计划实地看房",
+      ],
+      [
+        "用户0726",
+        "附近的生活配套方便吗？",
+        "medium",
+        "未识别",
+        "未识别",
+        "关注社区生活配套",
+      ],
+      [
+        "林先生",
+        "喜欢这个户型，想了解一下总价",
+        "medium",
+        "未识别",
+        "未识别",
+        "关注户型与价格",
+      ],
+      [
+        "周末看房",
+        "我们想找黄浦的两房，预算900万以内",
+        "high",
+        "900万元以内",
+        "黄浦区",
+        "两房",
+      ],
+      [
+        "阿白",
+        "装修风格挺好看的",
+        "low",
+        "未识别",
+        "未识别",
+        "尚未识别明确购房需求",
+      ],
+    ].map(
+      (
+        [name, commentText, intentLevel, budget, region, housingRequirements],
+        i,
+      ) => ({
+        id: `lead-${i + 1}`,
+        name,
+        platform: i % 2 ? ("xiaohongshu" as const) : ("douyin" as const),
+        commentText,
+        sourceVideo: i % 2 ? "城市生活的一种可能" : "滨江生活的理想答案",
+        intentLevel: intentLevel as "high" | "medium" | "low",
+        budget,
+        region,
+        housingRequirements,
+        aiSummary:
+          "根据示例评论提取需求，缺少的信息显示未识别。分析仅供人工跟进参考。",
+        contactPermission: "仅支持生成建议，联系权限待确认",
+        followupStatus: "new" as const,
+        reply: "",
+        followups: [],
+      }),
+    ),
+    analysisJobs: [],
+    requests: {},
+    updatedAt: now,
+  };
+}
