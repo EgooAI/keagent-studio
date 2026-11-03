@@ -555,6 +555,107 @@ async function main() {
     assert.equal(finalWorkspace.properties.length, 100);
     assert.equal(finalWorkspace.tasks.length, 11);
     assert.equal(finalWorkspace.batches.length, 1);
+    assert.ok(
+      results.every((result) => result.unexpected === 0),
+      "Unexpected load-test failures",
+    );
+    const adminCommand = async (path, body) => {
+      const result = await request(
+        authURL,
+        "/api/auth/admin/" + path,
+        users[0].sessionToken,
+        body,
+      );
+      assert.equal(result.status, 200, "Admin regression: " + path);
+    };
+    await adminCommand("set-role", { userId: users[1].id, role: "admin" });
+    assert.equal(
+      (await request(goURL, "/v1/admin/devices", users[1].token)).status,
+      200,
+    );
+    await adminCommand("set-role", { userId: users[1].id, role: "user" });
+    assert.equal(
+      (await request(goURL, "/v1/admin/devices", users[1].token)).status,
+      403,
+    );
+    assert.equal(
+      (await request(authURL, "/api/auth/sign-out", users[1].sessionToken, {}))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await request(goURL, "/v1/workspace", users[1].token)).status,
+      401,
+    );
+    await adminCommand("ban-user", {
+      userId: users[2].id,
+      banReason: "Load regression",
+    });
+    assert.equal(
+      (await request(goURL, "/v1/workspace", users[2].token)).status,
+      401,
+    );
+    await adminCommand("revoke-user-sessions", { userId: users[3].id });
+    assert.equal(
+      (await request(goURL, "/v1/workspace", users[3].token)).status,
+      401,
+    );
+    const property = await request(
+      goURL,
+      "/v1/commands/createProperty",
+      users[4].token,
+      [
+        {
+          title: "Ownership regression",
+          community: "Test",
+          propertyNumber: "unique-regression",
+          areaSqm: 90,
+        },
+      ],
+    );
+    assert.equal(property.status, 200);
+    assert.equal(
+      (
+        await request(goURL, "/v1/commands/updateProperty", users[5].token, [
+          property.data.id,
+          { title: "Forbidden" },
+        ])
+      ).status,
+      404,
+    );
+    const device = {
+      id: crypto.randomUUID(),
+      name: "Load regression",
+      platform: "test",
+    };
+    assert.equal(
+      (await request(goURL, "/v1/devices/register", users[6].token, device))
+        .status,
+      200,
+    );
+    assert.equal(
+      (
+        await request(goURL, "/v1/admin/devices/revoke", users[0].token, {
+          id: device.id,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (await request(goURL, "/v1/devices/register", users[6].token, device))
+        .status,
+      403,
+    );
+    report.regressions = {
+      roleChanges: true,
+      logout: true,
+      ban: true,
+      sessionRevocation: true,
+      ownership: true,
+      deviceRevocation: true,
+      idempotency: true,
+      revisions: true,
+    };
     const plan = await db.query(
       `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT u.name,u.email,COALESCE(u.role,'user') FROM "session" s JOIN "user" u ON u.id=s."userId" WHERE s.id=$1 AND s."userId"=$2 AND s."expiresAt">now() AND (NOT COALESCE(u.banned,false) OR u."banExpires"<=now())`,
       [

@@ -765,6 +765,8 @@ func main() {
 		log.Fatal("database configuration invalid")
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(20)
 	if err = db.Ping(); err != nil {
 		log.Fatal("database unavailable")
 	}
