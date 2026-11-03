@@ -154,7 +154,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, object{"status": "ok"}, nil)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	limit := int64(1 << 20)
+	if r.URL.Path == "/v1/panorama/audio" {
+		limit = 2 << 20
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		respond(w, nil, fail(413, "请求过大"))
 		return
@@ -187,6 +191,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/session" {
 		respond(w, object{"userId": a.UserID, "sessionId": a.SessionID, "name": a.Name, "email": a.Email, "role": a.Role}, nil)
+		return
+	}
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/panorama/") {
+		v, e := s.panorama(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/panorama/"), body)
+		respond(w, v, e)
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/workspace" {
@@ -681,6 +690,9 @@ func (s *server) workOnce(ctx context.Context) {
 	}
 }
 func generate(ctx context.Context, p object) (string, error) {
+	return generateWithInstruction(ctx, p, "你是房产视频文案助手。仅依据给定房源资料写中文口播文案，不编造价格、配套或承诺。")
+}
+func generateWithInstruction(ctx context.Context, p object, instruction string) (string, error) {
 	if os.Getenv("AI_API_KEY") == "" || os.Getenv("AI_MODEL") == "" {
 		return "", errors.New("云端 AI 服务未配置，请联系管理员")
 	}
@@ -697,6 +709,11 @@ func generate(ctx context.Context, p object) (string, error) {
 	if !allowed {
 		return "", errors.New("AI 服务域名未加入服务端允许列表")
 	}
+	client, transport := providerClient()
+	defer transport.CloseIdleConnections()
+	return completionWithInstruction(ctx, client, strings.TrimRight(base.String(), "/")+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), p, instruction)
+}
+func providerClient() (*http.Client, *http.Transport) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
@@ -717,12 +734,14 @@ func generate(ctx context.Context, p object) (string, error) {
 		return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}}
 	client := &http.Client{Transport: transport, Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
-	defer transport.CloseIdleConnections()
-	return completion(ctx, client, strings.TrimRight(base.String(), "/")+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), p)
+	return client, transport
 }
 func completion(ctx context.Context, client *http.Client, endpoint, model, key string, p object) (string, error) {
+	return completionWithInstruction(ctx, client, endpoint, model, key, p, "你是房产视频文案助手。仅依据给定房源资料写中文口播文案，不编造价格、配套或承诺。")
+}
+func completionWithInstruction(ctx context.Context, client *http.Client, endpoint, model, key string, p object, instruction string) (string, error) {
 	property, _ := json.Marshal(p)
-	payload, _ := json.Marshal(object{"model": model, "messages": []any{object{"role": "system", "content": "你是房产视频文案助手。仅依据给定房源资料写中文口播文案，不编造价格、配套或承诺。"}, object{"role": "user", "content": string(property)}}})
+	payload, _ := json.Marshal(object{"model": model, "messages": []any{object{"role": "system", "content": instruction}, object{"role": "user", "content": string(property)}}})
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", errors.New("AI 请求配置无效")
@@ -772,6 +791,9 @@ func main() {
 	}
 	if _, err = db.Exec(schema); err != nil {
 		log.Fatal("business migration failed")
+	}
+	if _, err = db.Exec(avatarSchema); err != nil {
+		log.Fatal("panorama migration failed")
 	}
 	verifier, err := newJWTVerifier()
 	if err != nil {
