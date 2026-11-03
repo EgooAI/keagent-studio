@@ -1,6 +1,23 @@
 const { app, BrowserWindow, protocol, net, dialog } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+if (!app.isPackaged) {
+  const envFile = path.resolve(__dirname, "../../../.env.local");
+  if (require("node:fs").existsSync(envFile)) {
+    const values = require("node:util").parseEnv(
+      require("node:fs").readFileSync(envFile, "utf8"),
+    );
+    for (const key of [
+      "CONTROL_API_URL",
+      "GO_API_URL",
+      "FFMPEG_PATH",
+      "FFPROBE_PATH",
+      "VOLC_VIDEO_ALLOWED_HOSTS",
+    ])
+      if (process.env[key] === undefined && values[key] !== undefined)
+        process.env[key] = values[key];
+  }
+}
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "keagent",
@@ -78,9 +95,24 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  require("./auth.cjs").registerAuth();
+  const identity = require("./auth.cjs").registerAuth();
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);
+    if (url.hostname === "media") {
+      try {
+        const response = await net.fetch(
+          pathToFileURL(await identity.media(request.url)).toString(),
+        );
+        const headers = new Headers(response.headers);
+        headers.set("Cache-Control", "no-store");
+        return new Response(response.body, {
+          status: response.status,
+          headers,
+        });
+      } catch {
+        return new Response("Media unavailable", { status: 403 });
+      }
+    }
     const root = path.resolve(__dirname, "../dist");
     let pathname;
     try {
@@ -101,7 +133,7 @@ app.whenReady().then(() => {
       const headers = new Headers(response.headers);
       headers.set(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: keagent://media; media-src 'self' blob: keagent://media; connect-src 'self'; object-src 'none'; base-uri 'self'",
       );
       return new Response(response.body, { status: response.status, headers });
     } catch {

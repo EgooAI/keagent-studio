@@ -4,7 +4,7 @@ KeAgent Studio 是面向房产经纪人的 AI 视频生产与营销桌面应用�
 
 版本：V1 开发基线。整理日期：2026 年 10 月 30 日。
 
-仓库已有 Electron + React 客户端、独立 React 管理后台、SEO SDK/Next.js 认证服务和 Go/PostgreSQL 业务服务。两端通过 JWT 直接请求 Go，Go 使用 JWKS 独立验签并在 PostgreSQL 复核实时会话与权限；迁移期保留旧签名网关。真实登录、用户隔离、资源目录和云端 AI 文案入口已进入联调；完整视频生产与平台执行尚未接入。当前实际范围、启动方式与限制见 [后端与桌面联调](docs/06-后端与桌面联调.md)，本次改造基线见 [JWT 认证解耦实施要求](docs/07-JWT认证解耦实施要求.md)。以下原有章节仍包含前端 Mock 阶段说明。
+仓库已有 Electron + React 客户端、独立 React 管理后台、SEO SDK/Next.js 认证服务和 Go/PostgreSQL 业务服务。两端通过 JWT 直接请求 Go，Go 使用 JWKS 独立验签并在 PostgreSQL 复核实时会话与权限；迁移期保留旧签名网关。已新增可实际执行的全景视频工作流：导入全景、分段文案审核、本机配音、按声音时长旋转、字幕合成和 MP4 导出。云端 AI、火山 TTS 与克隆数字人适配器已接入配置检查，付费调用待凭证联调。启动方式见 [后端与桌面联调](docs/06-后端与桌面联调.md)，本次实现与限制见 [全景工作流](docs/09-panorama-workflow.md)。以下原有章节仍包含前端 Mock 阶段说明。
 
 [完整阅读版](https://chatgpt.com/space/page_d0eb0ef5edc881919ee3018d5168da9d)已保存为私有 Page。后续开发以仓库文档为维护基线；Page 为本次整理的阅读副本。
 
@@ -20,6 +20,7 @@ KeAgent Studio 是面向房产经纪人的 AI 视频生产与营销桌面应用�
 | [后端与桌面联调](docs/06-后端与桌面联调.md) | 当前真实服务、登录、SDK 接入、数据库与运行验证 |
 | [JWT 认证解耦实施要求](docs/07-JWT认证解耦实施要求.md) | Token、公钥、实时撤销、直连与兼容迁移边界 |
 | [本机压测基线](docs/08-本机压测基线.md) | 当前吞吐与延迟、数据库连接瓶颈、临时对照和复现步骤 |
+| [全景视频工作流](docs/09-panorama-workflow.md) | 全景导入、文案模板、声音、火山数字人、执行与验证 |
 
 ## 已确认的开发基线
 
@@ -85,7 +86,22 @@ pnpm package:desktop  # 当前系统的未签名、未压缩 Electron 前端目�
 
 本轮在 Windows 上通过 TypeScript 与格式检查、18 个单元测试、6 条浏览器场景、客户端与后台生产构建；构建后的 Electron 通过隐藏窗口实际加载验证。Mac 安装包和正式签名没有验证。
 
-已增加 SDK 认证网关、Go 服务、PostgreSQL 和云端文案接口。DeepSeek 与火山引擎已确定为目标供应商，目前没有密钥，未做真实付费生成验证；火山 TTS、数字人、SQLite Sidecar、FFmpeg、平台自动化和正式代码签名仍未接入。当前版本不能作为完整营销系统的正式交付。
+已增加 SDK 认证网关、Go 服务、PostgreSQL、云端文案接口及本机全景工作流。FFmpeg 和 Windows 系统配音已经实际生成验证；火山 TTS 与克隆数字人已有云端适配器，尚未做真实付费生成验证。SQLite Sidecar、跨设备执行、平台自动化、捆绑视频运行时和正式代码签名仍未完成。当前版本不能作为完整营销系统的正式交付。
+
+## 全景讲解开发样片
+
+已取得两张 Poly Haven CC0 室内全景原图，均为 8192×4096 等距柱状图。来源、许可、官方校验值、分场景文案和镜头范围见 [素材清单](apps/desktop/public/media/panoramas/manifest.json) 与 [素材说明](apps/desktop/public/media/SOURCES.md)。两个地点是独立测试场景，不代表同一套或真实在售房源。
+
+Windows 开发机已安装中文系统音色、FFmpeg 和 FFprobe 时，在仓库根目录依次运行：
+
+```powershell
+powershell.exe -NoProfile -NonInteractive -File scripts/synthesize-panorama-demo.ps1
+node scripts/render-panorama-demo.mjs
+```
+
+先按每张图的分段文案生成中文配音，再探测真实音频时长，驱动全景旋转镜头、句级字幕和场景拼接。输出为 `output/panorama-demo/panorama-narrated-demo.mp4`，镜头与字幕时间记录在同目录 `timeline.json`。脚本校验源图哈希、音频与视频时长、画面实际运动及非静音音轨。
+
+该独立样片使用本机系统 TTS 与人工核对的测试文案，不含数字人开场。现在也可在桌面端「AI 视频工厂 → 全景工作流」载入同一套 CC0 素材，完成审核和真实制作；运行 `node scripts/verify-panorama-workflow.mjs` 验证该执行器及修改镜头后的配音复用。
 
 ## 界面配色
 

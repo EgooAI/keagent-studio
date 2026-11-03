@@ -12,6 +12,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tabs,
 } from "antd";
 import {
   ArrowRight,
@@ -41,6 +42,7 @@ import { useWorkspace } from "../lib/workspace";
 import { PageHeader, formatDate, formatPrice } from "../components/common";
 import { PropertyPicker } from "../components/PropertyPicker";
 import { ResourcePicker } from "../components/ResourcePicker";
+import { PanoramaStudio } from "../components/PanoramaStudio";
 
 function TemplateField({
   label,
@@ -75,6 +77,23 @@ function TemplateField({
 }
 
 export function StudioPage() {
+  return (
+    <Tabs
+      tabBarStyle={{ marginBottom: 0 }}
+      defaultActiveKey={window.desktop ? "panorama" : "existing"}
+      items={[
+        { key: "panorama", label: "全景工作流", children: <PanoramaStudio /> },
+        {
+          key: "existing",
+          label: "原有任务",
+          children: <ExistingStudioPage />,
+        },
+      ]}
+    />
+  );
+}
+
+function ExistingStudioPage() {
   const { data } = useWorkspace();
   const { message } = App.useApp();
   const navigate = useNavigate();

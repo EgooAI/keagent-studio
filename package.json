@@ -29,6 +29,7 @@
     "files": [
       "apps/desktop/dist/**/*",
       "apps/desktop/electron/**/*",
+      "!apps/desktop/electron/**/*.test.ts",
       "package.json"
     ],
     "extraMetadata": {

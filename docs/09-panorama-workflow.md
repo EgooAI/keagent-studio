@@ -1,0 +1,45 @@
+# 全景视频工作流
+
+入口是桌面端「AI 视频工厂 → 全景工作流」。此版是可执行的本机工作流，云端房源资料仍通过现有认证 API 读取；全景原图、审核草稿、执行检查点、音频缓存和成片存放于 Electron userData/panorama，按已验证的用户 ID 隔离。云端原有任务继续保留在「原有任务」标签。此版本不把本机成片同步到发布中心或其他电脑。
+
+## 使用顺序
+
+1. 选择已经录入的房源；为每个空间导入一张 2:1 等距柱状 JPEG / PNG，填写已核实的空间说明，调整顺序和起始视角。宽度 2048–16384，单张至多 50 MB，至多 20 个空间。
+2. 选择三种文案套路之一，可编辑开场、空间、结尾模板；支持 `{title}`、`{facts}`、`{sellingPoints}`、`{room}`、`{description}`。选择「按模板填稿」或已配置的 AI 改写。AI 使用房源事实和人工空间说明，不做图片视觉分析。
+3. 选择普通话 / 英语、Windows 本机声音或火山 TTS 音色、语速，选择不露脸全景或火山克隆数字人开场。英语模板和空间说明应使用对应语言；人工审核最终文案。
+4. 生成并逐段编辑文案，保存或确认制作。开场、每个空间、结尾均有固定的图文关联。任务保存配置与房源快照，不受之后修改影响。
+5. 先生成每个字幕短句的音频，再用 FFprobe 读取真实时长，合成完整讲解。镜头按「时长 × 旋转速度」运动；达到最大转角后停留，保留完整配音。字幕同步使用每句实际音频边界。
+6. 单段视频只保留画面，全部视频拼接后统一混入一条完整配音，避免 AAC 分段编码的累积间隙与重复开场声音。成片校验音轨、分辨率和总时长后生成封面及时间轴。
+7. 在本页查看进度、取消、重试、预览、导出 MP4。取消或退出不会把旧进程结果标记成功。异常退出后的运行任务转为可重试；音频和镜头缓存按输入内容复用。
+
+本机一次执行一个任务；未接入云端调度、Sidecar 或跨设备恢复。此范围先验证完整制作链路，不扩展通用工作流编排器。
+
+## 配置与火山数字人
+
+Go 云端从启动环境读取并使用供应商凭证。Electron 开发模式从 `.env.local` 仅装载服务地址、运行时路径和视频下载域名允许名单；供应商请求通过认证后的 Go 接口完成。安装包需要通过启动环境配置服务地址和 FFmpeg/FFprobe，当前尚未捆绑视频运行时。
+
+无需云端凭证即可使用 Windows 已安装的中英文系统声音、模板填稿和不露脸全景模板。AI 改写复用 `AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY`、`AI_ALLOWED_HOSTS`；缺失时不会伪造 AI 结果或自动切换生成方式。
+
+火山 TTS：`VOLC_TTS_API_KEY`、`VOLC_TTS_RESOURCE_ID`、`VOLC_TTS_SPEAKER`。音色可在界面替换；必须与已开通的模型资源兼容。使用官方 HTTP 单向流式接口，收集 PCM 后转换为标准 WAV；实际时长仍由本机探测。
+
+火山克隆数字人：`VOLC_ACCESS_KEY_ID`、`VOLC_SECRET_ACCESS_KEY`、`VOLC_AVATAR_RESOURCE_ID`、`VOLC_TOS_BUCKET`、`VOLC_TOS_REGION`。账号需开通克隆数字人及对应形象。使用同一份已审核开场配音，先上传 TOS 私有桶，以一小时预签名 URL 提交 `CVSubmitTask`，持久化 task_id 后通过 `CVGetResult` 查询并下载成片。开场限制为 30 秒；只使用下载视频的画面，最终音轨仍是原开场配音。已有形象相同且音频相同的数字人结果在修改镜头后可复用。
+
+TOS 上传内容不会自动公开；请为 `keagent/` 前缀设置生命周期清理策略，避免长期累积开场配音。任务取消会停止本机执行和轮询，已经提交的供应商任务仍可能执行和计费。云端按用户、音频和形象保存提交检查点，重放请求复用原 task_id；尚未取得 task_id 时会拒绝重复提交。若本机也丢失 task_id，系统停止自动重提，必须先在火山控制台核对。此版没有处理扣费未知任务的运维界面。
+
+参考官方接口：[克隆数字人生成](https://docs.volcengine.com/docs/intelligent-vision-services/generate-digital-human-video?lang=zh)、[TTS HTTP](https://docs.volcengine.com/docs/doubao-voice/unidirectional-streaming-text-to-speech-http?lang=zh)、[TOS 签名示例](https://docs.volcengine.com/docs/6349/74839?lang=en)。签名实现通过官方固定测试向量校验；真实火山付费调用仍需要有效凭证联调。
+
+## 验证
+
+云端新增认证端点 `POST /v1/panorama/{operation}`，沿用 JWT、实时会话和设备校验。`capabilities` 返回配置状态；`script` 返回分段文案；`tts` 返回 PCM Base64；`audio` 校验并上传开场 WAV；`avatar-submit` 创建或复用提交记录；`avatar-query` 仅查询当前用户所属的供应商任务。`keagent_panorama_avatar` 表以用户和音频/形象组合保存检查点。开场上传端点的请求上限为 2 MB，其他端点保留 1 MB。
+
+`pnpm test` 与 `services/cloud` 下的 `go test ./...` 覆盖模板变量、事实格式、镜头边界、音频缓存键、官方 TOS 签名、WAV 校验、用户素材隔离、修订冲突、快照、幂等、任务中断、取消后的迟到结果和未知数字人提交。
+
+Windows 机器安装中文系统声音与 FFmpeg / FFprobe 后运行：
+
+```powershell
+node scripts/verify-panorama-workflow.mjs
+```
+
+该检查通过与界面相同的执行器载入两张 CC0 测试全景、生成草稿、审核、配音和合成；改变旋转速度、方向与横竖画幅后再生成一次，并验证原配音文件的修改时间没有变化。输出路径写入 `output/workflow-verification/result.json`。两张图是独立地点，不代表真实同套在售房源。
+
+启动本项目开发数据库和后端、完成 `pnpm build` 后，可运行 `node scripts/panorama-desktop-integration.mjs`。该回归使用 `.env.local` 的本机管理员登录隐藏 Electron 窗口，在工作区 output 下创建独立配置目录；通过真实界面载入素材、审核、合成，并验证媒体播放和退出后的访问隔离。不会调用付费模型。

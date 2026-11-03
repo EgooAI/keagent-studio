@@ -1,0 +1,279 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
+const require = createRequire(import.meta.url);
+const domain = require("./domain.cjs");
+const providers = require("./providers.cjs");
+const media = require("./media.cjs");
+const { PanoramaWorkflow } = require("./workflow.cjs");
+const roots: string[] = [];
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  for (const root of roots.splice(0)) {
+    expect(
+      root.startsWith(path.resolve("output/workflow-unit-tests") + path.sep),
+    ).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+const property = {
+  id: "p",
+  title: "测试房源",
+  areaSqm: 80,
+  priceCents: 280000000,
+  layout: "两室",
+  sellingPoints: ["已核实的装修"],
+};
+function fixture() {
+  const testRoot = path.resolve("output/workflow-unit-tests");
+  fs.mkdirSync(testRoot, { recursive: true });
+  const root = fs.mkdtempSync(path.join(testRoot, "case-"));
+  roots.push(root);
+  const workflow = new PanoramaWorkflow(root, "", {
+    open: async () => [],
+    save: async () => null,
+  });
+  const owner = workflow.owner("user-a");
+  workflow.store(owner);
+  fs.mkdirSync(path.join(root, owner, "assets"));
+  const asset = `${"a".repeat(64)}.jpg`;
+  fs.writeFileSync(path.join(root, owner, "assets", asset), "fake image");
+  const scenes = [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      asset,
+      room: "客厅",
+      description: "白色墙面",
+      yaw: -30,
+    },
+  ];
+  const config = { ...domain.defaultConfig, voice: "test" };
+  vi.spyOn(workflow, "capabilities").mockResolvedValue({
+    ffmpeg: true,
+    ffprobe: true,
+    voices: [{ name: "test", language: "zh-CN" }],
+  });
+  return { workflow, owner, scenes, config };
+}
+describe("panorama domain", () => {
+  it("uses verified facts and rejects unknown template variables", () => {
+    const segments = domain.segments(
+      property,
+      [{ id: "s", room: "客厅", description: "白墙" }],
+      domain.config(domain.defaultConfig),
+    );
+    expect(segments[0].text).toContain("280万元");
+    expect(segments[1]).toMatchObject({
+      id: "s",
+      sceneId: "s",
+      text: "来到客厅。白墙",
+    });
+    expect(() => domain.fill("{school}", {})).toThrow("未知模板变量");
+    expect(() =>
+      domain.config({ ...domain.defaultConfig, speed: NaN }),
+    ).toThrow();
+    expect(() => domain.config({ ...domain.defaultConfig, rate: 0 })).toThrow();
+    expect(() =>
+      domain.validateSegments([{ id: "wrong", text: "x" }], [{ id: "s" }]),
+    ).toThrow();
+  });
+  it("caps movement while retaining audio duration and invalidates only affected audio", () => {
+    expect(
+      domain.motion(150, 30, { speed: 4, direction: -1, maxSweep: 80 }),
+    ).toEqual({ start: 150, end: 70, sweep: -80, duration: 30 });
+    const c = domain.defaultConfig;
+    expect(domain.audioKey({ text: "介绍" }, c)).toBe(
+      domain.audioKey(
+        { text: "介绍" },
+        { ...c, speed: 8, maxSweep: 30, avatarId: "new" },
+      ),
+    );
+    expect(domain.audioKey({ text: "介绍" }, c)).not.toBe(
+      domain.audioKey({ text: "介绍" }, { ...c, rate: 1.2 }),
+    );
+    expect(domain.sentences("一。二！三？")).toEqual(["一。", "二！", "三？"]);
+    expect(domain.sentences("面积80.5平方米。总价280万元。")).toEqual([
+      "面积80.5平方米。",
+      "总价280万元。",
+    ]);
+    const english =
+      "This spacious living room has a large window and a wooden floor.";
+    expect(domain.sentences(english).join(" ").replace(/\s+/g, " ")).toBe(
+      english,
+    );
+    expect(
+      providers.avatarResult({
+        resp_data: JSON.stringify({
+          code: 0,
+          vid: { url: "https://vendor.example/video.mp4" },
+        }),
+      }),
+    ).toEqual({ status: "done", url: "https://vendor.example/video.mp4" });
+    expect(media.escapeASS("{\\pos(1,1)}\n字")).toBe("｛＼pos(1,1)｝\\N字");
+  });
+  it("keeps binary hashes stable and rejects private CDN addresses", () => {
+    expect(domain.hash(Buffer.from("abc"))).toBe(domain.hash("abc"));
+    for (const address of [
+      "127.0.0.1",
+      "10.0.0.1",
+      "169.254.169.254",
+      "::1",
+      "::ffff:7f00:1",
+    ])
+      expect(providers.privateAddress(address)).toBe(true);
+    expect(providers.privateAddress("8.8.8.8")).toBe(false);
+  });
+});
+describe("persistent local workflow", () => {
+  it("rejects an approval superseded while preflight is awaiting runtime checks", async () => {
+    const { workflow, scenes, config } = fixture();
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      { scenes, config },
+      property,
+    );
+    let release: () => void = () => {};
+    vi.spyOn(workflow, "preflight").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const pending = workflow.handle("user-a", "start", {
+      id: draft.id,
+      revision: 1,
+    });
+    await workflow.handle("user-a", "save", {
+      id: draft.id,
+      revision: 1,
+      config,
+      segments: draft.segments.map((s: { text: string }) => ({
+        ...s,
+        text: s.text + "已修改。",
+      })),
+    });
+    release();
+    await expect(pending).rejects.toThrow("草稿已更新");
+  });
+  it("reports progress callback failures without crashing the main process", async () => {
+    await expect(
+      media.run(
+        process.execPath,
+        [
+          "-e",
+          "process.stdout.write('out_time_us=1000000\\n');setTimeout(()=>{},1000)",
+        ],
+        process.cwd(),
+        undefined,
+        () => {
+          throw new Error("checkpoint failed");
+        },
+      ),
+    ).rejects.toThrow("checkpoint failed");
+  });
+  it("freezes the approved revision, rejects conflicts, and keeps user media isolated", async () => {
+    const { workflow, owner, scenes, config } = fixture();
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      { scenes, config },
+      property,
+    );
+    const updated = await workflow.handle("user-a", "save", {
+      id: draft.id,
+      revision: 1,
+      segments: draft.segments.map((s: { text: string }) => ({
+        ...s,
+        text: s.text + "已确认。",
+      })),
+      config,
+    });
+    await expect(
+      workflow.handle("user-a", "save", {
+        id: draft.id,
+        revision: 1,
+        segments: draft.segments,
+        config,
+      }),
+    ).rejects.toThrow("草稿已更新");
+    const execute = vi.spyOn(workflow, "execute").mockImplementation(() => {});
+    const job = await workflow.handle("user-a", "start", {
+      id: updated.id,
+      revision: 2,
+    });
+    expect(
+      (
+        await workflow.handle("user-a", "start", {
+          id: updated.id,
+          revision: 2,
+        })
+      ).id,
+    ).toBe(job.id);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await workflow.handle("user-a", "save", {
+      id: updated.id,
+      revision: 2,
+      segments: updated.segments,
+      config: { ...config, speed: 6 },
+    });
+    expect(job.config.speed).toBe(4);
+    expect((await workflow.handle("user-b", "state")).drafts).toHaveLength(0);
+    expect(() =>
+      workflow.mediaFile(
+        "user-b",
+        new URL(`keagent://media/${owner}/assets/${scenes[0].asset}`),
+      ),
+    ).toThrow("无权");
+    expect(() =>
+      workflow.mediaFile(
+        "user-a",
+        new URL(`keagent://media/${owner}/workspace.json`),
+      ),
+    ).toThrow("素材地址无效");
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    expect((await restarted.handle("user-a", "state")).jobs[0]).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("中断"),
+    });
+  });
+  it("does not re-submit a digital human request with an unknown outcome", async () => {
+    const { workflow, owner } = fixture();
+    workflow
+      .store(owner)
+      .jobs.push({ id: "j", status: "failed", avatar: { submitting: true } });
+    await expect(
+      workflow.handle("user-a", "retry", { id: "j" }),
+    ).rejects.toThrow("提交结果未知");
+  });
+  it("a canceled render cannot publish success", async () => {
+    const { workflow, owner, scenes, config } = fixture();
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      { scenes, config },
+      property,
+    );
+    vi.spyOn(media, "synthesize").mockImplementation(async (s: unknown) => s);
+    let resolveRender: (value: unknown) => void = () => {};
+    vi.spyOn(media, "render").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
+    const job = await workflow.handle("user-a", "start", {
+      id: draft.id,
+      revision: 1,
+    });
+    const running = workflow.active.get(job.id).promise;
+    await vi.waitFor(() => expect(media.render).toHaveBeenCalled());
+    await workflow.handle("user-a", "cancel", { id: job.id });
+    resolveRender({ duration: 12 });
+    await running;
+    expect(workflow.store(owner).jobs[0].status).toBe("canceled");
+    expect(job.duration).toBeUndefined();
+  });
+});

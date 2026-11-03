@@ -1,9 +1,47 @@
-const { ipcMain, safeStorage, app } = require("electron");
+const { ipcMain, safeStorage, app, dialog } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
 function registerAuth() {
+  const { PanoramaWorkflow } = require("./panorama/workflow.cjs");
+  const workflow = new PanoramaWorkflow(
+    path.join(app.getPath("userData"), "panorama"),
+    path.join(
+      __dirname,
+      app.isPackaged || process.argv.includes("--built")
+        ? "../dist/media/panoramas"
+        : "../public/media/panoramas",
+    ),
+    {
+      open: async () => {
+        const result = await dialog.showOpenDialog({
+          title: "导入等距柱状全景图",
+          properties: ["openFile", "multiSelections"],
+          filters: [{ name: "全景图片", extensions: ["jpg", "jpeg", "png"] }],
+        });
+        return result.canceled ? [] : result.filePaths;
+      },
+      save: async (defaultPath) => {
+        const result = await dialog.showSaveDialog({
+          defaultPath,
+          filters: [{ name: "MP4 视频", extensions: ["mp4"] }],
+        });
+        return result.canceled ? null : result.filePath;
+      },
+    },
+    async (operation, payload, signal) => {
+      signal?.throwIfAborted();
+      const result = await request(
+        `/v1/panorama/${operation}`,
+        payload,
+        true,
+        signal,
+      );
+      signal?.throwIfAborted();
+      return result.data;
+    },
+  );
   const base = (
     process.env.CONTROL_API_URL || "http://127.0.0.1:18080"
   ).replace(/\/$/, "");
@@ -41,6 +79,7 @@ function registerAuth() {
   if (!fs.existsSync(installationFile))
     fs.writeFileSync(installationFile, installation, { mode: 0o600 });
   function clearAccess() {
+    workflow.stop();
     identityGeneration++;
     accessToken = "";
     accessExpires = 0;
@@ -94,7 +133,7 @@ function registerAuth() {
       if (tokenRequest === pending) tokenRequest = undefined;
     }
   }
-  async function request(route, body, retry = true) {
+  async function request(route, body, retry = true, signal) {
     const business = route.startsWith("/v1/");
     const generation = identityGeneration;
     const credential = business ? await getAccessToken() : token;
@@ -109,7 +148,9 @@ function registerAuth() {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "error",
-      signal: AbortSignal.timeout(65000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(65000)])
+        : AbortSignal.timeout(65000),
     });
     if (generation !== identityGeneration) {
       await response.body?.cancel();
@@ -118,7 +159,7 @@ function registerAuth() {
     if (business && response.status === 401 && retry) {
       await response.body?.cancel();
       if (accessToken === credential) accessToken = "";
-      return request(route, body, false);
+      return request(route, body, false, signal);
     }
     const next = response.headers.get("set-auth-token");
     const data = await response.json().catch(() => {
@@ -128,6 +169,12 @@ function registerAuth() {
     if (generation !== identityGeneration) throw new Error("请重新登录");
     if (!response.ok) {
       if (response.status === 401) clear();
+      if (
+        business &&
+        response.status === 403 &&
+        (route === "/v1/session" || route === "/v1/devices/register")
+      )
+        workflow.stop();
       throw new Error(data.error?.message || data.message || "服务请求失败");
     }
     if (!business && next && token) {
@@ -215,6 +262,42 @@ function registerAuth() {
       return (await request("/v1/session")).data;
     }
     if (!token) throw new Error("请重新登录");
+    if (typeof method === "string" && method.startsWith("panorama.")) {
+      const generation = identityGeneration;
+      const identity = (await request("/v1/session")).data;
+      let property;
+      if (method === "panorama.generate") {
+        if (args[0]?.propertyId === "panorama-cc0-sample")
+          property = {
+            id: "panorama-cc0-sample",
+            title: "全景工作流测试",
+            description: "两个独立 CC0 测试场景，非同一套在售房源",
+            areaSqm: 0,
+            priceCents: 0,
+            layout: "",
+            sellingPoints: [],
+            sample: true,
+          };
+        else {
+          const workspace = (await request("/v1/workspace")).data;
+          property = workspace.properties.find(
+            (p) => p.id === args[0]?.propertyId,
+          );
+        }
+      }
+      const result = await workflow.handle(
+        identity.userId,
+        method.slice(9),
+        args[0],
+        property,
+        () => {
+          if (generation !== identityGeneration || !token)
+            throw new Error("请重新登录");
+        },
+      );
+      if (generation !== identityGeneration) throw new Error("请重新登录");
+      return result;
+    }
     if (method === "session") {
       await request("/v1/devices/register", {
         id: deviceId,
@@ -236,5 +319,15 @@ function registerAuth() {
     if (!commands.has(method)) throw new Error("此桌面能力未开放");
     return (await request(`/v1/commands/${method}`, args)).data;
   });
+  app.on("before-quit", () => workflow.stop());
+  return {
+    async media(requestURL) {
+      if (!token) throw new Error("请重新登录");
+      const generation = identityGeneration;
+      const identity = (await request("/v1/session")).data;
+      if (generation !== identityGeneration) throw new Error("请重新登录");
+      return workflow.mediaFile(identity.userId, new URL(requestURL));
+    },
+  };
 }
 module.exports = { registerAuth };
