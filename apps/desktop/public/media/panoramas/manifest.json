@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "purpose": "全景讲解链路的开发测试素材；两个独立地点，不代表同一套或真实在售房源。",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "sourceLicenseUrl": "https://polyhaven.com/license",
+  "assets": [
+    {
+      "id": "lebombo",
+      "name": "采光客厅测试场景",
+      "file": "lebombo.jpg",
+      "sourcePage": "https://polyhaven.com/a/lebombo",
+      "downloadUrl": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/lebombo.jpg",
+      "author": "Greg Zaal",
+      "sizeBytes": 1873244,
+      "md5": "64ac9ae7e4711d96da237d85e929337a",
+      "width": 8192,
+      "height": 4096,
+      "projection": "equirectangular",
+      "yawStart": -35,
+      "yawEnd": 35,
+      "narration": [
+        "这是独立的客厅测试场景。",
+        "木地板、白墙和壁灯清晰可见，窗边配有纱帘。",
+        "镜头会随讲解缓慢转动。"
+      ]
+    },
+    {
+      "id": "hotel_room",
+      "name": "酒店客房测试场景",
+      "file": "hotel_room.jpg",
+      "sourcePage": "https://polyhaven.com/a/hotel_room",
+      "downloadUrl": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/hotel_room.jpg",
+      "author": "Greg Zaal",
+      "sizeBytes": 2989884,
+      "md5": "5675e838ff32b9ca8ac8ac4635d3adaf",
+      "width": 8192,
+      "height": 4096,
+      "projection": "equirectangular",
+      "yawStart": 20,
+      "yawEnd": 100,
+      "narration": [
+        "现在切换到另一处酒店客房。",
+        "画面中有床铺、桌椅、电视和大窗户。",
+        "本片仅用于全景讲解效果测试。"
+      ]
+    }
+  ]
+}
