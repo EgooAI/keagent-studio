@@ -15,7 +15,9 @@ protocol.registerSchemesAsPrivileged([
 
 function createWindow() {
   const window = new BrowserWindow({
-    show: !process.argv.includes("--smoke-test"),
+    show:
+      !process.argv.includes("--smoke-test") &&
+      !process.argv.includes("--hidden"),
     width: 1440,
     height: 940,
     minWidth: 1080,

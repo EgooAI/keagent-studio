@@ -8,7 +8,6 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:18080",
-      "/v1": "http://127.0.0.1:18080",
     },
   },
   publicDir: "../desktop/public",

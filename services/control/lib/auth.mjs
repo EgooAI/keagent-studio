@@ -1,21 +1,14 @@
 import { betterAuth } from "@app/auth-sdk/server";
-import { admin, bearer } from "@app/auth-sdk/plugins";
+import { admin, bearer, jwt } from "@app/auth-sdk/plugins";
 import { Pool } from "pg";
 
 let instance;
 export function getAuth() {
   if (instance) return instance;
-  for (const key of [
-    "DATABASE_URL",
-    "BETTER_AUTH_SECRET",
-    "INTERNAL_API_SECRET",
-  ]) {
+  for (const key of ["DATABASE_URL", "BETTER_AUTH_SECRET"]) {
     if (!process.env[key]) throw new Error(`${key} 未配置`);
   }
-  if (
-    process.env.BETTER_AUTH_SECRET.length < 32 ||
-    process.env.INTERNAL_API_SECRET.length < 32
-  )
+  if (process.env.BETTER_AUTH_SECRET.length < 32)
     throw new Error("服务端密钥至少 32 字符");
   instance = betterAuth({
     appName: "KeAgent Studio",
@@ -34,7 +27,27 @@ export function getAuth() {
       revokeSessionsOnPasswordReset: true,
     },
     session: { cookieCache: { enabled: false } },
-    plugins: [admin({ auditLog: true }), bearer({ requireSignature: true })],
+    plugins: [
+      admin({ auditLog: true }),
+      bearer({ requireSignature: true }),
+      jwt({
+        disableSettingJwtHeader: true,
+        jwks: {
+          keyPairConfig: { alg: "EdDSA", crv: "Ed25519" },
+          rotationInterval: 60 * 60 * 24 * 30,
+          gracePeriod: 600,
+        },
+        jwt: {
+          issuer:
+            process.env.JWT_ISSUER ||
+            process.env.BETTER_AUTH_URL ||
+            "http://127.0.0.1:18080",
+          audience: process.env.JWT_AUDIENCE || "keagent-api",
+          expirationTime: "5m",
+          definePayload: ({ session }) => ({ sid: session.id }),
+        },
+      }),
+    ],
   });
   return instance;
 }

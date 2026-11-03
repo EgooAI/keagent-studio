@@ -2,15 +2,20 @@ import assert from "node:assert/strict";
 import { loadEnvFile } from "node:process";
 loadEnvFile(".env.local");
 const base = process.env.BETTER_AUTH_URL;
-if (new URL(base).origin !== "http://127.0.0.1:18080")
+const goBase = process.env.GO_API_URL || "http://127.0.0.1:18081";
+if (
+  new URL(base).origin !== "http://127.0.0.1:18080" ||
+  new URL(goBase).origin !== "http://127.0.0.1:18081"
+)
   throw new Error("联调脚本仅允许本项目本机环境");
-async function request(path, token, body) {
-  const response = await fetch(base + path, {
+async function rawRequest(target, path, token, body, headers = {}) {
+  const response = await fetch(target + path, {
     method: body === undefined ? "GET" : "POST",
     headers: {
       "Content-Type": "application/json",
       Origin: "http://127.0.0.1:5174",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -20,6 +25,25 @@ async function request(path, token, body) {
     data,
     token: response.headers.get("set-auth-token"),
   };
+}
+const accessTokens = new Map();
+async function request(path, token, body, headers) {
+  if (!path.startsWith("/v1/"))
+    return rawRequest(base, path, token, body, headers);
+  if (token && !accessTokens.has(token)) {
+    const exchanged = await rawRequest(base, "/api/auth/token", token);
+    assert.equal(exchanged.status, 200, "JWT exchange failed");
+    assert.ok(exchanged.data.token);
+    const claims = JSON.parse(
+      Buffer.from(exchanged.data.token.split(".")[1], "base64url"),
+    );
+    assert.equal(claims.aud, "keagent-api");
+    assert.equal(claims.exp - claims.iat, 300);
+    assert.ok(claims.sub && claims.sid);
+    assert.equal(claims.token, undefined);
+    accessTokens.set(token, exchanged.data.token);
+  }
+  return rawRequest(goBase, path, accessTokens.get(token), body, headers);
 }
 const login = async (email, password) => {
   const r = await request("/api/auth/sign-in/email", null, { email, password });
@@ -32,16 +56,35 @@ const admin = await login(
   process.env.BOOTSTRAP_ADMIN_PASSWORD,
 );
 assert.equal((await request("/v1/workspace")).status, 401);
+assert.equal((await rawRequest(goBase, "/v1/workspace", admin)).status, 401);
+assert.equal((await rawRequest(base, "/v1/workspace", admin)).status, 200);
+const jwks = await rawRequest(base, "/api/auth/jwks");
+assert.equal(jwks.status, 200);
+assert.ok(jwks.data.keys.length);
+assert.ok(jwks.data.keys.every((key) => !key.d && !key.privateKey));
+const preflight = await fetch(goBase + "/v1/workspace", {
+  method: "OPTIONS",
+  headers: {
+    Origin: "http://127.0.0.1:5174",
+    "Access-Control-Request-Method": "GET",
+    "Access-Control-Request-Headers": "authorization",
+  },
+});
+assert.equal(preflight.status, 204);
+assert.equal(
+  preflight.headers.get("access-control-allow-origin"),
+  "http://127.0.0.1:5174",
+);
 const suffix = crypto.randomUUID();
 const users = [];
-for (const name of ["Alice", "Bob"]) {
+for (const name of ["Alice", "Bob", "Charlie"]) {
   const email = `${name.toLowerCase()}-${suffix}@example.test`;
   const password = crypto.randomUUID();
   const created = await request("/api/auth/admin/create-user", admin, {
     name,
     email,
     password,
-    role: "user",
+    role: name === "Charlie" ? "admin" : "user",
   });
   assert.equal(created.status, 200, JSON.stringify(created.data));
   users.push({
@@ -50,7 +93,21 @@ for (const name of ["Alice", "Bob"]) {
     token: await login(email, password),
   });
 }
-const [a, b] = users;
+const [a, b, c] = users;
+assert.equal((await request("/v1/admin/devices", c.token)).status, 200);
+assert.equal(
+  (
+    await request("/api/auth/admin/set-role", admin, {
+      userId: c.id,
+      role: "user",
+    })
+  ).status,
+  200,
+);
+assert.equal((await request("/v1/admin/devices", c.token)).status, 403);
+assert.equal((await request("/v1/workspace", c.token)).status, 200);
+assert.equal((await request("/api/auth/sign-out", c.token, {})).status, 200);
+assert.equal((await request("/v1/workspace", c.token)).status, 401);
 assert.equal((await request("/v1/admin/devices", a.token)).status, 403);
 assert.equal(
   (await request("/v1/workspace", a.token)).data.properties.length,
@@ -125,9 +182,25 @@ const device = await request("/v1/devices/register", a.token, {
 });
 assert.equal(device.status, 200);
 assert.equal(
+  (
+    await request("/v1/workspace", a.token, undefined, {
+      "X-Keagent-Device": device.data.id,
+    })
+  ).status,
+  200,
+);
+assert.equal(
   (await request("/v1/admin/devices/revoke", admin, { id: device.data.id }))
     .status,
   200,
+);
+assert.equal(
+  (
+    await request("/v1/workspace", a.token, undefined, {
+      "X-Keagent-Device": device.data.id,
+    })
+  ).status,
+  403,
 );
 assert.equal(
   (
@@ -159,5 +232,5 @@ assert.equal(
 );
 assert.equal((await request("/v1/workspace", b.token)).status, 401);
 console.log(
-  "PASS: SDK login/admin, Go identity, ownership, resource sync, batch idempotency, AI unconfigured, device revoke, user ban and session revoke",
+  "PASS: SDK JWT/JWKS, direct Go and legacy gateway, CORS, ownership, resources, idempotency, device revoke, immediate ban/logout/session revoke/role downgrade",
 );

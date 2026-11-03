@@ -4,7 +4,7 @@ KeAgent Studio 是面向房产经纪人的 AI 视频生产与营销桌面应用�
 
 版本：V1 开发基线。整理日期：2026 年 10 月 30 日。
 
-仓库已有 Electron + React 客户端、独立 React 管理后台、SEO SDK/Next.js 认证网关和 Go/PostgreSQL 业务服务。真实登录、用户隔离、资源目录和云端 AI 文案入口已进入联调；完整视频生产与平台执行尚未接入。当前实际范围、启动方式与限制见 [后端与桌面联调](docs/06-后端与桌面联调.md)。以下原有章节仍包含前端 Mock 阶段说明。
+仓库已有 Electron + React 客户端、独立 React 管理后台、SEO SDK/Next.js 认证服务和 Go/PostgreSQL 业务服务。两端通过 JWT 直接请求 Go，Go 使用 JWKS 独立验签并在 PostgreSQL 复核实时会话与权限；迁移期保留旧签名网关。真实登录、用户隔离、资源目录和云端 AI 文案入口已进入联调；完整视频生产与平台执行尚未接入。当前实际范围、启动方式与限制见 [后端与桌面联调](docs/06-后端与桌面联调.md)，本次改造基线见 [JWT 认证解耦实施要求](docs/07-JWT认证解耦实施要求.md)。以下原有章节仍包含前端 Mock 阶段说明。
 
 [完整阅读版](https://chatgpt.com/space/page_d0eb0ef5edc881919ee3018d5168da9d)已保存为私有 Page。后续开发以仓库文档为维护基线；Page 为本次整理的阅读副本。
 

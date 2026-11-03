@@ -21,11 +21,20 @@ const electron = await _electron.launch({
   args: [
     resolve("apps/desktop/electron/main.cjs"),
     "--built",
+    "--hidden",
     `--user-data-dir=${profile}`,
   ],
   env: { ...process.env, CONTROL_API_URL: process.env.BETTER_AUTH_URL },
 });
 try {
+  await electron.evaluate(() => {
+    const original = globalThis.fetch;
+    globalThis.testRequestURLs = [];
+    globalThis.fetch = (...args) => {
+      globalThis.testRequestURLs.push(String(args[0]));
+      return original(...args);
+    };
+  });
   const page = await electron.firstWindow();
   await page
     .locator('button[type="submit"]')
@@ -58,11 +67,64 @@ try {
     ),
     false,
   );
+  const urls = await electron.evaluate(() => globalThis.testRequestURLs);
+  assert.ok(urls.some((url) => url === "http://127.0.0.1:18081/v1/workspace"));
+  assert.equal(
+    urls.some((url) => url.startsWith("http://127.0.0.1:18080/v1/")),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(async () => {
+      try {
+        await window.desktop.request("token");
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+    false,
+  );
+  const persisted = await electron.evaluate(({ app, safeStorage }) => {
+    const fs = process.getBuiltinModule("node:fs");
+    const path = process.getBuiltinModule("node:path");
+    const saved = JSON.parse(
+      safeStorage.decryptString(
+        fs.readFileSync(path.join(app.getPath("userData"), "identity.enc")),
+      ),
+    );
+    return Object.keys(saved).sort();
+  });
+  assert.deepEqual(persisted, ["deviceId", "token"]);
+  const exchangesBefore = urls.filter((url) =>
+    url.endsWith("/api/auth/token"),
+  ).length;
+  await electron.evaluate(() => {
+    globalThis.originalNow = Date.now;
+    Date.now = () => globalThis.originalNow() + 270001;
+  });
+  try {
+    await page.evaluate(() =>
+      Promise.all(
+        Array.from({ length: 6 }, () => window.desktop.request("getWorkspace")),
+      ),
+    );
+  } finally {
+    await electron.evaluate(() => {
+      Date.now = globalThis.originalNow;
+    });
+  }
+  const exchangesAfter = await electron.evaluate(
+    () =>
+      globalThis.testRequestURLs.filter((url) =>
+        url.endsWith("/api/auth/token"),
+      ).length,
+  );
+  assert.equal(exchangesAfter - exchangesBefore, 1);
   await page.screenshot({ path: resolve(output, "desktop-authenticated.png") });
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await page.locator('button[type="submit"]').waitFor({ timeout: 15000 });
   console.log(
-    "PASS: built Electron login gate, Main bearer transport, encrypted persistence and logout",
+    "PASS: built Electron direct Go JWT in Main, restricted IPC, encrypted Session-only persistence and logout",
   );
 } finally {
   await electron.close();
@@ -71,6 +133,11 @@ try {
 const browser = await chromium.launch({ channel: "chrome" });
 try {
   const page = await browser.newPage();
+  const businessRequests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/v1/"))
+      businessRequests.push(request.url());
+  });
   await page.goto("http://127.0.0.1:5174/");
   await page.locator('button[type="submit"]').waitFor({ timeout: 30000 });
   await page
@@ -83,12 +150,28 @@ try {
   await page
     .getByRole("button", { name: "创建用户", exact: true })
     .waitFor({ timeout: 30000 });
+  await page.getByRole("menuitem", { name: "设备管理", exact: true }).click();
+  await page
+    .getByRole("columnheader", { name: "归属用户", exact: true })
+    .waitFor();
+  assert.ok(
+    businessRequests.some(
+      (url) => url === "http://127.0.0.1:18081/v1/admin/devices",
+    ),
+  );
+  assert.ok(businessRequests.every((url) => new URL(url).port === "18081"));
+  assert.equal(
+    await page.evaluate(() => JSON.stringify(localStorage).includes("eyJ")),
+    false,
+  );
   await page.getByRole("menuitem", { name: "身份审计", exact: true }).click();
   await page
     .getByRole("columnheader", { name: "操作人", exact: true })
     .waitFor();
   await page.screenshot({ path: resolve(output, "admin-authenticated.png") });
-  console.log("PASS: browser admin SDK login and authenticated audit page");
+  console.log(
+    "PASS: browser SDK Cookie login, direct Go JWT/CORS, memory-only Token and auth audit",
+  );
 } finally {
   await browser.close();
 }

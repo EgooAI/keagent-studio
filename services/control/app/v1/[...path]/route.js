@@ -3,6 +3,19 @@ import { identity } from "../../../lib/auth.mjs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 async function handle(request) {
+  if (process.env.ALLOW_LEGACY_GATEWAY === "false")
+    return Response.json(
+      { error: { message: "旧网关入口已关闭" } },
+      { status: 410 },
+    );
+  if (
+    !process.env.INTERNAL_API_SECRET ||
+    process.env.INTERNAL_API_SECRET.length < 32
+  )
+    return Response.json(
+      { error: { message: "旧网关密钥未配置" } },
+      { status: 503 },
+    );
   const user = await identity(request.headers);
   if (!user)
     return Response.json(

@@ -1,3 +1,4 @@
+import { serviceRequest } from "./transport";
 import type {
   AgentProfile,
   Avatar,
@@ -1116,52 +1117,13 @@ const mockApi = {
 };
 
 export const isLive = import.meta.env?.VITE_API_MODE !== "mock";
-export interface SessionUser {
-  userId: string;
-  sessionId: string;
-  name: string;
-  email: string;
-  role: string;
-}
-declare global {
-  interface Window {
-    desktop?: {
-      platform: string;
-      mode: string;
-      request: (method: string, args?: unknown[]) => Promise<unknown>;
-    };
-  }
-}
-export async function serviceRequest<T>(
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "include",
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    if (response.status === 401)
-      window.dispatchEvent(new Event("keagent:unauthorized"));
-    throw new Error(data.error?.message || data.message || "请求失败");
-  }
-  return data as T;
-}
-export async function authRequest<T>(
-  method: string,
-  args: unknown[] = [],
-): Promise<T> {
-  if (window.desktop?.request)
-    return (await window.desktop.request(method, args)) as T;
-  if (method === "session") return serviceRequest<T>("/api/session");
-  if (method === "login")
-    return serviceRequest<T>("/api/auth/sign-in/email", args[0]);
-  if (method === "logout") return serviceRequest<T>("/api/auth/sign-out", {});
-  throw new Error("未知身份操作");
-}
+export {
+  authBaseURL,
+  authRequest,
+  clearAccessToken,
+  serviceRequest,
+  type SessionUser,
+} from "./transport";
 const remoteListeners = new Set<() => void>();
 export const demoApi: typeof mockApi = isLive
   ? new Proxy(mockApi, {

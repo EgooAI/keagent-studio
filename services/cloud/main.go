@@ -30,14 +30,17 @@ type actor struct {
 	UserID    string `json:"userId"`
 	SessionID string `json:"sessionId"`
 	Name      string `json:"name"`
+	Email     string `json:"email"`
 	Role      string `json:"role"`
 	Timestamp int64  `json:"timestamp"`
 	Nonce     string `json:"nonce"`
 }
 type server struct {
-	db     *sql.DB
-	secret string
-	nonces sync.Map
+	db      *sql.DB
+	secret  string
+	nonces  sync.Map
+	jwt     *jwtVerifier
+	origins []string
 }
 type fault struct {
 	status  int
@@ -98,6 +101,9 @@ CREATE TABLE IF NOT EXISTS keagent_audit (id text PRIMARY KEY, actor_id text NOT
 
 func (s *server) verify(r *http.Request, body []byte) (actor, error) {
 	var a actor
+	if s.secret == "" {
+		return a, fail(401, "请使用 Access Token 登录")
+	}
 	contextHeader := r.Header.Get("X-Keagent-Context")
 	digest := sha256.Sum256(body)
 	h := hmac.New(sha256.New, []byte(s.secret))
@@ -141,6 +147,9 @@ func respond(w http.ResponseWriter, value any, err error) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.cors(w, r) {
+		return
+	}
 	if r.URL.Path == "/health" {
 		respond(w, object{"status": "ok"}, nil)
 		return
@@ -150,7 +159,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, fail(413, "请求过大"))
 		return
 	}
-	a, err := s.verify(r, body)
+	a, err := s.authenticate(r, body)
 	if err != nil {
 		respond(w, nil, err)
 		return
@@ -174,6 +183,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		v, e := s.admin(r, a, body)
 		respond(w, v, e)
+		return
+	}
+	if r.Method == "GET" && r.URL.Path == "/v1/session" {
+		respond(w, object{"userId": a.UserID, "sessionId": a.SessionID, "name": a.Name, "email": a.Email, "role": a.Role}, nil)
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/workspace" {
@@ -742,7 +755,9 @@ func completion(ctx context.Context, client *http.Client, endpoint, model, key s
 }
 func main() {
 	secret := os.Getenv("INTERNAL_API_SECRET")
-	if len(secret) < 32 {
+	if os.Getenv("ALLOW_LEGACY_GATEWAY") == "false" {
+		secret = ""
+	} else if len(secret) < 32 {
 		log.Fatal("INTERNAL_API_SECRET must have 32+ characters")
 	}
 	db, err := sql.Open("pgx", os.Getenv("DATABASE_URL"))
@@ -756,7 +771,15 @@ func main() {
 	if _, err = db.Exec(schema); err != nil {
 		log.Fatal("business migration failed")
 	}
-	s := &server{db: db, secret: secret}
+	verifier, err := newJWTVerifier()
+	if err != nil {
+		log.Fatal(err)
+	}
+	origins := os.Getenv("TRUSTED_ORIGINS")
+	if origins == "" {
+		origins = "http://127.0.0.1:5174,http://127.0.0.1:5173"
+	}
+	s := &server{db: db, secret: secret, jwt: verifier, origins: strings.Split(origins, ",")}
 	go s.work(context.Background())
 	log.Println("Go business API listening on 127.0.0.1:18081")
 	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())

@@ -4,16 +4,33 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 
 function registerAuth() {
-  const base = process.env.CONTROL_API_URL || "http://127.0.0.1:18080";
+  const base = (
+    process.env.CONTROL_API_URL || "http://127.0.0.1:18080"
+  ).replace(/\/$/, "");
+  const apiBase = (process.env.GO_API_URL || "http://127.0.0.1:18081").replace(
+    /\/$/,
+    "",
+  );
   const origin = new URL(base);
-  if (
-    origin.protocol !== "https:" &&
-    !(origin.protocol === "http:" && origin.hostname === "127.0.0.1")
-  )
-    throw new Error("认证服务必须使用 HTTPS");
+  for (const address of [origin, new URL(apiBase)]) {
+    if (
+      address.username ||
+      address.password ||
+      (address.protocol !== "https:" &&
+        !(
+          address.protocol === "http:" &&
+          ["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)
+        ))
+    )
+      throw new Error("服务地址必须使用 HTTPS 或本机回环 HTTP");
+  }
   const file = path.join(app.getPath("userData"), "identity.enc");
   let token = "";
   let deviceId = "";
+  let accessToken = "";
+  let accessExpires = 0;
+  let tokenRequest;
+  let identityGeneration = 0;
   const installationFile = path.join(
     app.getPath("userData"),
     "installation-id",
@@ -23,8 +40,16 @@ function registerAuth() {
     : crypto.randomUUID();
   if (!fs.existsSync(installationFile))
     fs.writeFileSync(installationFile, installation, { mode: 0o600 });
+  function clearAccess() {
+    identityGeneration++;
+    accessToken = "";
+    accessExpires = 0;
+    tokenRequest = undefined;
+  }
   function clear() {
+    clearAccess();
     token = "";
+    deviceId = "";
     if (fs.existsSync(file)) fs.unlinkSync(file);
   }
   function save() {
@@ -49,26 +74,63 @@ function registerAuth() {
       clear();
     }
   }
-  async function request(route, body) {
-    const response = await fetch(base + route, {
+  async function getAccessToken() {
+    if (accessToken && Date.now() < accessExpires) return accessToken;
+    if (tokenRequest) return tokenRequest;
+    const generation = identityGeneration;
+    const pending = request("/api/auth/token").then(({ data }) => {
+      if (generation !== identityGeneration) throw new Error("请重新登录");
+      if (typeof data.token !== "string" || !data.token)
+        throw new Error("服务器未返回 Access Token");
+      accessToken = data.token;
+      // Renew 30 seconds before the SDK's five-minute token lifetime.
+      accessExpires = Date.now() + 270000;
+      return accessToken;
+    });
+    tokenRequest = pending;
+    try {
+      return await pending;
+    } finally {
+      if (tokenRequest === pending) tokenRequest = undefined;
+    }
+  }
+  async function request(route, body, retry = true) {
+    const business = route.startsWith("/v1/");
+    const generation = identityGeneration;
+    const credential = business ? await getAccessToken() : token;
+    if (generation !== identityGeneration) throw new Error("请重新登录");
+    const response = await fetch((business ? apiBase : base) + route, {
       method: body === undefined ? "GET" : "POST",
       headers: {
         "Content-Type": "application/json",
-        Origin: origin.origin,
-        ...(deviceId ? { "X-Keagent-Device": deviceId } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(!business ? { Origin: origin.origin } : {}),
+        ...(business && deviceId ? { "X-Keagent-Device": deviceId } : {}),
+        ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "error",
       signal: AbortSignal.timeout(65000),
     });
+    if (generation !== identityGeneration) {
+      await response.body?.cancel();
+      throw new Error("请重新登录");
+    }
+    if (business && response.status === 401 && retry) {
+      await response.body?.cancel();
+      if (accessToken === credential) accessToken = "";
+      return request(route, body, false);
+    }
     const next = response.headers.get("set-auth-token");
-    const data = await response.json();
+    const data = await response.json().catch(() => {
+      if (response.ok) throw new Error("服务返回无效数据");
+      return {};
+    });
+    if (generation !== identityGeneration) throw new Error("请重新登录");
     if (!response.ok) {
       if (response.status === 401) clear();
       throw new Error(data.error?.message || data.message || "服务请求失败");
     }
-    if (next && token) {
+    if (!business && next && token) {
       token = next;
       save();
     }
@@ -150,19 +212,19 @@ function registerAuth() {
         }
         throw error;
       }
-      return (await request("/api/session")).data;
+      return (await request("/v1/session")).data;
     }
     if (!token) throw new Error("请重新登录");
     if (method === "session") {
-      const result = await request("/api/session");
       await request("/v1/devices/register", {
         id: deviceId,
         name: require("node:os").hostname(),
         platform: process.platform,
       });
-      return result.data;
+      return (await request("/v1/session")).data;
     }
     if (method === "logout") {
+      clearAccess();
       try {
         await request("/api/auth/sign-out", {});
       } finally {

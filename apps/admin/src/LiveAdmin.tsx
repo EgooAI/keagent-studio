@@ -17,10 +17,18 @@ import {
 } from "antd";
 import { createAuthClient } from "@app/auth-sdk/react";
 import { adminClient } from "@app/auth-sdk/client/plugins";
-import { serviceRequest, type SessionUser } from "@keagent/api-client";
+import {
+  authBaseURL,
+  authRequest,
+  serviceRequest,
+  type SessionUser,
+} from "@keagent/api-client";
 import { ThemeSettings } from "@keagent/theme";
 
-const auth = createAuthClient({ plugins: [adminClient({ auditLog: true })] });
+const auth = createAuthClient({
+  baseURL: authBaseURL || undefined,
+  plugins: [adminClient({ auditLog: true })],
+});
 type Row = Record<string, unknown>;
 const pages = [
   { key: "users", label: "用户管理" },
@@ -55,7 +63,7 @@ export default function LiveAdmin() {
   const [form] = Form.useForm();
   async function session() {
     try {
-      setUser(await serviceRequest<SessionUser>("/api/session"));
+      setUser(await authRequest<SessionUser>("session"));
     } catch {
       setUser(null);
       setData([]);
@@ -66,7 +74,16 @@ export default function LiveAdmin() {
   useEffect(() => {
     void session();
     const timer = setInterval(() => void session(), 15000);
-    return () => clearInterval(timer);
+    const lock = () => {
+      setUser(null);
+      setData([]);
+      setConfig({});
+    };
+    window.addEventListener("keagent:unauthorized", lock);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("keagent:unauthorized", lock);
+    };
   }, []);
   async function load() {
     if (!user) return;
@@ -122,7 +139,7 @@ export default function LiveAdmin() {
             onFinish={async (values) => {
               setError("");
               try {
-                await unwrap(auth.signIn.email(values));
+                await authRequest("login", [values]);
                 await session();
               } catch (e) {
                 setError(e instanceof Error ? e.message : "登录失败");
@@ -157,7 +174,7 @@ export default function LiveAdmin() {
         <Button
           onClick={() =>
             void act(async () => {
-              await auth.signOut();
+              await authRequest("logout");
               await session();
             })
           }
@@ -221,7 +238,7 @@ export default function LiveAdmin() {
           <Button
             onClick={() =>
               void act(async () => {
-                await unwrap(auth.signOut());
+                await authRequest("logout");
                 await session();
               })
             }
