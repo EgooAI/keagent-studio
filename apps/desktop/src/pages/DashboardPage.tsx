@@ -66,7 +66,7 @@ export default function DashboardPage() {
           }}
         >
           <div>
-            <Clapperboard size={26} color="#2563eb" />
+            <Clapperboard size={26} color="var(--accent)" />
             <h2 style={{ margin: "14px 0 7px", fontSize: 20 }}>
               批量制作房源视频
             </h2>

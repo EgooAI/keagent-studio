@@ -14,7 +14,7 @@
     "dev:admin": "pnpm --filter @keagent/admin dev",
     "build": "pnpm --filter @keagent/desktop build && pnpm --filter @keagent/admin build",
     "typecheck": "tsc --noEmit",
-    "lint": "pnpm typecheck && prettier --check \"apps/**/*.{ts,tsx,css,cjs,html}\" \"packages/**/*.{ts,json}\" \"tests/**/*.ts\" \"*.{json,ts}\"",
+    "lint": "pnpm typecheck && prettier --check \"apps/**/*.{ts,tsx,css,cjs,html}\" \"packages/**/*.{ts,tsx,css,json}\" \"tests/**/*.ts\" \"*.{json,ts}\"",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "package:desktop": "pnpm --filter @keagent/desktop build && electron-builder --dir",

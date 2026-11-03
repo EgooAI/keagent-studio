@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { demoApi } from "@keagent/api-client";
+import { ThemeSettings } from "@keagent/theme";
 import type {
   AgentProfile,
   ProductionConfig,
@@ -167,7 +168,10 @@ export default function SettingsPage() {
         >
           <Space size={15}>
             <Avatar
-              style={{ background: "#eff6ff", color: "#2563eb" }}
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
+              }}
               size={44}
               icon={<Mic size={20} />}
             />
@@ -345,7 +349,11 @@ export default function SettingsPage() {
       <Space size={20} style={{ margin: "12px 0 28px" }}>
         <Avatar
           size={64}
-          style={{ background: "#eaf0fb", color: "#2563eb", fontSize: 25 }}
+          style={{
+            background: "var(--accent-soft)",
+            color: "var(--accent)",
+            fontSize: 25,
+          }}
         >
           {data.profile.name.slice(-2)}
         </Avatar>
@@ -656,7 +664,7 @@ export default function SettingsPage() {
     <>
       <h2 style={{ fontSize: 18, marginTop: 0 }}>隐私和授权</h2>
       <Space align="start" size={15}>
-        <ShieldCheck color="#2563eb" size={24} />
+        <ShieldCheck color="var(--accent)" size={24} />
         <div>
           <strong>使用本人素材，保留明确授权</strong>
           <p style={{ lineHeight: 1.8, color: "#667085", maxWidth: 640 }}>
@@ -690,7 +698,7 @@ export default function SettingsPage() {
     <>
       <h2 style={{ fontSize: 18, marginTop: 0 }}>关于 KeAgent Studio</h2>
       <Space size={18} style={{ margin: "18px 0" }}>
-        <Monitor size={34} color="#2563eb" />
+        <Monitor size={34} color="var(--accent)" />
         <div>
           <strong style={{ fontSize: 20 }}>KeAgent Studio</strong>
           <p style={{ color: "#667085", margin: "8px 0" }}>
@@ -711,6 +719,7 @@ export default function SettingsPage() {
     </>
   );
   const items = [
+    { key: "theme", label: "主题设置", children: <ThemeSettings /> },
     { key: "account", label: "账号信息", children: accountSettings },
     { key: "profile", label: "经纪人资料", children: profileSettings },
     { key: "voices", label: "声音与音色", children: voiceList },

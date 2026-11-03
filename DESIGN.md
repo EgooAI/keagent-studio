@@ -1,12 +1,12 @@
 ---
 name: KeAgent Studio
-description: 白色工作面、冷灰背景与蓝色主操作组成的桌面工作界面。
+description: 白色工作面、冷灰背景与皇冠紫主操作组成的桌面工作界面。
 colors:
-  primary: "#2563eb"
-  primary-hover: "#4f8af7"
-  primary-active: "#1647c4"
-  selected-bg: "#eaf1ff"
-  selected-ink: "#245bd1"
+  primary: "#722ed1"
+  primary-hover: "#9254de"
+  primary-active: "#531dab"
+  selected-bg: "#f4eefb"
+  selected-ink: "#722ed1"
   ink: "#1b2b44"
   muted: "#65738a"
   canvas: "#f6f8fb"
@@ -17,7 +17,7 @@ colors:
   segmented-bg: "#f1f4f9"
   tag-bg: "#f2f5f9"
   tag-ink: "#667990"
-  focus: "#8ab0ff"
+  focus: "#8e58da"
   price: "#aa4c2b"
   demo-bg: "#fff6e5"
   demo-ink: "#a66612"
@@ -26,7 +26,7 @@ colors:
   admin-muted: "#667085"
   admin-canvas: "#f7f8fa"
   admin-line: "#e7ebf0"
-  admin-focus: "#93b4f5"
+  admin-focus: "#8e58da"
 typography:
   headline:
     fontFamily: '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
@@ -200,7 +200,7 @@ components:
 ### Shadow Vocabulary
 
 - **选中过滤项**（`0 1px 4px #1d334810`）：仅用于筛选分段中的白色选中项。
-- **选择描边**（`0 0 0 1px #2563eb`）：房源和资源选择卡，承担状态轮廓而非投影。
+- **选择描边**（`0 0 0 1px #722ed1`）：房源和资源选择卡，承担状态轮廓而非投影。
 
 **The Flat Work Surface Rule.** 普通工作面不添加悬浮大阴影；使用已存在的底色、边框和间距区分区域。
 
@@ -255,3 +255,5 @@ components:
 - **Don't** 将所有状态都替换为主色，或只用颜色表达成功、失败和审核。
 - **Don't** 为新增次要文字随意选取更浅的灰色。
 - **Don't** 把桌面和后台的实际中性色差异当作尚未实现的统一主题。
+
+默认配色为皇冠紫。桌面设置和后台系统设置可切换经典蓝、松石绿、玫瑰红，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量；成功、警告、错误语义色不参与替换。

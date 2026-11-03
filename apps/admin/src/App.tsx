@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { demoApi, isLive } from "@keagent/api-client";
 import LiveAdmin from "./LiveAdmin";
+import { ThemeProvider, ThemeSettings } from "@keagent/theme";
 import type { ProductionTask } from "@keagent/shared-types";
 import { stageLabels, statusLabels } from "@keagent/shared-types";
 import ResourcesPanel from "./ResourcesPanel";
@@ -329,7 +330,12 @@ function AdminWorkspace() {
               dataIndex: "name",
               render: (value) => (
                 <Space>
-                  <Avatar style={{ background: "#eff6ff", color: "#2563eb" }}>
+                  <Avatar
+                    style={{
+                      background: "var(--accent-soft)",
+                      color: "var(--accent)",
+                    }}
+                  >
                     {String(value).slice(-2)}
                   </Avatar>
                   <strong>{value}</strong>
@@ -722,7 +728,12 @@ function AdminWorkspace() {
           </Space>
           <Space size={18}>
             <Tag>本地 Mock</Tag>
-            <Avatar style={{ background: "#eaf0fb", color: "#2563eb" }}>
+            <Avatar
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
+              }}
+            >
               管
             </Avatar>
           </Space>
@@ -750,6 +761,11 @@ function AdminWorkspace() {
               }
               style={{ marginBottom: 18 }}
             />
+          )}
+          {page === "settings" && (
+            <section className="admin-panel" style={{ marginBottom: 24 }}>
+              <ThemeSettings />
+            </section>
           )}
           {content}
         </Layout.Content>
@@ -809,28 +825,29 @@ function AdminWorkspace() {
 
 export default function App() {
   return (
-    <ConfigProvider
-      locale={zhCN}
-      theme={{
-        token: {
-          colorPrimary: "#2563eb",
-          colorBgLayout: "#f7f8fa",
-          colorText: "#111827",
-          borderRadius: 8,
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
-        },
-      }}
-    >
-      <AntApp>
-        <QueryClientProvider client={queryClient}>
-          <HashRouter>
-            <AdminBoundary>
-              {isLive ? <LiveAdmin /> : <AdminWorkspace />}
-            </AdminBoundary>
-          </HashRouter>
-        </QueryClientProvider>
-      </AntApp>
-    </ConfigProvider>
+    <ThemeProvider>
+      <ConfigProvider
+        locale={zhCN}
+        theme={{
+          token: {
+            colorBgLayout: "#f7f8fa",
+            colorText: "#111827",
+            borderRadius: 8,
+            fontFamily:
+              '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
+          },
+        }}
+      >
+        <AntApp>
+          <QueryClientProvider client={queryClient}>
+            <HashRouter>
+              <AdminBoundary>
+                {isLive ? <LiveAdmin /> : <AdminWorkspace />}
+              </AdminBoundary>
+            </HashRouter>
+          </QueryClientProvider>
+        </AntApp>
+      </ConfigProvider>
+    </ThemeProvider>
   );
 }

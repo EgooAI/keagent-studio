@@ -10,7 +10,6 @@
   --ink: #1b2b44;
   --muted: #65738a;
   --line: #e3e8f0;
-  --blue: #2563eb;
 }
 * {
   box-sizing: border-box;
@@ -32,7 +31,7 @@ a {
   text-decoration: none;
 }
 a:hover {
-  color: var(--blue);
+  color: var(--accent);
 }
 button,
 a,
@@ -41,16 +40,16 @@ textarea {
   -webkit-tap-highlight-color: transparent;
 }
 :focus-visible {
-  outline: 3px solid #8ab0ff;
+  outline: 3px solid var(--accent-focus);
   outline-offset: 3px;
 }
 ::selection {
-  background: #dbe8ff;
-  color: #173b81;
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 input,
 textarea {
-  caret-color: var(--blue);
+  caret-color: var(--accent);
 }
 ::-webkit-scrollbar {
   width: 7px;
@@ -144,7 +143,7 @@ svg {
   width: 34px;
   height: 36px;
   color: #fff;
-  background: #2563eb;
+  background: var(--accent);
   border-radius: 9px;
 }
 .brand strong {
@@ -210,15 +209,15 @@ svg {
   background: #f5f8fc;
 }
 .nav-item.active {
-  background: #eaf1ff;
-  color: #245bd1;
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 650;
 }
 .nav-count {
   margin-left: auto;
   font-size: 11px;
-  background: #d9e6ff;
-  color: #245bd1;
+  background: var(--accent-tint);
+  color: var(--accent);
   padding: 1px 6px;
   border-radius: 4px;
   font-variant-numeric: tabular-nums;
@@ -406,7 +405,7 @@ svg {
 }
 .filter-pills button.active {
   background: white;
-  color: #255fd7;
+  color: var(--accent);
   font-weight: 600;
   box-shadow: 0 1px 4px #1d334810;
 }
@@ -418,8 +417,8 @@ svg {
   color: #65748d;
 }
 .filter-pills button.active span {
-  background: #e9f0ff;
-  color: #3565c3;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .toolbar-right {
   display: flex;
@@ -560,7 +559,7 @@ svg {
   display: inline-flex;
   gap: 4px;
   align-items: center;
-  color: #2563d2;
+  color: var(--accent);
   font-size: 12px;
   font-weight: 500;
 }
@@ -663,7 +662,7 @@ svg {
   font-size: 11px;
 }
 .import-result {
-  background: #f2f7fe;
+  background: var(--accent-soft);
   border-radius: 7px;
   padding: 17px;
   margin-top: 20px;
@@ -728,8 +727,8 @@ svg {
 .property-select-button {
   width: 100%;
   min-height: 84px;
-  background: #fafcff;
-  border: 1px dashed #bed0ea;
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-border);
   border-radius: 8px;
   padding: 16px;
   display: flex;
@@ -739,8 +738,8 @@ svg {
   color: #57749c;
 }
 .property-select-button:hover {
-  border-color: #2563eb;
-  background: #f6f9ff;
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .property-select-button > span:nth-child(2) {
   flex: 1;
@@ -944,14 +943,14 @@ svg {
   align-items: center;
   gap: 8px;
   color: #50729e;
-  background: #f0f5ff;
+  background: var(--accent-soft);
   padding: 13px 10px;
   border-radius: 6px;
   font-size: 10px;
   margin: 20px 0 16px;
 }
 .batch-summary strong {
-  color: #2862d5;
+  color: var(--accent);
   font-size: 12px;
 }
 .studio-submit {
@@ -1001,8 +1000,8 @@ svg {
   position: relative;
 }
 .property-choice.is-selected {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 1px #2563eb;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .property-choice-image {
   height: 120px;
@@ -1084,8 +1083,8 @@ svg {
   border-radius: 5px;
 }
 .resource-categories button.active {
-  color: #2563d2;
-  background: #edf3ff;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .resource-picker-grid {
   display: grid;
@@ -1103,8 +1102,8 @@ svg {
   min-width: 0;
 }
 .resource-tile.is-selected {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 1px #2563eb;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .resource-tile-image {
   height: 110px;
@@ -1124,7 +1123,7 @@ svg {
   display: grid;
   place-items: center;
   color: white;
-  background: #2563eb;
+  background: var(--accent);
   border-radius: 5px;
 }
 .resource-type-label {
@@ -1155,7 +1154,7 @@ svg {
   margin-top: 5px;
 }
 .resource-tile-status {
-  color: #4771a9;
+  color: var(--accent);
   font-size: 10px;
   margin-top: 9px;
 }
@@ -1271,7 +1270,7 @@ svg {
   align-items: center;
   gap: 15px;
   margin: 25px 0;
-  background: #f3f8fe;
+  background: var(--accent-soft);
   padding: 16px;
   border-radius: 7px;
   font-size: 12px;

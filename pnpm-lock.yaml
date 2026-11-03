@@ -99,6 +99,9 @@ importers:
       '@keagent/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@keagent/theme':
+        specifier: workspace:*
+        version: link:../../packages/theme
 
   apps/desktop:
     dependencies:
@@ -108,6 +111,9 @@ importers:
       '@keagent/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@keagent/theme':
+        specifier: workspace:*
+        version: link:../../packages/theme
 
   packages/api-client:
     dependencies:
@@ -116,6 +122,8 @@ importers:
         version: link:../shared-types
 
   packages/shared-types: {}
+
+  packages/theme: {}
 
   services/control: {}
 

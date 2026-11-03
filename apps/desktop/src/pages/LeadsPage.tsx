@@ -167,7 +167,9 @@ export default function LeadsPage() {
                   width: "100%",
                   textAlign: "left",
                   background:
-                    selected?.id === lead.id ? "#eff6ff" : "transparent",
+                    selected?.id === lead.id
+                      ? "var(--accent-soft)"
+                      : "transparent",
                   border: "1px solid",
                   borderColor: selected?.id === lead.id ? "#bfdbfe" : "#edf0f4",
                   borderRadius: 9,

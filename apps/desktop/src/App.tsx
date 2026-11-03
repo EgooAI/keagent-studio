@@ -166,7 +166,10 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
           <div className="sidebar-profile">
             <Avatar
               size={34}
-              style={{ background: "#e9eff9", color: "#31547d" }}
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
+              }}
             >
               林
             </Avatar>
@@ -208,11 +211,16 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
               onClick={() => setTasksOpen(true)}
             >
               任务中心
-              {activeTasks > 0 && <Badge count={activeTasks} color="#2563eb" />}
+              {activeTasks > 0 && (
+                <Badge count={activeTasks} color="var(--accent)" />
+              )}
             </Button>
             <Avatar
               size={30}
-              style={{ background: "#dae6f7", color: "#274b7a" }}
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
+              }}
             >
               林
             </Avatar>

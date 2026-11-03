@@ -1,5 +1,15 @@
 {
-  "name": "@keagent/admin", "version": "0.1.0", "private": true, "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1 --port 5174 --strictPort", "build": "vite build" },
-  "dependencies": { "@keagent/shared-types": "workspace:*", "@keagent/api-client": "workspace:*" }
+  "name": "@keagent/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5174 --strictPort",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@keagent/shared-types": "workspace:*",
+    "@keagent/api-client": "workspace:*",
+    "@keagent/theme": "workspace:*"
+  }
 }

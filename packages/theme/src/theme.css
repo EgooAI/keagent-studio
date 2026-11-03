@@ -1,0 +1,57 @@
+:root {
+  --accent: #722ed1;
+  --accent-soft: color-mix(in srgb, var(--accent) 8%, white);
+  --accent-tint: color-mix(in srgb, var(--accent) 14%, white);
+  --accent-border: color-mix(in srgb, var(--accent) 30%, white);
+  --accent-focus: color-mix(in srgb, var(--accent) 80%, white);
+}
+.theme-settings h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.theme-settings p {
+  color: #65738a;
+  line-height: 1.7;
+}
+.theme-settings fieldset {
+  border: 0;
+  padding: 0;
+  margin: 24px 0 16px;
+  min-width: 0;
+}
+.theme-settings legend {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.theme-settings .ant-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.theme-settings .ant-radio-button-wrapper {
+  border: 1px solid #dee4ed;
+  border-radius: 8px;
+  height: auto;
+  padding: 10px 18px;
+  line-height: 24px;
+}
+.theme-settings .ant-radio-button-wrapper::before {
+  display: none;
+}
+.theme-settings .ant-radio-button-wrapper-checked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.theme-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 10px;
+  border-radius: 50%;
+  vertical-align: -3px;
+}
+.theme-settings .theme-settings-note {
+  font-size: 13px;
+}

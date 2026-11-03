@@ -7,6 +7,7 @@ import { createHashRouter, RouterProvider } from "react-router-dom";
 import App from "./App";
 import LoginGate from "./LoginGate";
 import { isLive } from "@keagent/api-client";
+import { ThemeProvider } from "@keagent/theme";
 import "antd/dist/reset.css";
 import "./styles.css";
 
@@ -16,30 +17,31 @@ const router = createHashRouter([
 ]);
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <ConfigProvider
-      locale={zhCN}
-      theme={{
-        token: {
-          colorPrimary: "#2563eb",
-          fontFamily:
-            '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-          borderRadius: 8,
-          colorText: "#1b2b44",
-          colorBorder: "#dee4ed",
-          controlHeight: 38,
-        },
-        components: {
-          Button: { primaryShadow: "none" },
-          Modal: { borderRadiusLG: 12 },
-          Table: { headerBg: "#f7f9fc" },
-        },
-      }}
-    >
-      <AntApp>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </AntApp>
-    </ConfigProvider>
+    <ThemeProvider>
+      <ConfigProvider
+        locale={zhCN}
+        theme={{
+          token: {
+            fontFamily:
+              '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+            borderRadius: 8,
+            colorText: "#1b2b44",
+            colorBorder: "#dee4ed",
+            controlHeight: 38,
+          },
+          components: {
+            Button: { primaryShadow: "none" },
+            Modal: { borderRadiusLG: 12 },
+            Table: { headerBg: "#f7f9fc" },
+          },
+        }}
+      >
+        <AntApp>
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </AntApp>
+      </ConfigProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 );

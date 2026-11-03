@@ -18,6 +18,7 @@ import {
 import { createAuthClient } from "@app/auth-sdk/react";
 import { adminClient } from "@app/auth-sdk/client/plugins";
 import { serviceRequest, type SessionUser } from "@keagent/api-client";
+import { ThemeSettings } from "@keagent/theme";
 
 const auth = createAuthClient({ plugins: [adminClient({ auditLog: true })] });
 type Row = Record<string, unknown>;
@@ -29,6 +30,7 @@ const pages = [
   { key: "ai-config", label: "AI 配置" },
   { key: "audit", label: "业务审计" },
   { key: "auth-audit", label: "身份审计" },
+  { key: "settings", label: "系统设置" },
 ];
 async function unwrap<T>(
   promise: Promise<{ data: T | null; error: { message?: string } | null }>,
@@ -68,6 +70,10 @@ export default function LiveAdmin() {
   }, []);
   async function load() {
     if (!user) return;
+    if (page === "settings") {
+      setError("");
+      return;
+    }
     setLoading(true);
     setError("");
     setData([]);
@@ -253,7 +259,9 @@ export default function LiveAdmin() {
           {error && (
             <Alert type="error" title={error} style={{ marginBottom: 16 }} />
           )}
-          {page === "ai-config" ? (
+          {page === "settings" ? (
+            <ThemeSettings />
+          ) : page === "ai-config" ? (
             <Card title="服务端 AI 配置">
               <p>
                 <Tag color={config.configured ? "green" : "default"}>

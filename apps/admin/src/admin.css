@@ -12,15 +12,15 @@ body {
   margin: 0;
 }
 a {
-  color: #2563eb;
+  color: var(--accent);
   text-underline-offset: 3px;
 }
 ::selection {
-  color: #102f79;
-  background: #dbeafe;
+  color: var(--accent);
+  background: var(--accent-tint);
 }
 :focus-visible {
-  outline: 3px solid #93b4f5;
+  outline: 3px solid var(--accent-focus);
   outline-offset: 3px;
 }
 ::-webkit-scrollbar {
@@ -59,7 +59,7 @@ a {
   flex-shrink: 0;
   width: 34px;
   height: 36px;
-  background: #2563eb;
+  background: var(--accent);
   color: white;
   border-radius: 9px;
   font-size: 23px;
