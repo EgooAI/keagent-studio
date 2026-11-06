@@ -42,6 +42,8 @@ KeAgent Studio 是面向房产经纪人的 AI 视频生产与营销桌面应用�
 
 ## 本地运行
 
+当前 Windows 开发机已配置项目专用工具、数据库与账号，可直接运行 `powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1` 启动完整开发环境。地址、账号文件、检查命令和工具路径见 [Windows 本地开发环境](docs/10-local-development.md)。
+
 开发环境使用 Node.js 24 与 pnpm 10，准确依赖版本由 `pnpm-lock.yaml` 固定。
 
 ```powershell

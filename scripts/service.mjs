@@ -1,6 +1,8 @@
 import { loadEnvFile } from "node:process";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 const require = createRequire(import.meta.url);
 try {
   loadEnvFile(".env.local");
@@ -8,6 +10,10 @@ try {
   if (error.code !== "ENOENT") throw error;
 }
 const target = process.argv[2];
+const localGo = resolve(
+  "output/tools/go/bin",
+  process.platform === "win32" ? "go.exe" : "go",
+);
 const commands = {
   control: [
     process.execPath,
@@ -22,7 +28,7 @@ const commands = {
     "services/control",
   ],
   setup: [process.execPath, ["setup.mjs"], "services/control"],
-  cloud: ["go", ["run", "."], "services/cloud"],
+  cloud: [existsSync(localGo) ? localGo : "go", ["run", "."], "services/cloud"],
 };
 if (!commands[target]) throw new Error("Unknown service");
 const [command, args, cwd] = commands[target];
