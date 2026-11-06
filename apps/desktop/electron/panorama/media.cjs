@@ -2,6 +2,7 @@ const { execFile } = require("node:child_process");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { ensure, hash, sentences, motion, audioKey } = require("./domain.cjs");
+const presentation = require("../production/presentation.cjs");
 const ffmpeg = () => process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobe = () => process.env.FFPROBE_PATH || "ffprobe";
 function run(command, args, cwd, signal, onTime) {
@@ -274,32 +275,54 @@ async function render(
   const clips = [];
   const timeline = [];
   const yaw = new Map();
+  const sceneDurations = new Map();
+  const sceneOffsets = new Map();
+  for (const segment of audio)
+    sceneDurations.set(
+      segment.sceneId,
+      (sceneDurations.get(segment.sceneId) || 0) + segment.duration,
+    );
   let elapsed = 0;
   let frame = 0;
   for (const [index, segment] of audio.entries()) {
     const scene = job.scenes.find((s) => s.id === segment.sceneId);
-    ensure(scene, "全景图与文案关联丢失");
+    ensure(scene, "素材与文案关联丢失");
+    const expanded = scene.kind === "expanded";
+    const direction = scene.direction || c.direction;
+    const panOffset = sceneOffsets.get(scene.id) || 0;
+    const panDuration = sceneDurations.get(scene.id);
+    sceneOffsets.set(scene.id, panOffset + segment.duration);
+    ensure(
+      !scene.kind || scene.kind === "panorama" || (expanded && scene.approved),
+      "素材尚未扩图或未经审核",
+    );
     const nextFrame = Math.round((elapsed + segment.duration) * 25);
     const frames = Math.max(1, nextFrame - frame);
-    const camera = motion(yaw.get(scene.id) ?? scene.yaw, segment.duration, c);
+    const camera = motion(yaw.get(scene.id) ?? scene.yaw, segment.duration, {
+      ...c,
+      direction,
+    });
     yaw.set(scene.id, camera.end);
     // Wrap the start angle for FFmpeg while preserving continuous turns across segments.
     const start = ((((camera.start + 180) % 360) + 360) % 360) - 180;
     const avatar = segment.kind === "opening" && c.videoMode === "avatar";
-    const label = `${scene.room}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
+    const label = `${scene.room}${expanded ? " · AI扩图示意，非实拍全景" : ""}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
     const key = hash([
-      "render-v1",
+      expanded ? "render-v5-expanded" : "render-v3-panorama",
+      scene.kind || "panorama",
       scene.asset,
       segment,
       start,
       c.speed,
-      c.direction,
+      direction,
       c.maxSweep,
       width,
       height,
       c.subtitles,
       label,
       avatar ? job.avatar?.taskId : null,
+      expanded ? [panOffset, panDuration] : null,
+      presentation.card(job, segment.kind),
     ]);
     const name = `clip-${key}.mp4`;
     if (!(await exists(path.join(cache, name)))) {
@@ -309,17 +332,31 @@ async function render(
         path.join(cache, cmd),
         Array.from({ length: Math.max(1, frames - 1) }, (_, i) => {
           const t = (i + 1) / 25;
-          const angle = start + Math.min(t * c.speed, c.maxSweep) * c.direction;
+          const angle = start + Math.min(t * c.speed, c.maxSweep) * direction;
           return `${t.toFixed(6)} v360@camera yaw ${angle.toFixed(6)};`;
         }).join("\n") + "\n",
       );
       await fs.writeFile(
         path.join(cache, ass),
-        subtitles(segment, width, height, label, elapsed - frame / 25),
+        presentation.decorate(
+          subtitles(
+            c.subtitles ? segment : { ...segment, captions: [] },
+            width,
+            height,
+            label,
+            elapsed - frame / 25,
+          ),
+          segment,
+          width,
+          height,
+          presentation.card(job, segment.kind),
+        ),
       );
       const base = avatar
         ? `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=5`
-        : `scale=4096:2048,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${start}:reset_rot=1,setsar=1`;
+        : expanded
+          ? `scale=${Math.ceil(width * 1.06) * 2}:${Math.ceil(height * 1.06) * 2}:force_original_aspect_ratio=increase,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),crop=${width * 2}:${height * 2}:x='(iw-ow)*${direction === 1 ? `min(1,(${panOffset}+n/25)/${panDuration})` : `(1-min(1,(${panOffset}+n/25)/${panDuration}))`}':y='(ih-oh)/2',scale=${width}:${height},setsar=1`
+          : `scale=4096:2048,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${start}:reset_rot=1,setsar=1`;
       const temp = `clip-${key}.part.mp4`;
       await run(
         ffmpeg(),
@@ -330,7 +367,10 @@ async function render(
           "-i",
           avatar ? avatarFile : path.join(ownerDir, "assets", scene.asset),
           "-vf",
-          base + (c.subtitles ? `,ass=${ass}` : ""),
+          base +
+            (c.subtitles || expanded || c.design === "standard"
+              ? `,ass=${ass}`
+              : ""),
           "-an",
           "-frames:v",
           String(frames),
@@ -362,7 +402,7 @@ async function render(
       start: elapsed,
       duration: segment.duration,
       audio: segment.audio,
-      camera: avatar ? null : camera,
+      camera: avatar || expanded ? null : camera,
       captions: segment.captions.map(({ text, start, end }) => ({
         text,
         start: elapsed + start,
@@ -438,23 +478,61 @@ async function render(
     path.join(jobDir, "final.part.mp4"),
     path.join(jobDir, "final.mp4"),
   );
-  await run(
-    ffmpeg(),
-    [
-      "-v",
-      "error",
-      "-y",
-      "-ss",
-      String(Math.min(1, elapsed / 2)),
-      "-i",
-      "final.mp4",
-      "-frames:v",
-      "1",
-      "cover.jpg",
-    ],
-    jobDir,
-    signal,
-  );
+  if (c.design === "standard") {
+    const scene =
+      job.scenes.find((s) => s.id === (c.coverSceneId || c.leadSceneId)) ||
+      job.scenes[0];
+    const expanded = scene.kind === "expanded";
+    const caption = "cover.ass";
+    const label = `${expanded ? "AI扩图示意，非实拍全景" : ""}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
+    await fs.writeFile(
+      path.join(jobDir, caption),
+      presentation.decorate(
+        subtitles({ duration: 1, captions: [] }, width, height, label, 0),
+        null,
+        width,
+        height,
+        presentation.card(job, "cover"),
+      ),
+    );
+    const base = expanded
+      ? `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`
+      : `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${scene.yaw}`;
+    await run(
+      ffmpeg(),
+      [
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        path.join(ownerDir, "assets", scene.asset),
+        "-vf",
+        `${base},ass=${caption}`,
+        "-frames:v",
+        "1",
+        "cover.jpg",
+      ],
+      jobDir,
+      signal,
+    );
+  } else
+    await run(
+      ffmpeg(),
+      [
+        "-v",
+        "error",
+        "-y",
+        "-ss",
+        String(Math.min(1, elapsed / 2)),
+        "-i",
+        "final.mp4",
+        "-frames:v",
+        "1",
+        "cover.jpg",
+      ],
+      jobDir,
+      signal,
+    );
   await fs.writeFile(
     path.join(jobDir, "timeline.json"),
     JSON.stringify(

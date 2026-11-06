@@ -2,6 +2,14 @@ const { createHash } = require("node:crypto");
 
 const templates = [
   {
+    id: "standard-tour",
+    version: "1",
+    name: "标准房源带看",
+    opening: "一起看看{title}。{facts}",
+    scene: "这里是{room}。{description}",
+    closing: "欢迎预约实地看房，具体情况以现场核验为准。",
+  },
+  {
     id: "tour",
     version: "1",
     name: "逐空间带看",
@@ -27,7 +35,8 @@ const templates = [
   },
 ];
 const defaultConfig = {
-  templateId: "tour",
+  materialMode: "panorama",
+  templateId: "standard-tour",
   language: "zh-CN",
   scriptProvider: "template",
   openingTemplate: templates[0].opening,
@@ -44,6 +53,14 @@ const defaultConfig = {
   aspectRatio: "9:16",
   resolution: "720p",
   subtitles: true,
+  design: "standard",
+  brandColor: "#167D8D",
+  subtitleSize: "standard",
+  leadSceneId: "",
+  coverSceneId: "",
+  coverTitle: "",
+  agentName: "",
+  agentContact: "",
 };
 const hash = (value) =>
   createHash("sha256")
@@ -67,7 +84,7 @@ function text(value, label, max = 1000) {
   );
   return value.trim();
 }
-function config(input) {
+function config(input, personalTemplates = []) {
   ensure(input && typeof input === "object", "缺少制作配置");
   const c = Object.fromEntries(
     Object.keys(defaultConfig).map((key) => [
@@ -76,10 +93,11 @@ function config(input) {
     ]),
   );
   ensure(
-    templates.some((t) => t.id === c.templateId),
+    [...templates, ...personalTemplates].some((t) => t.id === c.templateId),
     "文案模板不存在",
   );
   ensure(["zh-CN", "en-US"].includes(c.language), "请选择支持的语言");
+  ensure(["panorama", "expand"].includes(c.materialMode), "素材制作方式无效");
   ensure(["template", "ai"].includes(c.scriptProvider), "文案生成方式无效");
   ensure(
     ["system", "volcengine", "personal"].includes(c.ttsProvider),
@@ -112,18 +130,25 @@ function config(input) {
     "输出规格无效",
   );
   ensure(typeof c.subtitles === "boolean", "字幕开关无效");
+  ensure(["standard", "classic"].includes(c.design), "画面样式无效");
+  ensure(/^#[a-fA-F0-9]{6}$/.test(c.brandColor), "品牌色需为六位十六进制颜色");
+  ensure(["standard", "large"].includes(c.subtitleSize), "字幕大小无效");
+  for (const key of ["leadSceneId", "coverSceneId"])
+    ensure(
+      typeof c[key] === "string" && (!c[key] || /^[a-f0-9-]{36}$/.test(c[key])),
+      "代表性镜头无效",
+    );
+  for (const key of ["coverTitle", "agentName", "agentContact"])
+    c[key] = optionalText(c[key], "封面或经纪人信息", 120);
   return c;
 }
-function fill(template, values) {
-  return template.replace(/\{([^{}]+)\}/g, (_, key) => {
-    ensure(Object.hasOwn(values, key), `未知模板变量：${key}`);
-    return values[key];
-  });
+function optionalText(value, label, max) {
+  ensure(typeof value === "string", `${label}无效`);
+  return value.trim() ? text(value, label, max) : "";
 }
-function segments(property, scenes, c) {
-  ensure(scenes.length > 0 && scenes.length <= 20, "请导入 1–20 张全景图");
-  const en = c.language === "en-US";
-  const facts = [
+function facts(property, language = "zh-CN") {
+  const en = language === "en-US";
+  return [
     property.areaSqm > 0
       ? en
         ? `${property.areaSqm} square metres`
@@ -138,9 +163,19 @@ function segments(property, scenes, c) {
   ]
     .filter(Boolean)
     .join(en ? ", " : "，");
+}
+function fill(template, values) {
+  return template.replace(/\{([^{}]+)\}/g, (_, key) => {
+    ensure(Object.hasOwn(values, key), `未知模板变量：${key}`);
+    return values[key];
+  });
+}
+function segments(property, scenes, c) {
+  ensure(scenes.length > 0 && scenes.length <= 20, "请导入 1–20 张全景图");
+  const en = c.language === "en-US";
   const values = {
     title: text(property.title, "房源名称", 200),
-    facts,
+    facts: facts(property, c.language),
     sellingPoints:
       (property.sellingPoints || []).join(en ? ", " : "，") ||
       (en ? "please review the room details" : "各空间的实际情况"),
@@ -151,7 +186,7 @@ function segments(property, scenes, c) {
     {
       id: "opening",
       kind: "opening",
-      sceneId: scenes[0].id,
+      sceneId: c.leadSceneId || scenes[0].id,
       text: fill(c.openingTemplate, values),
     },
     ...scenes.map((scene) => ({
@@ -161,13 +196,16 @@ function segments(property, scenes, c) {
       text: fill(c.sceneTemplate, {
         ...values,
         room: text(scene.room, "空间名称", 80),
-        description: text(scene.description, "空间说明", 1500),
+        description: optionalText(scene.description, "空间说明", 1500),
       }),
     })),
     {
       id: "closing",
       kind: "closing",
-      sceneId: scenes.at(-1).id,
+      sceneId:
+        c.design === "standard"
+          ? c.leadSceneId || scenes[0].id
+          : scenes.at(-1).id,
       text: fill(c.closingTemplate, values),
     },
   ];
@@ -226,6 +264,8 @@ module.exports = {
   config,
   ensure,
   text,
+  optionalText,
+  facts,
   hash,
   fill,
   segments,

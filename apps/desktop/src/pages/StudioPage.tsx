@@ -84,7 +84,11 @@ export function StudioPage() {
       tabBarStyle={{ marginBottom: 0 }}
       defaultActiveKey={window.desktop ? "panorama" : "existing"}
       items={[
-        { key: "panorama", label: "全景工作流", children: <PanoramaStudio /> },
+        {
+          key: "panorama",
+          label: "房源视频工作流",
+          children: <PanoramaStudio />,
+        },
         {
           key: "existing",
           label: "原有任务",

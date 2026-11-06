@@ -1,0 +1,126 @@
+# 房源素材接入与视频制作
+
+## 当前规则
+
+1. 获取的素材有可下载且通过格式验证的原始全景图时，优先全景路线，不提交普通照片扩图。
+2. 没有全景图、只有普通室内照片时，先 AI 扩图；逐张人工审核后才允许生成视频。原始普通照片不能直接出片。
+3. 没有可用素材或格式不符时报错，不用演示图片替代真实房源。
+
+原始全景要求 JPEG/PNG、2:1 等距柱状格式、宽度至少 2048，使用原有 v360 旋转执行器。扩图输出是透视照片，使用有限平移镜头；不把它当作真实 360° 全景。视频保留“AI扩图示意，非实拍全景”标记，关闭字幕也不会关闭该标记。
+
+## 贝壳开放平台的实际接入范围
+
+按城市、区县、详细地址调用已公开文档的两个接口，凭证使用 `access_token` 请求头：
+
+| 官方接口 | 固定调用地址 | 当前用途 |
+| --- | --- | --- |
+| [数据验真](https://open.ke.com/service/picVerifydata/) | `https://gw-open.ke.com/api/images-distinguish/houseInfo` | 小区、户型及房屋档案 |
+| [图片验真](https://open.ke.com/service/picVerify/) | `https://gw-open.ke.com/api/images-distinguish/distinguish` | `type=2`，获取室内空间分组图片 |
+
+**当前两个接口的公开格式没有全景原图字段。** 此适配器明确返回空 `panoramas` 与 `panoramaAvailability=not_exposed_by_this_interface`，实际会走普通照片扩图路线。自动优先全景的选择和校验已实现并以注入响应测试；要从贝壳自动取得全景，还需要正式获权的全景原图接口及实际响应，不能从 VR 页面链接猜测或抓取私有资源。目前可手动导入已有全景原图验证全景制作。
+
+仅取 `prospect.parlor/room/kitchen/toliet` 室内图片，保留官方 `toliet` 拼写。户型图、小区图不自动作为室内镜头。不能凭图片数组顺序关联卧室 A/B/C 的档案。接口缺少挂牌价格和建筑面积，应用保留未知；`frameArea` 只作为图示面积来源保存，不填写为建筑面积。
+
+查询结果和本机素材按用户保存。重新进入后选择该房源，点击“恢复已获取的素材”，可继续查询扩图任务；恢复的扩图仍需重新审核。详细素材证据、公开示例及复现脚本见 [核查记录](beike-materials-research.md)。本轮尚无真实凭证成功调用记录。
+
+## 扩图服务选择
+
+使用阿里云百炼万相 `wanx2.1-imageedit`，`input.function=expand`。[官方 API 文档](https://help.aliyun.com/zh/model-studio/wanx-image-edit-api-reference) 明确支持上、下、左、右扩图，单方向比例 1–2，异步提交后按任务 ID 查询；这对应本需求。当前不使用 MiniMax 的角色参考生图接口代替通用房屋扩图。
+
+应用只提交 JPEG/PNG，单边 512–4096 像素、文件不超过 10MB。默认左右 1.5、上下 1，每张生成一张，启用供应商 AI 水印。提示词和比例在提交前可修改，并与来源图片、模型、本机任务一同保存；提示词不能保证完全保持真实结构，必须检查门窗、家具、透视和原水印。
+
+任务先保存稳定请求键，再调用供应商。重复请求和重启后刷新不会重复生成。网络中断导致提交结果未知时保留检查点，不自动重提；请先在百炼控制台核对，避免重复计费。已确认任务可继续查询，完成图片立即下载到本机；官方返回下载地址有效期为 24 小时。最终失败需核对后重新导入素材才能再次提交。
+
+## 当前工作区的配置与启动
+
+私有 `.env.local` 已准备，认证已初始化，数据库使用本机 PostgreSQL 实例中的独立 `keagent_production`。认证密钥独立生成，现有私有配置中的其他供应商设置保留。`.env.local`、原图和成片均在 Git 忽略范围内。
+
+填写以下两项（只有服务端读取，不加 `VITE_` 前缀）：
+
+```dotenv
+BEIKE_ACCESS_TOKEN=已授权数据验真和图片验真的凭证
+DASHSCOPE_API_KEY=百炼北京地域的APIKey
+```
+
+`DASHSCOPE_BASE_URL` 可留空，使用仍受官方支持的 `https://dashscope.aliyuncs.com`；或设置 `https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com`。修改后重启服务。只测试手动导入照片扩图时，可暂不配置贝壳凭证。
+
+在本 worktree 根目录执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/dev-production.ps1 -ToolsRoot C:\code\EgooAI\keagent-studio\output\tools
+```
+
+脚本复用原仓库 Go 工具，FFmpeg/FFprobe 绝对路径已写入私有环境。Electron 使用当前 worktree 的 `output/electron-user-data`，不共用其他工作区的登录和制作检查点。脚本不启动或停止共享 PostgreSQL；要求其已在 55432 监听。应用端口仍为 5173、5174、18080、18081，其他工作区正在运行时会拒绝启动，请轮流运行。Ctrl+C 停止本次应用服务。
+
+进入“视频工厂 → 房源视频工作流”，获取房屋素材或导入已有素材。普通照片点击“生成 AI 扩图”，查询完成后核对每张图并勾选审核，再按现有流程生成、编辑文案和执行视频。全景图跳过扩图步骤。朗读仍使用原有火山语音配置；未配置语音或文案服务时，扩图测试可以单独进行，完整成片需要原有服务可用。
+
+## 验证记录
+
+- TypeScript 类型、格式检查、54 项 Vitest 测试、桌面和管理端构建通过。
+- Go 全套测试通过，数据库测试实际使用独立 `keagent_production_test`；包含扩图任务归属、稳定请求键、防重复提交与未知状态恢复。
+- 无头 Chrome 界面回归验证：获取普通照片、禁止原图出片、提交和查询扩图、审核前禁止生成、审核后允许生成。
+- 真实 FFmpeg 生成原始全景横屏、扩图横屏、扩图竖屏三个回归视频，验证画幅、时长、音轨、画面运动及强制 AI 标记。
+
+渲染回归可在下载公开示例后运行：
+
+```powershell
+node scripts/prepare-beike-material-sample.mjs
+$env:FFMPEG_PATH = 'C:/code/EgooAI/keagent-studio/output/tools/ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe'
+$env:FFPROBE_PATH = 'C:/code/EgooAI/keagent-studio/output/tools/ffmpeg-9.0.2-essentials_build/bin/ffprobe.exe'
+node scripts/verify-production-sources.mjs
+```
+
+结果在 `output/production-source-verification/result.json`。这组离线扩图渲染测试以普通照片充当受控供应商输出夹具，界面和协议测试也使用注入响应，不作为真实供应商输出证据。
+
+## 2026-11-07 真实百炼联调
+
+用户填入百炼密钥后，已从原仓库私有环境仅同步 `DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL` 到本 worktree。贝壳凭证测试未通过，素材使用先前核实的官方公开响应示例；没有将样例伪装成授权 API 成功返回。
+
+首次扩图提交发生网络错误，未取得任务 ID，其检查点保留为未确认，不自动重新提交。用户要求不走代理后，另做一次独立直连测试，成功完成一个万相扩图任务。当前机器为 Clash 系统代理、TUN 未开启；手动测试脚本显式清空 HTTP/HTTPS/ALL_PROXY 并设置 `NO_PROXY=*`，Go 供应商传输本身也不配置 HTTP 代理。没有改变机器的全局代理设置。
+
+本次实际结果：
+
+- 官方示例客厅原图 1440×1080，SHA-256 与核查清单一致；真实扩图输出 2336×880。
+- 原始照片和未审核扩图均被制作流程阻止；技术样例经检查后单独标记为演示用途。
+- 同一请求键的再次提交返回原来已成功的任务，不生成第二张图；重启后也可恢复本机结果。
+- 真实扩图制作了 1280×720 横屏、720×1280 竖屏视频，均约 12.98 秒。配音使用本机 `Microsoft Huihui Desktop` 测试音色，没有调用火山付费配音。
+- 视频包含音轨、字幕、强制 AI 示意和测试素材标记；验证了画面运动、时长，以及配音分段处镜头连续。
+- 修正了扩图镜头先裁掉画布、只在小范围移动的问题：现在沿扩图画布连续平移，跨配音段不重置；素材宽度不足时保留少量裁切余量以产生镜头运动。
+
+图片检查发现扩展区补造了香蕉和墙面装饰，尽管提示词要求不增加物品。因此本次只通过接口和渲染技术验证，**未通过真实房况素材验收**，不能作实际房源展示。
+
+本机结果在 `output/production-live-direct-verification/`，包含 `original.jpg`、`expanded.png`、`result.json`、`video-16x9/final.mp4`、`video-9x16/final.mp4`。旧的未知提交记录位于独立的 `output/production-live-verification/`。
+
+手动复现（首次运行会提交一张付费扩图；已有检查点时恢复同一任务）：
+
+```powershell
+$env:KEAGENT_GO_PATH = 'C:/code/EgooAI/keagent-studio/output/tools/go/bin/go.exe'
+node scripts/verify-live-production-sources.mjs --direct
+node scripts/render-live-production-sample.mjs
+```
+
+测试使用独立本机 `keagent_production_test` 数据库和本机临时签名 HTTP 桥，走实际 Go 素材端点、Electron 制作模块及真实百炼 API，不连接正在运行的其他工作区业务服务。桥接测试默认跳过，只有上述手动脚本显式启用才启动。已有未知提交不会因运行脚本而自动重提；异常时先核对供应商状态。
+
+贝壳实际授权素材获取、全套房间批量扩图和生产语音供应商的完整联调仍未验证。
+
+## 标准房源带看模板（第一版）
+
+默认使用“标准房源带看”：开场展示代表性镜头和已知房源信息，依次介绍实际存在的空间，结尾返回代表镜头并显示已填写的经纪人信息，封面独立选择空间和标题。价格、面积、户型、空间说明为空时跳过，不补造内容。已有全景旋转、照片扩图后平移的素材判断规则保持统一。
+
+编辑器分为三个区域：左侧选择段落、调整空间顺序或移除空间；中间实时展示标题、字幕和封面排版；右侧修改当前段文案、空间说明、镜头方向、全景起始视角及扩图审核状态。“公共设置”包含模板、音色、画幅、品牌色及标准/大字字幕。中间是排版和取景示意，不是完整全景投影或配音播放；最终镜头和音画以生成的视频为准。
+
+“我的模板（本机）”按登录账号保存，支持另存、更新和版本冲突检测。模板保存可复用的规则与样式，不自动带入当前房源照片、具体分段文案、代表图引用、音色/形象 ID、经纪人身份字段和本条视频的封面标题。模板中人工填写的固定文字会保留。每个草稿和制作任务保存自身配置快照及模板版本；更新模板不会改写既有草稿或成片。
+
+视觉配置会实际写入 FFmpeg 输出：开场/结尾信息卡、白色标题与品牌色装饰线、字幕大小、独立封面。关闭普通字幕仍保留 AI 和测试素材标识。空间可单独选择方向，封面全景按该空间起始视角取景，扩图按透视照片裁切。音频时长继续决定镜头时长。
+
+验证：56 项 Vitest 测试、类型和格式检查通过；新增测试覆盖模板隔离、持久化、版本快照、冲突、代表镜头、未知事实和空说明。无头 Chrome 通过导入/扩图审核门槛、排序、封面选图改标题、模板保存应用、文案修改和 1440/1100 宽度布局测试。真实 FFmpeg 回归通过两条素材路线，并用既有百炼扩图重新生成横竖屏样片及封面，本轮没有新增付费供应商调用。
+
+界面回归脚本：`node scripts/verify-template-editor.mjs`，默认要求 mock Vite 已在 `127.0.0.1:5189` 启动，可用 `KEAGENT_TEST_UI_URL` 指定地址。脚本只注入测试响应，不请求百炼或贝壳。截图在 `output/template-verification/editor-wide.png` 和 `editor-compact.png`。真实样片和封面位于 `output/production-live-direct-verification/video-16x9/`、`video-9x16/`，可运行 `scripts/render-live-production-sample.mjs` 离线重建。
+
+## 与主分支抖音发布功能合并
+
+制作结果保留主分支新增的“登记成片到发布中心”入口，通过独立 `artifact-media` 注册器交接真实 MP4 和封面。全景与扩图路线共用同一个完成结果端口；示例成片、未完成任务及其他账号的任务不能登记。模板编辑器和素材接入不修改已冻结的共享成片契约。
+
+`scripts/dev-production.ps1` 现在会先构建本机成片注册器和抖音发布运行时，再启动隔离桌面环境，避免新检出环境缺少运行时文件。
+
+合并验证：87 项 Vitest 测试、7 个抖音页面场景、模板编辑器界面回归、类型/格式检查、全部构建及 Go test/vet 通过。另启用隐藏 Electron 集成，实际连接受控媒体文件、本机注册器、Go API 和隔离 PostgreSQL schema，验证验收、交接及拦截后的发布链路。没有真实抖音发布或新增付费生成调用。

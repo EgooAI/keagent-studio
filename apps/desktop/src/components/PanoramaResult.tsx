@@ -164,11 +164,27 @@ export function PanoramaResult({
                 {
                   title: "镜头",
                   dataIndex: "camera",
-                  render: (camera: { sweep: number } | null) =>
-                    camera ? `${camera.sweep.toFixed(1)}°` : "数字人",
+                  render: (camera: { sweep: number } | null, row) =>
+                    camera
+                      ? `${camera.sweep.toFixed(1)}°`
+                      : job.config.videoMode === "avatar" &&
+                          job.segments.find((s) => s.id === row.id)?.kind ===
+                            "opening"
+                        ? "数字人"
+                        : job.config.materialMode === "expand"
+                          ? "扩图平移"
+                          : "数字人",
                 },
               ]}
             />
+          )}
+          {job.coverUrl && (
+            <div className="panorama-cover-result">
+              <img src={job.coverUrl} alt="成片封面" />
+              <span className="muted">
+                生成的封面 · {job.config.coverTitle || job.property.title}
+              </span>
+            </div>
           )}
         </>
       ) : (

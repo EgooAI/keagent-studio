@@ -81,4 +81,19 @@ async function downloadVideo(value, file, signal, env = process.env) {
   });
   await fs.writeFile(file, await limitedBody(response, 256 * 1024 * 1024));
 }
-module.exports = { avatarResult, privateAddress, downloadVideo };
+async function downloadImage(value, provider, signal) {
+  const host = new URL(value).hostname.toLowerCase();
+  ensure(
+    provider === "beike"
+      ? host.endsWith(".ljcdn.com")
+      : /\.(aliyuncs\.com|alicdn\.com)$/.test(host),
+    "图片下载域名未授权",
+  );
+  const url = await publicURL(value);
+  const response = await fetch(url, {
+    redirect: "error",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
+  });
+  return limitedBody(response, 50 * 1024 * 1024);
+}
+module.exports = { avatarResult, privateAddress, downloadVideo, downloadImage };

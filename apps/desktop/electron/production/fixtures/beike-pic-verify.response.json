@@ -1,0 +1,45 @@
+{
+  "msg": "success",
+  "code": 0,
+  "data": {
+    "prospect": {
+      "parlor": [
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/dea557fd-a88e-4700-af0c-34c1cb23bc79.JPG",
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/686059c4-d509-4beb-83a2-22db596e7c91.JPG"
+      ],
+      "toliet": [
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/d717846f-220f-4757-89f7-4f8f8457d9f6.JPG"
+      ],
+      "kitchen": [
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/a80a0fe1-537c-465b-8263-762f31597ba3.JPG"
+      ],
+      "room": [
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/f5f3099e-8905-41fa-a57e-e32da027d9b9.JPG",
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/4ce0d2f1-6e60-4315-8273-8382df84d596.JPG",
+        "https://p.ljcdn.com/v0/hdic.t_m/110000-inspection/52d77aa4-fbdd-4978-8ae8-4e7b5a62a958.JPG"
+      ]
+    },
+    "unit": {
+      "number": []
+    },
+    "downLoad": null,
+    "house": {
+      "number": []
+    },
+    "resblock": {
+      "name": [
+        "https://p.ljcdn.com/v0/hdic.t_m/hdic-resblock/86de69ad-9026-430b-9190-5fc5366a4eaf.jpg",
+        "https://p.ljcdn.com/v0/hdic.t_m/hdic-resblock/5e66f9b2-6160-4912-ab1e-8c1371b89de2.jpg",
+        "https://p.ljcdn.com/v0/hdic.t_m/hdic-resblock/c46135a2-e21c-499e-bd1f-71a2d06d2e18.jpg"
+      ],
+      "entrance": []
+    },
+    "building": {
+      "number": [],
+      "facade": []
+    },
+    "frame": [
+      "https://p.ljcdn.com/v0/hdic.t_m/hdic-frame/test-7407ee5f-0763-4807-96c2-2f1468eb7a51.png"
+    ]
+  }
+}
