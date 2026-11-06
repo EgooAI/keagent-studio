@@ -17,6 +17,7 @@ class PanoramaWorkflow {
     this.remote = remote;
     this.stores = new Map();
     this.active = new Map();
+    this.previews = new Set();
     this.capabilityPromise = null;
   }
   owner(userId) {
@@ -58,7 +59,23 @@ class PanoramaWorkflow {
     fs.writeFileSync(file + ".tmp", JSON.stringify(this.stores.get(owner)), {
       mode: 0o600,
     });
-    fs.renameSync(file + ".tmp", file);
+    // Windows indexers can briefly hold the destination without delete sharing.
+    // Keep atomic replacement and surface persistent failures; never delete the old checkpoint.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(file + ".tmp", file);
+        break;
+      } catch (error) {
+        if (attempt >= 6 || !["EPERM", "EACCES", "EBUSY"].includes(error.code))
+          throw error;
+        Atomics.wait(
+          new Int32Array(new SharedArrayBuffer(4)),
+          0,
+          0,
+          10 * (attempt + 1),
+        );
+      }
+    }
   }
   url(owner, relative) {
     return `keagent://media/${owner}/${relative}`;
@@ -226,6 +243,40 @@ class PanoramaWorkflow {
     const state = this.store(owner);
     if (method === "state") return this.view(owner, state);
     if (method === "capabilities") return this.capabilities();
+    if (method === "preview-system") {
+      const caps = await this.capabilities();
+      domain.ensure(
+        caps.voices.some(
+          (v) => v.name === input.voice && v.language === input.language,
+        ),
+        "系统音色不存在",
+      );
+      const directory = path.join(this.directory(owner), "preview");
+      await fsp.mkdir(directory, { recursive: true });
+      const sample =
+        input.language === "en-US"
+          ? "Hello, let me introduce this property to you."
+          : "您好，我是您的房产顾问，欢迎一起了解这套房源。";
+      const controller = new AbortController();
+      this.previews.add(controller);
+      try {
+        const result = await media.synthesize(
+          { text: sample },
+          {
+            ...domain.defaultConfig,
+            voice: input.voice,
+            language: input.language,
+          },
+          directory,
+          controller.signal,
+        );
+        controller.signal.throwIfAborted();
+        assertCurrent();
+        return { url: this.url(owner, `preview/${result.audio}`) };
+      } finally {
+        this.previews.delete(controller);
+      }
+    }
     if (method === "sample") return this.sample(owner);
     if (method === "import") {
       const files = await this.dialogs.open();
@@ -419,7 +470,17 @@ class PanoramaWorkflow {
         ),
         "所选语言没有可用的本机声音，请更换音色或配音服务",
       );
-    else
+    else if (draft.config.ttsProvider === "personal") {
+      domain.ensure(this.remote, "未连接本人音色服务");
+      const catalog = await this.remote("voice-list", {});
+      domain.ensure(
+        catalog.cloneEnabled &&
+          catalog.voices.some(
+            (v) => v.id === draft.config.voice && v.status === "ready",
+          ),
+        "本人音色不存在或尚未就绪，请重新选择",
+      );
+    } else
       domain.ensure(caps.volcTts && draft.config.voice, "火山 TTS 未配置完整");
     if (draft.config.videoMode === "avatar")
       domain.ensure(
@@ -577,6 +638,7 @@ class PanoramaWorkflow {
   }
   stop() {
     for (const { controller } of this.active.values()) controller.abort();
+    for (const controller of this.previews) controller.abort();
   }
   mediaFile(userId, url) {
     const owner = this.owner(userId);
@@ -585,6 +647,7 @@ class PanoramaWorkflow {
     const relative = url.pathname.slice(prefix.length);
     domain.ensure(
       /^assets\/[a-f0-9]{64}\.(jpg|png)$/.test(relative) ||
+        /^preview\/segment-[a-f0-9]{64}\.wav$/.test(relative) ||
         /^jobs\/[a-f0-9-]{36}\/(final\.mp4|cover\.jpg|narration\.wav)$/.test(
           relative,
         ),

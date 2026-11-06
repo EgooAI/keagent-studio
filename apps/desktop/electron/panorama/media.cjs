@@ -178,7 +178,13 @@ async function synthesize(segment, c, cwd, signal, remote) {
         ensure(remote, "未连接云端配音服务");
         const response = await remote(
           "tts",
-          { text: part, voice: c.voice, rate: c.rate, language: c.language },
+          {
+            text: part,
+            voice: c.voice,
+            rate: c.rate,
+            language: c.language,
+            kind: c.ttsProvider === "personal" ? "personal" : "builtin",
+          },
           signal,
         );
         ensure(

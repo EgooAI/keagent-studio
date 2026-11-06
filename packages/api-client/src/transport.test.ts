@@ -16,6 +16,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("routes voice uploads through authenticated business transport without replaying service failures", async () => {
+  fetchMock
+    .mockResolvedValueOnce(json({ token: "jwt" }))
+    .mockResolvedValueOnce(json({ error: { message: "声音服务未配置" } }, 503));
+  await expect(
+    authRequest("voice.create", [
+      { requestKey: "stable-key", audio: "sample" },
+    ]),
+  ).rejects.toThrow("声音服务未配置");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(String(fetchMock.mock.calls[1][0])).toBe(
+    "http://127.0.0.1:18081/v1/voices/create",
+  );
+  expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
+    requestKey: "stable-key",
+  });
+});
+
 it("rejects public plaintext service URLs", async () => {
   vi.resetModules();
   vi.stubEnv("VITE_GO_API_URL", "http://public.invalid");

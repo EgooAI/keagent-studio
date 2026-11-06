@@ -225,26 +225,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		}
 		return segments, nil
 	case "tts":
-		text, voice := str(input["text"]), str(input["voice"])
-		rate := number(input["rate"])
-		if len([]rune(text)) == 0 || len([]rune(text)) > 2000 || len(voice) == 0 || len(voice) > 150 || rate < .5 || rate > 2 {
-			return nil, fail(422, "配音参数无效")
-		}
-		key, resource := os.Getenv("VOLC_TTS_API_KEY"), os.Getenv("VOLC_TTS_RESOURCE_ID")
-		if key == "" || resource == "" {
-			return nil, fail(503, "云端未配置火山 TTS")
-		}
-		headers := http.Header{"Content-Type": {"application/json"}, "X-Api-Key": {key}, "X-Api-Resource-Id": {resource}, "X-Api-Request-Id": {id()}}
-		payload, _ := json.Marshal(object{"user": object{"uid": a.UserID}, "req_params": object{"text": text, "speaker": voice, "audio_params": object{"format": "pcm", "sample_rate": 24000, "speech_rate": int((rate - 1) * 100)}}})
-		data, err := providerBody(ctx, "POST", "https://openspeech.bytedance.com/api/v3/tts/unidirectional", headers, payload, 16<<20)
-		if err != nil {
-			return nil, err
-		}
-		pcm, err := decodeSpeech(data)
-		if err != nil {
-			return nil, err
-		}
-		return object{"pcm": base64.StdEncoding.EncodeToString(pcm)}, nil
+		return s.synthesizeVoice(ctx, a, input)
 	case "audio":
 		data, err := base64.StdEncoding.DecodeString(str(input["audio"]))
 		if err != nil || !validOpeningWAV(data) {

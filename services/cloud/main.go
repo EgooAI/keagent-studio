@@ -40,6 +40,7 @@ type server struct {
 	nonces  sync.Map
 	jwt     *jwtVerifier
 	origins []string
+	speech  func(context.Context, string, object, string) ([]byte, error)
 }
 type fault struct {
 	status  int
@@ -158,6 +159,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/panorama/audio" {
 		limit = 2 << 20
 	}
+	if r.URL.Path == "/v1/voices/create" {
+		limit = 14 << 20
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		respond(w, nil, fail(413, "请求过大"))
@@ -195,6 +199,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/panorama/") {
 		v, e := s.panorama(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/panorama/"), body)
+		respond(w, v, e)
+		return
+	}
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/voices/") {
+		v, e := s.voices(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/voices/"), body)
 		respond(w, v, e)
 		return
 	}
@@ -838,6 +847,9 @@ func main() {
 	}
 	if _, err = db.Exec(avatarSchema); err != nil {
 		log.Fatal("panorama migration failed")
+	}
+	if _, err = db.Exec(voiceSchema); err != nil {
+		log.Fatal("voice migration failed")
 	}
 	verifier, err := newJWTVerifier()
 	if err != nil {

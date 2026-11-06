@@ -150,7 +150,10 @@ export function PanoramaStudio() {
   const changeLanguage = (language: PanoramaConfig["language"]) => {
     patch({
       language,
-      voice: caps?.voices.find((v) => v.language === language)?.name || "",
+      voice:
+        config?.ttsProvider === "system"
+          ? caps?.voices.find((v) => v.language === language)?.name || ""
+          : config?.voice || "",
       ...(language === "en-US"
         ? {
             openingTemplate: "Let us take a look at {title}. {facts}",

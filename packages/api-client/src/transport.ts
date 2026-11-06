@@ -126,6 +126,16 @@ export async function authRequest<T>(
 ): Promise<T> {
   if (window.desktop?.request)
     return (await window.desktop.request(method, args)) as T;
+  if (
+    [
+      "voice.list",
+      "voice.create",
+      "voice.refresh",
+      "voice.preview",
+      "voice.remove",
+    ].includes(method)
+  )
+    return serviceRequest<T>(`/v1/voices/${method.slice(6)}`, args[0] ?? {});
   if (method === "session") return serviceRequest<T>("/v1/session");
   if (method === "login" || method === "logout") {
     clearAccessToken();

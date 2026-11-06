@@ -33,7 +33,9 @@ function registerAuth() {
     async (operation, payload, signal) => {
       signal?.throwIfAborted();
       const result = await request(
-        `/v1/panorama/${operation}`,
+        operation === "voice-list"
+          ? "/v1/voices/list"
+          : `/v1/panorama/${operation}`,
         payload,
         true,
         signal,
@@ -221,7 +223,8 @@ function registerAuth() {
       !trusted ||
       event.senderFrame !== event.sender.mainFrame ||
       !Array.isArray(args) ||
-      JSON.stringify(args).length > 1048576
+      JSON.stringify(args).length >
+        (method === "voice.create" ? 14 * 1024 * 1024 : 1048576)
     )
       throw new Error("非法桌面请求");
     if (method === "login") {
@@ -262,6 +265,18 @@ function registerAuth() {
       return (await request("/v1/session")).data;
     }
     if (!token) throw new Error("请重新登录");
+    if (
+      [
+        "voice.list",
+        "voice.create",
+        "voice.refresh",
+        "voice.preview",
+        "voice.remove",
+      ].includes(method)
+    ) {
+      return (await request(`/v1/voices/${method.slice(6)}`, args[0] || {}))
+        .data;
+    }
     if (typeof method === "string" && method.startsWith("panorama.")) {
       const generation = identityGeneration;
       const identity = (await request("/v1/session")).data;

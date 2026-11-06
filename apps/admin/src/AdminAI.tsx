@@ -12,6 +12,8 @@ const configLabels: Record<string, string> = {
   VOLC_TTS_API_KEY: "火山配音服务密钥",
   VOLC_TTS_RESOURCE_ID: "配音服务资源编号",
   VOLC_TTS_SPEAKER: "配音音色编号",
+  VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
+  VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻合成资源编号",
   VOLC_ACCESS_KEY_ID: "火山访问密钥编号",
   VOLC_SECRET_ACCESS_KEY: "火山访问密钥",
   VOLC_AVATAR_RESOURCE_ID: "数字人资源编号",

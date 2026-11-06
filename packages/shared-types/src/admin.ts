@@ -67,7 +67,7 @@ export interface AdminAudit {
   details: Record<string, string>;
 }
 export interface AdminAIService {
-  id: "script" | "tts" | "avatar";
+  id: "script" | "tts" | "avatar" | "voice-clone";
   label: string;
   purpose: string;
   provider: string;

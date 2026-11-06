@@ -11,6 +11,8 @@ import type {
   PanoramaCapabilities,
   PanoramaConfig,
 } from "@keagent/shared-types";
+import { Link } from "react-router-dom";
+import { useVoiceLibrary } from "../lib/voiceLibrary";
 export function PanoramaSettings({
   caps,
   config,
@@ -26,6 +28,9 @@ export function PanoramaSettings({
   changeLanguage: (language: PanoramaConfig["language"]) => void;
   invalidate: () => void;
 }) {
+  const library = useVoiceLibrary();
+  const personalVoices =
+    library.data?.voices.filter((v) => v.status === "ready") || [];
   return (
     <>
       {" "}
@@ -91,8 +96,14 @@ export function PanoramaSettings({
               { value: "system", label: "Windows 本机配音" },
               {
                 value: "volcengine",
-                label: caps.volcTts ? "火山引擎 TTS" : "火山引擎 TTS（待配置）",
+                label: caps.volcTts ? "云端系统音色" : "云端系统音色（待配置）",
                 disabled: !caps.volcTts,
+              },
+              {
+                value: "personal",
+                label: "我的专属音色",
+                disabled:
+                  !library.data?.cloneEnabled || personalVoices.length === 0,
               },
             ]}
             onChange={(ttsProvider) =>
@@ -102,13 +113,15 @@ export function PanoramaSettings({
                   ttsProvider === "system"
                     ? caps.voices.find((v) => v.language === config.language)
                         ?.name || ""
-                    : caps.volcSpeaker,
+                    : ttsProvider === "personal"
+                      ? personalVoices[0]?.id || ""
+                      : caps.volcSpeaker,
               })
             }
           />
         </Form.Item>
         <Form.Item
-          label={config.ttsProvider === "system" ? "人声" : "火山音色 ID"}
+          label={config.ttsProvider === "personal" ? "本人音色" : "系统音色"}
         >
           {config.ttsProvider === "system" ? (
             <Select
@@ -119,11 +132,25 @@ export function PanoramaSettings({
                 .map((v) => ({ value: v.name, label: v.name }))}
               onChange={(voice) => patch({ voice })}
             />
+          ) : config.ttsProvider === "personal" ? (
+            <Select
+              value={config.voice || undefined}
+              placeholder="请选择已就绪的本人音色"
+              options={personalVoices.map((v) => ({
+                value: v.id,
+                label: v.name,
+              }))}
+              onChange={(voice) => patch({ voice })}
+            />
           ) : (
-            <Input
-              value={config.voice}
-              maxLength={150}
-              onChange={(e) => patch({ voice: e.target.value })}
+            <Select
+              value={config.voice || undefined}
+              options={
+                caps.volcSpeaker
+                  ? [{ value: caps.volcSpeaker, label: "云端预设系统音色" }]
+                  : []
+              }
+              onChange={(voice) => patch({ voice })}
             />
           )}
         </Form.Item>
@@ -149,6 +176,17 @@ export function PanoramaSettings({
           </Form.Item>
         )}
       </div>
+      <p>
+        <Link to="/settings/voices">管理或上传我的声音</Link>
+        。本人音色首次用于合成可能启用供应商付费音色槽位。
+      </p>
+      {library.isError && (
+        <Alert
+          type="warning"
+          title="无法加载本人音色"
+          description={library.error.message}
+        />
+      )}
       {config.videoMode === "avatar" && !caps.volcAvatar && (
         <Alert
           type="warning"

@@ -6,7 +6,7 @@ export interface PanoramaConfig {
   sceneTemplate: string;
   closingTemplate: string;
   videoMode: "voiceover" | "avatar";
-  ttsProvider: "system" | "volcengine";
+  ttsProvider: "system" | "volcengine" | "personal";
   voice: string;
   rate: number;
   avatarId: string;

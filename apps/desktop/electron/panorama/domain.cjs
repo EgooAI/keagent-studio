@@ -81,7 +81,10 @@ function config(input) {
   );
   ensure(["zh-CN", "en-US"].includes(c.language), "请选择支持的语言");
   ensure(["template", "ai"].includes(c.scriptProvider), "文案生成方式无效");
-  ensure(["system", "volcengine"].includes(c.ttsProvider), "配音服务无效");
+  ensure(
+    ["system", "volcengine", "personal"].includes(c.ttsProvider),
+    "配音服务无效",
+  );
   ensure(["voiceover", "avatar"].includes(c.videoMode), "视频模板无效");
   for (const key of ["openingTemplate", "sceneTemplate", "closingTemplate"])
     c[key] = text(c[key], "文案模板", 1500);

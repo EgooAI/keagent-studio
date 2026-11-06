@@ -30,7 +30,8 @@ import {
   UserRound,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import { demoApi } from "@keagent/api-client";
+import { demoApi, isLive } from "@keagent/api-client";
+import { VoiceLibraryPanel } from "../components/VoiceLibrary";
 import { ThemeSettings } from "@keagent/theme";
 import type {
   AgentProfile,
@@ -668,7 +669,9 @@ export default function SettingsPage() {
         <div>
           <strong>使用本人素材，保留明确授权</strong>
           <p style={{ lineHeight: 1.8, color: "#667085", maxWidth: 640 }}>
-            声音和形象需要分别确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。正式服务接入时将展示对应用途、保存周期与撤回方式。
+            {isLive
+              ? "本人声音须确认授权后才会提交火山进行复刻；业务数据库只保存音色信息。移除本应用音色不会自动释放供应商槽位。人物形象上传仍为演示，平台账号与私信能力尚未接入。"
+              : "声音和形象需要分别确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
           </p>
         </div>
       </Space>
@@ -722,7 +725,11 @@ export default function SettingsPage() {
     { key: "theme", label: "主题设置", children: <ThemeSettings /> },
     { key: "account", label: "账号信息", children: accountSettings },
     { key: "profile", label: "经纪人资料", children: profileSettings },
-    { key: "voices", label: "声音与音色", children: voiceList },
+    {
+      key: "voices",
+      label: "声音与音色",
+      children: isLive ? <VoiceLibraryPanel /> : voiceList,
+    },
     { key: "avatars", label: "人物形象", children: avatarList },
     { key: "platforms", label: "平台账号", children: connections },
     { key: "defaults", label: "默认生成配置", children: defaultsSettings },

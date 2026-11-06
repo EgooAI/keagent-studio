@@ -88,7 +88,16 @@ func aiServices() []aiService {
 		}
 	}
 	avatar.setState(strings.TrimSpace(os.Getenv("VOLC_ACCESS_KEY_ID")) == "" && strings.TrimSpace(os.Getenv("VOLC_SECRET_ACCESS_KEY")) == "")
-	return []aiService{script, tts, avatar}
+	clone := aiService{ID: "voice-clone", Label: "声音复刻", Purpose: "用户上传录音创建个人音色，供全景讲解使用", Provider: "火山引擎", Model: cloneResource(), Endpoint: "https://openspeech.bytedance.com/api/v3/tts/voice_clone", Missing: []string{}, Issues: []string{}, Note: note}
+	clone.checkRequired("VOLC_TTS_API_KEY")
+	if os.Getenv("VOLC_VOICE_CLONE_ENABLED") != "true" {
+		clone.Missing = append(clone.Missing, "VOLC_VOICE_CLONE_ENABLED")
+	}
+	if !speechResourceID.MatchString(cloneResource()) {
+		clone.Issues = append(clone.Issues, "声音复刻资源编号格式无效")
+	}
+	clone.setState(strings.TrimSpace(os.Getenv("VOLC_TTS_API_KEY")) == "")
+	return []aiService{script, tts, avatar, clone}
 }
 
 func adminAIConfig() object {

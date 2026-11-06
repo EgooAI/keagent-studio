@@ -232,3 +232,4 @@ export const publishLabels: Record<PublishStatus, string> = {
   canceled: "已取消",
 };
 export type * from "./admin";
+export type * from "./voice";

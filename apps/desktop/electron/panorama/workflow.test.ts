@@ -58,6 +58,53 @@ function fixture() {
   return { workflow, owner, scenes, config };
 }
 describe("panorama domain", () => {
+  it("cancels a system-voice preview on logout before exposing its media URL", async () => {
+    const { workflow } = fixture();
+    let complete: (result: unknown) => void = () => {};
+    let signal: AbortSignal | undefined;
+    vi.spyOn(media, "synthesize").mockImplementation((...args: unknown[]) => {
+      signal = args[3] as AbortSignal;
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    });
+    const preview = workflow.handle("user-a", "preview-system", {
+      voice: "test",
+      language: "zh-CN",
+    });
+    await vi.waitFor(() => expect(media.synthesize).toHaveBeenCalled());
+    workflow.stop();
+    expect(signal?.aborted).toBe(true);
+    complete({ audio: "segment-example.wav" });
+    await expect(preview).rejects.toThrow();
+    expect(workflow.previews.size).toBe(0);
+  });
+  it("retries a temporary checkpoint sharing violation without removing the previous file", () => {
+    const { workflow, owner } = fixture();
+    const original = fs.renameSync;
+    const rename = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("temporary sharing violation"), {
+          code: "EPERM",
+        });
+      })
+      .mockImplementation(original);
+    workflow.persist(owner);
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(workflow.directory(owner), "workspace.json"),
+          "utf8",
+        ),
+      ).schemaVersion,
+    ).toBe(1);
+    rename.mockImplementation(() => {
+      throw Object.assign(new Error("disk failure"), { code: "EIO" });
+    });
+    expect(() => workflow.persist(owner)).toThrow("disk failure");
+  });
   it("uses verified facts and rejects unknown template variables", () => {
     const segments = domain.segments(
       property,
