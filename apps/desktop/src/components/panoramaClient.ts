@@ -1,11 +1,12 @@
 export async function request<T>(method: string, input?: unknown): Promise<T> {
-  if (!window.desktop) throw new Error("请在桌面客户端使用本机全景工作流");
+  if (!window.desktop) throw new Error("请在桌面客户端制作视频");
   return (await window.desktop.request(
     `panorama.${method}`,
     input === undefined ? [] : [input],
   )) as T;
 }
 export const stageNames = {
+  images: "正在处理房源图片",
   tts: "生成分段配音",
   avatar: "火山数字人开场",
   render: "渲染镜头与合成",

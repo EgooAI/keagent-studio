@@ -44,6 +44,7 @@ export interface PanoramaScene {
   yaw: number;
   direction?: 1 | -1;
   url?: string;
+  originalUrl?: string;
 }
 export interface PanoramaSegment {
   id: string;
@@ -62,6 +63,7 @@ export interface PanoramaProperty {
   sample?: boolean;
 }
 export interface PanoramaDraft {
+  confirmation?: "whole";
   templateVersion?: string;
   id: string;
   revision: number;
@@ -76,7 +78,8 @@ export interface PanoramaJob extends Omit<PanoramaDraft, "revision"> {
   draftId: string;
   draftRevision: number;
   status: "running" | "succeeded" | "failed" | "canceled";
-  stage: "tts" | "avatar" | "render" | "cover";
+  stage: "images" | "tts" | "avatar" | "render" | "cover";
+  confirmedAt?: string;
   progress: number;
   error?: string;
   videoUrl?: string;

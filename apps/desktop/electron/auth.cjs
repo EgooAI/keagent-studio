@@ -363,7 +363,13 @@ function registerAuth() {
       const generation = identityGeneration;
       const identity = (await request("/v1/session")).data;
       let property;
-      if (method === "panorama.generate") {
+      if (
+        [
+          "panorama.generate",
+          "panorama.prepare",
+          "panorama.property-import",
+        ].includes(method)
+      ) {
         if (args[0]?.propertyId === "panorama-cc0-sample")
           property = {
             id: "panorama-cc0-sample",

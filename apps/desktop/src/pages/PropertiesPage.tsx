@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Link,
   useNavigate,
@@ -43,6 +44,8 @@ import {
   formatPrice,
 } from "../components/common";
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
+import { request as productionRequest } from "../components/panoramaClient";
+import type { PanoramaScene } from "@keagent/shared-types";
 
 export default function PropertiesPage() {
   const { data } = useWorkspace();
@@ -454,7 +457,37 @@ export function PropertyDetailPage() {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [form] = Form.useForm();
+  const [importing, setImporting] = useState(false);
+  const material = useQuery({
+    queryKey: ["property-production-material", propertyId],
+    enabled: !!window.desktop && !!propertyId,
+    retry: false,
+    queryFn: () =>
+      productionRequest<{ scenes: PanoramaScene[] }>("source-restore", {
+        propertyId,
+      }),
+  });
   const property = data?.properties.find((p) => p.id === propertyId);
+  const addMaterial = async (kind: "photo" | "panorama") => {
+    setImporting(true);
+    try {
+      const value = await productionRequest<{ count: number }>(
+        "property-import",
+        { propertyId, kind },
+      );
+      await material.refetch();
+      if (value.count)
+        void message.success(
+          `已保存${value.count}张制作图片，可前往AI视频工厂制作`,
+        );
+    } catch (error) {
+      void message.error(
+        error instanceof Error ? error.message : "导入素材失败",
+      );
+    } finally {
+      setImporting(false);
+    }
+  };
   if (!data) return null;
   if (!property)
     return (
@@ -539,39 +572,66 @@ export function PropertyDetailPage() {
           <section className="panel detail-info">
             <h2>房源素材</h2>
             <p className="muted">
-              {property.videoCount} 段视频 · {property.images.length} 张示例图片
+              {material.data?.scenes.length || property.images.length}{" "}
+              张制作图片
             </p>
             <div className="asset-grid">
-              {property.images.map((image, i) => (
-                <img
-                  key={`${image}-${i}`}
-                  src={image}
-                  alt={`房源图片 ${i + 1}`}
-                />
-              ))}
+              {(material.data?.scenes.map((s) => s.url) || property.images).map(
+                (image, i) => (
+                  <img
+                    key={`${image}-${i}`}
+                    src={image}
+                    alt={`房源图片 ${i + 1}`}
+                  />
+                ),
+              )}
             </div>
-            <Upload
-              accept="image/*,video/*"
-              showUploadList={false}
-              beforeUpload={async (file) => {
-                if (file.size > 100 * 1024 * 1024) {
-                  message.error("单个演示文件最大100 MB");
+            {window.desktop ? (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Button
+                  icon={<Plus size={16} />}
+                  loading={importing}
+                  onClick={() => void addMaterial("photo")}
+                >
+                  添加房源照片
+                </Button>
+                <Button
+                  loading={importing}
+                  onClick={() => void addMaterial("panorama")}
+                >
+                  添加已有全景图
+                </Button>
+                <Button
+                  type="primary"
+                  onClick={() => navigate(`/studio?propertyId=${property.id}`)}
+                >
+                  制作视频
+                </Button>
+              </div>
+            ) : (
+              <Upload
+                accept="image/*,video/*"
+                showUploadList={false}
+                beforeUpload={async (file) => {
+                  if (file.size > 100 * 1024 * 1024) {
+                    message.error("单个演示文件最大100 MB");
+                    return false;
+                  }
+                  await demoApi.updateProperty(property.id, {
+                    videoCount:
+                      property.videoCount +
+                      (file.type.startsWith("video/") ? 1 : 0),
+                    importStatus: "ready",
+                  });
+                  message.info(
+                    `已登记 ${file.name} 的演示素材信息，文件未上传或保存`,
+                  );
                   return false;
-                }
-                await demoApi.updateProperty(property.id, {
-                  videoCount:
-                    property.videoCount +
-                    (file.type.startsWith("video/") ? 1 : 0),
-                  importStatus: "ready",
-                });
-                message.info(
-                  `已登记 ${file.name} 的演示素材信息，文件未上传或保存`,
-                );
-                return false;
-              }}
-            >
-              <Button icon={<Plus size={16} />}>添加演示素材</Button>
-            </Upload>
+                }}
+              >
+                <Button icon={<Plus size={16} />}>添加演示素材</Button>
+              </Upload>
+            )}
           </section>
           <section className="panel detail-info">
             <h2>关联生成任务</h2>

@@ -10,7 +10,14 @@ const methods = new Set([
   "image-refresh",
   "source-restore",
 ]);
-async function handle(workflow, owner, method, input, assertCurrent) {
+async function handle(
+  workflow,
+  owner,
+  method,
+  input,
+  assertCurrent,
+  parentSignal,
+) {
   const state = workflow.store(owner);
   if (method === "source-restore") {
     const saved = state.imports[input.propertyId];
@@ -29,7 +36,9 @@ async function handle(workflow, owner, method, input, assertCurrent) {
   domain.ensure(workflow.remote, "未连接云端素材服务");
   const controller = new AbortController();
   workflow.previews.add(controller);
-  const signal = controller.signal;
+  const signal = parentSignal
+    ? AbortSignal.any([controller.signal, parentSignal])
+    : controller.signal;
   try {
     if (method === "beike-import") {
       const result = await workflow.remote("beike-import", input, signal);
@@ -153,7 +162,8 @@ async function handle(workflow, owner, method, input, assertCurrent) {
     const tasks = state.imageTasks.filter(
       (t) =>
         ["submitting", "PENDING", "RUNNING", "SUCCEEDED"].includes(t.status) &&
-        !t.result,
+        !t.result &&
+        (!Array.isArray(input.sceneIds) || input.sceneIds.includes(t.sceneId)),
     );
     for (const task of tasks.slice(0, 3)) {
       try {

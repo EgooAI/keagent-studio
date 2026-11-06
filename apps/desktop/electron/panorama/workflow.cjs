@@ -8,6 +8,7 @@ const media = require("./media.cjs");
 const providers = require("./providers.cjs");
 const sources = require("../production/sources.cjs");
 const templateLibrary = require("../production/templates.cjs");
+const factory = require("../production/factory.cjs");
 const uuid = /^[a-f0-9-]{36}$/;
 const assetName = /^[a-f0-9]{64}\.(jpg|png)$/;
 
@@ -104,6 +105,10 @@ class PanoramaWorkflow {
         scenes: d.scenes.map((s) => ({
           ...s,
           url: this.url(owner, `assets/${s.asset}`),
+          originalUrl:
+            s.kind === "expanded" && assetName.test(s.sourceAsset || "")
+              ? this.url(owner, `assets/${s.sourceAsset}`)
+              : undefined,
         })),
       })),
       jobs: state.jobs.slice(0, 100).map((job) => ({
@@ -368,6 +373,14 @@ class PanoramaWorkflow {
       }
     }
     if (method === "sample") return this.sample(owner);
+    if (method === "property-import")
+      return factory.importProperty(
+        this,
+        owner,
+        property,
+        input,
+        assertCurrent,
+      );
     if (method === "import") {
       const files = await this.dialogs.open();
       assertCurrent();
@@ -383,73 +396,28 @@ class PanoramaWorkflow {
         );
       return results;
     }
-    if (method === "generate") {
-      property ??= state.properties.find((p) => p.id === input.propertyId);
-      domain.ensure(
-        property && typeof property.title === "string",
-        "房源不存在，请重新选择",
+    if (method === "generate")
+      return this.createDraft(owner, input, property, false, assertCurrent);
+    if (method === "prepare") {
+      const key =
+        owner +
+        ":prepare:" +
+        domain.hash({ propertyId: input.propertyId, config: input.config });
+      const previous = this.sourceFlight.get(key);
+      if (previous) return previous;
+      const pending = this.createDraft(
+        owner,
+        input,
+        property,
+        true,
+        assertCurrent,
       );
-      const c = domain.config(input.config, state.templates);
-      await this.requireAvatar(c);
-      assertCurrent();
-      domain.ensure(
-        c.scriptProvider !== "ai" || this.remote,
-        "未连接云端 AI 服务",
-      );
-      const scenes = this.scenes(owner, input.scenes);
-      for (const key of ["leadSceneId", "coverSceneId"])
-        domain.ensure(
-          !c[key] || scenes.some((s) => s.id === c[key]),
-          "开场或封面空间已移除，请重新选择",
-        );
-      domain.ensure(
-        scenes.every((s) =>
-          c.materialMode === "expand"
-            ? s.kind === "expanded"
-            : s.kind === "panorama",
-        ),
-        "素材与所选制作方式不一致",
-      );
-      const expected = domain.segments(property, scenes, c);
-      const segments =
-        c.scriptProvider === "ai"
-          ? domain.validateSegments(
-              await this.remote(
-                "script",
-                {
-                  property,
-                  scenes: scenes.map(({ room, description }) => ({
-                    room,
-                    description,
-                  })),
-                  template: c,
-                  language: c.language,
-                  segments: expected,
-                },
-                AbortSignal.timeout(65000),
-              ),
-              expected,
-            )
-          : expected;
-      assertCurrent();
-      const draft = {
-        id: crypto.randomUUID(),
-        revision: 1,
-        property: structuredClone(property),
-        sample: property.sample === true,
-        scenes,
-        config: c,
-        templateVersion: String(
-          state.templates.find((t) => t.id === c.templateId)?.version ||
-            domain.templates.find((t) => t.id === c.templateId)?.version ||
-            "1",
-        ),
-        segments,
-        createdAt: new Date().toISOString(),
-      };
-      state.drafts.unshift(draft);
-      this.persist(owner);
-      return this.view(owner, { ...state, drafts: [draft] }).drafts[0];
+      this.sourceFlight.set(key, pending);
+      try {
+        return await pending;
+      } finally {
+        this.sourceFlight.delete(key);
+      }
     }
     if (method === "save") {
       const draft = this.draft(owner, input.id, input.revision);
@@ -487,7 +455,11 @@ class PanoramaWorkflow {
           job.status !== "canceled",
       );
       if (existing) return existing;
-      await this.preflight(draft, owner);
+      domain.ensure(
+        draft.confirmation !== "whole" || input.confirmed === true,
+        "请先确认整条视频的文案",
+      );
+      await this.preflight(draft, owner, draft.confirmation === "whole");
       this.draft(owner, input.id, input.revision);
       assertCurrent();
       const avatarKey = domain.hash([
@@ -509,12 +481,19 @@ class PanoramaWorkflow {
         draftRevision: draft.revision,
         property: structuredClone(draft.property),
         sample: draft.sample,
+        confirmation: draft.confirmation,
+        confirmedAt:
+          draft.confirmation === "whole" ? new Date().toISOString() : undefined,
         config: structuredClone(draft.config),
         scenes: structuredClone(draft.scenes),
         segments: structuredClone(draft.segments),
         templateVersion: draft.templateVersion,
         status: "running",
-        stage: "tts",
+        stage:
+          draft.confirmation === "whole" &&
+          draft.config.materialMode === "expand"
+            ? "images"
+            : "tts",
         progress: 0,
         createdAt: new Date().toISOString(),
         avatar:
@@ -546,7 +525,11 @@ class PanoramaWorkflow {
         !job.avatar?.submitting || job.avatar.taskId,
         "数字人提交结果未知，已停止自动重提；请先在火山控制台核对，避免重复扣费",
       );
-      await this.preflight(job, owner);
+      await this.preflight(
+        job,
+        owner,
+        job.confirmation === "whole" && !!job.confirmedAt,
+      );
       assertCurrent();
       job.status = "running";
       job.error = undefined;
@@ -567,9 +550,102 @@ class PanoramaWorkflow {
     }
     throw new Error("未知全景工作流操作");
   }
-  async preflight(draft, owner) {
+  async createDraft(owner, input, property, preparing, assertCurrent) {
+    const state = this.store(owner);
+    const controller = new AbortController();
+    this.previews.add(controller);
+    try {
+      property ??= state.properties.find((p) => p.id === input.propertyId);
+      domain.ensure(
+        property && typeof property.title === "string",
+        "房源不存在，请重新选择",
+      );
+      const c = domain.config(input.config, state.templates);
+      await this.requireAvatar(c);
+      assertCurrent();
+      domain.ensure(
+        c.scriptProvider !== "ai" || this.remote,
+        "未连接云端 AI 服务",
+      );
+      const scenes = this.scenes(
+        owner,
+        preparing
+          ? await factory.load(this, owner, property, assertCurrent)
+          : input.scenes,
+        preparing,
+      );
+      if (preparing) {
+        c.materialMode = scenes.every((s) => s.kind === "panorama")
+          ? "panorama"
+          : "expand";
+        c.leadSceneId = "";
+        c.coverSceneId = "";
+        c.coverTitle = "";
+      }
+      for (const key of ["leadSceneId", "coverSceneId"])
+        domain.ensure(
+          !c[key] || scenes.some((s) => s.id === c[key]),
+          "开场或封面空间已移除，请重新选择",
+        );
+      domain.ensure(
+        scenes.every((s) =>
+          c.materialMode === "expand"
+            ? s.kind === "expanded" || (preparing && s.kind === "photo")
+            : s.kind === "panorama",
+        ),
+        "素材与所选制作方式不一致",
+      );
+      const expected = domain.segments(property, scenes, c);
+      const segments =
+        c.scriptProvider === "ai"
+          ? domain.validateSegments(
+              await this.remote(
+                "script",
+                {
+                  property,
+                  scenes: scenes.map(({ room, description }) => ({
+                    room,
+                    description,
+                  })),
+                  template: c,
+                  language: c.language,
+                  segments: expected,
+                },
+                AbortSignal.any([
+                  controller.signal,
+                  AbortSignal.timeout(65000),
+                ]),
+              ),
+              expected,
+            )
+          : expected;
+      assertCurrent();
+      const draft = {
+        id: crypto.randomUUID(),
+        revision: 1,
+        property: structuredClone(property),
+        sample: property.sample === true,
+        confirmation: preparing ? "whole" : undefined,
+        scenes,
+        config: c,
+        templateVersion: String(
+          state.templates.find((t) => t.id === c.templateId)?.version ||
+            domain.templates.find((t) => t.id === c.templateId)?.version ||
+            "1",
+        ),
+        segments,
+        createdAt: new Date().toISOString(),
+      };
+      state.drafts.unshift(draft);
+      this.persist(owner);
+      return this.view(owner, { ...state, drafts: [draft] }).drafts[0];
+    } finally {
+      this.previews.delete(controller);
+    }
+  }
+  async preflight(draft, owner, pendingImages = false) {
     if (owner) {
-      this.scenes(owner, draft.scenes);
+      this.scenes(owner, draft.scenes, pendingImages);
       for (const scene of draft.scenes) {
         const bytes = await fsp.readFile(
           path.join(this.directory(owner), "assets", scene.asset),
@@ -585,6 +661,12 @@ class PanoramaWorkflow {
       "本机正在生成视频，请等待完成后再提交",
     );
     const caps = await this.capabilities();
+    domain.ensure(
+      !pendingImages ||
+        !draft.scenes.some((s) => s.kind === "photo") ||
+        caps.imageExpansion,
+      "图片处理服务尚未配置，请联系管理员",
+    );
     domain.ensure(
       this.active.size === 0,
       "本机正在生成视频，请等待完成后再提交",
@@ -662,9 +744,23 @@ class PanoramaWorkflow {
     const promise = (async () => {
       await fsp.mkdir(cache, { recursive: true });
       await fsp.mkdir(jobDir, { recursive: true });
+      const automaticImages =
+        job.confirmation === "whole" && job.config.materialMode === "expand";
+      if (automaticImages) {
+        update("images", 0);
+        await factory.expand(this, owner, job, signal, (progress) =>
+          update("images", progress * 25),
+        );
+        this.scenes(owner, job.scenes);
+      }
       const audio = [];
       for (const [index, segment] of job.segments.entries()) {
-        update("tts", (index / job.segments.length) * 30);
+        update(
+          "tts",
+          automaticImages
+            ? 25 + (index / job.segments.length) * 15
+            : (index / job.segments.length) * 30,
+        );
         audio.push(
           await media.synthesize(
             segment,

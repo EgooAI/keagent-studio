@@ -9,80 +9,38 @@ test.beforeEach(async ({ page }) => {
   ).toBeVisible();
 });
 
-test("房源选择跨筛选保留，取消不覆盖确认值，刷新恢复草稿", async ({ page }) => {
-  await page.getByRole("link", { name: /^AI 视频工厂/ }).click();
-  await page.getByRole("button", { name: /选择要生成视频的房源/ }).click();
-  const dialog = page.getByRole("dialog", { name: "选择房源", exact: true });
-  await dialog
-    .getByRole("checkbox", { name: "仁恒滨江园", exact: true })
-    .check();
-  await dialog
-    .getByRole("checkbox", { name: "万科翡翠滨江", exact: true })
-    .check();
-  await dialog.getByRole("tab", { name: /^已发布过/ }).click();
+test("视频工厂只提供房源和模板选择，网页提示使用桌面客户端", async ({
+  page,
+}) => {
+  await page.goto("/#/studio");
   await expect(
-    dialog.getByRole("checkbox", { name: "仁恒滨江园", exact: true }),
-  ).toBeChecked();
-  await dialog.getByRole("button", { name: /确认选择（2）/ }).click();
-  await page.getByRole("button", { name: /已选择 2 套房源/ }).click();
-  await dialog.getByRole("button", { name: "清空选择", exact: true }).click();
-  await dialog.getByRole("button", { name: /^取\s*消$/ }).click();
-  await expect(
-    page.getByRole("button", { name: /已选择 2 套房源/ }),
+    page.getByRole("heading", { name: "AI 视频工厂", exact: true }),
   ).toBeVisible();
-  await page.reload();
   await expect(
-    page.getByRole("button", { name: /已选择 2 套房源/ }),
+    page.getByRole("combobox", { name: "选择房源", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "选择视频模板", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("请在桌面客户端制作视频", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("tab")).toHaveCount(0);
+  await expect(page.locator(".template-layout")).toHaveCount(0);
 });
 
-test("多房源独立生成、人工审核、成片与多平台草稿闭环", async ({ page }) => {
+test("未连接桌面客户端不会生成模拟成果，仍可管理房源", async ({ page }) => {
   await page.goto("/#/studio");
-  await page.getByRole("button", { name: /选择要生成视频的房源/ }).click();
-  const dialog = page.getByRole("dialog", { name: "选择房源", exact: true });
-  for (const name of ["仁恒滨江园", "万科翡翠滨江", "绿地海珀黄浦"])
-    await dialog.getByRole("checkbox", { name, exact: true }).check();
-  await dialog.getByRole("button", { name: /确认选择（3）/ }).click();
-  await page.getByRole("button", { name: "创建生成任务", exact: true }).click();
-  await expect(page).toHaveURL(/studio\/batches\//);
-  await expect(page.locator(".task-list tbody tr[data-row-key]")).toHaveCount(
-    3,
-  );
-  await page
-    .getByRole("button", { name: "审核文案", exact: true })
-    .first()
-    .click({ timeout: 30000 });
-  await page
-    .getByLabel("编辑口播内容")
-    .fill("这是人工确认后的模拟房源文案，请以实际核验资料为准。");
-  await page
-    .getByRole("button", { name: "审核通过并继续", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: /查看生成成果/ })
-    .click({ timeout: 40000 });
-  await expect(page).toHaveURL(/publish\/task-/);
-  await expect(page.locator("video")).toBeVisible();
-  await page
-    .getByRole("button", { name: "模拟提交到抖音草稿", exact: true })
-    .click();
   await expect(
-    page.locator(".publish-records").getByText("平台草稿", { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("tab", { name: "小红书", exact: true }).click();
-  await page
-    .getByRole("checkbox", { name: "模拟提交结果未知", exact: true })
-    .check();
-  await page
-    .getByRole("button", { name: "模拟提交到小红书草稿", exact: true })
-    .click();
-  await page.getByRole("button", { name: "核对模拟结果", exact: true }).click();
+    page.getByRole("combobox", { name: "选择房源", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator("video")).toHaveCount(0);
   await expect(
-    page
-      .getByRole("tabpanel", { name: "小红书", exact: true })
-      .locator(".publish-records")
-      .getByText("平台草稿", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "确认文案，开始生成" }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "管理房源与素材", exact: true }).click();
+  await expect(page).toHaveURL(/properties/);
 });
 
 test("房源导入入口可操作，客户端不暴露后台入口", async ({ page }) => {
@@ -157,15 +115,13 @@ test("修改已完成文案后仍能查看历史成片与原发布记录", async
   ).toBeVisible();
 });
 
-test("1280桌面首屏可访问视频提交入口", async ({ page }) => {
+test("1280桌面首屏可访问房源和模板选择", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/#/studio");
-  const button = page.getByRole("button", {
-    name: "创建生成任务",
-    exact: true,
-  });
-  await expect(button).toBeVisible();
-  const box = await button.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.y + box!.height).toBeLessThanOrEqual(800);
+  for (const name of ["选择房源", "选择视频模板"]) {
+    const input = page.getByRole("combobox", { name, exact: true });
+    await expect(input).toBeVisible();
+    const box = await input.boundingBox();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(800);
+  }
 });

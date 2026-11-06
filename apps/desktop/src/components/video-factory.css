@@ -1,0 +1,327 @@
+.video-factory {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.factory-steps {
+  display: flex;
+  gap: 36px;
+  align-items: center;
+  padding: 8px 0 28px;
+}
+.factory-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #8793a6;
+  font-size: 13px;
+}
+.factory-step > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: #e9edf4;
+  border-radius: 50%;
+}
+.factory-step.current {
+  color: #7134df;
+  font-weight: 600;
+}
+.factory-step.current > span {
+  background: #ede4ff;
+}
+.factory-step.done {
+  color: #167d8d;
+}
+.factory-selection,
+.factory-script,
+.factory-finished {
+  padding: 30px;
+  margin-bottom: 24px;
+}
+.factory-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+.factory-section-heading h2 {
+  margin: 8px 0 0;
+  font-size: 22px;
+}
+.factory-section-heading p {
+  color: #738198;
+  margin: 10px 0 0;
+  line-height: 1.7;
+}
+.factory-section-heading > svg {
+  color: #9c78e2;
+}
+.factory-eyebrow {
+  color: #8852d5;
+  font-size: 12px;
+  font-weight: 600;
+}
+.factory-select-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 24px;
+}
+.factory-select-grid label {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+  color: #4d5d76;
+}
+.factory-select-grid .ant-select {
+  width: 100%;
+}
+.factory-selection-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 12px;
+}
+.factory-selection-footer p {
+  margin: 0;
+  color: #8390a4;
+}
+.factory-empty,
+.factory-waiting,
+.factory-rendering {
+  padding: 58px 32px;
+  margin-bottom: 24px;
+  text-align: center;
+}
+.factory-empty h2,
+.factory-waiting h2,
+.factory-rendering h2 {
+  margin: 22px 0 12px;
+  font-size: 22px;
+}
+.factory-empty p,
+.factory-waiting p,
+.factory-rendering p {
+  color: #7b899d;
+  line-height: 1.8;
+}
+.factory-empty-icon,
+.factory-render-icon {
+  display: grid;
+  place-items: center;
+  width: 82px;
+  height: 82px;
+  border-radius: 24px;
+  color: #8853da;
+  background: #f2ecfc;
+  margin: 0 auto 24px;
+}
+.factory-rendering .ant-progress {
+  display: block;
+  max-width: 520px;
+  margin: 28px auto 10px;
+}
+.factory-error {
+  padding: 28px;
+  margin-bottom: 24px;
+}
+.factory-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+.factory-bookend {
+  display: grid;
+  gap: 10px;
+  padding: 20px 22px;
+  background: #f7f8fb;
+  border-radius: 12px;
+  margin-bottom: 18px;
+  color: #52627b;
+  font-size: 13px;
+}
+.factory-bookend .ant-input {
+  background: white;
+}
+.factory-script-list {
+  display: grid;
+  gap: 18px;
+  margin: 22px 0;
+}
+.factory-image-script {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  border: 1px solid #e6eaf1;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.factory-photo {
+  position: relative;
+  background: #f0f2f6;
+  min-height: 180px;
+}
+.factory-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+.factory-photo > span {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #15243acc;
+  color: white;
+}
+.factory-image-copy {
+  padding: 22px;
+  min-width: 0;
+}
+.factory-image-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: #455571;
+}
+.factory-image-copy .ant-input {
+  border-color: transparent;
+  padding: 0;
+  line-height: 1.9;
+  box-shadow: none;
+  font-size: 14px;
+}
+.factory-image-copy .ant-input:hover,
+.factory-image-copy .ant-input:focus {
+  border-color: #dbc9fa;
+  padding: 4px 8px;
+}
+.factory-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  position: static;
+  padding: 20px 22px;
+  border: 1px solid #e8ddf8;
+  border-radius: 12px;
+  background: #fcfafff5;
+  margin-top: 24px;
+  z-index: 2;
+  backdrop-filter: blur(8px);
+}
+.factory-confirm p {
+  font-size: 12px;
+  color: #7e6d95;
+  margin: 0;
+}
+.factory-ai-note {
+  font-size: 12px;
+  color: #8690a1;
+  line-height: 1.8;
+  margin: 16px 0 0;
+}
+.factory-final-video {
+  display: block;
+  max-height: 580px;
+  width: 100%;
+  background: #172334;
+  border-radius: 12px;
+}
+.factory-result-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 26px;
+}
+.factory-publish-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-radius: 8px;
+  color: white;
+  background: #7134df;
+}
+.factory-publish-link:hover {
+  color: white;
+  background: #8853ea;
+}
+.factory-history-list {
+  display: grid;
+  gap: 12px;
+}
+.factory-history-item {
+  width: 100%;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid #e7ebf2;
+  border-radius: 10px;
+  background: white;
+  color: #31435f;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.factory-history-item > img {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.factory-history-item > span:not(.ant-tag) {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.factory-history-item strong {
+  overflow-wrap: anywhere;
+}
+.factory-history-item small {
+  color: #8190a6;
+}
+@media (max-width: 800px) {
+  .factory-selection,
+  .factory-script,
+  .factory-finished {
+    padding: 22px;
+  }
+  .factory-select-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .factory-image-script {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .factory-photo img {
+    height: 220px;
+    max-height: 220px;
+  }
+  .factory-steps {
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .factory-step {
+    font-size: 12px;
+  }
+  .factory-confirm {
+    position: static;
+  }
+  .factory-confirm .ant-btn {
+    width: 100%;
+  }
+}

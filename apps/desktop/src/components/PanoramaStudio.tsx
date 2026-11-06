@@ -1,48 +1,60 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   App,
   Button,
-  Collapse,
-  Form,
-  Popconfirm,
+  Drawer,
+  Empty,
+  Input,
   Select,
   Skeleton,
-  Space,
-  Table,
+  Spin,
+  Tag,
 } from "antd";
-import { ImagePlus, Play, Save } from "lucide-react";
+import {
+  Check,
+  Clapperboard,
+  Clock3,
+  FileText,
+  House,
+  Images,
+  Sparkles,
+  Video,
+} from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import type {
   PanoramaCapabilities,
   PanoramaConfig,
   PanoramaDraft,
   PanoramaJob,
-  PanoramaProperty,
-  PanoramaScene,
-  PanoramaSegment,
   PanoramaState,
 } from "@keagent/shared-types";
-import { useBlocker, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../lib/workspace";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { useAvatarLibrary } from "../lib/avatarLibrary";
 import { PageHeader } from "./common";
-import { PanoramaTemplateEditor } from "./PanoramaTemplateEditor";
-import { PanoramaResult } from "./PanoramaResult";
-import { PanoramaSources, type ProductionSourceSet } from "./PanoramaSources";
-import { request, stageNames, statusNames } from "./panoramaClient";
-import "./panorama.css";
+import { FactoryResult } from "./FactoryResult";
+import { request, statusNames } from "./panoramaClient";
+import "./video-factory.css";
+
+type Phase = "choose" | "preparing" | "ready" | "result" | "error";
+const descriptions: Record<string, string> = {
+  "standard-tour": "按图片顺序，完整介绍房源的各个空间。",
+  tour: "按图片顺序，完整介绍房源的各个空间。",
+  highlights: "围绕已核实的房源亮点，生成更有重点的介绍。",
+  concise: "用更精简的文字，快速展示这套房源。",
+};
 
 export function PanoramaStudio() {
-  const { data: workspace } = useWorkspace();
+  const workspace = useWorkspace();
   const voices = useVoiceLibrary();
   const avatars = useAvatarLibrary();
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const enabled = !!window.desktop;
-  const capabilities = useQuery({
+  const caps = useQuery({
     queryKey: ["panorama-capabilities"],
     queryFn: () => request<PanoramaCapabilities>("capabilities"),
     enabled,
@@ -55,558 +67,583 @@ export function PanoramaStudio() {
     refetchInterval: 2500,
     retry: false,
   });
-  const [config, setConfig] = useState<PanoramaConfig>();
-  const [property, setProperty] = useState<PanoramaProperty>();
-  const [scenes, setScenes] = useState<PanoramaScene[]>([]);
+  const [propertyId, setPropertyId] = useState(params.get("propertyId") || "");
+  const [templateId, setTemplateId] = useState("");
+  const [phase, setPhase] = useState<Phase>("choose");
   const [draft, setDraft] = useState<PanoramaDraft>();
-  const [segments, setSegments] = useState<PanoramaSegment[]>([]);
+  const [texts, setTexts] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [selectedJob, setSelectedJob] = useState<string>();
-  const caps = capabilities.data;
-  const unsaved = draft
-    ? JSON.stringify(config) !== JSON.stringify(draft.config) ||
-      JSON.stringify(segments) !== JSON.stringify(draft.segments)
-    : scenes.length > 0;
-  const blocker = useBlocker(unsaved);
+  const [jobId, setJobId] = useState("");
+  const [createdJob, setCreatedJob] = useState<PanoramaJob>();
+  const [history, setHistory] = useState(false);
+  const sequence = useRef(0);
+  const preparation = useRef<
+    | {
+        key: string;
+        promise: Promise<PanoramaDraft>;
+      }
+    | undefined
+  >(undefined);
+  const confirming = useRef(false);
+  const mounted = useRef(true);
   useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    const prompt = modal.confirm({
-      title: "制作内容尚未保存",
-      content: "离开会丢弃当前未保存的编辑。已保存草稿和执行中的任务会保留。",
-      okText: "放弃修改并离开",
-      cancelText: "继续编辑",
-      onOk: () => blocker.proceed(),
-      onCancel: () => blocker.reset(),
-    });
-    return () => prompt.destroy();
-  }, [blocker, modal]);
-  useEffect(() => {
-    if (!caps || config) return;
-    setConfig({
-      ...caps.defaultConfig,
-      ttsProvider: "volcengine",
-      voice: voices.data?.publicVoices?.[0]?.id || "",
-      avatarId: "",
-    });
-  }, [caps, config]);
-  useEffect(() => {
-    if (property || !workspace) return;
-    const incoming = workspace.properties.find(
-      (p) => p.id === params.get("propertyId"),
-    );
-    if (incoming) setProperty(incoming);
-  }, [workspace, params, property]);
-  useEffect(() => {
-    const prevent = (event: BeforeUnloadEvent) => {
-      if (unsaved) event.preventDefault();
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      sequence.current++;
     };
-    window.addEventListener("beforeunload", prevent);
-    return () => window.removeEventListener("beforeunload", prevent);
-  }, [unsaved]);
+  }, []);
+  const properties = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          [
+            ...(workspace.data?.properties || []),
+            ...(state.data?.properties || []),
+            ...(draft ? [draft.property] : []),
+          ].map((p) => [p.id, p]),
+        ).values(),
+      ),
+    [workspace.data, state.data?.properties, draft],
+  );
+  const property = properties.find((p) => p.id === propertyId);
+  const templates = useMemo(
+    () => [
+      ...(caps.data?.templates || [])
+        .filter((t) => t.id !== "tour")
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          description: descriptions[t.id] || "按房源图片顺序生成视频介绍。",
+          config: {
+            templateId: t.id,
+            openingTemplate: t.opening,
+            sceneTemplate: t.scene,
+            closingTemplate: t.closing,
+          } as Partial<PanoramaConfig>,
+        })),
+      ...(state.data?.templates || []).map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: "使用你保存的文字和画面风格。",
+        config: { ...t.config, templateId: t.id },
+      })),
+    ],
+    [caps.data, state.data?.templates],
+  );
+  const template = templates.find((t) => t.id === templateId);
+  const config = useMemo(() => {
+    if (!caps.data || !template) return undefined;
+    const value = { ...caps.data.defaultConfig, ...template.config };
+    const preferred = workspace.data?.profile.defaults.voiceId;
+    const own =
+      voices.data?.voices.filter(
+        (v) => v.status === "ready" && v.language === value.language,
+      ) || [];
+    const publicVoices =
+      voices.data?.publicVoices.filter((v) => v.language === value.language) ||
+      [];
+    const personal =
+      own.find((v) => v.id === preferred) ||
+      (value.ttsProvider === "personal" ? own[0] : undefined);
+    const publicVoice =
+      publicVoices.find((v) => v.id === preferred) || publicVoices[0];
+    value.ttsProvider = caps.data.managedVoices
+      ? personal
+        ? "personal"
+        : "volcengine"
+      : "system";
+    value.voice =
+      personal?.id ||
+      publicVoice?.id ||
+      (!caps.data.managedVoices
+        ? caps.data.voices.find((v) => v.language === value.language)?.name
+        : "") ||
+      "";
+    value.avatarId =
+      avatars.data?.avatars.find(
+        (a) =>
+          a.id === workspace.data?.profile.defaults.avatarId &&
+          a.status === "ready",
+      )?.id ||
+      avatars.data?.avatars.find((a) => a.status === "ready")?.id ||
+      "";
+    value.scriptProvider = caps.data.ai ? "ai" : "template";
+    return value;
+  }, [
+    caps.data,
+    template,
+    voices.data,
+    avatars.data,
+    workspace.data?.profile.defaults,
+  ]);
+  const job = state.data?.jobs.find((j) => j.id === jobId) || createdJob;
+  const running = state.data?.jobs.find((j) => j.status === "running");
+  useEffect(() => {
+    if (running && !jobId && phase === "choose" && !propertyId) {
+      setJobId(running.id);
+      setPhase("result");
+    }
+  }, [running, jobId, phase, propertyId]);
+  useEffect(() => {
+    if (!enabled || !property || !config || phase !== "choose") return;
+    const token = ++sequence.current;
+    setPhase("preparing");
+    setError("");
+    const key = JSON.stringify({ propertyId: property.id, config });
+    if (!preparation.current || preparation.current.key !== key)
+      preparation.current = {
+        key,
+        promise: request<PanoramaDraft>("prepare", {
+          propertyId: property.id,
+          config,
+        }),
+      };
+    void preparation.current.promise
+      .then((value) => {
+        if (!mounted.current || sequence.current !== token) return;
+        setDraft(value);
+        setTexts(Object.fromEntries(value.segments.map((s) => [s.id, s.text])));
+        setPhase("ready");
+        void queryClient.invalidateQueries({ queryKey: ["panorama-state"] });
+      })
+      .catch((cause) => {
+        if (!mounted.current || sequence.current !== token) return;
+        setError(
+          cause instanceof Error ? cause.message : "文案准备失败，请重试",
+        );
+        setPhase("error");
+        if (preparation.current?.key === key) preparation.current = undefined;
+      });
+  }, [enabled, property, config, phase, queryClient]);
+  const reset = (nextProperty = propertyId, nextTemplate = templateId) => {
+    sequence.current++;
+    preparation.current = undefined;
+    setPropertyId(nextProperty);
+    setTemplateId(nextTemplate);
+    setDraft(undefined);
+    setTexts({});
+    setJobId("");
+    setCreatedJob(undefined);
+    setError("");
+    setPhase("choose");
+  };
   const act = async (action: () => Promise<void>) => {
     setBusy(true);
     try {
       await action();
       await queryClient.invalidateQueries({ queryKey: ["panorama-state"] });
-    } catch (error) {
+    } catch (cause) {
       void message.error(
-        error instanceof Error ? error.message : "操作失败，请重试",
+        cause instanceof Error ? cause.message : "操作失败，请重试",
       );
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
-  const restore = (value: PanoramaDraft) => {
-    setDraft(value);
-    setConfig(
-      value.config.ttsProvider === "system"
-        ? { ...value.config, ttsProvider: "volcengine", voice: "" }
-        : value.config,
-    );
-    setProperty(value.property);
-    setScenes(value.scenes);
-    setSegments(value.segments);
-  };
-  const patch = (value: Partial<PanoramaConfig>) =>
-    setConfig((c) => (c ? { ...c, ...value } : c));
-  const editScene = (id: string, value: Partial<PanoramaScene>) => {
-    setScenes((list) =>
-      list.map((s) => (s.id === id ? { ...s, ...value } : s)),
-    );
-    setDraft(undefined);
-    setSegments([]);
-  };
-  const loadSources = (value: ProductionSourceSet) => {
-    setProperty(value.property);
-    setScenes(value.scenes);
-    patch({
-      materialMode: value.materialMode,
-      leadSceneId: "",
-      coverSceneId: "",
-      coverTitle: "",
-    });
-    setDraft(undefined);
-    setSegments([]);
-  };
-  const changeTemplate = (id: string) => {
-    const personal = state.data?.templates?.find((t) => t.id === id);
-    if (personal) {
-      patch({ ...personal.config, templateId: personal.id });
-      setDraft(undefined);
-      setSegments([]);
-      return;
-    }
-    const template = caps?.templates.find((t) => t.id === id);
-    if (!template) return;
-    patch({
-      templateId: id,
-      openingTemplate: template.opening,
-      sceneTemplate: template.scene,
-      closingTemplate: template.closing,
-    });
-    setDraft(undefined);
-    setSegments([]);
-  };
-  const changeLanguage = (language: PanoramaConfig["language"]) => {
-    patch({
-      language,
-      voice:
-        config?.ttsProvider === "system"
-          ? caps?.voices.find((v) => v.language === language)?.name || ""
-          : config?.voice || "",
-      ...(language === "en-US"
-        ? {
-            openingTemplate: "Let us take a look at {title}. {facts}",
-            sceneTemplate: "This is the {room}. {description}",
-            closingTemplate:
-              "Please contact your agent to arrange an in-person viewing.",
-          }
-        : {
-            openingTemplate: (
-              caps!.templates.find((t) => t.id === config!.templateId) ||
-              caps!.templates[0]
-            ).opening,
-            sceneTemplate: (
-              caps!.templates.find((t) => t.id === config!.templateId) ||
-              caps!.templates[0]
-            ).scene,
-            closingTemplate: (
-              caps!.templates.find((t) => t.id === config!.templateId) ||
-              caps!.templates[0]
-            ).closing,
-          }),
-    });
-    setDraft(undefined);
-    setSegments([]);
-  };
-  const generate = () =>
-    act(async () => {
-      const value = await request<PanoramaDraft>("generate", {
-        propertyId: property?.id,
-        scenes,
-        config,
+  const confirm = async () => {
+    if (!draft || confirming.current) return;
+    confirming.current = true;
+    await act(async () => {
+      const resolvedConfig =
+        config && config.language === draft.config.language
+          ? {
+              ...draft.config,
+              voice: config.voice,
+              ttsProvider: config.ttsProvider,
+              avatarId: config.avatarId,
+            }
+          : draft.config;
+      const changed =
+        draft.segments.some((s) => texts[s.id] !== s.text) ||
+        JSON.stringify(resolvedConfig) !== JSON.stringify(draft.config);
+      const saved = changed
+        ? await request<PanoramaDraft>("save", {
+            id: draft.id,
+            revision: draft.revision,
+            config: resolvedConfig,
+            segments: draft.segments.map((s) => ({ ...s, text: texts[s.id] })),
+          })
+        : draft;
+      setDraft(saved);
+      const value = await request<PanoramaJob>("start", {
+        id: saved.id,
+        revision: saved.revision,
+        confirmed: true,
       });
-      restore(value);
-      void message.success("已生成分段文案，请核对房源事实和空间对应关系");
+      setCreatedJob(value);
+      setJobId(value.id);
+      setPhase("result");
     });
-  const save = async () => {
-    if (!draft) throw new Error("请先生成分段文案");
-    const value = await request<PanoramaDraft>("save", {
-      id: draft.id,
-      revision: draft.revision,
-      segments,
-      config,
-    });
-    restore(value);
-    return value;
+    confirming.current = false;
   };
-  const job =
-    state.data?.jobs.find((j) => j.id === selectedJob) || state.data?.jobs[0];
-  const hasRunning = state.data?.jobs.some((j) => j.status === "running");
-  const dirty =
-    !!draft &&
-    (JSON.stringify(config) !== JSON.stringify(draft.config) ||
-      JSON.stringify(segments) !== JSON.stringify(draft.segments));
-  const invalidate = () => {
-    setDraft(undefined);
-    setSegments([]);
+  const resume = (value: PanoramaDraft) => {
+    sequence.current++;
+    setPropertyId(value.property.id);
+    setTemplateId(value.config.templateId);
+    setDraft(value);
+    setTexts(Object.fromEntries(value.segments.map((s) => [s.id, s.text])));
+    setPhase("ready");
+    setHistory(false);
+    setError("");
   };
-  const replaceScenes = (next: PanoramaScene[]) => {
-    setScenes(next);
-    patch({
-      leadSceneId: next.some((s) => s.id === config?.leadSceneId)
-        ? config?.leadSceneId
-        : "",
-      coverSceneId: next.some((s) => s.id === config?.coverSceneId)
-        ? config?.coverSceneId
-        : "",
-    });
-    invalidate();
-  };
-  const unavailable =
-    !property ||
-    !scenes.length ||
-    scenes.some(
-      (s) => s.kind === "photo" || (s.kind === "expanded" && !s.approved),
-    ) ||
-    (config?.videoMode === "avatar" &&
-      !avatars.data?.avatars.some(
-        (a) => a.id === config.avatarId && a.status === "ready",
-      ));
+  const waiting = phase === "preparing" || busy;
+  const step = phase === "result" ? 2 : phase === "ready" ? 1 : 0;
+  const readyConfig = draft?.config || config;
+  const voiceMissing = !!readyConfig && !(config?.voice || readyConfig.voice);
+  const runtimeError = caps.error || state.error || workspace.error;
   return (
-    <>
+    <div className="video-factory">
       <PageHeader
-        title="房源视频工作流"
-        description="整理素材 → 套用模板 → 逐段审核 → 预览出片。有全景使用全景，普通照片先扩图。"
+        title="AI 视频工厂"
+        description="选好房源和模板，确认一次文案，等待视频完成。"
+        actions={
+          <Button icon={<Clock3 size={16} />} onClick={() => setHistory(true)}>
+            我的视频
+          </Button>
+        }
       />
-      {!enabled ? (
+      <div className="factory-steps" aria-label="视频制作流程">
+        {[
+          { icon: House, label: "选择房源和模板" },
+          { icon: FileText, label: "确认文案" },
+          { icon: Video, label: "生成视频" },
+        ].map((item, index) => (
+          <div
+            className={`factory-step ${step === index ? "current" : step > index ? "done" : ""}`}
+            key={item.label}
+          >
+            <span>
+              {step > index ? <Check size={17} /> : <item.icon size={17} />}
+            </span>
+            {item.label}
+          </div>
+        ))}
+      </div>
+      {!enabled && (
         <Alert
           type="info"
           showIcon
           title="请在桌面客户端制作视频"
-          description="此流程需要读取本机素材、生成配音并调用 FFmpeg。"
+          description="这里会使用房源的真实图片制作视频。"
         />
+      )}
+      {runtimeError && (
+        <Alert
+          type="error"
+          title="暂时无法加载创作资料"
+          description={runtimeError.message}
+          action={
+            <Button
+              onClick={() => {
+                void caps.refetch();
+                void state.refetch();
+                void workspace.refetch();
+              }}
+            >
+              重新加载
+            </Button>
+          }
+        />
+      )}
+      {enabled && (!caps.data || !state.data || !workspace.data) ? (
+        <Skeleton active />
       ) : (
         <>
-          {(capabilities.error || state.error) && (
-            <Alert
-              type="error"
-              title="工作流加载失败"
-              description={(capabilities.error || state.error)?.message}
-              action={
-                <Button
-                  onClick={() => {
-                    void capabilities.refetch();
-                    void state.refetch();
-                  }}
-                >
-                  重试
-                </Button>
-              }
-            />
+          {phase !== "result" && (
+            <section
+              className="panel factory-selection"
+              aria-label="选择房源和模板"
+            >
+              <div className="factory-section-heading">
+                <div>
+                  <span className="factory-eyebrow">开始创作</span>
+                  <h2>为一套房源，制作一条视频</h2>
+                </div>
+                <Sparkles size={24} />
+              </div>
+              <div className="factory-select-grid">
+                <label>
+                  <span>房源</span>
+                  <Select
+                    aria-label="选择房源"
+                    size="large"
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="选择要制作的房源"
+                    value={propertyId || undefined}
+                    disabled={!enabled || waiting}
+                    options={properties.map((p) => ({
+                      value: p.id,
+                      label: p.title,
+                    }))}
+                    onChange={(id) => reset(id)}
+                  />
+                </label>
+                <label>
+                  <span>视频模板</span>
+                  <Select
+                    aria-label="选择视频模板"
+                    size="large"
+                    placeholder="选择一种视频风格"
+                    value={templateId || undefined}
+                    disabled={!enabled || waiting}
+                    options={templates.map((t) => ({
+                      value: t.id,
+                      label: t.name,
+                    }))}
+                    onChange={(id) => reset(propertyId, id)}
+                  />
+                </label>
+              </div>
+              <div className="factory-selection-footer">
+                <p>{template?.description || "图片将按房源素材的顺序排列。"}</p>
+                <Link to="/properties">管理房源与素材</Link>
+              </div>
+            </section>
           )}
-          {!caps || !config ? (
-            <Skeleton active />
-          ) : (
-            <>
-              {(!caps.ffmpeg || !caps.ffprobe) && (
-                <Alert
-                  type="warning"
-                  title="尚未找到视频运行时"
-                  description="请配置 FFmpeg / FFprobe 后重启客户端；可以先完成素材与文案审核。"
-                />
+          {phase === "choose" && (
+            <section className="panel factory-empty">
+              <div className="factory-empty-icon">
+                <Clapperboard size={38} />
+              </div>
+              <h2>你选房源，AI 来准备</h2>
+              <p>
+                每张图片都有对应的介绍文案，确认后自动处理图片、配音并合成视频。
+              </p>
+              {!properties.length && (
+                <Link to="/properties">先去添加一套房源</Link>
               )}
-              <Collapse
-                className="panorama-sources"
-                defaultActiveKey={["source"]}
-                items={[
-                  {
-                    key: "source",
-                    label: `1. 房源与素材${property ? ` · ${property.title} · ${scenes.length} 个空间` : ""}`,
-                    children: (
-                      <Form layout="vertical" disabled={busy}>
-                        <Form.Item label="房源">
-                          <Select
-                            value={property?.id}
-                            placeholder="选择已录入的房源"
-                            showSearch
-                            optionFilterProp="label"
-                            options={Array.from(
-                              new Map(
-                                [
-                                  ...(workspace?.properties || []),
-                                  ...(state.data?.properties || []),
-                                  ...(property ? [property] : []),
-                                ].map((p) => [
-                                  p.id,
-                                  { value: p.id, label: p.title },
-                                ]),
-                              ).values(),
-                            )}
-                            onChange={(id) => {
-                              setProperty(
-                                workspace?.properties.find(
-                                  (p) => p.id === id,
-                                ) ||
-                                  state.data?.properties?.find(
-                                    (p) => p.id === id,
-                                  ),
-                              );
-                              setScenes([]);
-                              patch({
-                                leadSceneId: "",
-                                coverSceneId: "",
-                                coverTitle: "",
-                              });
-                              invalidate();
-                            }}
-                          />
-                        </Form.Item>
-                        <PanoramaSources
-                          caps={caps}
-                          property={property}
-                          scenes={scenes}
-                          tasks={state.data?.imageTasks || []}
-                          act={act}
-                          onLoaded={loadSources}
-                          onPhotos={(added, materialMode) => {
-                            replaceScenes(added);
-                            patch({ materialMode });
-                          }}
-                          onExpanded={(results) => {
-                            if (
-                              !scenes.some(
-                                (s) =>
-                                  s.kind === "photo" &&
-                                  results.some(
-                                    (r) => r.sceneId === s.id && r.result,
-                                  ),
-                              )
-                            )
-                              return;
-                            setScenes((previous) =>
-                              previous.map((s) => {
-                                const result = results.find(
-                                  (r) => r.sceneId === s.id,
-                                )?.result;
-                                return s.kind === "photo" && result
-                                  ? {
-                                      ...result,
-                                      room: s.room,
-                                      description: s.description,
-                                    }
-                                  : s;
-                              }),
-                            );
-                            invalidate();
-                          }}
+            </section>
+          )}
+          {phase === "preparing" && (
+            <section className="panel factory-waiting" role="status">
+              <Spin size="large" />
+              <h2>正在为这套房源准备文案</h2>
+              <p>按图片顺序整理素材，并套用你选择的视频模板。</p>
+            </section>
+          )}
+          {phase === "error" && (
+            <section className="panel factory-error">
+              <Alert
+                showIcon
+                type="error"
+                title="文案还没有准备好"
+                description={error}
+              />
+              <div className="factory-error-actions">
+                <Button type="primary" onClick={() => setPhase("choose")}>
+                  重新准备
+                </Button>
+                <Link
+                  to={propertyId ? `/properties/${propertyId}` : "/properties"}
+                >
+                  查看房源素材
+                </Link>
+              </div>
+            </section>
+          )}
+          {phase === "ready" && draft && (
+            <section className="panel factory-script" aria-label="整条视频文案">
+              <div className="factory-section-heading">
+                <div>
+                  <span className="factory-eyebrow">文案已准备好</span>
+                  <h2>{draft.property.title}</h2>
+                  <p>
+                    {draft.scenes.length}{" "}
+                    张图片，按以下顺序组成视频。可以直接修改文案，然后一次确认。
+                  </p>
+                </div>
+                <Tag color="green">
+                  <Check size={13} /> 等待确认
+                </Tag>
+              </div>
+              {draft.segments
+                .filter((s) => s.kind === "opening")
+                .map((s) => (
+                  <label className="factory-bookend" key={s.id}>
+                    <span>开场介绍</span>
+                    <Input.TextArea
+                      aria-label="开场介绍"
+                      autoSize={{ minRows: 2, maxRows: 5 }}
+                      maxLength={2000}
+                      value={texts[s.id]}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setTexts((v) => ({ ...v, [s.id]: e.target.value }))
+                      }
+                    />
+                  </label>
+                ))}
+              <div className="factory-script-list">
+                {draft.scenes.map((scene, index) => {
+                  const segment = draft.segments.find(
+                    (s) => s.kind === "scene" && s.sceneId === scene.id,
+                  );
+                  return (
+                    <article className="factory-image-script" key={scene.id}>
+                      <div className="factory-photo">
+                        <img
+                          src={scene.originalUrl || scene.url}
+                          alt={`第 ${index + 1} 张房源图片`}
                         />
-                        <Space wrap>
-                          <Button
-                            icon={<ImagePlus size={16} />}
-                            disabled={!property}
-                            onClick={() =>
-                              void act(async () => {
-                                const added =
-                                  await request<PanoramaScene[]>("import");
-                                if (!added.length) return;
-                                replaceScenes(
-                                  config.materialMode === "expand"
-                                    ? added
-                                    : [...scenes, ...added].slice(0, 20),
-                                );
-                                patch({ materialMode: "panorama" });
-                              })
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                      </div>
+                      <div className="factory-image-copy">
+                        <div className="factory-image-heading">
+                          <Images size={16} />
+                          <strong>{scene.room}</strong>
+                        </div>
+                        {segment && (
+                          <Input.TextArea
+                            aria-label={`第 ${index + 1} 张图片文案`}
+                            value={texts[segment.id]}
+                            disabled={busy}
+                            maxLength={2000}
+                            autoSize={{ minRows: 3, maxRows: 8 }}
+                            onChange={(e) =>
+                              setTexts((v) => ({
+                                ...v,
+                                [segment.id]: e.target.value,
+                              }))
                             }
-                          >
-                            导入已有全景图
-                          </Button>
-                          <Popconfirm
-                            title="载入两个独立测试场景？"
-                            description="将替换当前编辑内容；它们不代表同一套在售房源。"
-                            onConfirm={() =>
-                              act(async () => {
-                                const sample = await request<{
-                                  property: PanoramaProperty;
-                                  scenes: PanoramaScene[];
-                                }>("sample");
-                                setProperty(sample.property);
-                                replaceScenes(sample.scenes);
-                                patch({
-                                  materialMode: "panorama",
-                                  coverTitle: "",
-                                });
-                              })
-                            }
-                          >
-                            <Button>使用 CC0 测试素材</Button>
-                          </Popconfirm>
-                        </Space>
-                        <p className="muted">
-                          已有全景需为 2:1 等距柱状 JPEG / PNG，宽度至少
-                          2048，单张不超过 50MB。
-                        </p>
-                        {property?.sample && (
-                          <Alert
-                            type="info"
-                            title="测试素材，非在售房源"
-                            description="请只用于验证制作效果，不能作为真实房源发布。"
                           />
                         )}
-                      </Form>
-                    ),
-                  },
-                ]}
-              />
-              <div className="template-toolbar panel">
-                <div>
-                  <h2>2. 模板与分段审核</h2>
-                  <span className="muted">
-                    模板版本固定到草稿，配音决定镜头时长。
-                  </span>
-                </div>
-                <Space wrap>
-                  <Select
-                    aria-label="恢复已保存的草稿"
-                    style={{ width: 240 }}
-                    placeholder="恢复已保存的草稿"
-                    value={draft?.id}
-                    options={(state.data?.drafts || []).map((d) => ({
-                      value: d.id,
-                      label: `${d.property.title} · r${d.revision}`,
-                    }))}
-                    onChange={(id) => {
-                      const value = state.data?.drafts.find((d) => d.id === id);
-                      if (value) restore(value);
-                    }}
-                    disabled={busy}
-                  />
-                  <Button
-                    type="primary"
-                    loading={busy}
-                    disabled={unavailable}
-                    onClick={() => void generate()}
-                  >
-                    生成分段文案，进入审核
-                  </Button>
-                  {draft && (
-                    <>
-                      <Button
-                        icon={<Save size={16} />}
-                        loading={busy}
-                        onClick={() =>
-                          void act(async () => {
-                            await save();
-                            void message.success("文案与制作配置已保存");
-                          })
-                        }
-                      >
-                        保存修改
-                      </Button>
-                      <Button
-                        type="primary"
-                        icon={<Play size={16} />}
-                        loading={busy}
-                        disabled={
-                          hasRunning ||
-                          !caps.ffmpeg ||
-                          !caps.ffprobe ||
-                          (config.videoMode === "avatar" && !caps.volcAvatar)
-                        }
-                        onClick={() =>
-                          void act(async () => {
-                            const approved = dirty ? await save() : draft;
-                            const created = await request<PanoramaJob>(
-                              "start",
-                              { id: approved.id, revision: approved.revision },
-                            );
-                            setSelectedJob(created.id);
-                            void message.success("审核已确认，任务开始执行");
-                          })
-                        }
-                      >
-                        确认文案并制作
-                      </Button>
-                    </>
-                  )}
-                </Space>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-              {draft && (
-                <p className="muted">
-                  模板 v{draft.templateVersion} · 草稿 r{draft.revision} ·{" "}
-                  {dirty ? "有未保存修改" : "文案已保存"}
-                  ，请选择左侧段落逐段核对。
+              {draft.segments
+                .filter((s) => s.kind === "closing")
+                .map((s) => (
+                  <label className="factory-bookend" key={s.id}>
+                    <span>结束介绍</span>
+                    <Input.TextArea
+                      aria-label="结束介绍"
+                      autoSize={{ minRows: 2, maxRows: 5 }}
+                      maxLength={2000}
+                      value={texts[s.id]}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setTexts((v) => ({ ...v, [s.id]: e.target.value }))
+                      }
+                    />
+                  </label>
+                ))}
+              {voiceMissing && (
+                <Alert
+                  type="info"
+                  title="还没有可用的配音声音"
+                  description={
+                    <span>
+                      请先到<Link to="/settings/voices">声音设置</Link>
+                      配置声音，再开始生成。
+                    </span>
+                  }
+                />
+              )}
+              {draft.config.materialMode === "expand" && (
+                <p className="factory-ai-note">
+                  普通照片会自动扩图处理，生成视频保留 AI 示意标记。
                 </p>
               )}
-              <PanoramaTemplateEditor
-                caps={caps}
-                config={config}
-                property={property}
-                scenes={scenes}
-                segments={segments}
-                templates={state.data?.templates || []}
-                busy={busy}
-                patch={patch}
-                editScene={editScene}
-                replaceScenes={replaceScenes}
-                editSegment={(id, text) =>
-                  setSegments((previous) =>
-                    previous.map((s) => (s.id === id ? { ...s, text } : s)),
-                  )
-                }
-                changeTemplate={changeTemplate}
-                changeLanguage={changeLanguage}
-                invalidate={invalidate}
-                saveTemplate={(name, update) =>
-                  void act(async () => {
-                    const existing = state.data?.templates?.find(
-                      (t) => t.id === config.templateId,
-                    );
-                    await request("template-save", {
-                      name,
-                      config,
-                      ...(update && existing
-                        ? { id: existing.id, version: existing.version }
-                        : {}),
-                    });
-                    void message.success(
-                      update
-                        ? "模板已更新，已保存草稿保留原快照"
-                        : "已保存到我的模板，可在公共设置中选择",
-                    );
-                  })
-                }
-              />
-              <section className="panel panorama-review">
-                <PanoramaResult job={job} busy={busy} act={act} />
-              </section>
-              <section className="panel panorama-history">
-                <h2>本机生成记录</h2>
-                <Table<PanoramaJob>
-                  rowKey="id"
-                  size="small"
-                  dataSource={state.data?.jobs || []}
-                  pagination={{ pageSize: 5 }}
-                  scroll={{ x: 650 }}
-                  columns={[
-                    {
-                      title: "房源",
-                      dataIndex: "property",
-                      render: (p: PanoramaProperty) => p.title,
-                    },
-                    {
-                      title: "状态",
-                      dataIndex: "status",
-                      render: (s: PanoramaJob["status"]) => statusNames[s],
-                    },
-                    {
-                      title: "阶段",
-                      dataIndex: "stage",
-                      render: (s: PanoramaJob["stage"]) => stageNames[s],
-                    },
-                    {
-                      title: "创建时间",
-                      dataIndex: "createdAt",
-                      render: (v) => new Date(v).toLocaleString(),
-                    },
-                    {
-                      title: "操作",
-                      render: (_, value) => (
-                        <Button
-                          type="link"
-                          onClick={() => setSelectedJob(value.id)}
-                        >
-                          查看
-                        </Button>
-                      ),
-                    },
-                  ]}
-                />
-              </section>
-            </>
+              <div className="factory-confirm">
+                <p>确认后自动完成图片处理、配音和视频合成。</p>
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<Sparkles size={17} />}
+                  loading={busy}
+                  disabled={
+                    voiceMissing ||
+                    !!running ||
+                    draft.segments.some((s) => !texts[s.id]?.trim()) ||
+                    !caps.data?.ffmpeg ||
+                    !caps.data.ffprobe
+                  }
+                  onClick={() => void confirm()}
+                >
+                  确认文案，开始生成
+                </Button>
+              </div>
+            </section>
+          )}
+          {phase === "result" && (
+            <FactoryResult
+              job={job}
+              busy={busy}
+              act={act}
+              onNew={() => reset("", templateId)}
+            />
           )}
         </>
       )}
-    </>
+      <Drawer
+        title="我的视频"
+        open={history}
+        onClose={() => setHistory(false)}
+        size="large"
+      >
+        {!!state.data?.jobs.length && (
+          <div className="factory-history-list">
+            {state.data.jobs.map((value) => (
+              <button
+                className="factory-history-item"
+                key={value.id}
+                onClick={() => {
+                  sequence.current++;
+                  setJobId(value.id);
+                  setCreatedJob(undefined);
+                  setPhase("result");
+                  setHistory(false);
+                }}
+              >
+                {value.coverUrl ? (
+                  <img src={value.coverUrl} alt="" />
+                ) : (
+                  <Video size={25} />
+                )}
+                <span>
+                  <strong>{value.property.title}</strong>
+                  <small>{new Date(value.createdAt).toLocaleString()}</small>
+                </span>
+                <Tag>{statusNames[value.status]}</Tag>
+              </button>
+            ))}
+          </div>
+        )}
+        {!!state.data?.drafts.filter((d) => d.confirmation === "whole")
+          .length && (
+          <>
+            <h3>待确认的文案</h3>
+            {state.data.drafts
+              .filter(
+                (d) =>
+                  d.confirmation === "whole" &&
+                  !state.data.jobs.some((j) => j.draftId === d.id),
+              )
+              .map((value) => (
+                <button
+                  className="factory-history-item"
+                  key={value.id}
+                  onClick={() => resume(value)}
+                >
+                  <FileText size={24} />
+                  <span>
+                    <strong>{value.property.title}</strong>
+                    <small>{value.scenes.length} 张图片 · 继续制作</small>
+                  </span>
+                </button>
+              ))}
+          </>
+        )}
+        {!state.data?.jobs.length &&
+          !state.data?.drafts.some((d) => d.confirmation === "whole") && (
+            <Empty description="还没有制作记录" />
+          )}
+      </Drawer>
+    </div>
   );
 }
