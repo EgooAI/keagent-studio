@@ -1,490 +1,718 @@
-import { useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import {
+  Alert,
   App,
   Button,
-  Checkbox,
   Empty,
   Form,
   Input,
+  Modal,
+  Pagination,
+  Progress,
   Select,
-  Tabs,
+  Space,
   Tag,
+  Timeline,
 } from "antd";
+import { Film } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { artifactExchange, isLive } from "@keagent/api-client";
 import {
-  ArrowLeft,
-  ArrowUpRight,
-  Download,
-  Film,
-  Search,
-  Send,
-  Video,
-} from "lucide-react";
-import { demoApi } from "@keagent/api-client";
-import {
-  platformLabels,
-  type Platform,
-  type ProductionTask,
-  type PublishInput,
-  type Workspace,
+  douyinStateLabels,
+  validateDouyinInput,
+  type ArtifactHandoff,
+  type ArtifactReviewState,
+  type DouyinPublishRecord,
 } from "@keagent/shared-types";
-import { PageHeader, StatusTag, formatDate } from "../components/common";
-import { useWorkspace } from "../lib/workspace";
-import { productionResults } from "../lib/productionResults";
+import { PageHeader } from "../components/common";
+import { artifactMedia } from "../lib/artifactMedia";
+import {
+  douyinApi,
+  douyinDesktop,
+  desktopPublishingAvailable,
+  publishingMessage,
+  publishingFailureText,
+  useDouyinDesktop,
+} from "../lib/douyin";
+import DemoPublishPage, {
+  PublishDetailPage as DemoPublishDetail,
+} from "./DemoPublishPage";
 
 export default function PublishPage() {
-  const { data } = useWorkspace();
-  const [status, setStatus] = useState("all");
-  const [search, setSearch] = useState("");
-  if (!data) return null;
-  const completed = data.tasks.flatMap(productionResults);
-  const tasks = completed.filter((task) => {
-    const publishes = data.publishTasks.filter(
-      (p) =>
-        p.productionTaskId === task.id &&
-        p.productionRevision === task.productionRevision,
-    );
-    const matches =
-      status === "all" ||
-      (status === "pending"
-        ? !publishes.length
-        : status === "failed"
-          ? publishes.some((p) => ["failed", "unknown"].includes(p.status))
-          : publishes.some((p) => p.status === status));
-    return (
-      matches &&
-      `${task.propertySnapshot.community}${task.propertySnapshot.title}`.includes(
-        search,
-      )
-    );
+  return isLive ? <ArtifactLibrary /> : <DemoPublishPage />;
+}
+export function PublishDetailPage() {
+  return isLive ? <ArtifactPublishDetail /> : <DemoPublishDetail />;
+}
+const reviewLabels = {
+  pending: "待验收",
+  approved: "验收通过",
+  rejected: "验收未通过",
+};
+function ArtifactLibrary() {
+  const [review, setReview] = useState<ArtifactReviewState>();
+  const [offset, setOffset] = useState(0);
+  const query = useQuery({
+    queryKey: ["douyin", "artifacts", review, offset],
+    queryFn: () =>
+      artifactExchange.listArtifacts({ review, limit: 20, offset }),
   });
   return (
     <>
       <PageHeader
         title="发布中心"
-        description="检查每一份成片，再把合适的内容带到合适的平台。"
+        description="接收已验收的成片，选择抖音账号后立即发布。"
       />
       <div className="property-toolbar">
-        <Tabs
-          activeKey={status}
-          onChange={setStatus}
-          items={[
-            ["all", "全部成果"],
-            ["pending", "待发布"],
-            ["running", "上传中"],
-            ["draft_saved", "平台草稿"],
-            ["published", "已发布"],
-            ["failed", "失败 / 待确认"],
-          ].map(([key, label]) => ({ key, label }))}
-        />
-        <Input
-          className="publish-search"
-          placeholder="搜索房源或视频"
-          aria-label="搜索成片"
-          prefix={<Search size={16} />}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+        <Select
+          aria-label="成片验收状态"
+          placeholder="全部验收状态"
           allowClear
+          value={review}
+          style={{ width: 200 }}
+          onChange={(value) => {
+            setReview(value);
+            setOffset(0);
+          }}
+          options={Object.entries(reviewLabels).map(([value, label]) => ({
+            value,
+            label,
+          }))}
         />
-      </div>
-      <div className="list-caption">
-        <span>{tasks.length} 份视频成果</span>
-        <span>平台草稿与正式发布分别记录 · 当前为模拟环境</span>
-      </div>
-      {tasks.length ? (
-        <div className="publish-grid">
-          {tasks.map((task) => (
-            <article
-              className="publish-card"
-              key={`${task.id}-${task.productionRevision}`}
-            >
-              <Link
-                className="publish-cover"
-                to={`/publish/${task.id}?revision=${task.productionRevision}`}
-              >
-                <img
-                  src={task.coverUrl ?? task.propertySnapshot.image}
-                  alt={`${task.propertySnapshot.community}视频封面`}
-                />
-                <span className="video-cover-copy">
-                  <small>
-                    {task.configSnapshot.videoMode === "avatar"
-                      ? "经纪人露脸"
-                      : "纯口播"}
-                  </small>
-                  <strong>{task.propertySnapshot.community}</strong>
-                  <span>
-                    {task.propertySnapshot.layout} ·{" "}
-                    {task.propertySnapshot.areaSqm}m²
-                  </span>
-                </span>
-                <span className="video-play">
-                  <Video size={24} />
-                </span>
-                <span className="sample-stamp">演示成片</span>
-              </Link>
-              <div className="publish-card-content">
-                <h2>
-                  <Link
-                    to={`/publish/${task.id}?revision=${task.productionRevision}`}
-                  >
-                    {task.propertySnapshot.community}
-                  </Link>
-                </h2>
-                <p className="muted">
-                  成果修订 {task.productionRevision} ·{" "}
-                  {formatDate(task.createdAt)} ·{" "}
-                  {task.configSnapshot.outputResolution} ·{" "}
-                  {task.configSnapshot.aspectRatio}
-                </p>
-                <div className="platform-statuses">
-                  {data.publishTasks.filter(
-                    (p) =>
-                      p.productionTaskId === task.id &&
-                      p.productionRevision === task.productionRevision,
-                  ).length ? (
-                    data.publishTasks
-                      .filter(
-                        (p) =>
-                          p.productionTaskId === task.id &&
-                          p.productionRevision === task.productionRevision,
-                      )
-                      .map((p) => (
-                        <span key={p.id}>
-                          {platformLabels[p.platform]}{" "}
-                          <StatusTag status={p.status} />
-                        </span>
-                      ))
-                  ) : (
-                    <Tag>待发布</Tag>
-                  )}
-                </div>
-                <Link
-                  to={`/publish/${task.id}?revision=${task.productionRevision}`}
-                  className="text-link"
-                >
-                  查看成果与发布 <ArrowUpRight size={15} />
-                </Link>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <section className="panel empty-panel">
-          <Empty description="这里还没有匹配的成片">
-            <Link to="/studio">
-              <Button type="primary">前往视频工厂</Button>
-            </Link>
-          </Empty>
-        </section>
-      )}
-    </>
-  );
-}
-
-export function PublishDetailPage() {
-  const { productionTaskId } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { data } = useWorkspace();
-  if (!data) return null;
-  const original = data.tasks.find((t) => t.id === productionTaskId);
-  if (!original)
-    return (
-      <Empty description="成果不存在">
-        <Link to="/publish">返回发布中心</Link>
-      </Empty>
-    );
-  const revisions = productionResults(original);
-  const requestedRevision = searchParams.get("revision");
-  const task = requestedRevision
-    ? revisions.find(
-        (item) => item.productionRevision === Number(requestedRevision),
-      )
-    : revisions[0];
-  if (!task)
-    return (
-      <Empty description="当前修订还未完成生产">
-        <Link to={`/studio/tasks/${original.id}`}>查看生产任务</Link>
-      </Empty>
-    );
-  const canPublish =
-    original.status === "succeeded" &&
-    original.productionRevision === task.productionRevision;
-  const resolve = (id: string) =>
-    data.resources.find((r) => r.id === id)?.name ?? id;
-  const snapshots = [
-    [
-      "视频模式",
-      task.configSnapshot.videoMode === "avatar" ? "经纪人露脸" : "纯口播",
-    ],
-    [
-      "视频模板",
-      `${resolve(task.configSnapshot.videoTemplate.id)} / v${task.configSnapshot.videoTemplate.version}`,
-    ],
-    [
-      "风格模板",
-      `${resolve(task.configSnapshot.styleTemplate.id)} / v${task.configSnapshot.styleTemplate.version}`,
-    ],
-    ["封面模板", resolve(task.configSnapshot.coverTemplate.id)],
-    ["提示词模板", resolve(task.configSnapshot.promptTemplate.id)],
-    [
-      "声音",
-      data.voices.find((v) => v.id === task.configSnapshot.voiceId)?.name ??
-        "历史音色",
-    ],
-    ["文案修订", `第 ${task.scriptRevision} 版`],
-    ["成果修订", `第 ${task.productionRevision} 版`],
-  ];
-  return (
-    <>
-      <Link className="back-link" to="/publish">
-        <ArrowLeft size={16} /> 发布中心
-      </Link>
-      <PageHeader
-        title={task.propertySnapshot.community}
-        description="检查内容和来源信息，为不同平台分别设置发布文案。"
-        actions={
-          <>
-            <Select
-              aria-label="查看成果版本"
-              value={task.productionRevision}
-              onChange={(revision) =>
-                setSearchParams({ revision: String(revision) })
-              }
-              options={revisions.map((result) => ({
-                value: result.productionRevision,
-                label: `成果修订 ${result.productionRevision}${result.productionRevision === original.productionRevision ? "（当前）" : "（历史）"}`,
-              }))}
-            />
-            <a href={task.videoUrl} download="演示素材.mp4">
-              <Button icon={<Download size={16} />}>下载示例视频</Button>
-            </a>
-          </>
-        }
-      />
-      <div className="publish-detail-grid">
-        <aside className="panel provenance-panel">
-          <h2>制作信息</h2>
-          <img
-            src={task.propertySnapshot.image}
-            className="provenance-photo"
-            alt="房源来源照片"
-          />
-          <h3>{task.propertySnapshot.community}</h3>
-          <p className="muted">
-            {task.propertySnapshot.layout} · {task.propertySnapshot.areaSqm}m²
-          </p>
-          <p className="muted">编号 {task.propertySnapshot.propertyNumber}</p>
-          <dl className="snapshot-list">
-            {snapshots.map(([label, value]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
-          <Link to={`/studio/tasks/${task.id}`} className="text-link">
-            查看生产记录 <ArrowUpRight size={14} />
+        <Space>
+          <Link to="/settings/platforms">
+            <Button>管理抖音账号</Button>
           </Link>
-        </aside>
-        <section className="panel content-preview-panel">
-          <div className="section-heading">
-            <h2>视频成果</h2>
-            <Tag variant="filled">本地演示素材</Tag>
-          </div>
-          <video
-            controls
-            preload="metadata"
-            poster={task.coverUrl}
-            src={task.videoUrl}
-            className="result-video"
-          />
-          <p className="preview-disclaimer">
-            静音示例视频，用于验证播放交互，未实际执行配音或剪辑。
-          </p>
-          <h3>口播文案</h3>
-          <div className="script-content">{task.script}</div>
-          <h3>封面预览</h3>
-          <div className="cover-preview">
-            <img
-              src={task.coverUrl ?? task.propertySnapshot.image}
-              alt="示例封面"
-            />
-            <strong>
-              {task.propertySnapshot.community}
-              <small>
-                {task.propertySnapshot.layout} · {task.propertySnapshot.areaSqm}
-                m²
-              </small>
-            </strong>
-          </div>
-        </section>
-        <aside className="panel platform-config-panel">
-          <h2>发布配置</h2>
-          <p className="muted">不同平台的标题、账号和状态各自独立。</p>
-          {!canPublish && (
-            <p className="muted">
-              正在查看历史成果，仅可查看并核对对应修订的发布记录。
-            </p>
-          )}
-          <Tabs
-            items={(["douyin", "xiaohongshu"] as Platform[]).map(
-              (platform) => ({
-                key: platform,
-                label: platformLabels[platform],
-                children: (
-                  <PlatformPublishForm
-                    key={`${task.id}-${task.productionRevision}-${platform}`}
-                    task={task}
-                    platform={platform}
-                    data={data}
-                    canPublish={canPublish}
-                  />
-                ),
-              }),
-            )}
-          />
-        </aside>
+          <Link to="/publish/demo">
+            <Button type="text">查看原演示</Button>
+          </Link>
+          <Button onClick={() => void query.refetch()}>刷新成片</Button>
+        </Space>
       </div>
+      {query.error && (
+        <Alert
+          type="error"
+          title="成片加载失败"
+          description={publishingMessage(query.error)}
+        />
+      )}
+      {!query.isPending && !query.data?.items.length && (
+        <div className="panel empty-panel">
+          <Empty description="暂无符合条件的成片">
+            <p className="muted">制作侧完成登记与验收后，成片会出现在这里。</p>
+          </Empty>
+        </div>
+      )}
+      <div className="publish-grid">
+        {query.data?.items.map((artifact) => (
+          <article className="publish-card" key={artifact.id}>
+            <Link
+              className="douyin-artifact-cover"
+              to={`/publish/${artifact.id}`}
+            >
+              <Film size={44} />
+              <span>{artifact.content.title}</span>
+            </Link>
+            <div className="publish-card-content">
+              <h2>{artifact.content.title}</h2>
+              <Tag
+                color={
+                  artifact.review.state === "approved" ? "green" : "default"
+                }
+              >
+                {reviewLabels[artifact.review.state]}
+              </Tag>
+              <p className="muted">
+                版本 {artifact.source.revision} ·{" "}
+                {new Date(artifact.createdAt).toLocaleString("zh-CN")}
+              </p>
+              <p>{artifact.content.property?.title}</p>
+              <Link to={`/publish/${artifact.id}`}>查看成片与发布</Link>
+            </div>
+          </article>
+        ))}
+      </div>
+      <Pagination
+        current={offset / 20 + 1}
+        total={query.data?.total || 0}
+        pageSize={20}
+        showSizeChanger={false}
+        onChange={(page) => setOffset((page - 1) * 20)}
+      />
     </>
   );
 }
-
-function PlatformPublishForm({
-  task,
-  platform,
-  data,
-  canPublish,
-}: {
-  task: ProductionTask;
-  platform: Platform;
-  data: Workspace;
-  canPublish: boolean;
-}) {
-  const { message } = App.useApp();
-  const [form] = Form.useForm<PublishInput>();
+interface EditValues {
+  title: string;
+  description: string;
+  hashtags: string[];
+  accountId: string;
+}
+function ArtifactPublishDetail() {
+  const { productionTaskId: artifactId = "" } = useParams();
+  const client = useQueryClient();
+  const { message, modal } = App.useApp();
+  const desktop = useDouyinDesktop();
+  const artifact = useQuery({
+    queryKey: ["douyin", "artifact", artifactId],
+    queryFn: () => artifactExchange.getArtifact(artifactId),
+  });
+  const accounts = useQuery({
+    queryKey: ["douyin", "accounts"],
+    queryFn: douyinApi.accounts,
+  });
+  const [recordOffset, setRecordOffset] = useState(0);
+  const records = useQuery({
+    queryKey: ["douyin", "records", artifactId, recordOffset],
+    queryFn: () => douyinApi.records(artifactId, recordOffset),
+    refetchInterval: 5000,
+  });
+  const assets = useQuery({
+    queryKey: ["douyin", "assets", artifactId, artifact.data?.id],
+    enabled: !!artifact.data,
+    queryFn: () =>
+      Promise.all(
+        Object.values(artifact.data!.assets)
+          .filter(Boolean)
+          .map((id) => artifactExchange.getAsset(id)),
+      ),
+  });
+  const [form] = Form.useForm<EditValues>();
+  const values = Form.useWatch([], form) as EditValues | undefined;
+  const [handoff, setHandoff] = useState<ArtifactHandoff>();
+  const [preview, setPreview] = useState<{ video: string; cover: string }>();
+  const [cover, setCover] = useState<{ ref: string; url: string }>();
   const [busy, setBusy] = useState(false);
-  const request = useRef({ fingerprint: "", key: "" });
-  const accounts = data.accounts.filter(
-    (account) => account.platform === platform && account.connected,
+  const [error, setError] = useState("");
+  const [reconciling, setReconciling] = useState<DouyinPublishRecord>();
+  const [resultUrl, setResultUrl] = useState("");
+  const [confirmAbsent, setConfirmAbsent] = useState(false);
+  const handoffKey = useRef(crypto.randomUUID());
+  const publishKey = useRef(crypto.randomUUID());
+  useEffect(() => {
+    setHandoff(undefined);
+    setRecordOffset(0);
+    setPreview(undefined);
+    setCover(undefined);
+    handoffKey.current = crypto.randomUUID();
+    publishKey.current = crypto.randomUUID();
+  }, [artifactId]);
+  useEffect(() => {
+    setHandoff(undefined);
+    handoffKey.current = crypto.randomUUID();
+    publishKey.current = crypto.randomUUID();
+  }, [artifact.data?.review.revision]);
+  useEffect(() => {
+    if (artifact.data)
+      form.setFieldsValue({
+        title: artifact.data.content.title,
+        description: artifact.data.content.script,
+        hashtags: [],
+      });
+  }, [artifact.data?.id, form]);
+  const current = artifact.data;
+  const active = desktop.data?.activeRecord;
+  const running = !!active && ["running", "submitting"].includes(active.state);
+  const invalid = values
+    ? validateDouyinInput({
+        title: values.title || "",
+        description: values.description || "",
+        hashtags: values.hashtags || [],
+      })
+    : undefined;
+  const local = assets.data?.every(
+    (asset) =>
+      asset.location.deviceId === desktop.data?.deviceId &&
+      asset.availability.state === "available",
   );
-  const records = data.publishTasks.filter(
-    (p) =>
-      p.productionTaskId === task.id &&
-      p.platform === platform &&
-      p.productionRevision === task.productionRevision,
-  );
-  async function submit() {
+  async function act(action: () => Promise<void>) {
+    setBusy(true);
+    setError("");
     try {
-      const values = await form.validateFields();
-      setBusy(true);
-      const payload = { ...values, hashtags: values.hashtags ?? [] };
-      const fingerprint = JSON.stringify(payload);
-      if (request.current.fingerprint !== fingerprint)
-        request.current = { fingerprint, key: crypto.randomUUID() };
-      await demoApi.createPublish(
-        task.id,
-        platform,
-        payload,
-        request.current.key,
-      );
-      message.success("已创建模拟上传任务，可在下方查看进度");
+      await action();
     } catch (error) {
-      if (error instanceof Error) message.error(error.message);
+      setError(publishingMessage(error));
     } finally {
+      void client.invalidateQueries({ queryKey: ["douyin"] });
       setBusy(false);
     }
   }
+  async function receive() {
+    if (!current) return;
+    const value = await artifactExchange.createHandoff({
+      requestKey: handoffKey.current,
+      artifactId: current.id,
+      expectedReviewRevision: current.review.revision,
+    });
+    setHandoff(value);
+    message.success("已固定成片交接版本");
+  }
+  function review(state: ArtifactReviewState) {
+    modal.confirm({
+      title: state === "approved" ? "确认成片验收通过？" : "撤回成片验收？",
+      content:
+        state === "approved"
+          ? "请确认已检查视频、封面与最终文案。验收通过后才能接收并发布这份成片。"
+          : "撤回后，尚未最终提交的发布操作会重新检查并停止。",
+      okText: state === "approved" ? "验收通过" : "撤回验收",
+      cancelText: "取消",
+      onOk: () =>
+        act(async () => {
+          await artifactExchange.reviewArtifact({
+            id: current!.id,
+            expectedRevision: current!.review.revision,
+            state,
+          });
+          setHandoff(undefined);
+        }),
+    });
+  }
+  async function start() {
+    const edit = await form.validateFields();
+    if (!handoff) return;
+    const record = await douyinApi.start({
+      requestKey: publishKey.current,
+      handoffId: handoff.id,
+      accountId: edit.accountId,
+      title: edit.title,
+      description: edit.description || "",
+      hashtags: edit.hashtags || [],
+      ...(cover ? { coverRef: cover.ref } : {}),
+    });
+    if (!["running", "submitting"].includes(record.state))
+      publishKey.current = crypto.randomUUID();
+    message.info(douyinStateLabels[record.state]);
+  }
+  useEffect(() => {
+    if (
+      active?.artifactId === artifactId &&
+      !["running", "submitting"].includes(active.state)
+    )
+      publishKey.current = crypto.randomUUID();
+  }, [active?.id, active?.state, artifactId]);
+  if (!current)
+    return (
+      <>
+        <PageHeader title="成片与抖音发布" />
+        {artifact.error ? (
+          <Alert type="error" title={publishingMessage(artifact.error)} />
+        ) : (
+          <p>正在读取成片…</p>
+        )}
+      </>
+    );
   return (
     <>
-      <Form
-        name={`publish-${task.id}-${task.productionRevision}-${platform}`}
-        form={form}
-        layout="vertical"
-        disabled={!canPublish}
-        initialValues={{
-          accountId: accounts[0]?.id,
-          title: `${task.propertySnapshot.community}｜${task.propertySnapshot.title}`,
-          description: "房源与价格为示例内容，信息以实际核验为准。",
-          hashtags: ["上海房产", "房源介绍"],
-        }}
-      >
-        <Form.Item
-          label="平台账号"
-          name="accountId"
-          rules={[{ required: true, message: "请选择已连接账号" }]}
-        >
-          <Select
-            placeholder="选择已连接账号"
-            options={accounts.map((a) => ({ value: a.id, label: a.name }))}
-          />
-        </Form.Item>
-        {!accounts.length && (
-          <Link to="/settings/platforms">前往设置连接演示账号</Link>
-        )}
-        <Form.Item
-          label="发布标题"
-          name="title"
-          rules={[
-            { required: true, message: "请填写发布标题" },
-            { max: 100, message: "标题不能超过100字" },
-          ]}
-        >
-          <Input.TextArea rows={2} maxLength={100} showCount />
-        </Form.Item>
-        <Form.Item label="发布描述" name="description">
-          <Input.TextArea rows={4} />
-        </Form.Item>
-        <Form.Item label="话题标签" name="hashtags">
-          <Select mode="tags" tokenSeparators={[",", "，"]} />
-        </Form.Item>
-        <Form.Item name="simulateFailure" valuePropName="checked">
-          <Checkbox>模拟提交结果未知</Checkbox>
-        </Form.Item>
-        <Button
-          type="primary"
-          icon={<Send size={15} />}
-          block
-          loading={busy}
-          disabled={!accounts.length || !canPublish}
-          onClick={submit}
-        >
-          模拟提交到{platformLabels[platform]}草稿
-        </Button>
-      </Form>
-      <p className="preview-disclaimer">不会登录或向真实平台发送内容。</p>
-      <div className="publish-records">
-        <h3>该平台记录</h3>
-        {records.length ? (
-          records.map((record) => (
-            <div className="publish-record" key={record.id}>
-              <div>
-                <StatusTag status={record.status} />
-                <small>{formatDate(record.createdAt)}</small>
-              </div>
-              <p>{record.title}</p>
-              {record.error && <p className="error-text">{record.error}</p>}
-              {record.status === "unknown" && (
+      <Link to="/publish">← 返回成片列表</Link>
+      <PageHeader
+        title={current.content.title}
+        description={`成片版本 ${current.source.revision} · 验收修订 ${current.review.revision}`}
+      />
+      {!desktopPublishingAvailable() && (
+        <Alert
+          type="info"
+          title="请使用桌面客户端接收文件、管理账号并发布。网页版可以查看成片与记录。"
+        />
+      )}
+      {desktopPublishingAvailable() && !desktop.data?.resolverAvailable && (
+        <Alert
+          type="info"
+          title="等待制作侧文件解析器"
+          description="成片信息与交接可正常查看；解析器接入后才启用真实预览和发布。"
+        />
+      )}
+      {error && (
+        <Alert
+          type="error"
+          title="操作未完成"
+          description={error}
+          closable
+          onClose={() => setError("")}
+        />
+      )}
+      {assets.error && (
+        <Alert type="error" title={publishingMessage(assets.error)} />
+      )}
+      <div className="douyin-publish-layout">
+        <section className="panel">
+          <div className="douyin-video-preview">
+            {preview ? (
+              <video
+                src={preview.video}
+                poster={cover?.url || preview.cover}
+                controls
+              />
+            ) : (
+              <Film size={64} />
+            )}
+          </div>
+          <Space wrap>
+            <Tag
+              color={current.review.state === "approved" ? "green" : "default"}
+            >
+              {reviewLabels[current.review.state]}
+            </Tag>
+            <Tag>
+              {assets.isPending
+                ? "检查资产状态中"
+                : local
+                  ? "当前设备文件已登记"
+                  : "需在原设备恢复文件"}
+            </Tag>
+            <Button
+              disabled={!desktop.data?.resolverAvailable || !local || busy}
+              onClick={() =>
+                void act(async () =>
+                  setPreview(await douyinDesktop("preview", { artifactId })),
+                )
+              }
+            >
+              验证文件并预览
+            </Button>
+          </Space>
+          <p className="muted">发布前会重新检查验收状态和本机文件。</p>
+          <Space wrap className="douyin-file-actions">
+            {window.desktop?.artifactMedia &&
+              assets.data?.map((asset) => (
                 <Button
+                  key={asset.id}
                   size="small"
-                  onClick={async () => {
-                    try {
-                      await demoApi.reconcilePublish(record.id);
-                      message.success("已模拟核对结果，未重复提交");
-                    } catch (error) {
-                      message.error((error as Error).message);
+                  disabled={
+                    busy ||
+                    running ||
+                    asset.location.deviceId !== desktop.data?.deviceId
+                  }
+                  onClick={() =>
+                    void act(async () => {
+                      await artifactMedia.restore(asset.id);
+                      setPreview(undefined);
+                      message.success("文件已验证并恢复登记");
+                    })
+                  }
+                >
+                  {asset.kind === "video"
+                    ? "恢复视频文件"
+                    : asset.kind === "cover"
+                      ? "恢复封面文件"
+                      : "恢复字幕文件"}
+                </Button>
+              ))}
+            {current.review.state !== "approved" && (
+              <Button
+                type="primary"
+                disabled={!preview || busy || running}
+                onClick={() => review("approved")}
+              >
+                验收通过
+              </Button>
+            )}
+            {current.review.state === "approved" && (
+              <Button
+                disabled={busy || running}
+                onClick={() => review("pending")}
+              >
+                撤回验收
+              </Button>
+            )}
+          </Space>
+          {current.review.state !== "approved" && (
+            <p className="muted">先验证文件并预览，再确认成片验收。</p>
+          )}
+
+          <Button
+            disabled={
+              !desktopPublishingAvailable() ||
+              busy ||
+              current.review.state !== "approved" ||
+              !local
+            }
+            onClick={() => void act(receive)}
+          >
+            {handoff ? "已接收该版本" : "接收这份成片"}
+          </Button>
+          {handoff && <p className="muted">交接号：{handoff.id}</p>}
+        </section>
+        <section className="panel">
+          <h2>立即发布到抖音</h2>
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={{ hashtags: [], description: "" }}
+            onValuesChange={() => {
+              publishKey.current = crypto.randomUUID();
+            }}
+          >
+            <Form.Item
+              name="accountId"
+              label="发布账号"
+              rules={[{ required: true, message: "请选择抖音账号" }]}
+            >
+              <Select
+                placeholder="选择当前设备的抖音账号"
+                options={accounts.data?.items
+                  .filter(
+                    (account) => account.deviceId === desktop.data?.deviceId,
+                  )
+                  .map((account) => ({
+                    value: account.id,
+                    label: `${account.name}${account.loginStatus !== "logged_in" ? "（需登录）" : ""}`,
+                  }))}
+              />
+            </Form.Item>
+            <Link to="/settings/platforms">添加或重新登录抖音账号</Link>
+            <Form.Item
+              name="title"
+              label="标题"
+              rules={[{ required: true, message: "请输入标题" }]}
+            >
+              <Input showCount />
+            </Form.Item>
+            <Form.Item name="description" label="正文">
+              <Input.TextArea rows={6} showCount />
+            </Form.Item>
+            <Form.Item name="hashtags" label="话题">
+              <Select
+                mode="tags"
+                tokenSeparators={[" ", ","]}
+                placeholder="输入话题后按回车"
+              />
+            </Form.Item>
+            <Form.Item label="封面">
+              <Space>
+                <Button
+                  disabled={!desktopPublishingAvailable() || busy || running}
+                  onClick={() =>
+                    void act(async () => {
+                      setCover(await douyinDesktop("cover.select"));
+                      publishKey.current = crypto.randomUUID();
+                    })
+                  }
+                >
+                  选择本地 JPG / PNG
+                </Button>
+                {cover && (
+                  <Button
+                    onClick={() => {
+                      setCover(undefined);
+                      publishKey.current = crypto.randomUUID();
+                    }}
+                  >
+                    恢复成片封面
+                  </Button>
+                )}
+              </Space>
+              {cover && (
+                <img
+                  className="douyin-cover-thumbnail"
+                  alt="本次发布封面"
+                  src={cover.url}
+                />
+              )}
+            </Form.Item>
+            {invalid && <Alert type="warning" title={invalid} />}
+            <p className="muted">
+              立即公开发布，关闭下载，不同步头条。平台文案与封面修改仅用于本次发布。
+            </p>
+            <Button
+              type="primary"
+              loading={busy}
+              disabled={
+                !handoff ||
+                !desktop.data?.resolverAvailable ||
+                !local ||
+                running ||
+                !!invalid ||
+                current.review.state !== "approved"
+              }
+              onClick={() => void act(start)}
+            >
+              立即发布到抖音
+            </Button>
+          </Form>
+        </section>
+      </div>
+      {active?.artifactId === artifactId && (
+        <section className="panel douyin-result">
+          <h3>{douyinStateLabels[active.state]}</h3>
+          <Progress
+            percent={active.progress}
+            status={active.state === "failed" ? "exception" : undefined}
+          />
+          {running && (
+            <Button
+              onClick={() =>
+                void act(async () => {
+                  await douyinDesktop("account.open", {
+                    accountId: active.accountId,
+                  });
+                })
+              }
+            >
+              查看账号浏览器
+            </Button>
+          )}
+        </section>
+      )}
+      <section className="panel douyin-result">
+        <h2>这份成片的发布记录</h2>
+        {records.error && (
+          <Alert type="error" title={publishingMessage(records.error)} />
+        )}
+        <p className="muted">
+          “已提交抖音”表示获得提交回执，不代表作品已通过审核或在线状态已核验。
+        </p>
+        {!records.data?.items.length && <Empty description="暂无发布记录" />}
+        {records.data?.items.map((record) => (
+          <article className="douyin-record" key={record.id}>
+            <Space wrap>
+              <Tag
+                color={
+                  record.state === "accepted"
+                    ? "green"
+                    : record.state === "unknown"
+                      ? "orange"
+                      : "default"
+                }
+              >
+                {douyinStateLabels[record.state]}
+              </Tag>
+              <span>{record.title}</span>
+              <small>
+                {new Date(record.createdAt).toLocaleString("zh-CN")}
+              </small>
+              {record.resultSource === "manual" && <Tag>用户人工核对</Tag>}
+            </Space>
+            {record.url && (
+              <p>
+                <a
+                  href={record.url}
+                  onClick={(event) => {
+                    if (desktopPublishingAvailable()) {
+                      event.preventDefault();
+                      void act(async () => {
+                        await douyinDesktop("account.open", {
+                          accountId: record.accountId,
+                        });
+                        await douyinDesktop("browser.action", {
+                          accountId: record.accountId,
+                          action: "post",
+                          recordId: record.id,
+                        });
+                      });
                     }
                   }}
+                  target="_blank"
+                  rel="noreferrer"
                 >
-                  核对模拟结果
+                  {record.url}
+                </a>
+              </p>
+            )}
+            {record.errorCode && (
+              <p className="error-text">
+                {publishingFailureText(record.errorCode)}
+              </p>
+            )}
+            {record.state === "unknown" && (
+              <Space>
+                <Button
+                  disabled={!desktopPublishingAvailable()}
+                  onClick={() =>
+                    void act(async () => {
+                      await douyinDesktop("account.open", {
+                        accountId: record.accountId,
+                      });
+                      await douyinDesktop("browser.action", {
+                        accountId: record.accountId,
+                        action: "manage",
+                      });
+                    })
+                  }
+                >
+                  打开创作者中心核对
                 </Button>
-              )}
-            </div>
-          ))
-        ) : (
-          <p className="muted">还没有该平台的发布任务</p>
+                <Button
+                  disabled={record.deviceId !== desktop.data?.deviceId}
+                  onClick={() => {
+                    setReconciling(record);
+                    setResultUrl("");
+                    setConfirmAbsent(false);
+                  }}
+                >
+                  记录核对结果
+                </Button>
+              </Space>
+            )}
+            <details>
+              <summary>执行步骤</summary>
+              <Timeline
+                items={record.logs.map((log, index) => ({
+                  key: index,
+                  children: `${log.step} · ${log.status}${log.durationMs === undefined ? "" : ` · ${log.durationMs}ms`}`,
+                }))}
+              />
+            </details>
+          </article>
+        ))}
+        {(records.data?.total || 0) > 20 && (
+          <Pagination
+            current={recordOffset / 20 + 1}
+            pageSize={20}
+            showSizeChanger={false}
+            total={records.data?.total}
+            onChange={(page) => setRecordOffset((page - 1) * 20)}
+          />
         )}
-      </div>
+      </section>
+      <Modal
+        title={confirmAbsent ? "确认未发布后允许重新操作" : "记录人工核对结果"}
+        open={!!reconciling}
+        onCancel={() => setReconciling(undefined)}
+        footer={
+          <Space>
+            <Button onClick={() => setReconciling(undefined)}>取消</Button>
+            <Button
+              danger
+              onClick={() => {
+                if (!confirmAbsent) {
+                  setConfirmAbsent(true);
+                  return;
+                }
+                void act(async () => {
+                  await douyinApi.reconcile(reconciling!.id, false);
+                  setReconciling(undefined);
+                });
+              }}
+            >
+              {confirmAbsent ? "我已核对，确认未发布" : "确认未发布"}
+            </Button>
+            <Button
+              type="primary"
+              disabled={!resultUrl || busy}
+              onClick={() =>
+                void act(async () => {
+                  await douyinApi.reconcile(reconciling!.id, true, resultUrl);
+                  setReconciling(undefined);
+                })
+              }
+            >
+              确认已有作品
+            </Button>
+          </Space>
+        }
+      >
+        {error && <Alert type="error" title={error} />}
+        <p>
+          请先在创作者中心核对。仅凭网络错误不能判断未发布，错误判断后再次操作可能产生重复作品。
+        </p>
+        <Input
+          aria-label="已发布的抖音作品链接"
+          placeholder="https://www.douyin.com/video/作品ID"
+          value={resultUrl}
+          onChange={(event) => setResultUrl(event.target.value)}
+        />
+      </Modal>
     </>
   );
 }

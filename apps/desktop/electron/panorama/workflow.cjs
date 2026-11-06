@@ -671,6 +671,39 @@ class PanoramaWorkflow {
     for (const { controller } of this.active.values()) controller.abort();
     for (const controller of this.previews) controller.abort();
   }
+  completedArtifactOutput(userId, jobId) {
+    const owner = this.owner(userId);
+    domain.ensure(
+      typeof jobId === "string" && uuid.test(jobId),
+      "制作结果引用无效",
+    );
+    const job = this.store(owner).jobs.find((item) => item.id === jobId);
+    domain.ensure(job && job.status === "succeeded", "本机制作任务尚未完成");
+    domain.ensure(
+      !job.sample &&
+        !job.property?.sample &&
+        job.property?.id !== "panorama-cc0-sample",
+      "示例成片不能登记为正式成果",
+    );
+    // This producer-owned port exports completed files only. Consumers never read checkpoints.
+    return {
+      source: {
+        producer: "panorama",
+        taskId: job.id,
+        revision: job.draftRevision,
+      },
+      content: {
+        title: job.property.title,
+        script: job.segments.map((segment) => segment.text).join("\n\n"),
+        property: { id: job.property.id, title: job.property.title },
+      },
+      files: {
+        video: path.join(this.directory(owner), "jobs", job.id, "final.mp4"),
+        cover: path.join(this.directory(owner), "jobs", job.id, "cover.jpg"),
+      },
+      sample: false,
+    };
+  }
   mediaFile(userId, url) {
     const owner = this.owner(userId);
     const prefix = `/${owner}/`;

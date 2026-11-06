@@ -44,6 +44,7 @@ import { demoApi, isLive } from "@keagent/api-client";
 import { stageLabels } from "@keagent/shared-types";
 import { useUiStore, useWorkspace } from "./lib/workspace";
 import { StatusTag, formatDate } from "./components/common";
+import DouyinBrowserWorkspace from "./components/DouyinBrowserWorkspace";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const PropertiesPage = lazy(() => import("./pages/PropertiesPage"));
 const PropertyDetailPage = lazy(() =>
@@ -62,6 +63,12 @@ const BatchDetailPage = lazy(() =>
 const ProductionTaskPage = lazy(() =>
   import("./pages/ProductionPages").then((m) => ({
     default: m.ProductionTaskPage,
+  })),
+);
+const DemoPublishPage = lazy(() => import("./pages/DemoPublishPage"));
+const DemoPublishDetailPage = lazy(() =>
+  import("./pages/DemoPublishPage").then((m) => ({
+    default: m.PublishDetailPage,
   })),
 );
 const PublishPage = lazy(() => import("./pages/PublishPage"));
@@ -291,6 +298,11 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                   element={<ProductionTaskPage />}
                 />
                 <Route path="/publish" element={<PublishPage />} />
+                <Route path="/publish/demo" element={<DemoPublishPage />} />
+                <Route
+                  path="/publish/demo/:productionTaskId"
+                  element={<DemoPublishDetailPage />}
+                />
                 <Route
                   path="/publish/:productionTaskId"
                   element={<PublishDetailPage />}
@@ -320,6 +332,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             </span>
           </footer>
         </main>
+        {isLive && <DouyinBrowserWorkspace />}
       </div>
       <Drawer
         title="任务中心"

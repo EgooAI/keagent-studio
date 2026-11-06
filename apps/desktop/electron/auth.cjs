@@ -73,6 +73,7 @@ function registerAuth() {
   let accessExpires = 0;
   let tokenRequest;
   let identityGeneration = 0;
+  const identityListeners = new Set();
   const installationFile = path.join(
     app.getPath("userData"),
     "installation-id",
@@ -84,6 +85,7 @@ function registerAuth() {
     fs.writeFileSync(installationFile, installation, { mode: 0o600 });
   function clearAccess() {
     workflow.stop();
+    for (const listener of identityListeners) listener();
     identityGeneration++;
     accessToken = "";
     accessExpires = 0;
@@ -177,8 +179,10 @@ function registerAuth() {
         business &&
         response.status === 403 &&
         (route === "/v1/session" || route === "/v1/devices/register")
-      )
+      ) {
         workflow.stop();
+        for (const listener of identityListeners) listener();
+      }
       throw Object.assign(
         new Error(data.error?.message || data.message || "服务请求失败"),
         { status: response.status, code: data.error?.code },
@@ -299,6 +303,32 @@ function registerAuth() {
       return (await request(`/v1/avatars/${method.slice(7)}`, args[0] || {}))
         .data;
     }
+    if (method === "douyin.cloud") {
+      if (
+        ![
+          "accounts/list",
+          "records/list",
+          "records/get",
+          "records/reconcile",
+        ].includes(args[0])
+      )
+        throw new Error("此发布接口未开放");
+      try {
+        return {
+          ok: true,
+          data: (await request(`/v1/douyin/${args[0]}`, args[1] || {})).data,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            message: error.message,
+            status: error.status || 0,
+            code: error.code,
+          },
+        };
+      }
+    }
     const exchangeRoutes = {
       "asset.register": "/v1/media-assets/register",
       "asset.get": "/v1/media-assets/get",
@@ -386,6 +416,27 @@ function registerAuth() {
   });
   app.on("before-quit", () => workflow.stop());
   return {
+    onInvalidated(listener) {
+      identityListeners.add(listener);
+      return () => identityListeners.delete(listener);
+    },
+    async publishingIdentity() {
+      const generation = identityGeneration;
+      const session = (await request("/v1/session")).data;
+      if (generation !== identityGeneration || !deviceId)
+        throw new Error("请重新登录");
+      return { userId: session.userId, deviceId, generation };
+    },
+    async completedArtifactOutput(jobId) {
+      const context = await this.publishingIdentity();
+      const output = workflow.completedArtifactOutput(context.userId, jobId);
+      if (context.generation !== identityGeneration)
+        throw new Error("登录状态已改变");
+      return output;
+    },
+    async businessRequest(route, input) {
+      return (await request(route, input)).data;
+    },
     async media(requestURL) {
       if (!token) throw new Error("请重新登录");
       const generation = identityGeneration;

@@ -58,6 +58,43 @@ function fixture() {
   return { workflow, owner, scenes, config };
 }
 describe("panorama domain", () => {
+  it("exports only the owning user's completed real output through the registration port", () => {
+    const { workflow, owner } = fixture();
+    const job = {
+      id: "11111111-1111-4111-8111-111111111111",
+      draftRevision: 2,
+      property,
+      segments: [{ text: "最终文案" }],
+      status: "succeeded",
+      sample: false,
+    };
+    workflow.store(owner).jobs.push(job);
+    const output = workflow.completedArtifactOutput("user-a", job.id);
+    expect(output.source).toEqual({
+      producer: "panorama",
+      taskId: job.id,
+      revision: 2,
+    });
+    expect(output.content.script).toBe("最终文案");
+    expect(output.files.video).toBe(
+      path.join(workflow.directory(owner), "jobs", job.id, "final.mp4"),
+    );
+    expect(() => workflow.completedArtifactOutput("user-b", job.id)).toThrow(
+      "尚未完成",
+    );
+    job.status = "running";
+    expect(() => workflow.completedArtifactOutput("user-a", job.id)).toThrow(
+      "尚未完成",
+    );
+    job.status = "succeeded";
+    job.sample = true;
+    expect(() => workflow.completedArtifactOutput("user-a", job.id)).toThrow(
+      "示例成片",
+    );
+    expect(() =>
+      workflow.completedArtifactOutput("user-a", "../../private"),
+    ).toThrow("引用无效");
+  });
   it("requires a user-owned uploaded photo before generating digital-human scripts", async () => {
     const { workflow, scenes, config } = fixture();
     const remote = vi.fn(

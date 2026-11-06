@@ -1,0 +1,21 @@
+// @ts-nocheck
+/*
+ * Adapted from jackwener/opencli commit 0e73c3c2c2b45c91e050e1618b20e2aba22f1a23.
+ * Licensed under Apache-2.0. Modified for AutoUp module imports and TypeScript compilation.
+ */
+// @ts-nocheck
+export function parseTextExtra(_text, hashtags) {
+  return hashtags.map((h) => ({
+    type: 1,
+    hashtag_id: h.id,
+    hashtag_name: h.name,
+    start: h.start,
+    end: h.end,
+    caption_start: 0,
+    caption_end: h.end - h.start,
+  }));
+}
+/** Extract hashtag names from text (e.g. "#话题" → ["话题"]) */
+export function extractHashtagNames(text) {
+  return [...text.matchAll(/#([^\s#]+)/g)].map((m) => m[1]);
+}

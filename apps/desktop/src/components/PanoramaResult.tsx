@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { artifactMedia } from "../lib/artifactMedia";
 import { Alert, App, Button, Empty, Progress, Space, Table, Tag } from "antd";
 import { Download, RefreshCw } from "lucide-react";
 import type { PanoramaJob } from "@keagent/shared-types";
@@ -12,6 +15,8 @@ export function PanoramaResult({
   act: (action: () => Promise<void>) => Promise<void>;
 }) {
   const { message } = App.useApp();
+  const [registered, setRegistered] = useState<string>();
+  useEffect(() => setRegistered(undefined), [job?.id]);
   return (
     <>
       {" "}
@@ -102,7 +107,32 @@ export function PanoramaResult({
                 导出 MP4
               </Button>
             )}
+            {job.status === "succeeded" &&
+              !job.sample &&
+              window.desktop?.artifactMedia && (
+                <Button
+                  type="primary"
+                  loading={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      const artifact = await artifactMedia.registerOutput(
+                        job.id,
+                      );
+                      setRegistered(artifact.id);
+                      void message.success("成片已登记，验收通过后即可发布");
+                    })
+                  }
+                >
+                  登记成片到发布中心
+                </Button>
+              )}
+            {registered && (
+              <Link to={`/publish/${registered}`}>前往成片验收与发布</Link>
+            )}
           </Space>
+          {job.sample && job.status === "succeeded" && (
+            <p className="muted">示例成片仅用于演示，不登记为正式成果。</p>
+          )}
           {job.timeline && (
             <Table
               size="small"
