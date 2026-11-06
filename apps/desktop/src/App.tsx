@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Link,
   NavLink,
@@ -12,38 +12,26 @@ import {
   Alert,
   App as AntApp,
   Avatar,
-  Badge,
   Button,
-  Drawer,
+  Dropdown,
   Empty,
   Popconfirm,
-  Progress,
   Skeleton,
   Tag,
 } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Bell,
   Building2,
-  ChevronDown,
-  ChevronRight,
-  CircleHelp,
   Clapperboard,
-  Cloud,
   FolderOpen,
   House,
   LayoutDashboard,
   LogOut,
-  PanelLeftClose,
   Settings,
-  Sparkles,
   Users,
-  Workflow,
 } from "lucide-react";
 import { demoApi, isLive } from "@keagent/api-client";
-import { stageLabels } from "@keagent/shared-types";
-import { useUiStore, useWorkspace } from "./lib/workspace";
-import { StatusTag, formatDate } from "./components/common";
+import { useWorkspace } from "./lib/workspace";
 import DouyinBrowserWorkspace from "./components/DouyinBrowserWorkspace";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const PropertiesPage = lazy(() => import("./pages/PropertiesPage"));
@@ -92,7 +80,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
-  const { tasksOpen, setTasksOpen } = useUiStore();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   useEffect(
     () =>
       demoApi.subscribe(() => {
@@ -109,7 +97,6 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   useEffect(() => {
     document.querySelector(".app-main")?.scrollTo(0, 0);
   }, [location.pathname]);
-  const current = navigation.find((n) => location.pathname.startsWith(n.path));
   const activeTasks =
     data?.tasks.filter((t) =>
       ["queued", "running", "awaiting_review"].includes(t.status),
@@ -131,13 +118,6 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             <small>房产创作工作台</small>
           </span>
         </Link>
-        <div className="workspace-switch">
-          <span className="workspace-avatar">沪</span>
-          <span>
-            我的创作空间<small>个人工作区</small>
-          </span>
-          <ChevronDown size={15} />
-        </div>
         <nav aria-label="主要导航">
           {navigation.map(({ path, label, icon: Icon }) => (
             <NavLink
@@ -156,13 +136,6 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="workspace-note">
-            <Workflow size={18} />
-            <div>
-              <strong>让好房源，被看见</strong>
-              <p>从一套房源，开始你的创作。</p>
-            </div>
-          </div>
           <NavLink
             to="/settings"
             className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
@@ -170,69 +143,55 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             <Settings size={19} />
             <span>设置</span>
           </NavLink>
-          <div className="sidebar-profile">
-            <Avatar
-              size={34}
-              style={{
-                background: "var(--accent-soft)",
-                color: "var(--accent)",
-              }}
+          <Dropdown
+            trigger={["click"]}
+            placement="topLeft"
+            open={userMenuOpen}
+            onOpenChange={setUserMenuOpen}
+            disabled={!onLogout}
+            menu={{
+              items: onLogout
+                ? [
+                    {
+                      key: "logout",
+                      label: "退出登录",
+                      icon: <LogOut size={16} />,
+                      onClick: () =>
+                        void onLogout().catch((e: Error) =>
+                          message.error(e.message),
+                        ),
+                    },
+                  ]
+                : [],
+            }}
+          >
+            <button
+              type="button"
+              className="sidebar-profile"
+              aria-label="用户菜单"
+              aria-haspopup="menu"
+              aria-expanded={userMenuOpen}
+              disabled={!onLogout}
             >
-              林
-            </Avatar>
-            <span>
-              <strong>{data?.profile.name ?? "演示经纪人"}</strong>
-              <small>{isLive ? "云端工作区" : "演示工作区"}</small>
-            </span>
-            <Tag variant="filled">V1</Tag>
-          </div>
+              <Avatar
+                size={34}
+                style={{
+                  background: "var(--accent-soft)",
+                  color: "var(--accent)",
+                }}
+              >
+                林
+              </Avatar>
+              <span>
+                <strong>{data?.profile.name ?? "演示经纪人"}</strong>
+                <small>{isLive ? "云端工作区" : "演示工作区"}</small>
+              </span>
+              <Tag variant="filled">V1</Tag>
+            </button>
+          </Dropdown>
         </div>
       </aside>
       <div className="app-workspace">
-        <header className="app-header">
-          <div className="breadcrumb">
-            <span>工作空间</span>
-            <ChevronRight size={14} />
-            <strong>{current?.label ?? "设置"}</strong>
-          </div>
-          <div className="header-actions">
-            {onLogout && (
-              <Button
-                onClick={() =>
-                  void onLogout().catch((e: Error) => message.error(e.message))
-                }
-                icon={<LogOut size={16} />}
-              >
-                退出登录
-              </Button>
-            )}
-            <span className="demo-indicator">
-              {isLive ? "云端联调" : "Mock 演示"}
-            </span>
-            <span className="cloud-state">
-              <Cloud size={16} /> {isLive ? "云端业务数据" : "本地模拟数据"}
-            </span>
-            <Button
-              className="task-center-button"
-              icon={<Bell size={17} />}
-              onClick={() => setTasksOpen(true)}
-            >
-              任务中心
-              {activeTasks > 0 && (
-                <Badge count={activeTasks} color="var(--accent)" />
-              )}
-            </Button>
-            <Avatar
-              size={30}
-              style={{
-                background: "var(--accent-soft)",
-                color: "var(--accent)",
-              }}
-            >
-              林
-            </Avatar>
-          </div>
-        </header>
         <main id="main-content" className="app-main" tabIndex={-1}>
           {error ? (
             <div className="panel error-boundary">
@@ -334,58 +293,6 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
         </main>
         {isLive && <DouyinBrowserWorkspace />}
       </div>
-      <Drawer
-        title="任务中心"
-        open={tasksOpen}
-        onClose={() => setTasksOpen(false)}
-        size={440}
-      >
-        <p className="muted">离开当前页面后，模拟任务仍会继续推进。</p>
-        {data?.tasks.map((task) => (
-          <Link
-            className="drawer-task"
-            to={`/studio/tasks/${task.id}`}
-            key={task.id}
-            onClick={() => setTasksOpen(false)}
-          >
-            <div>
-              <strong>{task.propertySnapshot.community}</strong>
-              <StatusTag status={task.status} />
-            </div>
-            <p>
-              {stageLabels[task.stage]} · {formatDate(task.createdAt)}
-            </p>
-            {task.status === "running" && (
-              <Progress
-                percent={task.progress}
-                size="small"
-                format={() => "模拟进度"}
-              />
-            )}
-          </Link>
-        ))}
-        {data?.resources
-          .filter((r) => r.downloadStatus === "downloading")
-          .map((r) => (
-            <div className="drawer-task" key={r.id}>
-              <strong>下载 {r.name}</strong>
-              <Progress percent={r.downloadProgress} size="small" />
-            </div>
-          ))}
-        {data?.publishTasks
-          .filter((p) => ["running", "queued", "unknown"].includes(p.status))
-          .map((p) => (
-            <Link
-              className="drawer-task"
-              key={p.id}
-              to={`/publish/${p.productionTaskId}`}
-              onClick={() => setTasksOpen(false)}
-            >
-              <strong>{p.title}</strong>
-              <StatusTag status={p.status} />
-            </Link>
-          ))}
-      </Drawer>
     </div>
   );
 }

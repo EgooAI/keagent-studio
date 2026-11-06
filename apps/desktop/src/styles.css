@@ -163,36 +163,6 @@ svg {
   color: var(--muted);
   letter-spacing: 1.6px;
 }
-.workspace-switch {
-  display: flex;
-  align-items: center;
-  padding: 10px;
-  gap: 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  margin: 0 5px 25px;
-  font-size: 12px;
-}
-.workspace-switch > span:nth-child(2) {
-  flex: 1;
-  font-weight: 600;
-}
-.workspace-switch small {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 3px;
-  font-weight: 400;
-}
-.workspace-avatar {
-  width: 29px;
-  height: 29px;
-  background: #eff3f8;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  color: #596c85;
-}
 .nav-item {
   display: flex;
   align-items: center;
@@ -227,30 +197,25 @@ svg {
 .sidebar-bottom {
   margin-top: auto;
 }
-.workspace-note {
-  display: flex;
-  gap: 9px;
-  margin: 22px 5px;
-  padding: 14px 7px;
-  color: #6d7f98;
-  font-size: 11px;
-}
-.workspace-note strong {
-  font-weight: 500;
-  color: #52657d;
-}
-.workspace-note p {
-  font-size: 10px;
-  margin: 7px 0 0;
-  color: var(--muted);
-}
 .sidebar-profile {
   display: flex;
   align-items: center;
   gap: 9px;
   margin: 16px -14px 0;
   padding: 16px 18px;
+  width: calc(100% + 28px);
+  border: 0;
   border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.sidebar-profile:hover:not(:disabled),
+.sidebar-profile[aria-expanded="true"] {
+  background: var(--accent-soft);
+}
+.sidebar-profile:disabled {
+  cursor: default;
 }
 .sidebar-profile strong {
   font-size: 12px;
@@ -271,56 +236,6 @@ svg {
   margin-left: 220px;
   min-width: 0;
   width: calc(100% - 220px);
-}
-.app-header {
-  height: 68px;
-  padding: 0 32px;
-  border-bottom: 1px solid var(--line);
-  background: #fff;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.breadcrumb strong {
-  color: #3d4b60;
-  font-weight: 500;
-}
-.header-actions {
-  display: flex;
-  gap: 21px;
-  align-items: center;
-  font-size: 12px;
-}
-.demo-indicator {
-  color: #a66612;
-  background: #fff6e5;
-  padding: 4px 8px;
-  border-radius: 5px;
-  font-size: 11px;
-}
-.cloud-state {
-  color: var(--muted);
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  font-size: 11px;
-}
-.task-center-button.ant-btn {
-  height: 32px;
-  border: 0;
-  box-shadow: none;
-  color: #546279;
-  padding: 0;
-  font-size: 12px;
-  gap: 8px;
 }
 .app-main {
   max-width: 1880px;
@@ -1468,21 +1383,6 @@ svg {
 .publish-record .error-text {
   color: #b75243;
 }
-.drawer-task {
-  display: block;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--line);
-}
-.drawer-task > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.drawer-task p {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 9px 0 0;
-}
 .app-footer {
   display: flex;
   justify-content: space-between;
@@ -1516,12 +1416,6 @@ svg {
 @media (max-width: 1300px) {
   .app-main {
     padding: 27px 25px 0;
-  }
-  .app-header {
-    padding: 0 25px;
-  }
-  .header-actions {
-    gap: 14px;
   }
   .property-title {
     flex-wrap: wrap;
@@ -1564,9 +1458,6 @@ svg {
   }
   .brand strong {
     font-size: 15px;
-  }
-  .cloud-state {
-    display: none;
   }
   .property-grid,
   .publish-grid {
@@ -1616,10 +1507,17 @@ svg {
     padding: 0 6px 25px;
   }
   .brand > span:last-child,
-  .workspace-switch,
   .nav-item > span,
-  .workspace-note,
+  .sidebar-profile > span:not(.ant-avatar) {
+    display: none;
+  }
   .sidebar-profile {
+    justify-content: center;
+    width: calc(100% + 14px);
+    margin: 16px -7px 0;
+    padding: 16px 0;
+  }
+  .sidebar-profile .ant-tag {
     display: none;
   }
   .nav-item {
@@ -1635,21 +1533,6 @@ svg {
   }
   .app-main {
     padding: 22px 16px 0;
-  }
-  .app-header {
-    height: 58px;
-    padding: 0 16px;
-  }
-  .header-actions {
-    gap: 10px;
-  }
-  .header-actions > .ant-avatar,
-  .breadcrumb > span,
-  .breadcrumb > svg {
-    display: none;
-  }
-  .task-center-button {
-    font-size: 0 !important;
   }
   .page-heading {
     align-items: flex-start;
