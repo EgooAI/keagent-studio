@@ -34,6 +34,8 @@ import type {
 } from "@keagent/shared-types";
 import { useBlocker, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../lib/workspace";
+import { useVoiceLibrary } from "../lib/voiceLibrary";
+import { useAvatarLibrary } from "../lib/avatarLibrary";
 import { PageHeader } from "./common";
 import { PanoramaSettings } from "./PanoramaSettings";
 import { PanoramaResult } from "./PanoramaResult";
@@ -42,6 +44,8 @@ import "./panorama.css";
 
 export function PanoramaStudio() {
   const { data: workspace } = useWorkspace();
+  const voices = useVoiceLibrary();
+  const avatars = useAvatarLibrary();
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
@@ -88,8 +92,9 @@ export function PanoramaStudio() {
     if (!caps || config) return;
     setConfig({
       ...caps.defaultConfig,
-      voice: caps.voices.find((v) => v.language === "zh-CN")?.name || "",
-      avatarId: caps.avatarId,
+      ttsProvider: "volcengine",
+      voice: voices.data?.publicVoices?.[0]?.id || "",
+      avatarId: "",
     });
   }, [caps, config]);
   useEffect(() => {
@@ -121,7 +126,11 @@ export function PanoramaStudio() {
   };
   const restore = (value: PanoramaDraft) => {
     setDraft(value);
-    setConfig(value.config);
+    setConfig(
+      value.config.ttsProvider === "system"
+        ? { ...value.config, ttsProvider: "volcengine", voice: "" }
+        : value.config,
+    );
     setProperty(value.property);
     setScenes(value.scenes);
     setSegments(value.segments);
@@ -437,7 +446,16 @@ export function PanoramaStudio() {
                       type="primary"
                       block
                       loading={busy}
-                      disabled={!property || !scenes.length}
+                      disabled={
+                        !property ||
+                        !scenes.length ||
+                        (config.videoMode === "avatar" &&
+                          !avatars.data?.avatars.some(
+                            (avatar) =>
+                              avatar.id === config.avatarId &&
+                              avatar.status === "ready",
+                          ))
+                      }
                       onClick={() => void generate()}
                     >
                       生成分段文案，进入审核

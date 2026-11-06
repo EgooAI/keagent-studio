@@ -82,9 +82,8 @@ export interface PanoramaCapabilities {
   voices: { name: string; language: string }[];
   ai: boolean;
   volcTts: boolean;
-  volcSpeaker: string;
   volcAvatar: boolean;
-  avatarId: string;
+  managedVoices: boolean;
   defaultConfig: PanoramaConfig;
   templates: {
     id: string;

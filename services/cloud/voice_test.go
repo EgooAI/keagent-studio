@@ -92,7 +92,7 @@ func voiceTestServer(t *testing.T) *server {
 		}
 		base.Close()
 	})
-	if _, err = db.Exec(voiceSchema); err != nil {
+	if _, err = db.Exec(schema + voiceSchema + publicVoiceSchema + userAvatarSchema + avatarSchema); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "true")
@@ -190,8 +190,7 @@ func TestVoiceIsolationIdempotencyAndSynthesis(t *testing.T) {
 	if _, err = s.synthesizeVoice(t.Context(), a, speech); err == nil {
 		t.Fatal("archived voice synthesized")
 	}
-	t.Setenv("VOLC_TTS_RESOURCE_ID", "seed-tts-2.0")
-	t.Setenv("VOLC_TTS_SPEAKER", "public-system")
+
 	if _, err = s.synthesizeVoice(t.Context(), a, object{"text": "文案", "voice": latest.Speaker, "rate": float64(1)}); err == nil {
 		t.Fatal("private provider speaker bypassed ownership via builtin route")
 	}

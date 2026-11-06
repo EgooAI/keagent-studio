@@ -32,6 +32,7 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import { demoApi, isLive } from "@keagent/api-client";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
+import { AvatarLibraryPanel } from "../components/AvatarLibrary";
 import { ThemeSettings } from "@keagent/theme";
 import type {
   AgentProfile,
@@ -670,7 +671,7 @@ export default function SettingsPage() {
           <strong>使用本人素材，保留明确授权</strong>
           <p style={{ lineHeight: 1.8, color: "#667085", maxWidth: 640 }}>
             {isLive
-              ? "本人声音须确认授权后才会提交火山进行复刻；业务数据库只保存音色信息。移除本应用音色不会自动释放供应商槽位。人物形象上传仍为演示，平台账号与私信能力尚未接入。"
+              ? "本人声音须确认授权后才会提交火山进行复刻；业务数据库只保存音色信息。移除本应用音色不会自动释放供应商槽位。本人照片保存在私有存储，并在制作时提供给火山；移除形象会阻止新任务使用，不会自动删除云端照片。平台账号与私信能力尚未接入。"
               : "声音和形象需要分别确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
           </p>
         </div>
@@ -730,7 +731,11 @@ export default function SettingsPage() {
       label: "声音与音色",
       children: isLive ? <VoiceLibraryPanel /> : voiceList,
     },
-    { key: "avatars", label: "人物形象", children: avatarList },
+    {
+      key: "avatars",
+      label: "人物形象",
+      children: isLive ? <AvatarLibraryPanel /> : avatarList,
+    },
     { key: "platforms", label: "平台账号", children: connections },
     { key: "defaults", label: "默认生成配置", children: defaultsSettings },
     { key: "storage", label: "本地存储", children: storage },

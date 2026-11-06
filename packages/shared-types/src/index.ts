@@ -233,3 +233,4 @@ export const publishLabels: Record<PublishStatus, string> = {
 };
 export type * from "./admin";
 export type * from "./voice";
+export type * from "./avatar";

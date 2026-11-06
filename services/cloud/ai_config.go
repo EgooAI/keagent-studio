@@ -68,20 +68,11 @@ func aiServices() []aiService {
 		script.Issues = append(script.Issues, "AI_BASE_URL 必须是无凭据、查询参数及片段的公共 HTTPS 地址")
 	}
 	script.setState(strings.TrimSpace(os.Getenv("AI_API_KEY")) == "")
-	tts := aiService{ID: "tts", Label: "火山配音", Purpose: "全景讲解的云端语音合成", Provider: "火山引擎", Model: os.Getenv("VOLC_TTS_RESOURCE_ID"), Endpoint: "https://openspeech.bytedance.com/api/v3/tts/unidirectional", Missing: []string{}, Issues: []string{}, Note: note}
-	tts.checkRequired("VOLC_TTS_API_KEY", "VOLC_TTS_RESOURCE_ID", "VOLC_TTS_SPEAKER")
-	if value := os.Getenv("VOLC_TTS_SPEAKER"); value != "" && !resourceID.MatchString(value) {
-		tts.Issues = append(tts.Issues, "VOLC_TTS_SPEAKER 格式无效")
-	}
-	if value := os.Getenv("VOLC_TTS_RESOURCE_ID"); value != "" && !speechResourceID.MatchString(value) {
-		tts.Issues = append(tts.Issues, "VOLC_TTS_RESOURCE_ID 格式无效")
-	}
+	tts := aiService{ID: "tts", Label: "火山配音", Purpose: "全景讲解的云端语音合成", Provider: "火山引擎", Model: "由公共音色目录指定合成资源", Endpoint: "https://openspeech.bytedance.com/api/v3/tts/unidirectional", Missing: []string{}, Issues: []string{}, Note: note}
+	tts.checkRequired("VOLC_TTS_API_KEY")
 	tts.setState(strings.TrimSpace(os.Getenv("VOLC_TTS_API_KEY")) == "")
-	avatar := aiService{ID: "avatar", Label: "火山数字人", Purpose: "全景讲解的数字人开场", Provider: "火山引擎", Model: os.Getenv("VOLC_AVATAR_RESOURCE_ID"), Endpoint: "https://visual.volcengineapi.com", Missing: []string{}, Issues: []string{}, Note: note}
-	avatar.checkRequired("VOLC_ACCESS_KEY_ID", "VOLC_SECRET_ACCESS_KEY", "VOLC_AVATAR_RESOURCE_ID", "VOLC_TOS_BUCKET")
-	if value := os.Getenv("VOLC_AVATAR_RESOURCE_ID"); value != "" && !resourceID.MatchString(value) {
-		avatar.Issues = append(avatar.Issues, "VOLC_AVATAR_RESOURCE_ID 格式无效")
-	}
+	avatar := aiService{ID: "avatar", Label: "火山数字人", Purpose: "用用户本人上传的照片生成数字人开场", Provider: "火山引擎", Model: photoAvatarProvider, Endpoint: "https://visual.volcengineapi.com", Missing: []string{}, Issues: []string{}, Note: note}
+	avatar.checkRequired("VOLC_ACCESS_KEY_ID", "VOLC_SECRET_ACCESS_KEY", "VOLC_TOS_BUCKET")
 	if os.Getenv("VOLC_TOS_BUCKET") != "" {
 		if _, _, err := tosEndpoint(); err != nil {
 			avatar.Issues = append(avatar.Issues, "TOS 私有桶或地域格式无效")

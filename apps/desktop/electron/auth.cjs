@@ -33,9 +33,11 @@ function registerAuth() {
     async (operation, payload, signal) => {
       signal?.throwIfAborted();
       const result = await request(
-        operation === "voice-list"
-          ? "/v1/voices/list"
-          : `/v1/panorama/${operation}`,
+        operation === "avatar-list"
+          ? "/v1/avatars/list"
+          : operation === "voice-list"
+            ? "/v1/voices/list"
+            : `/v1/panorama/${operation}`,
         payload,
         true,
         signal,
@@ -224,7 +226,11 @@ function registerAuth() {
       event.senderFrame !== event.sender.mainFrame ||
       !Array.isArray(args) ||
       JSON.stringify(args).length >
-        (method === "voice.create" ? 14 * 1024 * 1024 : 1048576)
+        (method === "voice.create"
+          ? 14 * 1024 * 1024
+          : method === "avatar.create"
+            ? 8 * 1024 * 1024
+            : 1048576)
     )
       throw new Error("非法桌面请求");
     if (method === "login") {
@@ -271,10 +277,23 @@ function registerAuth() {
         "voice.create",
         "voice.refresh",
         "voice.preview",
+        "voice.preview-public",
         "voice.remove",
       ].includes(method)
     ) {
       return (await request(`/v1/voices/${method.slice(6)}`, args[0] || {}))
+        .data;
+    }
+    if (
+      [
+        "avatar.list",
+        "avatar.create",
+        "avatar.preview",
+        "avatar.refresh",
+        "avatar.remove",
+      ].includes(method)
+    ) {
+      return (await request(`/v1/avatars/${method.slice(7)}`, args[0] || {}))
         .data;
     }
     if (typeof method === "string" && method.startsWith("panorama.")) {

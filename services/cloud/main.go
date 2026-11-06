@@ -41,6 +41,8 @@ type server struct {
 	jwt     *jwtVerifier
 	origins []string
 	speech  func(context.Context, string, object, string) ([]byte, error)
+	storage func(context.Context, string, string, []byte, string) ([]byte, error)
+	vision  func(context.Context, string, object) (object, error)
 }
 type fault struct {
 	status  int
@@ -162,6 +164,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/voices/create" {
 		limit = 14 << 20
 	}
+	if r.URL.Path == "/v1/avatars/create" {
+		limit = 8 << 20
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		respond(w, nil, fail(413, "请求过大"))
@@ -204,6 +209,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/voices/") {
 		v, e := s.voices(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/voices/"), body)
+		respond(w, v, e)
+		return
+	}
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/avatars/") {
+		v, e := s.avatars(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/avatars/"), body)
 		respond(w, v, e)
 		return
 	}
@@ -377,6 +387,15 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 		if str(config["videoMode"]) != "voiceover" && str(config["videoMode"]) != "avatar" {
 			return nil, fail(422, "视频模式无效")
 		}
+		if config["videoMode"] == "avatar" {
+			var allowed bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_user_avatar WHERE id=$1 AND owner_id=$2 AND NOT archived AND payload->>'status'='ready')`, str(config["avatarId"]), a.UserID).Scan(&allowed); err != nil {
+				return nil, err
+			}
+			if !allowed {
+				return nil, fail(422, "露脸模式必须先上传本人照片并选择形象")
+			}
+		}
 		for _, k := range []string{"promptTemplate", "videoTemplate", "styleTemplate", "coverTemplate"} {
 			ref := obj(config[k])
 			if ref == nil {
@@ -478,6 +497,9 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	ctx := r.Context()
 	kind := strings.TrimPrefix(r.URL.Path, "/v1/admin/")
+	if kind == "voices" {
+		return s.adminVoices(r, a, body)
+	}
 	if r.Method == "GET" {
 		if strings.HasSuffix(kind, "/list") {
 			return queryAdminList(ctx, s.db, strings.TrimSuffix(kind, "/list"), r.URL.Query())
@@ -850,6 +872,12 @@ func main() {
 	}
 	if _, err = db.Exec(voiceSchema); err != nil {
 		log.Fatal("voice migration failed")
+	}
+	if _, err = db.Exec(publicVoiceSchema); err != nil {
+		log.Fatal("public voice migration failed")
+	}
+	if _, err = db.Exec(userAvatarSchema); err != nil {
+		log.Fatal("user avatar migration failed")
 	}
 	verifier, err := newJWTVerifier()
 	if err != nil {

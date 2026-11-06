@@ -30,7 +30,9 @@ import {
   Volume2,
 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { demoApi } from "@keagent/api-client";
+import { demoApi, isLive } from "@keagent/api-client";
+import { useAvatarLibrary } from "../lib/avatarLibrary";
+import { useVoiceLibrary } from "../lib/voiceLibrary";
 import type {
   ProductionConfig,
   Resource,
@@ -94,6 +96,8 @@ export function StudioPage() {
 }
 
 function ExistingStudioPage() {
+  const ownAvatars = useAvatarLibrary();
+  const voiceLibrary = useVoiceLibrary();
   const { data } = useWorkspace();
   const { message } = App.useApp();
   const navigate = useNavigate();
@@ -172,8 +176,36 @@ function ExistingStudioPage() {
       (item) => item.id === ref.id && item.version === ref.version,
     );
   const name = (ref: ResourceRef) => resource(ref)?.name ?? "未选择";
-  const voice = data.voices.find((item) => item.id === config.voiceId);
-  const avatar = data.avatars.find((item) => item.id === config.avatarId);
+  const voices = isLive
+    ? [
+        ...(voiceLibrary.data?.publicVoices || []).map((item) => ({
+          ...item,
+          status: "ready" as const,
+          description: "管理员提供的公共音色",
+          isDefault: false,
+        })),
+        ...(voiceLibrary.data?.voices || [])
+          .filter((item) => item.status === "ready")
+          .map((item) => ({
+            ...item,
+            status: "ready" as const,
+            description: "本人的专属音色",
+            isDefault: false,
+          })),
+      ]
+    : data.voices;
+  const voice = voices.find((item) => item.id === config.voiceId);
+  const avatars = isLive
+    ? (ownAvatars.data?.avatars || [])
+        .filter((item) => item.status === "ready")
+        .map((item) => ({
+          ...item,
+          image: "",
+          status: "ready" as const,
+          isDefault: false,
+        }))
+    : data.avatars;
+  const avatar = avatars.find((item) => item.id === config.avatarId);
   const selectedResource =
     resourceType === "video"
       ? config.videoTemplate
@@ -221,6 +253,10 @@ function ExistingStudioPage() {
     }
   };
   const listen = () => {
+    if (isLive) {
+      navigate("/settings/voices");
+      return;
+    }
     if (!("speechSynthesis" in window)) {
       void message.info("当前环境不支持系统语音试听");
       return;
@@ -387,7 +423,7 @@ function ExistingStudioPage() {
                     aria-label="配音声音"
                     value={config.voiceId}
                     onChange={(voiceId) => patch({ voiceId })}
-                    options={data.voices
+                    options={voices
                       .filter((item) => item.status === "ready")
                       .map((item) => ({ value: item.id, label: item.name }))}
                   />
@@ -399,7 +435,7 @@ function ExistingStudioPage() {
                 </div>
                 <p className="form-hint">
                   <Link to="/settings/voices">管理声音</Link> ·
-                  试听为系统演示语音
+                  {isLive ? "前往设置试听公共或本人音色" : "试听为系统演示语音"}
                 </p>
               </Form.Item>
               {config.videoMode === "avatar" ? (
@@ -409,7 +445,7 @@ function ExistingStudioPage() {
                     placeholder="请选择数字人形象"
                     value={config.avatarId}
                     onChange={(avatarId) => patch({ avatarId })}
-                    options={data.avatars
+                    options={avatars
                       .filter((item) => item.status === "ready")
                       .map((item) => ({ value: item.id, label: item.name }))}
                     notFoundContent={

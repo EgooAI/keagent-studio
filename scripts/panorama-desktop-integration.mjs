@@ -37,6 +37,54 @@ try {
     .getByLabel("密码", { exact: true })
     .fill(process.env.BOOTSTRAP_ADMIN_PASSWORD);
   await page.locator('button[type="submit"]').click();
+  // This isolated Electron process uses a catalog and test tone fixture. Never
+  // call paid speech providers from a media/rendering regression test.
+  await electron.evaluate(() => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (...args) => {
+      const url = String(args[0]);
+      if (url.endsWith("/v1/voices/list"))
+        return Promise.resolve(
+          Response.json({
+            cloudEnabled: true,
+            cloneEnabled: false,
+            voices: [],
+            publicVoices: [
+              {
+                id: "fixture-test-tone",
+                name: "媒体回归测试音",
+                language: "zh-CN",
+              },
+            ],
+          }),
+        );
+      if (url.endsWith("/v1/panorama/capabilities"))
+        return Promise.resolve(
+          Response.json({
+            ai: false,
+            volcTts: true,
+            volcAvatar: false,
+            managedVoices: true,
+          }),
+        );
+      if (url.endsWith("/v1/panorama/tts")) {
+        const pcm = Buffer.alloc(48000);
+        for (let i = 0; i < 24000; i++)
+          pcm.writeInt16LE(
+            Math.round(Math.sin((i * 440 * 2 * Math.PI) / 24000) * 3000),
+            i * 2,
+          );
+        return Promise.resolve(Response.json({ pcm: pcm.toString("base64") }));
+      }
+      if (
+        /\/v1\/panorama\/(script|audio|avatar-submit|avatar-query)$/.test(url)
+      )
+        throw new Error(
+          "Paid provider calls are forbidden in the media regression",
+        );
+      return original(...args);
+    };
+  });
   await page.getByRole("link", { name: /^AI 视频工厂/ }).click();
   await page.getByRole("heading", { name: "全景视频工作流" }).waitFor();
   await page.getByRole("button", { name: "使用 CC0 测试素材" }).click();
@@ -106,6 +154,7 @@ try {
   const copied = resolve(output, "desktop-generated.mp4");
   await writeFile(copied, await readFile(localPath));
   const result = {
+    audio: "Synthetic test tone fixture; no paid TTS or avatar requests",
     jobId: state.jobs[0].id,
     duration: state.jobs[0].duration,
     video: copied,

@@ -185,7 +185,22 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 			}
 			result = append(result, v.userVoice)
 		}
-		return object{"voices": result, "cloneEnabled": cloneConfigured(), "cloudVoice": os.Getenv("VOLC_TTS_SPEAKER"), "cloudEnabled": aiServices()[1].State == "configured"}, records.Err()
+		if err = records.Err(); err != nil {
+			return nil, err
+		}
+		records.Close()
+		catalog, err := s.publicVoices(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		public := []publicVoice{}
+		for _, v := range catalog {
+			public = append(public, v.publicVoice)
+		}
+		return object{"voices": result, "cloneEnabled": cloneConfigured(), "publicVoices": public, "cloudEnabled": aiServices()[1].State == "configured"}, nil
+	}
+	if operation == "preview-public" {
+		return s.previewPublicVoice(ctx, a, str(input["id"]))
 	}
 	if operation == "create" {
 		data, err := validateVoiceUpload(input)
@@ -285,7 +300,7 @@ func (s *server) synthesizeVoice(ctx context.Context, a actor, input object) (an
 	if len([]rune(text)) == 0 || len([]rune(text)) > 2000 || rate < .5 || rate > 2 {
 		return nil, fail(422, "配音参数无效")
 	}
-	resource := os.Getenv("VOLC_TTS_RESOURCE_ID")
+	var resource string
 	if kind == "personal" {
 		if !cloneConfigured() {
 			return nil, fail(503, "管理员尚未启用本人音色合成，请选择系统音色")
@@ -299,9 +314,11 @@ func (s *server) synthesizeVoice(ctx context.Context, a actor, input object) (an
 		}
 		voice, resource = v.Speaker, v.Resource
 	} else if kind == "" || kind == "builtin" {
-		if voice == "" || voice != os.Getenv("VOLC_TTS_SPEAKER") {
-			return nil, fail(422, "请选择管理员配置的系统音色")
+		preset, err := s.activePublicVoice(ctx, voice)
+		if err != nil {
+			return nil, err
 		}
+		voice, resource = preset.Speaker, preset.Resource
 	} else {
 		return nil, fail(422, "音色类型无效")
 	}

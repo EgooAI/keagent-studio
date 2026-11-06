@@ -37,7 +37,7 @@ func TestAdminPageValidation(t *testing.T) {
 }
 
 func TestAdminAISafeConfiguration(t *testing.T) {
-	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "VOLC_TTS_API_KEY", "VOLC_TTS_RESOURCE_ID", "VOLC_TTS_SPEAKER", "VOLC_ACCESS_KEY_ID", "VOLC_SECRET_ACCESS_KEY", "VOLC_AVATAR_RESOURCE_ID", "VOLC_TOS_BUCKET", "VOLC_TOS_REGION"} {
+	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "VOLC_TTS_API_KEY", "VOLC_ACCESS_KEY_ID", "VOLC_SECRET_ACCESS_KEY", "VOLC_TOS_BUCKET", "VOLC_TOS_REGION"} {
 		t.Setenv(key, "")
 	}
 	if services := aiServices(); services[0].State != "missing" || services[1].State != "missing" || services[2].State != "missing" {
@@ -62,17 +62,12 @@ func TestAdminAISafeConfiguration(t *testing.T) {
 		}
 	}
 	t.Setenv("VOLC_TTS_API_KEY", "private-tts-key")
-	t.Setenv("VOLC_TTS_RESOURCE_ID", "seed-tts-2.0")
-	if aiServices()[1].State != "incomplete" {
-		t.Fatal("missing speaker reported configured")
-	}
-	t.Setenv("VOLC_TTS_SPEAKER", "speaker_1")
+
 	if aiServices()[1].State != "configured" {
 		t.Fatal("valid TTS configuration rejected")
 	}
 	t.Setenv("VOLC_ACCESS_KEY_ID", "private-ak")
 	t.Setenv("VOLC_SECRET_ACCESS_KEY", "private-sk")
-	t.Setenv("VOLC_AVATAR_RESOURCE_ID", "avatar_1")
 	t.Setenv("VOLC_TOS_BUCKET", "valid-bucket")
 	t.Setenv("VOLC_TOS_REGION", "bad.region")
 	if aiServices()[2].State != "incomplete" {

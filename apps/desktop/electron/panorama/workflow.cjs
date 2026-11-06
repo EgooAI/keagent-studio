@@ -121,9 +121,8 @@ class PanoramaWorkflow {
       defaultConfig: domain.defaultConfig,
       ai: !!cloud.ai,
       volcTts: !!cloud.volcTts,
-      volcSpeaker: cloud.volcSpeaker || "",
       volcAvatar: !!cloud.volcAvatar,
-      avatarId: cloud.avatarId || "",
+      managedVoices: !!cloud.managedVoices,
     };
   }
   async importFile(owner, file, room) {
@@ -246,6 +245,10 @@ class PanoramaWorkflow {
     if (method === "preview-system") {
       const caps = await this.capabilities();
       domain.ensure(
+        !caps.managedVoices,
+        "请选择管理员上架的公共音色或本人音色",
+      );
+      domain.ensure(
         caps.voices.some(
           (v) => v.name === input.voice && v.language === input.language,
         ),
@@ -298,6 +301,8 @@ class PanoramaWorkflow {
         "房源不存在，请重新选择",
       );
       const c = domain.config(input.config);
+      await this.requireAvatar(c);
+      assertCurrent();
       domain.ensure(
         c.scriptProvider !== "ai" || this.remote,
         "未连接云端 AI 服务",
@@ -371,7 +376,7 @@ class PanoramaWorkflow {
       this.draft(owner, input.id, input.revision);
       assertCurrent();
       const avatarKey = domain.hash([
-        "clone-v1",
+        "photo-v1",
         domain.audioKey(draft.segments[0], draft.config),
         draft.config.avatarId,
       ]);
@@ -463,11 +468,12 @@ class PanoramaWorkflow {
     );
     if (draft.config.ttsProvider === "system")
       domain.ensure(
-        caps.voices.some(
-          (v) =>
-            v.name === draft.config.voice &&
-            v.language === draft.config.language,
-        ),
+        !caps.managedVoices &&
+          caps.voices.some(
+            (v) =>
+              v.name === draft.config.voice &&
+              v.language === draft.config.language,
+          ),
         "所选语言没有可用的本机声音，请更换音色或配音服务",
       );
     else if (draft.config.ttsProvider === "personal") {
@@ -480,13 +486,38 @@ class PanoramaWorkflow {
           ),
         "本人音色不存在或尚未就绪，请重新选择",
       );
-    } else
-      domain.ensure(caps.volcTts && draft.config.voice, "火山 TTS 未配置完整");
-    if (draft.config.videoMode === "avatar")
+    } else {
       domain.ensure(
-        caps.volcAvatar && draft.config.avatarId,
+        caps.volcTts && draft.config.voice,
+        "请选择公共音色，并确认配音服务已配置",
+      );
+      const catalog = await this.remote("voice-list", {});
+      domain.ensure(
+        catalog.publicVoices.some((voice) => voice.id === draft.config.voice),
+        "公共音色已下架或不存在，请重新选择",
+      );
+    }
+    if (draft.config.videoMode === "avatar") {
+      await this.requireAvatar(draft.config);
+      domain.ensure(
+        caps.volcAvatar,
         "请配置火山数字人 AK、SK、TOS 私有桶以及形象 ID",
       );
+    }
+  }
+  async requireAvatar(config) {
+    if (config.videoMode !== "avatar") return;
+    domain.ensure(
+      config.avatarId && this.remote,
+      "露脸模式必须先上传本人照片并选择形象",
+    );
+    const library = await this.remote("avatar-list", {});
+    domain.ensure(
+      library.avatars.some(
+        (avatar) => avatar.id === config.avatarId && avatar.status === "ready",
+      ),
+      "请先上传本人照片，只能选择自己已保存的形象",
+    );
   }
   execute(owner, job) {
     const controller = new AbortController();
@@ -545,7 +576,7 @@ class PanoramaWorkflow {
             this.persist(owner);
             const data = await this.remote(
               "avatar-submit",
-              { resourceId: job.config.avatarId, audioUrl: uploaded.url },
+              { avatarId: job.config.avatarId, audioUrl: uploaded.url },
               signal,
             );
             domain.ensure(

@@ -1,8 +1,10 @@
-import { Alert, Button, Descriptions, Empty, Spin, Tag } from "antd";
+import { Alert, Button, Descriptions, Empty, Spin, Tag, Tabs } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { serviceRequest } from "@keagent/api-client";
 import type { AdminAIConfig, AdminAIService } from "@keagent/shared-types";
 import { dateTime } from "./admin-api";
+import { useAdminParams } from "./admin-api";
+import AdminPublicVoices from "./AdminPublicVoices";
 
 const configLabels: Record<string, string> = {
   AI_API_KEY: "文案服务密钥",
@@ -10,13 +12,10 @@ const configLabels: Record<string, string> = {
   AI_BASE_URL: "文案服务地址",
   AI_ALLOWED_HOSTS: "允许访问的文案服务域名",
   VOLC_TTS_API_KEY: "火山配音服务密钥",
-  VOLC_TTS_RESOURCE_ID: "配音服务资源编号",
-  VOLC_TTS_SPEAKER: "配音音色编号",
   VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
   VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻合成资源编号",
   VOLC_ACCESS_KEY_ID: "火山访问密钥编号",
   VOLC_SECRET_ACCESS_KEY: "火山访问密钥",
-  VOLC_AVATAR_RESOURCE_ID: "数字人资源编号",
   VOLC_TOS_BUCKET: "数字人音频使用的私有存储桶",
   VOLC_TOS_REGION: "私有存储桶所在地域",
 };
@@ -46,6 +45,20 @@ export function AIState({ state }: { state: AdminAIService["state"] }) {
 }
 
 export default function AdminAI() {
+  const { params, setParams } = useAdminParams();
+  return (
+    <Tabs
+      activeKey={params.get("tab") === "voices" ? "voices" : "services"}
+      onChange={(tab) => setParams({ tab }, false)}
+      destroyOnHidden
+      items={[
+        { key: "services", label: "服务配置", children: <AIConfiguration /> },
+        { key: "voices", label: "公共音色", children: <AdminPublicVoices /> },
+      ]}
+    />
+  );
+}
+function AIConfiguration() {
   const query = useQuery({
     queryKey: ["admin", "ai-config"],
     queryFn: () => serviceRequest<AdminAIConfig>("/v1/admin/ai-config"),

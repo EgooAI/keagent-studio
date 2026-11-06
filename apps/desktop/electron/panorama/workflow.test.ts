@@ -58,6 +58,61 @@ function fixture() {
   return { workflow, owner, scenes, config };
 }
 describe("panorama domain", () => {
+  it("requires a user-owned uploaded photo before generating digital-human scripts", async () => {
+    const { workflow, scenes, config } = fixture();
+    const remote = vi.fn(
+      async (): Promise<{ avatars: { id: string; status: string }[] }> => ({
+        avatars: [],
+      }),
+    );
+    workflow.remote = remote;
+    await expect(
+      workflow.handle(
+        "user-a",
+        "generate",
+        {
+          scenes,
+          config: {
+            ...config,
+            videoMode: "avatar",
+            avatarId: "",
+            scriptProvider: "ai",
+          },
+        },
+        property,
+      ),
+    ).rejects.toThrow("本人照片");
+    await expect(
+      workflow.handle(
+        "user-a",
+        "generate",
+        {
+          scenes,
+          config: {
+            ...config,
+            videoMode: "avatar",
+            avatarId: "somebody-else",
+            scriptProvider: "ai",
+          },
+        },
+        property,
+      ),
+    ).rejects.toThrow("自己");
+    expect(remote).toHaveBeenCalledTimes(1);
+    remote.mockResolvedValue({
+      avatars: [{ id: "own-photo", status: "ready" }],
+    });
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      {
+        scenes,
+        config: { ...config, videoMode: "avatar", avatarId: "own-photo" },
+      },
+      property,
+    );
+    expect(draft.config.avatarId).toBe("own-photo");
+  });
   it("cancels a system-voice preview on logout before exposing its media URL", async () => {
     const { workflow } = fixture();
     let complete: (result: unknown) => void = () => {};

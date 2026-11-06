@@ -9,8 +9,19 @@ export interface PersonalVoice {
 export interface VoiceLibrary {
   voices: PersonalVoice[];
   cloneEnabled: boolean;
-  cloudVoice: string;
+  publicVoices: PublicVoice[];
   cloudEnabled: boolean;
+}
+export interface PublicVoice {
+  id: string;
+  name: string;
+  language: "zh-CN" | "en-US";
+}
+export interface AdminPublicVoice extends PublicVoice {
+  speakerId: string;
+  resourceId: string;
+  enabled: boolean;
+  publishedOnce: boolean;
 }
 export interface VoiceUpload {
   name: string;

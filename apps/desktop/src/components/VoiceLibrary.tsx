@@ -15,12 +15,9 @@ import {
   Tag,
   Upload,
 } from "antd";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { authRequest } from "@keagent/api-client";
-import type {
-  PanoramaCapabilities,
-  PersonalVoice,
-} from "@keagent/shared-types";
+import type { PersonalVoice } from "@keagent/shared-types";
 import {
   audioBlobURL,
   encodeRecording,
@@ -40,16 +37,7 @@ export function VoiceLibraryPanel() {
   const { message } = App.useApp();
   const client = useQueryClient();
   const library = useVoiceLibrary();
-  const local = useQuery({
-    queryKey: ["system-voices"],
-    enabled: !!window.desktop,
-    queryFn: () => authRequest<PanoramaCapabilities>("panorama.capabilities"),
-    retry: false,
-  });
-  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>(
-    [],
-  );
-  const [systemVoice, setSystemVoice] = useState<string>();
+  const [publicVoice, setPublicVoice] = useState<string>();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [language, setLanguage] = useState<PersonalVoice["language"]>("zh-CN");
@@ -79,19 +67,6 @@ export function VoiceLibraryPanel() {
     }, 10000);
     return () => window.clearInterval(timer);
   }, [client]);
-  const voiceChoices = window.desktop
-    ? local.data?.voices || []
-    : browserVoices.map((v) => ({ name: v.name, language: v.lang }));
-  useEffect(() => {
-    if (!window.speechSynthesis || window.desktop) return;
-    const update = () => setBrowserVoices(window.speechSynthesis.getVoices());
-    update();
-    window.speechSynthesis.addEventListener("voiceschanged", update);
-    return () => {
-      window.speechSynthesis.removeEventListener("voiceschanged", update);
-      window.speechSynthesis.cancel();
-    };
-  }, []);
   useEffect(
     () => () => {
       if (audioURL.startsWith("blob:")) URL.revokeObjectURL(audioURL);
@@ -146,7 +121,7 @@ export function VoiceLibraryPanel() {
   return (
     <>
       <h2>声音与音色</h2>
-      <p>使用设备自带的系统音色，或上传录音创建本人的专属声音。</p>
+      <p>选择管理员提供的公共音色，或上传录音创建本人的专属声音。</p>
       <section
         style={{
           borderBottom: "1px solid #edf0f4",
@@ -154,68 +129,40 @@ export function VoiceLibraryPanel() {
           marginBottom: 24,
         }}
       >
-        <h3>系统音色</h3>
-        <p>
-          无需上传录音。桌面端使用 Windows 已安装的声音，制作时在全景工厂选择。
-        </p>
-        {local.isError && (
-          <Alert
-            type="error"
-            title="无法读取系统音色"
-            description={local.error.message}
-          />
-        )}
+        <h3>公共音色</h3>
+        <p>由管理员配置并上架。制作时可选择公共音色或自己的专属音色。</p>
         <Space wrap>
           <Select
-            aria-label="系统音色"
+            aria-label="公共音色"
             style={{ minWidth: 260 }}
-            placeholder={
-              local.isPending && window.desktop
-                ? "正在读取音色…"
-                : "请选择系统音色"
-            }
-            value={systemVoice}
-            options={voiceChoices.map((v) => ({
-              value: v.name,
-              label: `${v.name} · ${v.language}`,
+            placeholder="请选择已上架的公共音色"
+            value={publicVoice}
+            options={(library.data?.publicVoices || []).map((voice) => ({
+              value: voice.id,
+              label: voice.name,
             }))}
-            onChange={setSystemVoice}
+            onChange={setPublicVoice}
           />
           <Button
-            disabled={!systemVoice || busy}
+            disabled={!publicVoice || busy || !library.data?.cloudEnabled}
             onClick={() =>
               void act(async () => {
-                setAudioURL("");
-                const selected = voiceChoices.find(
-                  (v) => v.name === systemVoice,
-                )!;
-                if (window.desktop) {
-                  const result = await authRequest<{ url: string }>(
-                    "panorama.preview-system",
-                    [{ voice: selected.name, language: selected.language }],
-                  );
-                  setAudioURL(result.url);
-                } else {
-                  window.speechSynthesis.cancel();
-                  const utterance = new SpeechSynthesisUtterance(
-                    selected.language.startsWith("en")
-                      ? "Hello, let me introduce this property to you."
-                      : "您好，我是您的房产顾问，欢迎一起了解这套房源。",
-                  );
-                  utterance.voice =
-                    browserVoices.find((v) => v.name === selected.name) || null;
-                  window.speechSynthesis.speak(utterance);
-                }
+                const sample = await authRequest<{
+                  audio: string;
+                  mime: string;
+                }>("voice.preview-public", [{ id: publicVoice }]);
+                setAudioURL(audioBlobURL(sample.audio, sample.mime));
               })
             }
           >
-            试听系统音色
+            试听公共音色
           </Button>
         </Space>
-        {!window.desktop && (
-          <p>
-            浏览器试听使用当前浏览器的声音；实际制作以桌面设备可用音色为准。
-          </p>
+        {library.data?.publicVoices?.length === 0 && (
+          <p>管理员尚未上架公共音色。</p>
+        )}
+        {library.data && !library.data.cloudEnabled && (
+          <p>公共音色合成服务尚未配置。</p>
         )}
       </section>
       <Space
@@ -252,7 +199,7 @@ export function VoiceLibraryPanel() {
               type="info"
               showIcon
               title="声音复刻尚未开通"
-              description="管理员配置火山语音服务并开通声音复刻后，可上传本人录音。系统音色仍可直接使用。"
+              description="管理员配置火山语音服务并开通声音复刻后，可上传本人录音。可选择管理员已上架的公共音色。"
               style={{ marginBottom: 16 }}
             />
           )}

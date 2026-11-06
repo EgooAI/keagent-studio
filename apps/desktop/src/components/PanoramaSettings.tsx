@@ -13,6 +13,7 @@ import type {
 } from "@keagent/shared-types";
 import { Link } from "react-router-dom";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
+import { useAvatarLibrary } from "../lib/avatarLibrary";
 export function PanoramaSettings({
   caps,
   config,
@@ -29,6 +30,10 @@ export function PanoramaSettings({
   invalidate: () => void;
 }) {
   const library = useVoiceLibrary();
+  const avatars = useAvatarLibrary();
+  const ownAvatars =
+    avatars.data?.avatars.filter((avatar) => avatar.status === "ready") || [];
+  const publicVoices = library.data?.publicVoices || [];
   const personalVoices =
     library.data?.voices.filter((v) => v.status === "ready") || [];
   return (
@@ -93,11 +98,12 @@ export function PanoramaSettings({
           <Select
             value={config.ttsProvider}
             options={[
-              { value: "system", label: "Windows 本机配音" },
               {
                 value: "volcengine",
-                label: caps.volcTts ? "云端系统音色" : "云端系统音色（待配置）",
-                disabled: !caps.volcTts,
+                label: caps.volcTts
+                  ? "管理员提供的公共音色"
+                  : "公共音色（服务待配置）",
+                disabled: !caps.volcTts || publicVoices.length === 0,
               },
               {
                 value: "personal",
@@ -115,26 +121,21 @@ export function PanoramaSettings({
                         ?.name || ""
                     : ttsProvider === "personal"
                       ? personalVoices[0]?.id || ""
-                      : caps.volcSpeaker,
+                      : publicVoices[0]?.id || "",
               })
             }
           />
         </Form.Item>
         <Form.Item
-          label={config.ttsProvider === "personal" ? "本人音色" : "系统音色"}
+          label={config.ttsProvider === "personal" ? "本人音色" : "公共音色"}
         >
-          {config.ttsProvider === "system" ? (
+          {config.ttsProvider === "personal" ? (
             <Select
-              value={config.voice || undefined}
-              placeholder="没有可用音色"
-              options={caps.voices
-                .filter((v) => v.language === config.language)
-                .map((v) => ({ value: v.name, label: v.name }))}
-              onChange={(voice) => patch({ voice })}
-            />
-          ) : config.ttsProvider === "personal" ? (
-            <Select
-              value={config.voice || undefined}
+              value={
+                personalVoices.some((voice) => voice.id === config.voice)
+                  ? config.voice
+                  : undefined
+              }
               placeholder="请选择已就绪的本人音色"
               options={personalVoices.map((v) => ({
                 value: v.id,
@@ -144,12 +145,15 @@ export function PanoramaSettings({
             />
           ) : (
             <Select
-              value={config.voice || undefined}
-              options={
-                caps.volcSpeaker
-                  ? [{ value: caps.volcSpeaker, label: "云端预设系统音色" }]
-                  : []
+              value={
+                publicVoices.some((voice) => voice.id === config.voice)
+                  ? config.voice
+                  : undefined
               }
+              options={publicVoices.map((voice) => ({
+                value: voice.id,
+                label: voice.name,
+              }))}
               onChange={(voice) => patch({ voice })}
             />
           )}
@@ -166,16 +170,52 @@ export function PanoramaSettings({
           />
         </Form.Item>
         {config.videoMode === "avatar" && (
-          <Form.Item label="火山克隆数字人形象 ID">
-            <Input
-              value={config.avatarId}
-              maxLength={150}
-              placeholder="控制台中的 resource_id"
-              onChange={(e) => patch({ avatarId: e.target.value })}
+          <Form.Item label="本人上传的形象" required>
+            <Select
+              value={
+                ownAvatars.some((avatar) => avatar.id === config.avatarId)
+                  ? config.avatarId
+                  : undefined
+              }
+              placeholder="请先上传本人照片"
+              options={ownAvatars.map((avatar) => ({
+                value: avatar.id,
+                label: avatar.name,
+              }))}
+              onChange={(avatarId) => patch({ avatarId })}
             />
+            <p>
+              <Link to="/settings/avatars">上传或管理本人照片</Link>
+              。露脸模式必须选择本人上传的形象。
+            </p>
           </Form.Item>
         )}
       </div>
+      {publicVoices.length === 0 && personalVoices.length === 0 && (
+        <Alert
+          type="info"
+          title="暂无可用音色"
+          description="请联系管理员上架公共音色，或前往设置上传本人的声音。"
+        />
+      )}
+      {config.videoMode === "avatar" && ownAvatars.length === 0 && (
+        <Alert
+          type="warning"
+          title="请先上传本人照片"
+          description={
+            <Link to="/settings/avatars">
+              前往设置上传自己的形象；露脸模式不提供预置形象。
+            </Link>
+          }
+        />
+      )}
+      {config.videoMode === "avatar" && avatars.isError && (
+        <Alert
+          type="error"
+          title="无法加载本人形象"
+          description={avatars.error.message}
+        />
+      )}
       <p>
         <Link to="/settings/voices">管理或上传我的声音</Link>
         。本人音色首次用于合成可能启用供应商付费音色槽位。
@@ -192,7 +232,7 @@ export function PanoramaSettings({
           type="warning"
           showIcon
           title="数字人等待火山配置"
-          description="需要 AK / SK、已开通的克隆数字人形象及 TOS 私有桶。开场配音会上传至私有桶，再以限时链接驱动口型。"
+          description="需配置火山访问凭证、照片数字人服务及 TOS 私有桶。只使用用户自己上传的照片。"
         />
       )}
       <Collapse

@@ -199,7 +199,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 	switch operation {
 	case "capabilities":
 		services := aiServices()
-		return object{"ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcSpeaker": os.Getenv("VOLC_TTS_SPEAKER"), "volcAvatar": services[2].State == "configured", "avatarId": os.Getenv("VOLC_AVATAR_RESOURCE_ID")}, nil
+		return object{"ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true}, nil
 	case "script":
 		expected := rows(input["segments"])
 		language := str(input["language"])
@@ -247,17 +247,20 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		}
 		return object{"url": tosReadURL(u, ak, sk, region, time.Now())}, nil
 	case "avatar-submit":
+		avatar, ownErr := s.activeAvatar(ctx, a.UserID, str(input["avatarId"]))
+		if ownErr != nil {
+			return nil, ownErr
+		}
 		if os.Getenv("VOLC_ACCESS_KEY_ID") == "" || os.Getenv("VOLC_SECRET_ACCESS_KEY") == "" {
 			return nil, fail(503, "云端未配置火山数字人 AK / SK")
 		}
-		resource := str(input["resourceId"])
 		audioURL, err := url.Parse(str(input["audioUrl"]))
 		tos, _, tosErr := tosEndpoint()
 		prefix := "/keagent/" + digestBytes([]byte(a.UserID)) + "/"
-		if err != nil || tosErr != nil || audioURL.Scheme != "https" || audioURL.User != nil || audioURL.Host != tos.Host || !strings.HasPrefix(audioURL.Path, prefix) || !audioObject.MatchString(strings.TrimPrefix(audioURL.Path, prefix)) || !resourceID.MatchString(resource) {
+		if err != nil || tosErr != nil || audioURL.Scheme != "https" || audioURL.User != nil || audioURL.Host != tos.Host || !strings.HasPrefix(audioURL.Path, prefix) || !audioObject.MatchString(strings.TrimPrefix(audioURL.Path, prefix)) {
 			return nil, fail(422, "数字人形象或开场音频地址无效")
 		}
-		cacheKey := digestBytes([]byte(resource + "|" + audioURL.Path))
+		cacheKey := digestBytes([]byte("photo-v1|" + avatar.ID + "|" + avatar.Hash + "|" + audioURL.Path))
 		pending, _ := json.Marshal(object{"submitting": true})
 		result, err := s.db.ExecContext(ctx, `INSERT INTO keagent_panorama_avatar(owner_id,cache_key,payload) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, a.UserID, cacheKey, pending)
 		if err != nil {
@@ -278,14 +281,16 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		_, region, _ := tosEndpoint()
 		audioURL.RawQuery = ""
 		audioURL.Fragment = ""
-		data, err := visualCall(ctx, "CVSubmitTask", object{"req_key": "realman_avatar_creation_task", "resource_id": resource, "audio_url": tosReadURL(audioURL, os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY"), region, time.Now())})
+		photoURL, _, _ := tosEndpoint()
+		photoURL.Path = avatar.ObjectKey
+		data, err := s.avatarVision(ctx, "CVSubmitTask", object{"req_key": photoAvatarProvider, "image_url": tosReadURL(photoURL, os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY"), region, time.Now()), "audio_url": tosReadURL(audioURL, os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY"), region, time.Now())})
 		if err != nil {
 			return nil, err
 		}
 		if str(data["task_id"]) == "" {
 			return nil, fail(502, "数字人未返回任务 ID，请核对控制台")
 		}
-		saved, _ := json.Marshal(object{"taskId": str(data["task_id"]), "submitting": false})
+		saved, _ := json.Marshal(object{"taskId": str(data["task_id"]), "submitting": false, "provider": photoAvatarProvider, "avatarId": avatar.ID})
 		if _, err = s.db.ExecContext(ctx, `UPDATE keagent_panorama_avatar SET payload=$3 WHERE owner_id=$1 AND cache_key=$2`, a.UserID, cacheKey, saved); err != nil {
 			return nil, fail(502, "数字人已提交但检查点保存失败，请核对控制台")
 		}
@@ -303,7 +308,15 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if err != nil {
 			return nil, err
 		}
-		return visualCall(ctx, "CVGetResult", object{"req_key": "realman_avatar_creation_task", "task_id": taskID})
+		var checkpoint object
+		if json.Unmarshal(saved, &checkpoint) != nil {
+			return nil, fail(502, "数字人任务检查点无效")
+		}
+		provider := str(checkpoint["provider"])
+		if provider == "" {
+			provider = "realman_avatar_creation_task"
+		} // Historical tasks remain queryable.
+		return s.avatarVision(ctx, "CVGetResult", object{"req_key": provider, "task_id": taskID})
 	}
 	return nil, fail(404, "全景供应商能力不存在")
 }
