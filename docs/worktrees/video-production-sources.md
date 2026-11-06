@@ -116,3 +116,11 @@ node scripts/render-live-production-sample.mjs
 验证：56 项 Vitest 测试、类型和格式检查通过；新增测试覆盖模板隔离、持久化、版本快照、冲突、代表镜头、未知事实和空说明。无头 Chrome 通过导入/扩图审核门槛、排序、封面选图改标题、模板保存应用、文案修改和 1440/1100 宽度布局测试。真实 FFmpeg 回归通过两条素材路线，并用既有百炼扩图重新生成横竖屏样片及封面，本轮没有新增付费供应商调用。
 
 界面回归脚本：`node scripts/verify-template-editor.mjs`，默认要求 mock Vite 已在 `127.0.0.1:5189` 启动，可用 `KEAGENT_TEST_UI_URL` 指定地址。脚本只注入测试响应，不请求百炼或贝壳。截图在 `output/template-verification/editor-wide.png` 和 `editor-compact.png`。真实样片和封面位于 `output/production-live-direct-verification/video-16x9/`、`video-9x16/`，可运行 `scripts/render-live-production-sample.mjs` 离线重建。
+
+## 与主分支抖音发布功能合并
+
+制作结果保留主分支新增的“登记成片到发布中心”入口，通过独立 `artifact-media` 注册器交接真实 MP4 和封面。全景与扩图路线共用同一个完成结果端口；示例成片、未完成任务及其他账号的任务不能登记。模板编辑器和素材接入不修改已冻结的共享成片契约。
+
+`scripts/dev-production.ps1` 现在会先构建本机成片注册器和抖音发布运行时，再启动隔离桌面环境，避免新检出环境缺少运行时文件。
+
+合并验证：87 项 Vitest 测试、7 个抖音页面场景、模板编辑器界面回归、类型/格式检查、全部构建及 Go test/vet 通过。另启用隐藏 Electron 集成，实际连接受控媒体文件、本机注册器、Go API 和隔离 PostgreSQL schema，验证验收、交接及拦截后的发布链路。没有真实抖音发布或新增付费生成调用。

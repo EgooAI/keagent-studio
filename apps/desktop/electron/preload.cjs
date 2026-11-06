@@ -2,6 +2,19 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld(
   "desktop",
   Object.freeze({
+    artifactMedia: Object.freeze({
+      request: (method, input = {}) =>
+        ipcRenderer.invoke("artifact-media:request", method, input),
+    }),
+    publishing: Object.freeze({
+      request: (method, input = {}) =>
+        ipcRenderer.invoke("douyin:request", method, input),
+      subscribe: (listener) => {
+        const handler = () => listener();
+        ipcRenderer.on("douyin:changed", handler);
+        return () => ipcRenderer.removeListener("douyin:changed", handler);
+      },
+    }),
     platform: process.platform,
     mode: "authenticated",
     request: (method, args) =>

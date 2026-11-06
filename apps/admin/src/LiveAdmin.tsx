@@ -41,6 +41,7 @@ import { ThemeSettings } from "@keagent/theme";
 import type { AdminUser } from "@keagent/shared-types";
 import AdminUsers from "./AdminUsers";
 import AdminTasks from "./AdminTasks";
+import AdminDouyin from "./AdminDouyin";
 import AdminDashboard from "./AdminDashboard";
 import AdminAI from "./AdminAI";
 import AdminAudit from "./AdminAudit";
@@ -54,6 +55,12 @@ import {
 } from "./admin-api";
 
 const pages = [
+  {
+    key: "douyin",
+    label: "抖音发布",
+    icon: <ClipboardList size={18} />,
+    description: "查看抖音发布回执、执行日志和流程告警。",
+  },
   {
     key: "dashboard",
     label: "管理概览",
@@ -341,6 +348,7 @@ export default function LiveAdmin() {
             />
             <Route path="/admin/resources" element={<ResourcesPanel />} />
             <Route path="/admin/tasks" element={<AdminTasks />} />
+            <Route path="/admin/douyin" element={<AdminDouyin />} />
             <Route path="/admin/ai" element={<AdminAI />} />
             <Route path="/admin/audit" element={<AdminAudit />} />
             <Route

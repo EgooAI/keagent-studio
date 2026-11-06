@@ -1,3 +1,4 @@
+export { douyinApi, douyinDesktop } from "./douyin";
 import { serviceRequest } from "./transport";
 export {
   artifactExchange,

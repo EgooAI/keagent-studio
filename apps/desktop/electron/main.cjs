@@ -30,6 +30,47 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+let publishing;
+let identity;
+function returnWindowSetup(window) {
+  const routes = {
+    getAsset: "/v1/media-assets/get",
+    getArtifact: "/v1/artifacts/get",
+    getHandoff: "/v1/artifact-handoffs/get",
+    registerAsset: "/v1/media-assets/register",
+    createArtifact: "/v1/artifacts/create",
+    reportAvailability: "/v1/media-assets/availability",
+  };
+  const exchange = Object.fromEntries(
+    Object.entries(routes).map(([name, route]) => [
+      name,
+      (input) =>
+        identity.businessRequest(
+          route,
+          ["getAsset", "getArtifact", "getHandoff"].includes(name)
+            ? { id: input }
+            : input,
+        ),
+    ]),
+  );
+  const artifactMedia =
+    require("./artifact-media/dist/runtime.cjs").registerArtifactMedia(window, {
+      identity: () => identity.publishingIdentity(),
+      exchange,
+      producer: (jobId) => identity.completedArtifactOutput(jobId),
+    });
+  publishing = require("./publishing/dist/runtime.cjs").registerPublishing(
+    window,
+    {
+      identity: () => identity.publishingIdentity(),
+      request: (route, input) => identity.businessRequest(route, input),
+      exchange,
+      resolver: artifactMedia.registry,
+    },
+  );
+  identity.onInvalidated(() => publishing.stop());
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     show:
@@ -49,6 +90,7 @@ function createWindow() {
     },
   });
   window.removeMenu();
+  returnWindowSetup(window);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {
     const target = new URL(url);
@@ -78,7 +120,7 @@ function createWindow() {
     window.webContents.once("did-finish-load", async () => {
       try {
         const heading = await window.webContents.executeJavaScript(
-          `new Promise((resolve, reject) => { const deadline = Date.now() + 10000; const check = () => { const heading = document.querySelector('h1'); if (heading) resolve(heading.textContent); else if (Date.now() > deadline) reject(new Error('Renderer did not mount')); else setTimeout(check, 100); }; check(); })`,
+          `new Promise((resolve, reject) => { const deadline = Date.now() + 10000; const check = () => { const heading = document.querySelector('h1, .ant-card-head-title'); if (heading) resolve(heading.textContent); else if (Date.now() > deadline) reject(new Error('Renderer did not mount')); else setTimeout(check, 100); }; check(); })`,
         );
         if (!heading.includes("创作工作台") && !heading.includes("登录"))
           throw new Error("Unexpected renderer content: " + heading);
@@ -95,9 +137,24 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  const identity = require("./auth.cjs").registerAuth();
+  identity = require("./auth.cjs").registerAuth();
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);
+    if (url.hostname === "douyin") {
+      try {
+        const response = await net.fetch(
+          pathToFileURL(await publishing.media(url)).toString(),
+        );
+        const headers = new Headers(response.headers);
+        headers.set("Cache-Control", "no-store");
+        return new Response(response.body, {
+          status: response.status,
+          headers,
+        });
+      } catch {
+        return new Response("Media unavailable", { status: 403 });
+      }
+    }
     if (url.hostname === "media") {
       try {
         const response = await net.fetch(
@@ -133,7 +190,7 @@ app.whenReady().then(() => {
       const headers = new Headers(response.headers);
       headers.set(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: keagent://media; media-src 'self' blob: keagent://media; connect-src 'self'; object-src 'none'; base-uri 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: keagent://media keagent://douyin; media-src 'self' blob: keagent://media keagent://douyin; connect-src 'self'; object-src 'none'; base-uri 'self'",
       );
       return new Response(response.body, { status: response.status, headers });
     } catch {

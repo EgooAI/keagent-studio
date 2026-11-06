@@ -19,6 +19,13 @@ export class ServiceRequestError extends Error {
 declare global {
   interface Window {
     desktop?: {
+      artifactMedia?: {
+        request(method: string, input?: unknown): Promise<unknown>;
+      };
+      publishing?: {
+        request(method: string, input?: unknown): Promise<unknown>;
+        subscribe(listener: () => void): () => void;
+      };
       platform: string;
       mode: string;
       request: (method: string, args?: unknown[]) => Promise<unknown>;

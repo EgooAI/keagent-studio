@@ -1,3 +1,4 @@
+import DouyinAccounts from "../components/DouyinAccounts";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -547,7 +548,7 @@ export default function SettingsPage() {
       </Form>
     </>
   );
-  const connections = (
+  const demoConnections = (
     <>
       <h2 style={{ fontSize: 18, marginTop: 0 }}>平台账号</h2>
       <p style={{ color: "#667085" }}>
@@ -736,7 +737,11 @@ export default function SettingsPage() {
       label: "人物形象",
       children: isLive ? <AvatarLibraryPanel /> : avatarList,
     },
-    { key: "platforms", label: "平台账号", children: connections },
+    {
+      key: "platforms",
+      label: "平台账号",
+      children: isLive ? <DouyinAccounts /> : demoConnections,
+    },
     { key: "defaults", label: "默认生成配置", children: defaultsSettings },
     { key: "storage", label: "本地存储", children: storage },
     { key: "privacy", label: "隐私和授权", children: privacy },

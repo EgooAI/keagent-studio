@@ -220,6 +220,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, v, e)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/douyin/") {
+		if r.Method != "POST" {
+			respond(w, nil, fail(405, "抖音业务接口仅支持POST"))
+			return
+		}
+		v, e := s.douyin(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/douyin/"), body)
+		respond(w, v, e)
+		return
+	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/panorama/") {
 		v, e := s.panorama(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/panorama/"), body)
 		respond(w, v, e)
@@ -514,6 +523,9 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 
 func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	ctx := r.Context()
+	if strings.HasPrefix(r.URL.Path, "/v1/admin/douyin/") {
+		return s.adminDouyin(r, a, body)
+	}
 	kind := strings.TrimPrefix(r.URL.Path, "/v1/admin/")
 	if kind == "voices" {
 		return s.adminVoices(r, a, body)
@@ -903,6 +915,9 @@ func main() {
 	if _, err = db.Exec(artifactExchangeSchema); err != nil {
 		log.Fatal("artifact exchange migration failed")
 	}
+	if _, err = db.Exec(douyinSchema); err != nil {
+		log.Fatal("douyin migration failed")
+	}
 	verifier, err := newJWTVerifier()
 	if err != nil {
 		log.Fatal(err)
@@ -913,6 +928,7 @@ func main() {
 	}
 	s := &server{db: db, secret: secret, jwt: verifier, origins: strings.Split(origins, ",")}
 	go s.work(context.Background())
+	go s.douyinBackground(context.Background())
 	log.Println("Go business API listening on 127.0.0.1:18081")
 	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
 }

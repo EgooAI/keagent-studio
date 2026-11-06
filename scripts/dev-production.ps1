@@ -22,6 +22,8 @@ if (!(Get-NetTCPConnection -State Listen -LocalPort 55432 -ErrorAction SilentlyC
 }
 
 Write-Host 'Starting the production worktree with its own Electron profile. Ctrl+C stops application services.'
+& corepack pnpm build:publishing
+if ($LASTEXITCODE -ne 0) { throw 'Desktop publishing runtime build failed.' }
 $profileDirectory = Join-Path $projectRoot 'output/electron-user-data'
 $desktopCommand = 'corepack pnpm exec wait-on http://127.0.0.1:5173 http://127.0.0.1:18080/api/auth/jwks && corepack pnpm exec electron apps/desktop/electron/main.cjs --user-data-dir="{0}"' -f $profileDirectory
 $commands = @('node scripts/service.mjs control', 'node scripts/service.mjs cloud', 'corepack pnpm dev:admin', 'corepack pnpm dev:web')

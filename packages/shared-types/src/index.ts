@@ -1,3 +1,4 @@
+export * from "./douyin";
 export type VideoMode = "voiceover" | "avatar";
 export type * from "./artifact";
 export type * from "./panorama";
