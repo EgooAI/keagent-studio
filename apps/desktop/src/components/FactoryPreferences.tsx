@@ -97,6 +97,7 @@ export function FactoryPreferences() {
         模板、公共音色与管理员后台同步。以下偏好用于新视频，已有文案与任务保留原配置。
       </p>
       <Button
+        aria-label="刷新管理员配置"
         onClick={() => void refresh()}
         loading={catalog.isFetching || voices.isFetching || avatars.isFetching}
         style={{ marginBottom: 20 }}
@@ -204,10 +205,11 @@ export function FactoryPreferences() {
         </p>
         <Space wrap>
           <Button
+            aria-label="保存默认配置"
             type="primary"
             htmlType="submit"
             loading={busy}
-            disabled={!!error || catalog.isPending}
+            disabled={busy || !!error || catalog.isPending}
           >
             保存默认配置
           </Button>
