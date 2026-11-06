@@ -85,7 +85,7 @@ test("多房源独立生成、人工审核、成片与多平台草稿闭环", as
   ).toBeVisible();
 });
 
-test("房源导入入口与后台资源维护可操作", async ({ page }) => {
+test("房源导入入口可操作，客户端不暴露后台入口", async ({ page }) => {
   await page.getByRole("button", { name: "导入房源", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "导入房源", exact: true });
   await dialog.getByLabel("房源号列表").fill("SH900100\nSH900101\nSH900100");
@@ -100,11 +100,6 @@ test("房源导入入口与后台资源维护可操作", async ({ page }) => {
   await expect(
     page.getByRole("link", { name: "管理后台", exact: true }),
   ).toHaveCount(0);
-  await page.goto("http://127.0.0.1:5174/#/admin/resources");
-  await expect(
-    page.getByRole("heading", { name: "资源管理", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: /上传资源/ })).toBeVisible();
 });
 
 test("两个窗口并发导入不会相互覆盖", async ({ page, context }) => {

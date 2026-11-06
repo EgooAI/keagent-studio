@@ -256,4 +256,4 @@ components:
 - **Don't** 为新增次要文字随意选取更浅的灰色。
 - **Don't** 把桌面和后台的实际中性色差异当作尚未实现的统一主题。
 
-默认配色为皇冠紫。桌面设置和后台系统设置可切换经典蓝、松石绿、玫瑰红，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量；成功、警告、错误语义色不参与替换。
+默认配色为皇冠紫。桌面设置和后台右上角的外观设置可切换经典蓝、松石绿、玫瑰红，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量；成功、警告、错误语义色不参与替换。

@@ -17,7 +17,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -97,6 +96,7 @@ CREATE TABLE IF NOT EXISTS keagent_resource (id text PRIMARY KEY, payload jsonb 
 CREATE TABLE IF NOT EXISTS keagent_device (id text PRIMARY KEY, owner_id text NOT NULL, session_id text NOT NULL, name text NOT NULL, platform text NOT NULL, revoked boolean NOT NULL DEFAULT false, seen_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS keagent_setting (id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_audit (id text PRIMARY KEY, actor_id text NOT NULL, action text NOT NULL, target_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE keagent_audit ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
 `
 
 func (s *server) verify(r *http.Request, body []byte) (actor, error) {
@@ -470,6 +470,15 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	ctx := r.Context()
 	kind := strings.TrimPrefix(r.URL.Path, "/v1/admin/")
 	if r.Method == "GET" {
+		if strings.HasSuffix(kind, "/list") {
+			return queryAdminList(ctx, s.db, strings.TrimSuffix(kind, "/list"), r.URL.Query())
+		}
+		if kind == "overview" {
+			return queryAdminOverview(ctx, s.db)
+		}
+		if strings.HasPrefix(kind, "tasks/") {
+			return queryAdminTask(ctx, s.db, strings.TrimPrefix(kind, "tasks/"))
+		}
 		query := ""
 		switch kind {
 		case "devices":
@@ -481,7 +490,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		case "audit":
 			query = `SELECT jsonb_build_object('id',id,'actorId',actor_id,'action',action,'targetId',target_id,'createdAt',created_at) FROM keagent_audit ORDER BY created_at DESC LIMIT 100`
 		case "ai-config":
-			return object{"configured": os.Getenv("AI_API_KEY") != "", "model": os.Getenv("AI_MODEL"), "baseURL": os.Getenv("AI_BASE_URL"), "note": "密钥通过服务端环境配置，浏览器无法读取"}, nil
+			return adminAIConfig(), nil
 		case "releases", "remote-config":
 			var b []byte
 			err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_setting WHERE id=$1`, kind).Scan(&b)
@@ -531,8 +540,18 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	}
 	defer tx.Rollback()
 	target := str(input["id"])
+	metadata := object{}
+	action := kind
 	switch kind {
 	case "devices/revoke":
+		action = "device.revoke"
+		var name, ownerID, platform string
+		if err = tx.QueryRowContext(ctx, `SELECT name,owner_id,platform FROM keagent_device WHERE id=$1 FOR UPDATE`, target).Scan(&name, &ownerID, &platform); errors.Is(err, sql.ErrNoRows) {
+			return nil, fail(404, "设备不存在")
+		} else if err != nil {
+			return nil, err
+		}
+		metadata = object{"name": name, "ownerId": ownerID, "platform": platform}
 		result, e := tx.ExecContext(ctx, `UPDATE keagent_device SET revoked=true WHERE id=$1`, target)
 		if e != nil {
 			return nil, e
@@ -542,12 +561,14 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			return nil, fail(404, "设备不存在")
 		}
 	case "resources":
+		input = pickFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "published", "sizeMb")
 		if target == "" {
 			target = id()
 			input["id"] = target
 		}
-		if str(input["name"]) == "" || str(input["version"]) == "" || !strings.Contains(",video,style,prompt,cover,subtitle,", ","+str(input["type"])+",") {
-			return nil, fail(422, "资源名称、版本、类型无效")
+		// Row locks cannot protect a client-supplied ID before its first insert.
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('keagent-resource:' || $1, 0))`, target); err != nil {
+			return nil, err
 		}
 		var old []byte
 		err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 FOR UPDATE`, target).Scan(&old)
@@ -560,7 +581,20 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 				return nil, err
 			}
 		}
+		action = "resource.update"
+		if prior == nil {
+			action = "resource.create"
+		}
+		if input["published"] == true && (prior == nil || prior["published"] != true) {
+			action = "resource.publish"
+		}
+		if input["published"] == false && prior != nil && prior["published"] == true {
+			action = "resource.unpublish"
+		}
 		if prior != nil && prior["publishedOnce"] == true {
+			if _, ok := input["published"].(bool); !ok {
+				return nil, fail(422, "请明确指定上下架状态")
+			}
 			for k, v := range input {
 				if k != "published" && k != "id" {
 					p, _ := json.Marshal(prior[k])
@@ -574,22 +608,44 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			var patch object
 			_ = json.Unmarshal(body, &patch)
 			input["published"] = patch["published"]
+		} else if err = validateResource(input); err != nil {
+			return nil, err
 		}
 		if input["published"] == true {
 			input["publishedOnce"] = true
+		}
+		if input["description"] == nil {
+			input["description"] = ""
+		}
+		if input["category"] == nil {
+			input["category"] = "通用"
+		}
+		if input["thumbnail"] == nil {
+			input["thumbnail"] = ""
+		}
+		if input["compatibleModes"] == nil {
+			input["compatibleModes"] = []any{"voiceover", "avatar"}
+		}
+		if input["sizeMb"] == nil {
+			input["sizeMb"] = float64(0)
+		}
+		if input["published"] == nil {
+			input["published"] = false
 		}
 		input["installed"] = false
 		input["downloadStatus"] = "idle"
 		input["downloadProgress"] = 0
 		b, _ := json.Marshal(input)
 		_, err = tx.ExecContext(ctx, `INSERT INTO keagent_resource(id,payload) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload`, target, b)
+		metadata = pickFields(input, "name", "type", "version", "published")
 	default:
 		return nil, fail(501, "此管理能力尚未接入，未保存模拟配置")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_audit(id,actor_id,action,target_id) VALUES($1,$2,$3,$4)`, id(), a.UserID, kind, target); err != nil {
+	metadataJSON, _ := json.Marshal(metadata)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_audit(id,actor_id,action,target_id,metadata) VALUES($1,$2,$3,$4,$5)`, id(), a.UserID, action, target, metadataJSON); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -693,25 +749,13 @@ func generate(ctx context.Context, p object) (string, error) {
 	return generateWithInstruction(ctx, p, "你是房产视频文案助手。仅依据给定房源资料写中文口播文案，不编造价格、配套或承诺。")
 }
 func generateWithInstruction(ctx context.Context, p object, instruction string) (string, error) {
-	if os.Getenv("AI_API_KEY") == "" || os.Getenv("AI_MODEL") == "" {
+	service := aiServices()[0]
+	if service.State != "configured" {
 		return "", errors.New("云端 AI 服务未配置，请联系管理员")
-	}
-	base, err := url.Parse(os.Getenv("AI_BASE_URL"))
-	if err != nil || base.Scheme != "https" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
-		return "", errors.New("云端 AI 地址配置无效")
-	}
-	allowed := false
-	for _, h := range strings.Split(os.Getenv("AI_ALLOWED_HOSTS"), ",") {
-		if h != "" && strings.EqualFold(h, base.Hostname()) {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return "", errors.New("AI 服务域名未加入服务端允许列表")
 	}
 	client, transport := providerClient()
 	defer transport.CloseIdleConnections()
-	return completionWithInstruction(ctx, client, strings.TrimRight(base.String(), "/")+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), p, instruction)
+	return completionWithInstruction(ctx, client, service.Endpoint+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), p, instruction)
 }
 func providerClient() (*http.Client, *http.Transport) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {

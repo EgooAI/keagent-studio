@@ -1,166 +1,217 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   App,
   Button,
   Card,
+  Drawer,
   Form,
   Input,
   Layout,
   Menu,
   Modal,
-  Select,
   Space,
-  Switch,
-  Table,
-  Tag,
+  Spin,
 } from "antd";
-import { createAuthClient } from "@app/auth-sdk/react";
-import { adminClient } from "@app/auth-sdk/client/plugins";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  authBaseURL,
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import {
+  Boxes,
+  ChevronRight,
+  ClipboardList,
+  Cpu,
+  LayoutDashboard,
+  Palette,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
+import {
   authRequest,
-  serviceRequest,
+  clearAccessToken,
   type SessionUser,
 } from "@keagent/api-client";
 import { ThemeSettings } from "@keagent/theme";
+import type { AdminUser } from "@keagent/shared-types";
+import AdminUsers from "./AdminUsers";
+import AdminTasks from "./AdminTasks";
+import AdminDashboard from "./AdminDashboard";
+import AdminAI from "./AdminAI";
+import AdminAudit from "./AdminAudit";
+import ResourcesPanel from "./ResourcesPanel";
+import {
+  auth,
+  unwrap,
+  useAdminAction,
+  useAdminParams,
+  userLabel,
+} from "./admin-api";
 
-const auth = createAuthClient({
-  baseURL: authBaseURL || undefined,
-  plugins: [adminClient({ auditLog: true })],
-});
-type Row = Record<string, unknown>;
 const pages = [
-  { key: "users", label: "用户管理" },
-  { key: "devices", label: "设备管理" },
-  { key: "resources", label: "资源管理" },
-  { key: "tasks", label: "任务监控" },
-  { key: "ai-config", label: "AI 配置" },
-  { key: "audit", label: "业务审计" },
-  { key: "auth-audit", label: "身份审计" },
-  { key: "settings", label: "系统设置" },
+  {
+    key: "dashboard",
+    label: "管理概览",
+    icon: <LayoutDashboard size={18} />,
+    description: "查看账号、设备和公共模板，优先处理失败任务与服务配置缺项。",
+  },
+  {
+    key: "users",
+    label: "用户与设备",
+    icon: <Users size={18} />,
+    description: "开通或停用用户账号，处理登录问题，查看并解绑用户设备。",
+  },
+  {
+    key: "resources",
+    label: "公共模板",
+    icon: <Boxes size={18} />,
+    description: "管理用户在视频工厂中选择的公共模板目录、适用模式和上架状态。",
+  },
+  {
+    key: "tasks",
+    label: "云端任务",
+    icon: <ClipboardList size={18} />,
+    description:
+      "按用户和房源定位云端生产任务，查看当前阶段、失败原因与生成配置。",
+  },
+  {
+    key: "ai",
+    label: "AI 服务",
+    icon: <Cpu size={18} />,
+    description:
+      "检查文案、配音和数字人的服务端配置，了解各项能力的用途与缺项。",
+  },
+  {
+    key: "audit",
+    label: "操作记录",
+    icon: <ShieldCheck size={18} />,
+    description:
+      "追溯谁在什么时间对哪个对象做了什么，区分业务操作与账号安全记录。",
+  },
 ];
-async function unwrap<T>(
-  promise: Promise<{ data: T | null; error: { message?: string } | null }>,
-): Promise<T> {
-  const value = await promise;
-  if (value.error || !value.data)
-    throw new Error(value.error?.message || "请求失败");
-  return value.data;
-}
 
 export default function LiveAdmin() {
+  const client = useQueryClient();
   const { message } = App.useApp();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [ready, setReady] = useState(false);
-  const [page, setPage] = useState("users");
-  const [data, setData] = useState<Row[]>([]);
-  const [config, setConfig] = useState<Row>({});
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [editor, setEditor] = useState(false);
-  const [resourceEditor, setResourceEditor] = useState(false);
-  const [form] = Form.useForm();
+  const [busy, setBusy] = useState(false);
+  const [pendingExit, setPendingExit] = useState<AdminUser | null>(null);
+  const pendingAction = useAdminAction();
+  const identity = useRef("");
+  const mounted = useRef(true);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { params, setParams } = useAdminParams();
+  const page = pages.find((item) => location.pathname === `/admin/${item.key}`);
+  function clearAdminState() {
+    client.clear();
+    setPendingExit(null);
+    Modal.destroyAll();
+  }
   async function session() {
     try {
-      setUser(await authRequest<SessionUser>("session"));
+      const value = await authRequest<SessionUser>("session");
+      if (!mounted.current) return;
+      if (identity.current !== `${value.userId}:${value.role}`)
+        clearAdminState();
+      identity.current = `${value.userId}:${value.role}`;
+      setUser(value);
     } catch {
+      if (!mounted.current) return;
+      clearAdminState();
+      identity.current = "";
       setUser(null);
-      setData([]);
     } finally {
-      setReady(true);
+      if (mounted.current) setReady(true);
     }
   }
   useEffect(() => {
+    mounted.current = true;
     void session();
     const timer = setInterval(() => void session(), 15000);
     const lock = () => {
+      clearAdminState();
+      identity.current = "";
       setUser(null);
-      setData([]);
-      setConfig({});
+      clearAccessToken();
     };
     window.addEventListener("keagent:unauthorized", lock);
     return () => {
+      mounted.current = false;
       clearInterval(timer);
       window.removeEventListener("keagent:unauthorized", lock);
     };
-  }, []);
-  async function load() {
-    if (!user) return;
-    if (page === "settings") {
-      setError("");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    setData([]);
+  }, [client]);
+  async function logout() {
+    setBusy(true);
     try {
-      if (page === "users") {
-        const result = await unwrap(
-          auth.admin.listUsers({ query: { limit: 100 } }),
-        );
-        setData(result.users as unknown as Row[]);
-      } else if (page === "auth-audit") {
-        const result = await serviceRequest<{ entries: Row[] }>(
-          "/api/auth/admin/audit-logs?limit=100",
-        );
-        setData(result.entries);
-      } else if (page === "ai-config")
-        setConfig(await serviceRequest<Row>("/v1/admin/ai-config"));
-      else setData(await serviceRequest<Row[]>(`/v1/admin/${page}`));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "加载失败");
+      await authRequest("logout");
+      clearAdminState();
+      identity.current = "";
+      setUser(null);
+    } catch (problem) {
+      message.error(
+        problem instanceof Error ? problem.message : "退出失败，请重试",
+      );
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
-  useEffect(() => {
-    void load();
-  }, [page, user?.userId]);
-  async function act(fn: () => Promise<unknown>) {
-    try {
-      await fn();
-      message.success("已保存");
-      await load();
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : "操作失败");
-    }
-  }
-  if (!ready) return <p>正在验证身份…</p>;
+  if (!ready)
+    return (
+      <main className="admin-login">
+        <Spin tip="正在验证管理员身份…" />
+      </main>
+    );
   if (!user)
     return (
-      <main
-        style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}
-      >
-        <Card title="登录管理后台" style={{ width: 400 }}>
-          {error && <Alert type="error" title={error} />}
+      <main className="admin-login">
+        <Card title="登录管理后台" className="admin-login-card">
+          <p className="admin-secondary">
+            使用管理员账号维护用户、公共模板与云端服务。
+          </p>
+          {error && <Alert type="error" showIcon title={error} />}
           <Form
             layout="vertical"
             onFinish={async (values) => {
+              setBusy(true);
               setError("");
               try {
                 await authRequest("login", [values]);
                 await session();
-              } catch (e) {
-                setError(e instanceof Error ? e.message : "登录失败");
+              } catch (problem) {
+                setError(
+                  problem instanceof Error ? problem.message : "登录失败",
+                );
+              } finally {
+                setBusy(false);
               }
             }}
           >
             <Form.Item
-              label="邮箱"
               name="email"
-              rules={[{ required: true, type: "email" }]}
+              label="邮箱"
+              rules={[
+                { required: true, type: "email", message: "请输入有效邮箱" },
+              ]}
             >
               <Input autoComplete="username" />
             </Form.Item>
             <Form.Item
-              label="密码"
               name="password"
-              rules={[{ required: true }]}
+              label="密码"
+              rules={[{ required: true, message: "请输入密码" }]}
             >
               <Input.Password autoComplete="current-password" />
             </Form.Item>
-            <Button type="primary" htmlType="submit" block>
+            <Button type="primary" htmlType="submit" loading={busy} block>
               登录
             </Button>
           </Form>
@@ -169,320 +220,163 @@ export default function LiveAdmin() {
     );
   if (!user.role.split(",").includes("admin"))
     return (
-      <Card title="无管理权限">
-        <p>当前账号：{user.email}</p>
-        <Button
-          onClick={() =>
-            void act(async () => {
-              await authRequest("logout");
-              await session();
-            })
-          }
-        >
-          退出登录
-        </Button>
-      </Card>
+      <main className="admin-login">
+        <Card title="当前账号没有管理权限">
+          <p>{user.email}</p>
+          <p>请使用管理员账号登录。</p>
+          <Button onClick={() => void logout()} loading={busy}>
+            退出并切换账号
+          </Button>
+        </Card>
+      </main>
     );
-  const text = (value: unknown) =>
-    typeof value === "object" ? JSON.stringify(value) : String(value ?? "—");
-  const keys =
-    page === "users"
-      ? ["name", "email", "role", "banned"]
-      : page === "devices"
-        ? ["name", "platform", "ownerId", "revoked", "lastSeenAt"]
-        : page === "resources"
-          ? ["name", "type", "version", "published"]
-          : page === "tasks"
-            ? ["ownerId", "stage", "status", "script", "error"]
-            : ["actorId", "action", "targetId", "status", "createdAt"];
-  const labels: Record<string, string> = {
-    name: "名称",
-    email: "邮箱",
-    role: "角色",
-    banned: "封禁",
-    platform: "系统",
-    ownerId: "归属用户",
-    revoked: "已解绑",
-    lastSeenAt: "最近在线",
-    type: "类型",
-    version: "版本",
-    published: "已发布",
-    stage: "阶段",
-    status: "状态",
-    script: "文案",
-    error: "诊断",
-    actorId: "操作人",
-    action: "动作",
-    targetId: "目标",
-    createdAt: "时间",
-  };
   return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <Layout.Sider theme="light" width={220}>
-        <h2 style={{ padding: 20 }}>KeAgent 管理后台</h2>
+    <Layout className="admin-shell">
+      <a
+        href="#admin-main"
+        className="admin-skip"
+        onClick={(event) => {
+          event.preventDefault();
+          document.getElementById("admin-main")?.focus();
+        }}
+      >
+        跳至主要内容
+      </a>
+      <Layout.Sider
+        theme="light"
+        width={222}
+        breakpoint="lg"
+        collapsedWidth={68}
+      >
+        <Link to="/admin/dashboard" className="admin-brand">
+          <span className="admin-brand-mark">K</span>
+          <div>
+            <strong>KeAgent Studio</strong>
+            <small>管理后台</small>
+          </div>
+        </Link>
         <Menu
-          selectedKeys={[page]}
-          items={pages}
-          onClick={({ key }) => setPage(key)}
+          mode="inline"
+          selectedKeys={[page?.key || "dashboard"]}
+          items={pages.map(({ key, label, icon }) => ({ key, label, icon }))}
+          onClick={({ key }) => navigate(`/admin/${key}`)}
         />
+        <div className="admin-sidebar-foot">
+          <ShieldCheck size={17} />
+          <span>管理员工作区</span>
+        </div>
       </Layout.Sider>
       <Layout>
-        <Layout.Header
-          style={{
-            background: "white",
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
-          <span>云端管理 · {user.email}</span>
-          <Button
-            onClick={() =>
-              void act(async () => {
-                await authRequest("logout");
-                await session();
-              })
-            }
-          >
-            退出登录
-          </Button>
-        </Layout.Header>
-        <Layout.Content style={{ padding: 28 }}>
-          <h1>{pages.find((p) => p.key === page)?.label}</h1>
-          <Space style={{ marginBottom: 20 }}>
-            <Button onClick={() => void load()}>刷新</Button>
-            {page === "users" && (
-              <Button
-                type="primary"
-                onClick={() => {
-                  form.resetFields();
-                  setEditor(true);
-                }}
-              >
-                创建用户
-              </Button>
-            )}
-            {page === "resources" && (
-              <Button
-                type="primary"
-                onClick={() => {
-                  form.resetFields();
-                  setResourceEditor(true);
-                }}
-              >
-                新建资源版本
-              </Button>
-            )}
+        <Layout.Header className="admin-header">
+          <Space>
+            <span>管理后台</span>
+            <ChevronRight size={14} />
+            <span>{page?.label || "管理概览"}</span>
           </Space>
-          {error && (
-            <Alert type="error" title={error} style={{ marginBottom: 16 }} />
-          )}
-          {page === "settings" ? (
-            <ThemeSettings />
-          ) : page === "ai-config" ? (
-            <Card title="服务端 AI 配置">
-              <p>
-                <Tag color={config.configured ? "green" : "default"}>
-                  {config.configured ? "已配置" : "未配置"}
-                </Tag>
-              </p>
-              <p>模型：{text(config.model)}</p>
-              <p>接口：{text(config.baseURL)}</p>
-              <p>{text(config.note)}</p>
-              <Alert
-                type="info"
-                title="当前支持云端 OpenAI 兼容文案接口。TTS、数字人、本地合成与平台发布尚未接通。"
-              />
-            </Card>
-          ) : (
-            <Table<Row>
-              rowKey="id"
-              loading={loading}
-              dataSource={data}
-              scroll={{ x: 900 }}
-              columns={[
-                ...keys.map((key) => ({
-                  title: labels[key] || key,
-                  key,
-                  render: (_: unknown, row: Row) => text(row[key]),
-                })),
-                ...(page === "users"
-                  ? [
-                      {
-                        title: "操作",
-                        key: "actions",
-                        render: (_: unknown, row: Row) => (
-                          <Space>
-                            <Button
-                              disabled={row.id === user.userId}
-                              danger={!row.banned}
-                              onClick={() =>
-                                Modal.confirm({
-                                  title: row.banned
-                                    ? "解除封禁？"
-                                    : "封禁用户并撤销会话？",
-                                  onOk: () =>
-                                    act(() =>
-                                      row.banned
-                                        ? unwrap(
-                                            auth.admin.unbanUser({
-                                              userId: String(row.id),
-                                            }),
-                                          )
-                                        : unwrap(
-                                            auth.admin.banUser({
-                                              userId: String(row.id),
-                                              banReason: "管理员停用账号",
-                                            }),
-                                          ),
-                                    ),
-                                })
-                              }
-                            >
-                              {row.banned ? "启用" : "停用"}
-                            </Button>
-                            <Button
-                              onClick={() =>
-                                void act(() =>
-                                  unwrap(
-                                    auth.admin.revokeUserSessions({
-                                      userId: String(row.id),
-                                    }),
-                                  ),
-                                )
-                              }
-                            >
-                              撤销全部会话
-                            </Button>
-                          </Space>
-                        ),
-                      },
-                    ]
-                  : page === "devices"
-                    ? [
-                        {
-                          title: "操作",
-                          key: "actions",
-                          render: (_: unknown, row: Row) => (
-                            <Button
-                              disabled={Boolean(row.revoked)}
-                              danger
-                              onClick={() =>
-                                void act(() =>
-                                  serviceRequest("/v1/admin/devices/revoke", {
-                                    id: row.id,
-                                  }),
-                                )
-                              }
-                            >
-                              解绑
-                            </Button>
+          <Space wrap className="admin-account-controls">
+            <span className="admin-account-email">{user.email}</span>
+            <Button
+              icon={<Palette size={16} />}
+              onClick={() => setParams({ appearance: "1" }, false)}
+            >
+              外观设置
+            </Button>
+            <Button loading={busy} onClick={() => void logout()}>
+              退出登录
+            </Button>
+          </Space>
+        </Layout.Header>
+        <Layout.Content className="admin-content" id="admin-main" tabIndex={-1}>
+          {pendingExit && (
+            <Alert
+              className="admin-notice"
+              type="warning"
+              showIcon
+              title="密码已更改，但强制退出未完成"
+              description={`${userLabel(pendingExit)} 的新密码已经生效，旧会话可能仍然有效。请重试强制退出，无需再次重置密码。请完成此步骤后再刷新或退出后台。`}
+              action={
+                <Button
+                  danger
+                  loading={pendingAction.busy}
+                  onClick={async () => {
+                    if (
+                      await pendingAction.run(
+                        () =>
+                          unwrap(
+                            auth.admin.revokeUserSessions({
+                              userId: pendingExit.id,
+                            }),
                           ),
-                        },
-                      ]
-                    : page === "resources"
-                      ? [
-                          {
-                            title: "上下架",
-                            key: "actions",
-                            render: (_: unknown, row: Row) => (
-                              <Switch
-                                checked={Boolean(row.published)}
-                                onChange={(published) =>
-                                  void act(() =>
-                                    serviceRequest("/v1/admin/resources", {
-                                      ...row,
-                                      published,
-                                    }),
-                                  )
-                                }
-                              />
-                            ),
-                          },
-                        ]
-                      : []),
-              ]}
+                        "登录会话已撤销，密码重置处理完成",
+                      )
+                    )
+                      setPendingExit(null);
+                  }}
+                >
+                  重试强制退出
+                </Button>
+              }
             />
           )}
+          {page && (
+            <div className="admin-page-heading">
+              <h1>{page.label}</h1>
+              <p>{page.description}</p>
+            </div>
+          )}
+          <Routes>
+            <Route path="/admin/dashboard" element={<AdminDashboard />} />
+            <Route
+              path="/admin/users"
+              element={
+                <AdminUsers
+                  currentUser={user}
+                  pendingExit={pendingExit}
+                  setPendingExit={(value) => {
+                    if (identity.current === `${user.userId}:${user.role}`)
+                      setPendingExit(value);
+                  }}
+                />
+              }
+            />
+            <Route path="/admin/resources" element={<ResourcesPanel />} />
+            <Route path="/admin/tasks" element={<AdminTasks />} />
+            <Route path="/admin/ai" element={<AdminAI />} />
+            <Route path="/admin/audit" element={<AdminAudit />} />
+            <Route
+              path="/admin/devices"
+              element={<Navigate replace to="/admin/users?tab=devices" />}
+            />
+            <Route
+              path="/admin/auth-audit"
+              element={<Navigate replace to="/admin/audit?tab=account" />}
+            />
+            <Route
+              path="/admin/ai-config"
+              element={<Navigate replace to="/admin/ai" />}
+            />
+            <Route
+              path="/admin/settings"
+              element={<Navigate replace to="/admin/dashboard?appearance=1" />}
+            />
+            <Route
+              path="*"
+              element={<Navigate replace to="/admin/dashboard" />}
+            />
+          </Routes>
         </Layout.Content>
       </Layout>
-      <Modal
-        title={editor ? "创建用户" : "新建资源版本"}
-        open={editor || resourceEditor}
-        onCancel={() => {
-          setEditor(false);
-          setResourceEditor(false);
-        }}
-        onOk={() => form.submit()}
-        destroyOnHidden
+      <Drawer
+        title="外观设置"
+        open={params.get("appearance") === "1"}
+        onClose={() => setParams({ appearance: undefined }, false)}
+        width={480}
       >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={(values) =>
-            void act(async () => {
-              if (editor)
-                await unwrap(
-                  auth.admin.createUser({ ...values, role: "user" }),
-                );
-              else
-                await serviceRequest("/v1/admin/resources", {
-                  ...values,
-                  description: "",
-                  category: "通用",
-                  thumbnail: "",
-                  compatibleModes: ["voiceover", "avatar"],
-                  published: false,
-                  sizeMb: 0,
-                });
-              setEditor(false);
-              setResourceEditor(false);
-            })
-          }
-        >
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          {editor ? (
-            <>
-              <Form.Item
-                name="email"
-                label="邮箱"
-                rules={[{ required: true, type: "email" }]}
-              >
-                <Input />
-              </Form.Item>
-              <Form.Item
-                name="password"
-                label="初始密码"
-                rules={[{ required: true, min: 12 }]}
-              >
-                <Input.Password />
-              </Form.Item>
-            </>
-          ) : (
-            <>
-              <Form.Item name="type" label="类型" rules={[{ required: true }]}>
-                <Select
-                  options={[
-                    "video",
-                    "style",
-                    "cover",
-                    "subtitle",
-                    "prompt",
-                  ].map((value) => ({ value, label: value }))}
-                />
-              </Form.Item>
-              <Form.Item
-                name="version"
-                label="版本"
-                rules={[{ required: true }]}
-              >
-                <Input />
-              </Form.Item>
-            </>
-          )}
-        </Form>
-      </Modal>
+        <ThemeSettings />
+        <p className="admin-secondary">
+          只影响当前浏览器，不更改用户客户端或系统功能。
+        </p>
+      </Drawer>
     </Layout>
   );
 }

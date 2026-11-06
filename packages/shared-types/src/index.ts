@@ -231,3 +231,4 @@ export const publishLabels: Record<PublishStatus, string> = {
   unknown: "待确认",
   canceled: "已取消",
 };
+export type * from "./admin";

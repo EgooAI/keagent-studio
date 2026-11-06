@@ -148,15 +148,18 @@ try {
     .fill(process.env.BOOTSTRAP_ADMIN_PASSWORD);
   await page.locator('button[type="submit"]').click();
   await page
-    .getByRole("button", { name: "创建用户", exact: true })
+    .getByRole("heading", { name: "管理概览", exact: true })
     .waitFor({ timeout: 30000 });
-  await page.getByRole("menuitem", { name: "设备管理", exact: true }).click();
+  await page.getByRole("menuitem", { name: "用户与设备", exact: true }).click();
+  await page.getByRole("tab", { name: "设备", exact: true }).click();
   await page
-    .getByRole("columnheader", { name: "归属用户", exact: true })
+    .getByRole("columnheader", { name: "所属用户", exact: true })
     .waitFor();
   assert.ok(
     businessRequests.some(
-      (url) => url === "http://127.0.0.1:18081/v1/admin/devices",
+      (url) =>
+        new URL(url).origin === "http://127.0.0.1:18081" &&
+        new URL(url).pathname === "/v1/admin/devices/list",
     ),
   );
   assert.ok(businessRequests.every((url) => new URL(url).port === "18081"));
@@ -164,7 +167,8 @@ try {
     await page.evaluate(() => JSON.stringify(localStorage).includes("eyJ")),
     false,
   );
-  await page.getByRole("menuitem", { name: "身份审计", exact: true }).click();
+  await page.getByRole("menuitem", { name: "操作记录", exact: true }).click();
+  await page.getByRole("tab", { name: "账号操作", exact: true }).click();
   await page
     .getByRole("columnheader", { name: "操作人", exact: true })
     .waitFor();

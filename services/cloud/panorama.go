@@ -198,7 +198,8 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 	}
 	switch operation {
 	case "capabilities":
-		return object{"ai": os.Getenv("AI_API_KEY") != "" && os.Getenv("AI_MODEL") != "", "volcTts": os.Getenv("VOLC_TTS_API_KEY") != "" && os.Getenv("VOLC_TTS_RESOURCE_ID") != "", "volcSpeaker": os.Getenv("VOLC_TTS_SPEAKER"), "volcAvatar": os.Getenv("VOLC_ACCESS_KEY_ID") != "" && os.Getenv("VOLC_SECRET_ACCESS_KEY") != "" && os.Getenv("VOLC_TOS_BUCKET") != "", "avatarId": os.Getenv("VOLC_AVATAR_RESOURCE_ID")}, nil
+		services := aiServices()
+		return object{"ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcSpeaker": os.Getenv("VOLC_TTS_SPEAKER"), "volcAvatar": services[2].State == "configured", "avatarId": os.Getenv("VOLC_AVATAR_RESOURCE_ID")}, nil
 	case "script":
 		expected := rows(input["segments"])
 		language := str(input["language"])

@@ -1,7 +1,11 @@
 import { useState } from "react";
 import {
   Alert,
+  App,
   Button,
+  Descriptions,
+  Drawer,
+  Empty,
   Form,
   Input,
   Modal,
@@ -9,293 +13,440 @@ import {
   Space,
   Table,
   Tag,
-  Upload,
-  message,
+  Typography,
 } from "antd";
-import { Plus, Search, UploadCloud } from "lucide-react";
-import { demoApi } from "@keagent/api-client";
-import type { Resource, ResourceType } from "@keagent/shared-types";
+import { Plus } from "lucide-react";
+import { serviceRequest } from "@keagent/api-client";
+import type { Resource, ResourceType, VideoMode } from "@keagent/shared-types";
+import {
+  listPagination,
+  useAdminAction,
+  useAdminList,
+  useAdminParams,
+} from "./admin-api";
 
-const typeLabels: Record<ResourceType, string> = {
+export const resourceTypeLabels: Record<ResourceType, string> = {
   video: "视频模板",
   style: "风格模板",
   cover: "封面模板",
   subtitle: "字幕模板",
-  prompt: "提示词模板",
+  prompt: "文案提示词模板",
 };
-interface Values {
-  name: string;
-  type: ResourceType;
-  category: string;
-  version: string;
-  description: string;
-}
+const modeLabels: Record<VideoMode, string> = {
+  voiceover: "纯口播",
+  avatar: "经纪人露脸",
+};
+type Values = Pick<
+  Resource,
+  "name" | "description" | "category" | "version" | "type" | "compatibleModes"
+>;
+const resourceState = (r: Resource) =>
+  r.published ? "已上架" : r.publishedOnce ? "已下架" : "草稿";
 
-export default function ResourcesPanel({
-  resources,
-  onAudit,
-}: {
-  resources: Resource[];
-  onAudit: (action: string) => void;
-}) {
-  const [search, setSearch] = useState("");
-  const [type, setType] = useState("all");
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<Resource | null>(null);
-  const [file, setFile] = useState<{ name: string; size: number } | null>(null);
-  const [busy, setBusy] = useState(false);
+export default function ResourcesPanel() {
+  const { modal } = App.useApp();
+  const { params, setParams } = useAdminParams();
+  const query = useAdminList("resources");
+  const { busy, run } = useAdminAction();
   const [form] = Form.useForm<Values>();
-  function show(resource?: Resource) {
-    setEditing(resource ?? null);
-    setFile(null);
+  const [editor, setEditor] = useState<{
+    source?: Resource;
+    clone: boolean;
+  } | null>(null);
+  const [detail, setDetail] = useState<Resource | null>(null);
+  function showEditor(source?: Resource, clone = false) {
+    setEditor({ source, clone });
     form.setFieldsValue(
-      resource ?? {
-        name: "",
-        type: "video",
-        category: "简约专业",
-        version: "1.0.0",
-        description: "",
-      },
+      source
+        ? {
+            name: source.name,
+            description: source.description,
+            category: source.category,
+            version: clone ? "" : source.version,
+            type: source.type,
+            compatibleModes: source.compatibleModes,
+          }
+        : {
+            name: "",
+            description: "",
+            category: "通用",
+            version: "1.0.0",
+            type: "prompt",
+            compatibleModes: ["voiceover", "avatar"],
+          },
     );
-    setOpen(true);
   }
-  async function submit() {
-    setBusy(true);
-    try {
-      const values = await form.validateFields();
-      if (editing)
-        await demoApi.updateResource(editing.id, {
-          name: values.name,
-          description: values.description,
-          category: values.category,
-        });
-      else {
-        if (!file && values.type !== "prompt") {
-          message.warning("请选择演示资源包文件");
-          return;
-        }
-        await demoApi.createResource({
+  async function save(values: Values) {
+    if (!editor) return;
+    const source = editor.source;
+    const saved = await run(
+      () =>
+        serviceRequest("/v1/admin/resources", {
           ...values,
+          ...(source && !editor.clone ? { id: source.id } : {}),
+          name: values.name.trim(),
+          category: values.category.trim(),
+          version: values.version.trim(),
+          thumbnail: source?.thumbnail || "",
+          sizeMb: source?.sizeMb || 0,
           published: false,
-          installed: false,
-          sizeMb: file
-            ? Math.max(0.1, Number((file.size / 1024 / 1024).toFixed(1)))
-            : 0.1,
-          thumbnail: "/media/interior-1.jpg",
-          compatibleModes: ["voiceover", "avatar"],
-        });
-      }
-      onAudit(`${editing ? "编辑" : "创建"}资源草稿：${values.name}`);
-      setOpen(false);
-      message.success("模拟资源草稿已保存");
-    } catch (error) {
-      if (error instanceof Error) message.error(error.message);
-    } finally {
-      setBusy(false);
-    }
+        }),
+      "模板草稿已保存",
+    );
+    if (saved) setEditor(null);
   }
-  async function toggle(resource: Resource) {
-    try {
-      await demoApi.updateResource(resource.id, {
-        published: !resource.published,
-      });
-      onAudit(
-        `${resource.published ? "下架" : "发布"}资源：${resource.name} ${resource.version}`,
-      );
-      message.success(resource.published ? "资源已模拟下架" : "资源已模拟发布");
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "操作失败");
-    }
+  function toggle(resource: Resource) {
+    modal.confirm({
+      title: resource.published ? "下架这个模板版本？" : "上架这个模板版本？",
+      content: (
+        <>
+          <p>
+            {resource.name} · {resource.version}
+          </p>
+          <p>
+            {resource.published
+              ? "下架后，用户不能再为新任务选择此版本；已有任务的引用保留。"
+              : "上架后用户可以选择此版本，内容将锁定；后续调整需新建版本。"}
+          </p>
+        </>
+      ),
+      okText: resource.published ? "确认下架" : "确认上架",
+      cancelText: "取消",
+      onOk: async () => {
+        const saved = await run(
+          () =>
+            serviceRequest("/v1/admin/resources", {
+              ...resource,
+              published: !resource.published,
+            }),
+          resource.published ? "模板已下架" : "模板已上架",
+        );
+        if (!saved) throw new Error("保存失败，请重试");
+      },
+    });
   }
-  const filtered = resources.filter(
-    (resource) =>
-      (type === "all" || resource.type === type) &&
-      `${resource.name}${resource.category}`.includes(search),
-  );
   return (
     <>
-      <div className="admin-toolbar">
-        <Space>
-          <Input
-            prefix={<Search size={15} />}
-            placeholder="搜索资源名称或分类"
-            aria-label="搜索资源"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            allowClear
-          />
-          <Select
-            aria-label="资源类型"
-            value={type}
-            onChange={setType}
-            style={{ width: 150 }}
-            options={[
-              { value: "all", label: "全部资源" },
-              ...Object.entries(typeLabels).map(([value, label]) => ({
-                value,
-                label,
-              })),
-            ]}
-          />
-        </Space>
-        <Button type="primary" icon={<Plus size={15} />} onClick={() => show()}>
-          上传资源包
-        </Button>
-      </div>
       <Alert
+        className="admin-notice"
         type="info"
-        title="仅模拟资源目录与安装状态；选择的文件不会上传。已发布版本的内容不可覆盖，下架后仍需创建新资源版本。"
-        style={{ marginBottom: 18 }}
+        showIcon
+        title="这里管理模板目录，不上传资源包"
+        description="目录上架只代表用户可以选择。当前云端文案仍使用内置生成指令；视频、风格、封面及字幕模板尚未由真实执行器消费，目录说明不会直接改变生成结果。"
       />
-      <Table<Resource>
-        rowKey="id"
-        dataSource={filtered}
-        pagination={{ pageSize: 8, showSizeChanger: false }}
-        scroll={{ x: 850 }}
-        columns={[
-          {
-            title: "资源",
-            key: "name",
-            render: (_, resource) => (
-              <Space>
-                <img
-                  src={resource.thumbnail}
-                  alt=""
-                  className="admin-resource-thumb"
-                />
-                <div>
-                  <strong>{resource.name}</strong>
-                  <p className="admin-secondary">{resource.category}</p>
-                </div>
-              </Space>
+      <section className="admin-panel" aria-label="模板目录">
+        <div className="admin-toolbar">
+          <Space wrap>
+            <Input.Search
+              key={params.get("q") || ""}
+              defaultValue={params.get("q") || ""}
+              placeholder="搜索模板名称或分类"
+              aria-label="搜索模板"
+              allowClear
+              onSearch={(q) => setParams({ q })}
+              style={{ width: 260 }}
+            />
+            <Select
+              aria-label="模板类型"
+              value={params.get("type") || ""}
+              style={{ width: 160 }}
+              onChange={(type) => setParams({ type })}
+              options={[
+                { value: "", label: "全部类型" },
+                ...Object.entries(resourceTypeLabels).map(([value, label]) => ({
+                  value,
+                  label,
+                })),
+              ]}
+            />
+            <Select
+              aria-label="上架状态"
+              value={params.get("state") || ""}
+              style={{ width: 130 }}
+              onChange={(state) => setParams({ state })}
+              options={[
+                { value: "", label: "全部状态" },
+                { value: "draft", label: "草稿" },
+                { value: "published", label: "已上架" },
+                { value: "unpublished", label: "已下架" },
+              ]}
+            />
+          </Space>
+          <Space>
+            <Button
+              onClick={() => void query.refetch()}
+              loading={query.isFetching}
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<Plus size={16} />}
+              onClick={() => showEditor()}
+            >
+              新建模板草稿
+            </Button>
+          </Space>
+        </div>
+        {query.error && (
+          <Alert
+            className="admin-notice"
+            type="error"
+            showIcon
+            title="模板目录读取失败"
+            description={query.error.message}
+            action={<Button onClick={() => void query.refetch()}>重试</Button>}
+          />
+        )}
+        <Table<Resource>
+          rowKey="id"
+          loading={query.isPending && !query.error}
+          dataSource={query.data?.items || []}
+          scroll={{ x: 1000 }}
+          pagination={listPagination(query.data, params, setParams)}
+          locale={{
+            emptyText: (
+              <Empty description="没有符合条件的模板。可调整筛选，或新建模板草稿。" />
             ),
-          },
-          {
-            title: "类型",
-            dataIndex: "type",
-            render: (value: ResourceType) => typeLabels[value],
-          },
-          { title: "版本", dataIndex: "version" },
-          {
-            title: "兼容模式",
-            key: "modes",
-            render: (_, resource) =>
-              resource.compatibleModes
-                .map((mode) => (mode === "avatar" ? "露脸" : "口播"))
-                .join(" / "),
-          },
-          {
-            title: "状态",
-            dataIndex: "published",
-            render: (value: boolean) => (
-              <Tag color={value ? "green" : "default"}>
-                {value ? "已发布" : "草稿 / 已下架"}
-              </Tag>
-            ),
-          },
-          {
-            title: "操作",
-            key: "actions",
-            render: (_, resource) => (
-              <Space>
-                <Button
-                  type="link"
-                  size="small"
-                  disabled={resource.published || resource.publishedOnce}
-                  title={
-                    resource.published || resource.publishedOnce
-                      ? "已发布版本内容不可覆盖，请创建新资源版本"
-                      : "编辑未发布草稿"
-                  }
-                  onClick={() => show(resource)}
-                >
-                  编辑
-                </Button>
-                <Button
-                  type="link"
-                  size="small"
-                  danger={resource.published}
-                  onClick={() => void toggle(resource)}
-                >
-                  {resource.published ? "下架" : "发布"}
-                </Button>
-              </Space>
-            ),
-          },
-        ]}
-      />
+          }}
+          columns={[
+            {
+              title: "模板",
+              key: "name",
+              render: (_, r) => (
+                <>
+                  <Button
+                    type="link"
+                    className="admin-text-button"
+                    onClick={() => setDetail(r)}
+                  >
+                    {r.name}
+                  </Button>
+                  <p className="admin-secondary">{r.category || "未分类"}</p>
+                </>
+              ),
+            },
+            {
+              title: "类型",
+              dataIndex: "type",
+              render: (type: ResourceType) =>
+                resourceTypeLabels[type] || "其他模板",
+            },
+            { title: "版本", dataIndex: "version" },
+            {
+              title: "适用模式",
+              key: "modes",
+              render: (_, r) =>
+                r.compatibleModes.map((m) => modeLabels[m]).join("、") ||
+                "未设置",
+            },
+            {
+              title: "状态",
+              key: "state",
+              render: (_, r) => (
+                <Tag color={r.published ? "green" : "default"}>
+                  {resourceState(r)}
+                </Tag>
+              ),
+            },
+            {
+              title: "操作",
+              key: "actions",
+              width: 260,
+              render: (_, r) => (
+                <Space wrap>
+                  {!r.published && !r.publishedOnce && (
+                    <Button
+                      size="small"
+                      disabled={busy}
+                      onClick={() => showEditor(r)}
+                    >
+                      编辑草稿
+                    </Button>
+                  )}
+                  <Button
+                    size="small"
+                    disabled={busy}
+                    onClick={() => showEditor(r, true)}
+                  >
+                    复制新版本
+                  </Button>
+                  <Button
+                    size="small"
+                    disabled={busy}
+                    onClick={() => toggle(r)}
+                  >
+                    {r.published ? "下架" : "上架"}
+                  </Button>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </section>
+      <Drawer
+        title="模板详情"
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        width={560}
+      >
+        {detail && (
+          <>
+            <h2>{detail.name}</h2>
+            <Descriptions
+              bordered
+              column={1}
+              items={[
+                {
+                  key: "type",
+                  label: "类型",
+                  children: resourceTypeLabels[detail.type],
+                },
+                { key: "version", label: "版本", children: detail.version },
+                {
+                  key: "category",
+                  label: "分类",
+                  children: detail.category || "未分类",
+                },
+                {
+                  key: "state",
+                  label: "状态",
+                  children: resourceState(detail),
+                },
+                {
+                  key: "modes",
+                  label: "适用模式",
+                  children: detail.compatibleModes
+                    .map((m) => modeLabels[m])
+                    .join("、"),
+                },
+                {
+                  key: "description",
+                  label: "目录说明",
+                  children: (
+                    <div className="admin-prewrap">
+                      {detail.description || "暂无说明"}
+                    </div>
+                  ),
+                },
+                {
+                  key: "id",
+                  label: "内部编号",
+                  children: (
+                    <Typography.Text copyable>{detail.id}</Typography.Text>
+                  ),
+                },
+              ]}
+            />
+            <p className="admin-secondary">
+              发布过的版本内容不可修改。需要调整时，请复制为新版本。
+            </p>
+          </>
+        )}
+      </Drawer>
       <Modal
-        title={editing ? "编辑资源草稿" : "上传演示资源包"}
-        open={open}
-        onCancel={() => setOpen(false)}
-        onOk={() => void submit()}
-        confirmLoading={busy}
+        title={
+          editor?.clone
+            ? "复制为新版本草稿"
+            : editor?.source
+              ? "编辑模板草稿"
+              : "新建模板草稿"
+        }
+        open={!!editor}
+        onCancel={() => {
+          if (!busy) setEditor(null);
+        }}
+        onOk={() => form.submit()}
         okText="保存草稿"
+        cancelText="取消"
+        confirmLoading={busy}
+        closable={!busy}
+        maskClosable={!busy}
         destroyOnHidden
       >
-        <Form form={form} layout="vertical">
+        {editor?.clone && (
+          <Alert
+            className="admin-notice"
+            type="info"
+            title={`来源：${editor.source?.name} · ${editor.source?.version}。请填写不同的版本号。`}
+          />
+        )}
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={(values) => void save(values)}
+          disabled={busy}
+        >
           <Form.Item
             name="name"
-            label="资源名称"
-            rules={[{ required: true, message: "请输入名称" }, { max: 60 }]}
+            label="模板名称"
+            rules={[{ required: true, whitespace: true, max: 120 }]}
           >
-            <Input />
+            <Input maxLength={120} />
           </Form.Item>
           <div className="admin-form-columns">
             <Form.Item
               name="type"
-              label="资源类型"
+              label="模板类型"
               rules={[{ required: true }]}
             >
               <Select
-                disabled={!!editing}
-                options={Object.entries(typeLabels).map(([value, label]) => ({
-                  value,
-                  label,
-                }))}
+                options={Object.entries(resourceTypeLabels).map(
+                  ([value, label]) => ({ value, label }),
+                )}
               />
             </Form.Item>
             <Form.Item
-              name="version"
-              label="资源版本"
-              rules={[
-                { required: true, message: "请输入版本" },
-                { pattern: /^\d+\.\d+\.\d+$/, message: "版本格式为 1.0.0" },
-              ]}
+              name="category"
+              label="分类"
+              rules={[{ required: true, whitespace: true, max: 80 }]}
             >
-              <Input disabled={!!editing} />
+              <Input maxLength={80} />
             </Form.Item>
           </div>
           <Form.Item
-            name="category"
-            label="分类"
-            rules={[{ required: true, message: "请输入分类" }]}
+            name="version"
+            label="版本号"
+            rules={[
+              { required: true, whitespace: true, max: 40 },
+              {
+                validator: (_, value: string) =>
+                  editor?.clone && value?.trim() === editor.source?.version
+                    ? Promise.reject(new Error("新版本号不能与来源版本相同"))
+                    : Promise.resolve(),
+              },
+            ]}
           >
-            <Input />
+            <Input placeholder="例如 1.0.0" maxLength={40} />
           </Form.Item>
-          <Form.Item name="description" label="效果与使用说明">
-            <Input.TextArea rows={3} maxLength={500} />
+          <Form.Item
+            name="compatibleModes"
+            label="适用视频模式"
+            rules={[
+              {
+                required: true,
+                type: "array",
+                min: 1,
+                message: "至少选择一种视频模式",
+              },
+            ]}
+          >
+            <Select
+              mode="multiple"
+              options={Object.entries(modeLabels).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+            />
           </Form.Item>
-          {!editing && (
-            <Form.Item label="资源文件">
-              <Upload
-                showUploadList={false}
-                accept=".zip,.json,.ttf,.otf"
-                beforeUpload={(selected) => {
-                  if (selected.size > 100 * 1024 * 1024) {
-                    message.error("演示文件不能超过 100 MB");
-                    return false;
-                  }
-                  setFile({ name: selected.name, size: selected.size });
-                  return false;
-                }}
-              >
-                <Button icon={<UploadCloud size={16} />}>
-                  {file?.name ?? "选择文件（仅演示）"}
-                </Button>
-              </Upload>
-            </Form.Item>
-          )}
+          <Form.Item
+            name="description"
+            label="目录说明"
+            rules={[{ max: 4000 }]}
+            extra="说明模板适合的场景和用途；当前说明不会直接作为生成提示词。"
+          >
+            <Input.TextArea rows={4} maxLength={4000} showCount />
+          </Form.Item>
         </Form>
       </Modal>
     </>
