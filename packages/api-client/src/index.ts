@@ -960,6 +960,22 @@ const mockApi = {
       return state.profile;
     });
   },
+  async updateFactoryPreferences(input: {
+    templateId: string;
+    templateVersion: string;
+    voiceId: string;
+    avatarId: string;
+  }) {
+    return change((state) => {
+      Object.assign(state.profile.defaults, {
+        videoTemplate: { id: input.templateId, version: input.templateVersion },
+        voiceId: input.voiceId,
+        avatarId: input.avatarId,
+        requireScriptReview: true,
+      });
+      return state.profile.defaults;
+    });
+  },
   async addVoice(name: string) {
     return change((state) => {
       const voice: Voice = {

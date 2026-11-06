@@ -14,11 +14,20 @@ const {
 } = require("../apps/desktop/electron/panorama/workflow.cjs");
 const media = require("../apps/desktop/electron/panorama/media.cjs");
 const domain = require("../apps/desktop/electron/panorama/domain.cjs");
+const catalog = require("../services/cloud/video_templates.json");
 const root = path.resolve("output/factory-run");
 await mkdir(root, { recursive: true });
 const calls = [];
+const testTemplate = structuredClone(catalog[0]);
+Object.assign(testTemplate.production.config, {
+  openingTemplate: "这是自动制作流程测试。",
+  sceneTemplate: "{room}。{description}",
+  closingTemplate: "仅作技术演示。",
+  aspectRatio: "16:9",
+});
 const workflow = new PanoramaWorkflow(root, "", {}, async (method) => {
   calls.push(method);
+  if (method === "template") return structuredClone(testTemplate);
   assert.equal(
     method,
     "capabilities",
@@ -109,7 +118,7 @@ assert.equal(job.status, "succeeded", job.error);
 assert.equal(job.scenes[0].kind, "expanded");
 assert.equal(job.scenes[0].approved, true);
 assert.equal(
-  calls.every((method) => method === "capabilities"),
+  calls.every((method) => ["capabilities", "template"].includes(method)),
   true,
 );
 const file = path.join(workflow.directory(owner), "jobs", job.id, "final.mp4");

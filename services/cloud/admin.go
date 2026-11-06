@@ -198,7 +198,12 @@ func pickFields(input object, keys ...string) object {
 }
 
 func publicResource(input object) object {
-	return publicFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "installed", "downloadStatus", "downloadProgress", "published", "sizeMb", "publishedOnce")
+	out := publicFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "installed", "downloadStatus", "downloadProgress", "published", "sizeMb", "publishedOnce")
+	if input["production"] != nil {
+		out["production"] = input["production"]
+		out["previewed"] = input["previewDigest"] == productionDigest(input)
+	}
+	return out
 }
 
 func publicFields(input object, keys ...string) object {

@@ -58,5 +58,8 @@ func validateResource(input object) error {
 			return fail(422, "缩略图请填写公共图片地址或 /media/ 本地资源路径")
 		}
 	}
+	if input["production"] != nil {
+		return validateProduction(input)
+	}
 	return nil
 }

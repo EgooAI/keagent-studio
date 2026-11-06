@@ -1,0 +1,110 @@
+[
+  {
+    "id": "standard-tour",
+    "name": "标准房源带看",
+    "description": "按图片顺序，完整介绍房源的各个空间。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.0.0",
+    "thumbnail": "",
+    "compatibleModes": ["voiceover"],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 1,
+      "config": {
+        "language": "zh-CN",
+        "openingTemplate": "一起看看{title}。{facts}",
+        "sceneTemplate": "这里是{room}。{description}",
+        "closingTemplate": "欢迎预约实地看房，具体情况以现场核验为准。",
+        "videoMode": "voiceover",
+        "rate": 1,
+        "speed": 4,
+        "direction": 1,
+        "maxSweep": 100,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "standard",
+        "brandColor": "#167D8D",
+        "subtitleSize": "standard"
+      }
+    }
+  },
+  {
+    "id": "highlights",
+    "name": "卖点先行",
+    "description": "围绕已核实的房源亮点，生成更有重点的介绍。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.0.0",
+    "thumbnail": "",
+    "compatibleModes": ["voiceover"],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 1,
+      "config": {
+        "language": "zh-CN",
+        "openingTemplate": "这套{title}，值得关注的是：{sellingPoints}。{facts}",
+        "sceneTemplate": "接下来看看{room}。{description}",
+        "closingTemplate": "具体房屋情况，请以实地看房和核验资料为准。",
+        "videoMode": "voiceover",
+        "rate": 1,
+        "speed": 4,
+        "direction": 1,
+        "maxSweep": 100,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "standard",
+        "brandColor": "#167D8D",
+        "subtitleSize": "standard"
+      }
+    }
+  },
+  {
+    "id": "concise",
+    "name": "简洁介绍",
+    "description": "用更精简的文字，快速展示这套房源。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.0.0",
+    "thumbnail": "",
+    "compatibleModes": ["voiceover"],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 1,
+      "config": {
+        "language": "zh-CN",
+        "openingTemplate": "{title}。{facts}",
+        "sceneTemplate": "{room}。{description}",
+        "closingTemplate": "欢迎预约实地看房。",
+        "videoMode": "voiceover",
+        "rate": 1,
+        "speed": 4,
+        "direction": 1,
+        "maxSweep": 100,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "standard",
+        "brandColor": "#167D8D",
+        "subtitleSize": "standard"
+      }
+    }
+  }
+]

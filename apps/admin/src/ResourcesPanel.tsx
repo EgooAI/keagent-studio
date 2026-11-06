@@ -18,6 +18,13 @@ import {
 import { Plus } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import type { Resource, ResourceType, VideoMode } from "@keagent/shared-types";
+import type { ProductionTemplatePreview } from "@keagent/shared-types";
+import {
+  defaultProduction,
+  ProductionTemplateEditor,
+  ProductionPreview,
+  ProductionTemplateRules,
+} from "./ProductionTemplateEditor";
 import {
   listPagination,
   useAdminAction,
@@ -38,7 +45,13 @@ const modeLabels: Record<VideoMode, string> = {
 };
 type Values = Pick<
   Resource,
-  "name" | "description" | "category" | "version" | "type" | "compatibleModes"
+  | "name"
+  | "description"
+  | "category"
+  | "version"
+  | "type"
+  | "compatibleModes"
+  | "production"
 >;
 const resourceState = (r: Resource) =>
   r.published ? "已上架" : r.publishedOnce ? "已下架" : "草稿";
@@ -49,6 +62,9 @@ export default function ResourcesPanel() {
   const query = useAdminList("resources");
   const { busy, run } = useAdminAction();
   const [form] = Form.useForm<Values>();
+  const type = Form.useWatch("type", form);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [preview, setPreview] = useState<ProductionTemplatePreview>();
   const [editor, setEditor] = useState<{
     source?: Resource;
     clone: boolean;
@@ -56,6 +72,7 @@ export default function ResourcesPanel() {
   const [detail, setDetail] = useState<Resource | null>(null);
   function showEditor(source?: Resource, clone = false) {
     setEditor({ source, clone });
+    form.resetFields();
     form.setFieldsValue(
       source
         ? {
@@ -65,14 +82,16 @@ export default function ResourcesPanel() {
             version: clone ? "" : source.version,
             type: source.type,
             compatibleModes: source.compatibleModes,
+            production: structuredClone(source.production || defaultProduction),
           }
         : {
             name: "",
             description: "",
             category: "通用",
             version: "1.0.0",
-            type: "prompt",
+            type: "video",
             compatibleModes: ["voiceover", "avatar"],
+            production: structuredClone(defaultProduction),
           },
     );
   }
@@ -83,6 +102,11 @@ export default function ResourcesPanel() {
       () =>
         serviceRequest("/v1/admin/resources", {
           ...values,
+          production: values.type === "video" ? values.production : undefined,
+          compatibleModes:
+            values.type === "video"
+              ? [values.production!.config.videoMode]
+              : values.compatibleModes,
           ...(source && !editor.clone ? { id: source.id } : {}),
           name: values.name.trim(),
           category: values.category.trim(),
@@ -94,6 +118,15 @@ export default function ResourcesPanel() {
       "模板草稿已保存",
     );
     if (saved) setEditor(null);
+  }
+  async function showPreview(resource: Resource) {
+    await run(async () => {
+      const result = await serviceRequest<ProductionTemplatePreview>(
+        "/v1/admin/resources/preview",
+        { id: resource.id },
+      );
+      setPreview(result);
+    }, "模板规则校验通过");
   }
   function toggle(resource: Resource) {
     modal.confirm({
@@ -131,8 +164,8 @@ export default function ResourcesPanel() {
         className="admin-notice"
         type="info"
         showIcon
-        title="这里管理模板目录，不上传资源包"
-        description="目录上架只代表用户可以选择。当前云端文案仍使用内置生成指令；视频、风格、封面及字幕模板尚未由真实执行器消费，目录说明不会直接改变生成结果。"
+        title="完整视频模板与 AI 视频工厂同步"
+        description="含制作规则的视频模板，经预览校验并上架后，用户即可选择。文案、镜头、字幕和封面配置会真实用于制作。旧版仅有目录说明的条目不会进入新版视频工厂。"
       />
       <section className="admin-panel" aria-label="模板目录">
         <div className="admin-toolbar">
@@ -173,6 +206,7 @@ export default function ResourcesPanel() {
             />
           </Space>
           <Space>
+            <Button onClick={() => setRulesOpen(true)}>添加规则</Button>
             <Button
               onClick={() => void query.refetch()}
               loading={query.isFetching}
@@ -222,7 +256,10 @@ export default function ResourcesPanel() {
                   >
                     {r.name}
                   </Button>
-                  <p className="admin-secondary">{r.category || "未分类"}</p>
+                  <p className="admin-secondary">
+                    {r.category || "未分类"} ·{" "}
+                    {r.production ? "制作模板" : "旧版目录"}
+                  </p>
                 </>
               ),
             },
@@ -255,6 +292,15 @@ export default function ResourcesPanel() {
               width: 260,
               render: (_, r) => (
                 <Space wrap>
+                  {r.production && (
+                    <Button
+                      size="small"
+                      disabled={busy}
+                      onClick={() => void showPreview(r)}
+                    >
+                      预览校验
+                    </Button>
+                  )}
                   {!r.published && !r.publishedOnce && (
                     <Button
                       size="small"
@@ -273,7 +319,15 @@ export default function ResourcesPanel() {
                   </Button>
                   <Button
                     size="small"
-                    disabled={busy}
+                    disabled={
+                      busy || (!!r.production && !r.previewed && !r.published)
+                    }
+                    title={
+                      r.production && !r.previewed && !r.published
+                        ? "请先预览校验"
+                        : undefined
+                    }
+                    aria-label={r.published ? "下架" : "上架"}
                     onClick={() => toggle(r)}
                   >
                     {r.published ? "下架" : "上架"}
@@ -322,7 +376,7 @@ export default function ResourcesPanel() {
                 },
                 {
                   key: "description",
-                  label: "目录说明",
+                  label: "适用说明",
                   children: (
                     <div className="admin-prewrap">
                       {detail.description || "暂无说明"}
@@ -341,6 +395,11 @@ export default function ResourcesPanel() {
             <p className="admin-secondary">
               发布过的版本内容不可修改。需要调整时，请复制为新版本。
             </p>
+            {detail.production && (
+              <Button onClick={() => void showPreview(detail)} disabled={busy}>
+                查看制作规则与预览
+              </Button>
+            )}
           </>
         )}
       </Drawer>
@@ -363,6 +422,7 @@ export default function ResourcesPanel() {
         closable={!busy}
         maskClosable={!busy}
         destroyOnHidden
+        width={760}
       >
         {editor?.clone && (
           <Alert
@@ -410,6 +470,13 @@ export default function ResourcesPanel() {
             rules={[
               { required: true, whitespace: true, max: 40 },
               {
+                pattern:
+                  type === "video"
+                    ? /^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,4}$/
+                    : undefined,
+                message: "制作模板请使用 1.0.0 格式的版本号",
+              },
+              {
                 validator: (_, value: string) =>
                   editor?.clone && value?.trim() === editor.source?.version
                     ? Promise.reject(new Error("新版本号不能与来源版本相同"))
@@ -419,36 +486,55 @@ export default function ResourcesPanel() {
           >
             <Input placeholder="例如 1.0.0" maxLength={40} />
           </Form.Item>
-          <Form.Item
-            name="compatibleModes"
-            label="适用视频模式"
-            rules={[
-              {
-                required: true,
-                type: "array",
-                min: 1,
-                message: "至少选择一种视频模式",
-              },
-            ]}
-          >
-            <Select
-              mode="multiple"
-              options={Object.entries(modeLabels).map(([value, label]) => ({
-                value,
-                label,
-              }))}
-            />
-          </Form.Item>
+          {type !== "video" && (
+            <Form.Item
+              name="compatibleModes"
+              label="适用视频模式"
+              rules={[
+                {
+                  required: true,
+                  type: "array",
+                  min: 1,
+                  message: "至少选择一种视频模式",
+                },
+              ]}
+            >
+              <Select
+                mode="multiple"
+                options={Object.entries(modeLabels).map(([value, label]) => ({
+                  value,
+                  label,
+                }))}
+              />
+            </Form.Item>
+          )}
           <Form.Item
             name="description"
-            label="目录说明"
+            label="适用说明"
             rules={[{ max: 4000 }]}
-            extra="说明模板适合的场景和用途；当前说明不会直接作为生成提示词。"
+            extra="显示给用户的适用说明。具体句式在下方制作规则中填写。"
           >
             <Input.TextArea rows={4} maxLength={4000} showCount />
           </Form.Item>
+          {type === "video" && <ProductionTemplateEditor />}
         </Form>
       </Modal>
+      <Drawer
+        title="视频模板添加规则"
+        open={rulesOpen}
+        onClose={() => setRulesOpen(false)}
+        width={640}
+      >
+        <ProductionTemplateRules />
+      </Drawer>
+      <Drawer
+        title="制作模板预览校验"
+        open={!!preview}
+        onClose={() => setPreview(undefined)}
+        width={640}
+      >
+        {preview && <ProductionPreview value={preview} />}
+      </Drawer>
     </>
   );
 }

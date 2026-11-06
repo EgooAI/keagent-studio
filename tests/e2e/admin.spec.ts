@@ -8,6 +8,9 @@ import type {
   ProductionConfig,
   Resource,
 } from "../../packages/shared-types/src/index";
+import { defaultProduction } from "../../apps/admin/src/ProductionTemplateEditor";
+
+const adminBase = process.env.KEAGENT_ADMIN_TEST_URL || "http://127.0.0.1:5174";
 
 const admin = {
   userId: "admin",
@@ -164,7 +167,7 @@ async function fixture(page: Page) {
     const url = new URL(route.request().url());
     requests.push(url.pathname + url.search);
     const cors = {
-      "access-control-allow-origin": "http://127.0.0.1:5174",
+      "access-control-allow-origin": adminBase,
       "access-control-allow-headers": "authorization,content-type",
       "access-control-allow-methods": "GET,POST,OPTIONS",
     };
@@ -232,6 +235,24 @@ async function fixture(page: Page) {
         else resources.push({ ...resources[0], ...body, id: "new-resource" });
         return json({ id: existing?.id || "new-resource" });
       }
+      if (url.pathname.endsWith("/resources/preview")) {
+        const resource = resources.find((item) => item.id === body.id)!;
+        resource.previewed = true;
+        return json({
+          template: resource,
+          segments: [
+            {
+              id: "opening",
+              text: "一起看看示例小区两居室。建筑面积约80平方米。",
+            },
+            { id: "scene", text: "这里是客厅。原图展示客厅的空间布局。" },
+            {
+              id: "closing",
+              text: "欢迎预约实地看房，具体情况以现场核验为准。",
+            },
+          ],
+        });
+      }
     }
     const kind = url.pathname.split("/").at(-2);
     let items: object[] = [];
@@ -267,7 +288,7 @@ async function fixture(page: Page) {
   return { users, owner, task, resources, requests, writes, state };
 }
 
-test("六个管理入口职责明确，真实路由和旧入口可恢复", async ({ page }) => {
+test("管理入口职责明确，真实路由和旧入口可恢复", async ({ page }) => {
   await fixture(page);
   for (const [route, label] of [
     ["dashboard", "管理概览"],
@@ -277,14 +298,17 @@ test("六个管理入口职责明确，真实路由和旧入口可恢复", async
     ["ai", "AI 服务"],
     ["audit", "操作记录"],
   ]) {
-    await page.goto(`http://127.0.0.1:5174/#/admin/${route}`);
+    await page.goto(`${adminBase}/#/admin/${route}`);
     await expect(
       page.getByRole("heading", { name: label, exact: true }),
     ).toBeVisible();
     await expect(page.locator(".admin-page-heading p")).not.toBeEmpty();
-    await expect(page.getByRole("menuitem")).toHaveCount(6);
+    await expect(page.getByRole("menuitem")).toHaveCount(7);
+    await expect(
+      page.getByRole("menuitem", { name: "抖音发布", exact: true }),
+    ).toBeVisible();
   }
-  await page.goto("http://127.0.0.1:5174/#/admin/devices");
+  await page.goto(adminBase + "/#/admin/devices");
   await expect(page).toHaveURL(/admin\/users\?tab=devices/);
   await expect(
     page.getByRole("tab", { name: "设备", exact: true }),
@@ -297,7 +321,7 @@ test("六个管理入口职责明确，真实路由和旧入口可恢复", async
 
 test("服务端分页可查第123位用户，搜索和刷新保留URL", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto("http://127.0.0.1:5174/#/admin/users?limit=20&offset=120");
+  await page.goto(adminBase + "/#/admin/users?limit=20&offset=120");
   await expect(
     page.locator(`tr[data-row-key="${data.owner.id}"]`),
   ).toContainText(data.owner.email);
@@ -307,7 +331,7 @@ test("服务端分页可查第123位用户，搜索和刷新保留URL", async ({
   ).toContainText(data.owner.email);
   await expect(page).toHaveURL(/offset=120/);
   await page.goto(
-    `http://127.0.0.1:5174/#/admin/users?q=${data.owner.email}&role=user&banned=false`,
+    `${adminBase}/#/admin/users?q=${data.owner.email}&role=user&banned=false`,
   );
   await expect(page.locator("tr[data-row-key]")).toHaveCount(1);
   await expect
@@ -328,7 +352,7 @@ test("服务端分页可查第123位用户，搜索和刷新保留URL", async ({
 
 test("任务摘要显示关联信息，详情链接和返回可恢复", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto("http://127.0.0.1:5174/#/admin/tasks");
+  await page.goto(adminBase + "/#/admin/tasks");
   await expect(
     page.getByText(data.task.propertyTitle, { exact: true }),
   ).toBeVisible();
@@ -340,7 +364,7 @@ test("任务摘要显示关联信息，详情链接和返回可恢复", async ({
   await expect(
     page.getByText("这是仅在详情显示的完整文案", { exact: true }),
   ).toHaveCount(0);
-  await page.goto("http://127.0.0.1:5174/#/admin/tasks?taskId=task-1");
+  await page.goto(adminBase + "/#/admin/tasks?taskId=task-1");
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(
     page.getByText("这是仅在详情显示的完整文案", { exact: true }),
@@ -354,7 +378,7 @@ test("任务摘要显示关联信息，详情链接和返回可恢复", async ({
 test("普通用户不会挂载管理查询", async ({ page }) => {
   const data = await fixture(page);
   data.state.deny = true;
-  await page.goto("http://127.0.0.1:5174/#/admin/dashboard");
+  await page.goto(adminBase + "/#/admin/dashboard");
   await expect(
     page.getByText("当前账号没有管理权限", { exact: true }),
   ).toBeVisible();
@@ -370,7 +394,7 @@ test("快速切页时，迟到的用户查询不会覆盖任务列表", async ({
     (response) =>
       response.url().includes("/users/list") && !response.url().includes("q="),
   );
-  await page.goto("http://127.0.0.1:5174/#/admin/users");
+  await page.goto(adminBase + "/#/admin/users");
   await expect
     .poll(() =>
       data.requests.some((request) =>
@@ -389,7 +413,7 @@ test("快速切页时，迟到的用户查询不会覆盖任务列表", async ({
 
 test("已发布模板不可直接编辑，复制版本必须更换版本号", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto("http://127.0.0.1:5174/#/admin/resources");
+  await page.goto(adminBase + "/#/admin/resources");
   const published = page.locator('tr[data-row-key="published"]');
   await expect(
     published.getByRole("button", { name: "编辑草稿", exact: true }),
@@ -410,16 +434,95 @@ test("已发布模板不可直接编辑，复制版本必须更换版本号", as
   expect(
     data.writes.filter((write) => write.path.endsWith("/resources")),
   ).toHaveLength(0);
-  await dialog.getByLabel("版本号", { exact: true }).fill("2");
+  await dialog.getByLabel("版本号", { exact: true }).fill("2.0.0");
   await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
   await expect(dialog).toBeHidden();
   const saved = data.writes.find((write) => write.path.endsWith("/resources"));
   expect(saved?.body).toMatchObject({
     name: "在架视频模板",
-    version: "2",
+    version: "2.0.0",
     published: false,
   });
   expect(saved?.body.id).toBeUndefined();
+});
+
+test("完整视频模板通过参数表单保存，预览后才允许上架", async ({ page }) => {
+  const data = await fixture(page);
+  await page.goto(adminBase + "/#/admin/resources");
+  await page.getByRole("button", { name: "添加规则", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "视频模板添加规则", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("2. 结构与素材处理固定", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "视频模板添加规则", exact: true })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "新建模板草稿",
+    exact: true,
+  });
+  await dialog.getByLabel("模板名称", { exact: true }).fill("门店房源带看");
+  await dialog
+    .getByLabel("适用说明", { exact: true })
+    .fill("适合完整介绍一套房源。");
+  await expect(
+    dialog.getByLabel("每张图片对应的空间文案", { exact: true }),
+  ).toHaveValue(defaultProduction.config.sceneTemplate);
+  await dialog.getByLabel("品牌色", { exact: true }).fill("#336699");
+  await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  const saved = data.writes.find((write) => write.path.endsWith("/resources"));
+  expect(saved?.body).toMatchObject({
+    type: "video",
+    version: "1.0.0",
+    compatibleModes: ["voiceover"],
+    production: {
+      schemaVersion: 1,
+      config: {
+        brandColor: "#336699",
+        sceneTemplate: "这里是{room}。{description}",
+      },
+    },
+  });
+  const row = page.locator('tr[data-row-key="new-resource"]');
+  await expect(row).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: "上架", exact: true }),
+  ).toBeDisabled();
+  await row.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "制作模板预览校验", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "这是示例房源的文案和版式示意，不生成收费 AI 图片、配音或视频。真实文案会依据所选房源生成，最终效果以生成视频为准。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "output/template-verification/admin-preview.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("dialog", { name: "制作模板预览校验", exact: true })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(
+    row.getByRole("button", { name: "上架", exact: true }),
+  ).toBeEnabled();
+  await row.getByRole("button", { name: "上架", exact: true }).click();
+  await page.getByRole("button", { name: "确认上架", exact: true }).click();
+  await expect(
+    row.getByRole("button", { name: "下架", exact: true }),
+  ).toBeVisible();
+  await expect(
+    row.getByRole("button", { name: "编辑草稿", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("密码重置部分成功后跨主页面仍保留提醒，重试不重复修改密码", async ({
@@ -427,7 +530,7 @@ test("密码重置部分成功后跨主页面仍保留提醒，重试不重复�
 }) => {
   const data = await fixture(page);
   data.state.revokeFailures = 1;
-  await page.goto("http://127.0.0.1:5174/#/admin/users");
+  await page.goto(adminBase + "/#/admin/users");
   await page
     .locator('tr[data-row-key="user-0"]')
     .getByRole("button", { name: "重置密码", exact: true })
@@ -480,7 +583,7 @@ test("密码重置部分成功后跨主页面仍保留提醒，重试不重复�
 
 test("会话失效立即关闭停用确认，不保留旧管理操作", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto("http://127.0.0.1:5174/#/admin/users");
+  await page.goto(adminBase + "/#/admin/users");
   await page
     .locator('tr[data-row-key="user-0"]')
     .getByRole("button", { name: "停用", exact: true })
@@ -503,7 +606,7 @@ test("会话失效立即关闭停用确认，不保留旧管理操作", async ({
 
 test("操作记录搜索在切换来源和清除筛选时移除隐藏条件", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto("http://127.0.0.1:5174/#/admin/audit?tab=business");
+  await page.goto(adminBase + "/#/admin/audit?tab=business");
   const search = page.getByLabel("搜索操作对象", { exact: true });
   await search.fill("门店模板");
   await search.press("Enter");
@@ -532,7 +635,7 @@ test("操作记录搜索在切换来源和清除筛选时移除隐藏条件", as
 test("设备解绑先确认，失败保留对话框并允许重试", async ({ page }) => {
   const data = await fixture(page);
   data.state.deviceFailures = 1;
-  await page.goto("http://127.0.0.1:5174/#/admin/users?tab=devices");
+  await page.goto(adminBase + "/#/admin/users?tab=devices");
   await page.getByRole("button", { name: "解绑设备", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "解绑该设备？",

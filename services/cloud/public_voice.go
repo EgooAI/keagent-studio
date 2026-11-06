@@ -32,6 +32,17 @@ func validatePublicVoice(v adminVoice) error {
 	}
 	return nil
 }
+
+// Official TTS 2.0 example voice. Insert once; administrator unlisting survives restarts.
+func seedDefaultPublicVoice(ctx context.Context, db *sql.DB) error {
+	v := adminVoice{publicVoice: publicVoice{ID: "builtin-public-zh-vv-v2", Name: "公共讲解女声 · VV 2.0", Language: "zh-CN"}, Speaker: "zh_female_vv_uranus_bigtts", Resource: "seed-tts-2.0", Enabled: true, PublishedOnce: true}
+	if err := validatePublicVoice(v); err != nil {
+		return err
+	}
+	b, _ := json.Marshal(v)
+	_, err := db.ExecContext(ctx, `INSERT INTO keagent_public_voice(id,payload) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, v.ID, b)
+	return err
+}
 func (s *server) publicVoices(ctx context.Context, all bool) ([]adminVoice, error) {
 	query := `SELECT payload FROM keagent_public_voice`
 	if !all {

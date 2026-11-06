@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import {
   App,
+  Alert,
   Button,
   Empty,
   Form,
@@ -199,7 +200,11 @@ export default function PropertiesPage() {
                 <span
                   className={`photo-state ${publishedIds.has(property.id) ? "published" : ""}`}
                 >
-                  {publishedIds.has(property.id) ? "已发布过" : "未发布过"}
+                  {property.sample
+                    ? "测试素材"
+                    : publishedIds.has(property.id)
+                      ? "已发布过"
+                      : "未发布过"}
                 </span>
                 <span className="media-count">
                   <Play size={11} fill="currentColor" /> {property.videoCount}{" "}
@@ -211,12 +216,16 @@ export default function PropertiesPage() {
                   <Link to={`/properties/${property.id}`}>
                     {property.community}
                   </Link>
-                  <strong>{formatPrice(property.priceCents)}</strong>
+                  <strong>
+                    {property.sample
+                      ? "测试样例"
+                      : formatPrice(property.priceCents)}
+                  </strong>
                 </div>
                 <p className="property-summary">
                   {property.layout}
                   <span />
-                  {property.areaSqm} m²
+                  {property.sample ? "两张原全景图" : `${property.areaSqm} m²`}
                   <span />
                   {property.district}
                 </p>
@@ -266,10 +275,15 @@ export default function PropertiesPage() {
                 ),
               },
               { title: "户型", dataIndex: "layout" },
-              { title: "面积", render: (_, p: Property) => `${p.areaSqm} m²` },
+              {
+                title: "面积",
+                render: (_, p: Property) =>
+                  p.sample ? "未提供" : `${p.areaSqm} m²`,
+              },
               {
                 title: "总价",
-                render: (_, p: Property) => formatPrice(p.priceCents),
+                render: (_, p: Property) =>
+                  p.sample ? "测试样例" : formatPrice(p.priceCents),
               },
               {
                 title: "发布",
@@ -517,12 +531,13 @@ export function PropertyDetailPage() {
         actions={
           <>
             <Button
+              disabled={property.sample}
               onClick={() => {
                 form.setFieldsValue(property);
                 setEditing(true);
               }}
             >
-              编辑房源
+              {property.sample ? "内置测试资料" : "编辑房源"}
             </Button>
             <Button
               type="primary"
@@ -535,6 +550,15 @@ export function PropertyDetailPage() {
           </>
         }
       />
+      {property.sample && (
+        <Alert
+          style={{ marginBottom: 20 }}
+          type="info"
+          showIcon
+          title="内置测试房源，非真实在售房源"
+          description="已附带两张原全景素材，使用模板文案和本机配音，无需贝壳接口、扩图或云端配音即可测试视频。两个场景来自不同地点；成片可预览、下载，不能作为正式房源视频发布。"
+        />
+      )}
       <div className="property-detail-grid">
         <div>
           <div className="property-hero">
@@ -544,15 +568,21 @@ export function PropertyDetailPage() {
             <h2>{property.title}</h2>
             <div className="property-facts">
               <div>
-                <strong>{formatPrice(property.priceCents)}</strong>
+                <strong>
+                  {property.sample
+                    ? "未提供"
+                    : formatPrice(property.priceCents)}
+                </strong>
                 <span>总价</span>
               </div>
               <div>
-                <strong>{property.layout}</strong>
+                <strong>{property.layout || "未提供"}</strong>
                 <span>户型</span>
               </div>
               <div>
-                <strong>{property.areaSqm} m²</strong>
+                <strong>
+                  {property.sample ? "未提供" : `${property.areaSqm} m²`}
+                </strong>
                 <span>建筑面积</span>
               </div>
             </div>
@@ -586,7 +616,9 @@ export function PropertyDetailPage() {
                 ),
               )}
             </div>
-            {window.desktop ? (
+            {property.sample ? (
+              <p className="muted">内置素材已就绪，可直接创建视频任务。</p>
+            ) : window.desktop ? (
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <Button
                   icon={<Plus size={16} />}

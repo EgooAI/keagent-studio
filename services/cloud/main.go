@@ -297,6 +297,13 @@ func (s *server) workspace(ctx context.Context, a actor) (object, error) {
 	if err = json.Unmarshal(b, &w); err != nil {
 		return nil, err
 	}
+	properties := []any{builtinTestProperty()}
+	for _, property := range rows(w["properties"]) {
+		if obj(property)["id"] != "panorama-cc0-sample" {
+			properties = append(properties, property)
+		}
+	}
+	w["properties"] = properties
 	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE payload->>'published'='true' ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -312,7 +319,7 @@ func (s *server) workspace(ctx context.Context, a actor) (object, error) {
 		if err = json.Unmarshal(b, &resource); err != nil {
 			return nil, err
 		}
-		w["resources"] = append(rows(w["resources"]), resource)
+		w["resources"] = append(rows(w["resources"]), publicResource(resource))
 	}
 	return w, rr.Err()
 }
@@ -360,10 +367,30 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 			}
 		}
 		result = w["profile"]
+	case "updateFactoryPreferences":
+		input := obj(arg(0))
+		if input == nil {
+			return nil, fail(422, "默认制作配置无效")
+		}
+		preferences, err := s.factoryPreferences(ctx, a, input)
+		if err != nil {
+			return nil, err
+		}
+		defaults := obj(obj(w["profile"])["defaults"])
+		if defaults == nil {
+			return nil, fail(422, "原有默认配置无效")
+		}
+		for key, value := range preferences {
+			defaults[key] = value
+		}
+		result = defaults
 	case "createProperty", "updateProperty":
 		input := obj(arg(0))
 		var property object
 		if cmd == "updateProperty" {
+			if str(arg(0)) == "panorama-cc0-sample" {
+				return nil, fail(422, "内置测试房源仅供测试，请另外添加真实房源")
+			}
 			property = find(w["properties"], str(arg(0)))
 			input = obj(arg(1))
 			if property == nil {
@@ -595,6 +622,9 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	if json.Unmarshal(body, &input) != nil {
 		return nil, fail(400, "参数无效")
 	}
+	if kind == "resources/preview" {
+		return s.previewProduction(ctx, a, input)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -622,7 +652,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			return nil, fail(404, "设备不存在")
 		}
 	case "resources":
-		input = pickFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "published", "sizeMb")
+		input = pickFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "published", "sizeMb", "production")
 		if target == "" {
 			target = id()
 			input["id"] = target
@@ -671,6 +701,25 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			input["published"] = patch["published"]
 		} else if err = validateResource(input); err != nil {
 			return nil, err
+		}
+		if input["production"] != nil {
+			catalogKey := strings.ToLower(strings.TrimSpace(str(input["name"]))) + "@" + str(input["version"])
+			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('keagent-template-version:' || $1, 0))`, catalogKey); err != nil {
+				return nil, err
+			}
+			var duplicate bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id<>$1 AND lower(trim(payload->>'name'))=lower(trim($2)) AND payload->>'version'=$3 AND payload ? 'production')`, target, str(input["name"]), str(input["version"])).Scan(&duplicate); err != nil {
+				return nil, err
+			}
+			if duplicate {
+				return nil, fail(409, "相同名称和版本的制作模板已存在，请填写新版本号")
+			}
+			if prior != nil && prior["previewDigest"] == productionDigest(input) {
+				input["previewDigest"] = prior["previewDigest"]
+			}
+			if input["published"] == true && input["previewDigest"] != productionDigest(input) {
+				return nil, fail(422, "请先保存并预览校验当前模板，再上架")
+			}
 		}
 		if input["published"] == true {
 			input["publishedOnce"] = true
@@ -897,6 +946,9 @@ func main() {
 	if _, err = db.Exec(schema); err != nil {
 		log.Fatal("business migration failed")
 	}
+	if err = seedVideoTemplates(context.Background(), db); err != nil {
+		log.Fatal("video template migration failed")
+	}
 	if _, err = db.Exec(avatarSchema); err != nil {
 		log.Fatal("panorama migration failed")
 	}
@@ -908,6 +960,9 @@ func main() {
 	}
 	if _, err = db.Exec(publicVoiceSchema); err != nil {
 		log.Fatal("public voice migration failed")
+	}
+	if err = seedDefaultPublicVoice(context.Background(), db); err != nil {
+		log.Fatal("public voice seed failed")
 	}
 	if _, err = db.Exec(userAvatarSchema); err != nil {
 		log.Fatal("user avatar migration failed")

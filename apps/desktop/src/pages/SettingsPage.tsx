@@ -31,9 +31,16 @@ import {
   UserRound,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import { demoApi, isLive } from "@keagent/api-client";
+import {
+  authRequest,
+  demoApi,
+  isLive,
+  type SessionUser,
+} from "@keagent/api-client";
+import { useQuery } from "@tanstack/react-query";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
 import { AvatarLibraryPanel } from "../components/AvatarLibrary";
+import { FactoryPreferences } from "../components/FactoryPreferences";
 import { ThemeSettings } from "@keagent/theme";
 import type {
   AgentProfile,
@@ -62,6 +69,12 @@ export default function SettingsPage() {
   const { section = "account" } = useParams();
   const navigate = useNavigate();
   const { data } = useWorkspace();
+  const account = useQuery({
+    queryKey: ["settings-account"],
+    queryFn: () => authRequest<SessionUser>("session"),
+    enabled: isLive && section === "account",
+    retry: false,
+  });
   const [profileForm] = Form.useForm<AgentProfile>();
   const [defaultsForm] = Form.useForm();
   const [creator, setCreator] = useState<"voice" | "avatar" | null>(null);
@@ -76,10 +89,10 @@ export default function SettingsPage() {
   } | null>(null);
   const defaults = data?.profile.defaults;
   useEffect(() => {
-    if (data) profileForm.setFieldsValue(data.profile);
-  }, [data?.profile, profileForm]);
+    if (data && section === "profile") profileForm.setFieldsValue(data.profile);
+  }, [data?.profile, profileForm, section]);
   useEffect(() => {
-    if (defaults)
+    if (defaults && !isLive && section === "defaults")
       defaultsForm.setFieldsValue({
         ...defaults,
         promptTemplate: defaults.promptTemplate.id,
@@ -87,7 +100,7 @@ export default function SettingsPage() {
         styleTemplate: defaults.styleTemplate.id,
         coverTemplate: defaults.coverTemplate.id,
       });
-  }, [defaults, defaultsForm]);
+  }, [defaults, defaultsForm, section]);
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
   if (!data) return null;
   async function act(action: () => Promise<unknown>, success?: string) {
@@ -363,32 +376,59 @@ export default function SettingsPage() {
         <div>
           <strong style={{ fontSize: 18 }}>{data.profile.name}</strong>
           <p style={{ margin: "8px 0 0", color: "#667085" }}>
-            个人演示工作区 <Tag>Mock</Tag>
+            {isLive ? (
+              <>
+                {account.data?.email || "正在读取账号"}{" "}
+                <Tag color="green">已登录</Tag>
+              </>
+            ) : (
+              <>
+                个人演示工作区 <Tag>Mock</Tag>
+              </>
+            )}
           </p>
         </div>
       </Space>
       <Descriptions
         column={1}
         items={[
-          { key: "type", label: "账号类型", children: "前端演示账号" },
+          {
+            key: "type",
+            label: "账号类型",
+            children: isLive
+              ? account.data
+                ? account.data.role === "admin"
+                  ? "管理员账号"
+                  : "用户账号"
+                : "待读取"
+              : "前端演示账号",
+          },
           {
             key: "scope",
             label: "数据范围",
-            children: "仅保存在当前浏览器或桌面应用的数据目录中",
+            children: isLive
+              ? "当前登录账号的云端工作区与本机制作数据"
+              : "仅保存在当前浏览器或桌面应用的数据目录中",
           },
           {
             key: "auth",
             label: "认证状态",
-            children: "未接入真实认证服务，不存储真实登录凭据",
+            children: isLive
+              ? account.isError
+                ? "身份读取失败，请刷新或重新登录"
+                : "由认证服务验证登录，密钥和登录凭据不会在设置页展示"
+              : "未接入真实认证服务，不存储真实登录凭据",
           },
         ]}
       />
-      <Alert
-        type="info"
-        showIcon
-        title="当前无需真实账号即可体验全部前端流程。正式注册、登录和权限将在后续接入后端时实现。"
-        style={{ marginTop: 20 }}
-      />
+      {!isLive && (
+        <Alert
+          type="info"
+          showIcon
+          title="当前无需真实账号即可体验全部前端流程。正式注册、登录和权限将在后续接入后端时实现。"
+          style={{ marginTop: 20 }}
+        />
+      )}
     </>
   );
   const profileSettings = (
@@ -630,37 +670,45 @@ export default function SettingsPage() {
         items={[
           {
             key: "size",
-            label: "演示业务数据",
+            label: isLive ? "当前工作区资料" : "演示业务数据",
             children: `${(new Blob([JSON.stringify(data)]).size / 1024).toFixed(1)} KB`,
           },
           {
             key: "resources",
-            label: "已安装资源",
-            children: `${data.resources.filter((item) => item.installed).length} 个（模拟安装状态）`,
+            label: isLive ? "可选制作模板" : "已安装资源",
+            children: isLive
+              ? `${data.resources.filter((item) => item.production && item.published).length} 个（由管理员上架，无需安装）`
+              : `${data.resources.filter((item) => item.installed).length} 个（模拟安装状态）`,
           },
           {
             key: "storage",
             label: "存储方式",
-            children: "浏览器本地存储；真实 SQLite 尚未接入",
+            children: isLive
+              ? "账号资料与创作偏好保存在业务服务；制作素材、文案、配音和成片保存在本机，并按登录账号隔离。"
+              : "浏览器本地存储；真实 SQLite 尚未接入",
           },
         ]}
       />
-      <Alert
-        type="warning"
-        title="重置会清除本环境的演示房源、任务、草稿和设置，恢复初始示例。不会删除磁盘上的用户文件。"
-        style={{ margin: "24px 0" }}
-      />
-      <Popconfirm
-        title="重置所有演示数据？"
-        description="当前演示草稿和修改将被清除，无法撤销。"
-        onConfirm={() => act(() => demoApi.resetDemo(), "演示数据已重置")}
-        okText="确认重置"
-        cancelText="取消"
-      >
-        <Button danger icon={<RefreshCw size={15} />}>
-          重置演示数据
-        </Button>
-      </Popconfirm>
+      {!isLive && (
+        <>
+          <Alert
+            type="warning"
+            title="重置会清除本环境的演示房源、任务、草稿和设置，恢复初始示例。不会删除磁盘上的用户文件。"
+            style={{ margin: "24px 0" }}
+          />
+          <Popconfirm
+            title="重置所有演示数据？"
+            description="当前演示草稿和修改将被清除，无法撤销。"
+            onConfirm={() => act(() => demoApi.resetDemo(), "演示数据已重置")}
+            okText="确认重置"
+            cancelText="取消"
+          >
+            <Button danger icon={<RefreshCw size={15} />}>
+              重置演示数据
+            </Button>
+          </Popconfirm>
+        </>
+      )}
     </>
   );
   const privacy = (
@@ -672,7 +720,7 @@ export default function SettingsPage() {
           <strong>使用本人素材，保留明确授权</strong>
           <p style={{ lineHeight: 1.8, color: "#667085", maxWidth: 640 }}>
             {isLive
-              ? "本人声音须确认授权后才会提交火山进行复刻；业务数据库只保存音色信息。移除本应用音色不会自动释放供应商槽位。本人照片保存在私有存储，并在制作时提供给火山；移除形象会阻止新任务使用，不会自动删除云端照片。平台账号与私信能力尚未接入。"
+              ? "本人声音须确认授权后才提交复刻；移除本应用音色不会自动释放供应商槽位。本人照片保存在私有存储，并在制作时提供给数字人服务；移除形象会阻止新任务使用。平台账号由本人在客户端连接，发布前确认目标账号和成片。"
               : "声音和形象需要分别确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
           </p>
         </div>
@@ -683,17 +731,23 @@ export default function SettingsPage() {
           {
             key: "files",
             label: "上传资料",
-            children: "当前仅在本地选择文件，记录示例名称并模拟处理",
+            children: isLive
+              ? "本人声音、照片仅在明确上传和授权后提交；房源素材用于所选制作流程。"
+              : "当前仅在本地选择文件，记录示例名称并模拟处理",
           },
           {
             key: "platform",
             label: "平台会话",
-            children: "未接入；不收集或保存真实 Cookie",
+            children: isLive
+              ? "抖音账号由客户端连接并用于发布；设置页不展示敏感会话内容。"
+              : "未接入；不收集或保存真实 Cookie",
           },
           {
             key: "ai",
             label: "AI 请求",
-            children: "未调用外部供应商；话术和生产结果均为演示",
+            children: isLive
+              ? "按管理员配置调用文案、扩图、配音或数字人服务。原全景素材无需 AI 扩图；服务调用可能产生供应商费用。"
+              : "未调用外部供应商；话术和生产结果均为演示",
           },
         ]}
       />
@@ -707,13 +761,14 @@ export default function SettingsPage() {
         <div>
           <strong style={{ fontSize: 20 }}>KeAgent Studio</strong>
           <p style={{ color: "#667085", margin: "8px 0" }}>
-            v0.1.0 · 前端演示版
+            v0.1.0 · {isLive ? "开发测试版" : "前端演示版"}
           </p>
         </div>
       </Space>
       <p style={{ color: "#667085", maxWidth: 640, lineHeight: 1.8 }}>
-        面向房产经纪人的内容生产工作台。当前提供完整前端操作与模拟任务流程；真实房源接口、AI
-        供应商、本地视频合成和平台发布尚未接入。
+        {isLive
+          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原全景或 AI 扩图素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在默认生成配置中查看。"
+          : "面向房产经纪人的内容生产工作台。当前提供前端演示操作与模拟任务流程。"}
       </p>
       <Button
         icon={<RefreshCw size={15} />}
@@ -742,7 +797,11 @@ export default function SettingsPage() {
       label: "平台账号",
       children: isLive ? <DouyinAccounts /> : demoConnections,
     },
-    { key: "defaults", label: "默认生成配置", children: defaultsSettings },
+    {
+      key: "defaults",
+      label: "默认生成配置",
+      children: isLive ? <FactoryPreferences /> : defaultsSettings,
+    },
     { key: "storage", label: "本地存储", children: storage },
     { key: "privacy", label: "隐私和授权", children: privacy },
     { key: "about", label: "软件更新与关于", children: about },

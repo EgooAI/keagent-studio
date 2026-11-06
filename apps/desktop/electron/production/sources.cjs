@@ -20,6 +20,8 @@ async function handle(
 ) {
   const state = workflow.store(owner);
   if (method === "source-restore") {
+    if (input.propertyId === "panorama-cc0-sample")
+      await workflow.loadSample(owner, assertCurrent);
     const saved = state.imports[input.propertyId];
     domain.ensure(saved, "没有这套房源的本机素材记录");
     return {

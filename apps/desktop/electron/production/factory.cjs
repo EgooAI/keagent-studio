@@ -16,6 +16,8 @@ function select(scenes) {
       );
 }
 async function load(workflow, owner, property, assertCurrent) {
+  if (property.id === "panorama-cc0-sample")
+    return (await workflow.loadSample(owner, assertCurrent)).scenes;
   const state = workflow.store(owner);
   const saved = state.imports[property.id];
   const panoramas = Array.isArray(property.panoramas) ? property.panoramas : [];

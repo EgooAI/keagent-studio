@@ -6,6 +6,13 @@ import { createRequire } from "node:module";
 import { mkdirSync, readFileSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const domain = require("../apps/desktop/electron/panorama/domain.cjs");
+const catalog = require("../services/cloud/video_templates.json");
+const templates = catalog.map((t) => ({
+  ...t,
+  opening: t.production.config.openingTemplate,
+  scene: t.production.config.sceneTemplate,
+  closing: t.production.config.closingTemplate,
+}));
 const picture =
   "data:image/jpeg;base64," +
   readFileSync(
@@ -162,7 +169,7 @@ try {
         },
       };
     },
-    { defaults: domain.defaultConfig, templates: domain.templates, picture },
+    { defaults: domain.defaultConfig, templates, picture },
   );
   const base = process.env.KEAGENT_TEST_UI_URL || "http://127.0.0.1:5189";
   await page.goto(base + "/#/studio");
@@ -179,7 +186,7 @@ try {
   await page.getByRole("combobox", { name: "选择视频模板" }).click();
   await page
     .locator(".ant-select-dropdown")
-    .getByText("简洁介绍", { exact: true })
+    .getByText("简洁介绍 · 1.0.0", { exact: true })
     .click();
   await page.getByRole("combobox", { name: "选择房源", exact: true }).click();
   await page
@@ -203,6 +210,7 @@ try {
   let calls = await page.evaluate(() => window.factoryTestCalls);
   assert.equal(calls.filter((c) => c.method === "panorama.prepare").length, 1);
   assert.equal(calls[0].input.config.templateId, "concise");
+  assert.equal(calls[0].input.templateVersion, "1.0.0");
   assert.equal(calls.filter((c) => c.method === "panorama.start").length, 0);
   await page
     .getByRole("textbox", { name: "第 2 张图片文案" })

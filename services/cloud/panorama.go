@@ -200,9 +200,15 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 	case "beike-import", "image-submit", "image-query":
 		return s.productionImage(ctx, a, operation, input)
 	case "capabilities":
+		templates, err := s.productionTemplates(ctx)
+		if err != nil {
+			return nil, err
+		}
 		services := aiServices()
 		_, imageConfigErr := dashscopeBase()
-		return object{"ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true, "beike": strings.TrimSpace(os.Getenv("BEIKE_ACCESS_TOKEN")) != "", "imageExpansion": strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")) != "" && imageConfigErr == nil}, nil
+		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true, "beike": strings.TrimSpace(os.Getenv("BEIKE_ACCESS_TOKEN")) != "", "imageExpansion": strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")) != "" && imageConfigErr == nil}, nil
+	case "template":
+		return s.productionTemplate(ctx, input)
 	case "script":
 		expected := rows(input["segments"])
 		language := str(input["language"])

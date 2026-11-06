@@ -77,7 +77,8 @@ const pages = [
     key: "resources",
     label: "公共模板",
     icon: <Boxes size={18} />,
-    description: "管理用户在视频工厂中选择的公共模板目录、适用模式和上架状态。",
+    description:
+      "配置视频工厂使用的文案、镜头、字幕和封面规则，预览后发布模板版本。",
   },
   {
     key: "tasks",

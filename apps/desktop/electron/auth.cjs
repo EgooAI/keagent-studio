@@ -215,6 +215,7 @@ function registerAuth() {
     "updateLead",
     "addFollowup",
     "updateProfile",
+    "updateFactoryPreferences",
     "addVoice",
     "addAvatar",
     "updateVoice",
@@ -370,23 +371,10 @@ function registerAuth() {
           "panorama.property-import",
         ].includes(method)
       ) {
-        if (args[0]?.propertyId === "panorama-cc0-sample")
-          property = {
-            id: "panorama-cc0-sample",
-            title: "全景工作流测试",
-            description: "两个独立 CC0 测试场景，非同一套在售房源",
-            areaSqm: 0,
-            priceCents: 0,
-            layout: "",
-            sellingPoints: [],
-            sample: true,
-          };
-        else {
-          const workspace = (await request("/v1/workspace")).data;
-          property = workspace.properties.find(
-            (p) => p.id === args[0]?.propertyId,
-          );
-        }
+        const workspace = (await request("/v1/workspace")).data;
+        property = workspace.properties.find(
+          (p) => p.id === args[0]?.propertyId,
+        );
       }
       const result = await workflow.handle(
         identity.userId,

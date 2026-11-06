@@ -7,6 +7,7 @@ const { PanoramaWorkflow } = require("../panorama/workflow.cjs");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
 const providers = require("../panorama/providers.cjs");
+const catalog = require("../../../../services/cloud/video_templates.json");
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
@@ -73,6 +74,12 @@ async function fixture() {
     .mockResolvedValue({ duration: 4, timeline: [] });
   workflow.remote = vi.fn(
     async (method: string, input: Record<string, unknown>) => {
+      if (method === "template") {
+        const template = catalog.find((t: { id: string }) => t.id === input.id);
+        if (!template || (input.version && input.version !== template.version))
+          throw new Error("模板已下架或版本变化");
+        return structuredClone(template);
+      }
       if (method === "script")
         return (input.segments as { id: string; text: string }[]).map((s) => ({
           id: s.id,
@@ -174,6 +181,7 @@ describe("simple video factory", () => {
         .map((s: { sceneId: string }) => s.sceneId),
     ).toEqual(draft.scenes.map((s: { id: string }) => s.id));
     expect(workflow.remote.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      "template",
       "script",
     ]);
     expect(synthesize).not.toHaveBeenCalled();
@@ -244,6 +252,7 @@ describe("simple video factory", () => {
     await workflow.active.get(job.id)?.promise;
     expect(job.status).toBe("succeeded");
     expect(workflow.remote.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      "template",
       "script",
     ]);
   });
@@ -295,7 +304,7 @@ describe("simple video factory", () => {
       ),
     ]);
     expect(first.id).toBe(second.id);
-    expect(workflow.remote).toHaveBeenCalledTimes(1);
+    expect(workflow.remote).toHaveBeenCalledTimes(2);
     await expect(
       workflow.handle(
         "b",
@@ -330,5 +339,91 @@ describe("simple video factory", () => {
     await expect(
       workflow.handle("b", "source-restore", { propertyId: another.id }),
     ).rejects.toThrow("没有");
+  });
+  it("resolves published rules instead of renderer overrides and retains a locked snapshot after unlisting", async () => {
+    const { workflow, owner, property, config } = await fixture();
+    workflow.store(owner).imports[property.id].scenes[0].direction = -1;
+    const draft = await workflow.handle(
+      "a",
+      "prepare",
+      {
+        propertyId: property.id,
+        templateVersion: "1.0.0",
+        config: {
+          ...config,
+          brandColor: "#FFFFFF",
+          openingTemplate: "篡改的文案",
+          speed: 12,
+        },
+      },
+      property,
+    );
+    expect(draft.config.brandColor).toBe("#167D8D");
+    expect(draft.config.speed).toBe(4);
+    expect(
+      draft.scenes.every(
+        (scene: { direction: number }) => scene.direction === 1,
+      ),
+    ).toBe(true);
+    expect(draft.config.openingTemplate).toContain("{title}");
+    expect(draft.templateVersion).toBe("1.0.0");
+    expect(draft.templateSnapshot.production.config).toMatchObject({
+      brandColor: "#167D8D",
+      speed: 4,
+    });
+    await expect(
+      workflow.handle("a", "save", {
+        id: draft.id,
+        revision: 1,
+        config: { ...draft.config, speed: 8 },
+        segments: draft.segments,
+      }),
+    ).rejects.toThrow("制作规则不可修改");
+    const resolve = workflow.remote;
+    workflow.remote = vi.fn(
+      async (method: string, input: Record<string, unknown>) => {
+        if (method === "template") throw new Error("模板已下架");
+        return resolve(method, input);
+      },
+    );
+    const job = await workflow.handle("a", "start", {
+      id: draft.id,
+      revision: 1,
+      confirmed: true,
+    });
+    await workflow.active.get(job.id)?.promise;
+    expect(job.status).toBe("succeeded");
+    expect(job.templateSnapshot.version).toBe("1.0.0");
+    expect(
+      workflow.remote.mock.calls.some(
+        (call: unknown[]) => call[0] === "template",
+      ),
+    ).toBe(false);
+    const count = workflow.store(owner).drafts.length;
+    await expect(
+      workflow.handle(
+        "a",
+        "prepare",
+        { propertyId: property.id, config },
+        property,
+      ),
+    ).rejects.toThrow("模板已下架");
+    expect(workflow.store(owner).drafts).toHaveLength(count);
+  });
+  it("rejects a stale selected version before scripts or images are requested", async () => {
+    const { workflow, owner, property, config, synthesize } = await fixture();
+    await expect(
+      workflow.handle(
+        "a",
+        "prepare",
+        { propertyId: property.id, config, templateVersion: "9.0.0" },
+        property,
+      ),
+    ).rejects.toThrow("版本变化");
+    expect(workflow.store(owner).drafts).toHaveLength(0);
+    expect(
+      workflow.remote.mock.calls.map((call: unknown[]) => call[0]),
+    ).toEqual(["template"]);
+    expect(synthesize).not.toHaveBeenCalled();
   });
 });

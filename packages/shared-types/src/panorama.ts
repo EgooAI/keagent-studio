@@ -65,6 +65,7 @@ export interface PanoramaProperty {
 export interface PanoramaDraft {
   confirmation?: "whole";
   templateVersion?: string;
+  templateSnapshot?: import("./production-template").ProductionTemplateSnapshot;
   id: string;
   revision: number;
   property: PanoramaProperty;
@@ -123,6 +124,8 @@ export interface PanoramaCapabilities {
     id: string;
     version: string;
     name: string;
+    description?: string;
+    production?: import("./production-template").ProductionTemplateRecipe;
     opening: string;
     scene: string;
     closing: string;

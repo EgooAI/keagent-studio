@@ -39,12 +39,6 @@ import { request, statusNames } from "./panoramaClient";
 import "./video-factory.css";
 
 type Phase = "choose" | "preparing" | "ready" | "result" | "error";
-const descriptions: Record<string, string> = {
-  "standard-tour": "按图片顺序，完整介绍房源的各个空间。",
-  tour: "按图片顺序，完整介绍房源的各个空间。",
-  highlights: "围绕已核实的房源亮点，生成更有重点的介绍。",
-  concise: "用更精简的文字，快速展示这套房源。",
-};
 
 export function PanoramaStudio() {
   const workspace = useWorkspace();
@@ -59,6 +53,8 @@ export function PanoramaStudio() {
     queryFn: () => request<PanoramaCapabilities>("capabilities"),
     enabled,
     retry: false,
+    staleTime: 0,
+    refetchOnWindowFocus: "always",
   });
   const state = useQuery({
     queryKey: ["panorama-state"],
@@ -86,6 +82,7 @@ export function PanoramaStudio() {
     | undefined
   >(undefined);
   const confirming = useRef(false);
+  const defaultTemplateApplied = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -109,30 +106,40 @@ export function PanoramaStudio() {
   );
   const property = properties.find((p) => p.id === propertyId);
   const templates = useMemo(
-    () => [
-      ...(caps.data?.templates || [])
-        .filter((t) => t.id !== "tour")
-        .map((t) => ({
-          id: t.id,
-          name: t.name,
-          description: descriptions[t.id] || "按房源图片顺序生成视频介绍。",
-          config: {
-            templateId: t.id,
-            openingTemplate: t.opening,
-            sceneTemplate: t.scene,
-            closingTemplate: t.closing,
-          } as Partial<PanoramaConfig>,
-        })),
-      ...(state.data?.templates || []).map((t) => ({
+    () =>
+      (caps.data?.templates || []).map((t) => ({
         id: t.id,
+        version: t.version,
         name: t.name,
-        description: "使用你保存的文字和画面风格。",
-        config: { ...t.config, templateId: t.id },
+        description: t.description || "按房源图片顺序生成视频介绍。",
+        config: {
+          templateId: t.id,
+          ...t.production?.config,
+          openingTemplate: t.opening,
+          sceneTemplate: t.scene,
+          closingTemplate: t.closing,
+        } as Partial<PanoramaConfig>,
       })),
-    ],
-    [caps.data, state.data?.templates],
+    [caps.data],
   );
   const template = templates.find((t) => t.id === templateId);
+  useEffect(() => {
+    if (defaultTemplateApplied.current || !caps.data || !workspace.data) return;
+    defaultTemplateApplied.current = true;
+    const preferred = workspace.data.profile.defaults.videoTemplate;
+    if (
+      !templateId &&
+      phase === "choose" &&
+      templates.some(
+        (t) => t.id === preferred.id && t.version === preferred.version,
+      )
+    )
+      setTemplateId(preferred.id);
+  }, [caps.data, workspace.data, templates, templateId, phase]);
+  useEffect(() => {
+    if (phase === "choose" && caps.data && templateId && !template)
+      setTemplateId("");
+  }, [caps.data, templateId, template, phase]);
   const config = useMemo(() => {
     if (!caps.data || !template) return undefined;
     const value = { ...caps.data.defaultConfig, ...template.config };
@@ -170,6 +177,13 @@ export function PanoramaStudio() {
       avatars.data?.avatars.find((a) => a.status === "ready")?.id ||
       "";
     value.scriptProvider = caps.data.ai ? "ai" : "template";
+    if (property?.sample && property.id === "panorama-cc0-sample") {
+      value.ttsProvider = "system";
+      value.voice =
+        caps.data.voices.find((v) => v.language === value.language)?.name || "";
+      value.scriptProvider = "template";
+      value.avatarId = "";
+    }
     return value;
   }, [
     caps.data,
@@ -177,6 +191,7 @@ export function PanoramaStudio() {
     voices.data,
     avatars.data,
     workspace.data?.profile.defaults,
+    property,
   ]);
   const job = state.data?.jobs.find((j) => j.id === jobId) || createdJob;
   const running = state.data?.jobs.find((j) => j.status === "running");
@@ -191,13 +206,18 @@ export function PanoramaStudio() {
     const token = ++sequence.current;
     setPhase("preparing");
     setError("");
-    const key = JSON.stringify({ propertyId: property.id, config });
+    const key = JSON.stringify({
+      propertyId: property.id,
+      config,
+      templateVersion: template?.version,
+    });
     if (!preparation.current || preparation.current.key !== key)
       preparation.current = {
         key,
         promise: request<PanoramaDraft>("prepare", {
           propertyId: property.id,
           config,
+          templateVersion: template?.version,
         }),
       };
     void preparation.current.promise
@@ -391,7 +411,7 @@ export function PanoramaStudio() {
                     disabled={!enabled || waiting}
                     options={templates.map((t) => ({
                       value: t.id,
-                      label: t.name,
+                      label: `${t.name} · ${t.version}`,
                     }))}
                     onChange={(id) => reset(propertyId, id)}
                   />
@@ -401,6 +421,11 @@ export function PanoramaStudio() {
                 <p>{template?.description || "图片将按房源素材的顺序排列。"}</p>
                 <Link to="/properties">管理房源与素材</Link>
               </div>
+              {property?.sample && (
+                <p className="factory-ai-note">
+                  内置测试素材来自两个独立场景，不代表真实在售房源。使用模板文案与本机配音，无云端生成费用，可测试成片预览与下载。
+                </p>
+              )}
             </section>
           )}
           {phase === "choose" && (
@@ -414,6 +439,18 @@ export function PanoramaStudio() {
               </p>
               {!properties.length && (
                 <Link to="/properties">先去添加一套房源</Link>
+              )}
+              {enabled && caps.data && !templates.length && (
+                <p>暂无已上架的视频模板，请联系管理员添加。</p>
+              )}
+              {enabled && (
+                <Button
+                  type="link"
+                  loading={caps.isFetching}
+                  onClick={() => void caps.refetch()}
+                >
+                  刷新视频模板
+                </Button>
               )}
             </section>
           )}

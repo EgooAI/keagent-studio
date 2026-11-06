@@ -2,6 +2,7 @@ export * from "./douyin";
 export type VideoMode = "voiceover" | "avatar";
 export type * from "./artifact";
 export type * from "./panorama";
+export type * from "./production-template";
 export type TaskStatus =
   | "queued"
   | "running"
@@ -26,6 +27,7 @@ export interface ResourceRef {
   version: string;
 }
 export interface Property {
+  sample?: boolean;
   id: string;
   propertyNumber: string;
   title: string;
@@ -58,6 +60,8 @@ export interface Resource {
   published: boolean;
   sizeMb: number;
   publishedOnce?: boolean;
+  production?: import("./production-template").ProductionTemplateRecipe;
+  previewed?: boolean;
 }
 export interface ProductionConfig {
   propertyIds: string[];

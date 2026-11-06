@@ -138,7 +138,12 @@ class PanoramaWorkflow {
     const cloud = this.remote ? await this.remote("capabilities", {}) : {};
     return {
       ...local,
-      templates: domain.templates,
+      templates: (cloud.templates || []).map((template) => ({
+        ...template,
+        opening: template.production.config.openingTemplate,
+        scene: template.production.config.sceneTemplate,
+        closing: template.production.config.closingTemplate,
+      })),
       defaultConfig: domain.defaultConfig,
       ai: !!cloud.ai,
       volcTts: !!cloud.volcTts,
@@ -301,6 +306,19 @@ class PanoramaWorkflow {
       scenes,
     };
   }
+  async loadSample(owner, assertCurrent = () => {}) {
+    const state = this.store(owner);
+    if (state.imports["panorama-cc0-sample"])
+      return state.imports["panorama-cc0-sample"];
+    const sample = await this.sample(owner);
+    assertCurrent();
+    state.imports["panorama-cc0-sample"] = {
+      ...sample,
+      materialMode: "panorama",
+    };
+    this.persist(owner);
+    return state.imports["panorama-cc0-sample"];
+  }
   draft(owner, id, revision) {
     const draft = this.store(owner).drafts.find((d) => d.id === id);
     domain.ensure(
@@ -373,7 +391,11 @@ class PanoramaWorkflow {
       }
     }
     if (method === "sample") return this.sample(owner);
-    if (method === "property-import")
+    if (method === "property-import") {
+      domain.ensure(
+        input.propertyId !== "panorama-cc0-sample",
+        "内置测试素材不可替换，请为真实房源另外导入素材",
+      );
       return factory.importProperty(
         this,
         owner,
@@ -381,6 +403,7 @@ class PanoramaWorkflow {
         input,
         assertCurrent,
       );
+    }
     if (method === "import") {
       const files = await this.dialogs.open();
       assertCurrent();
@@ -402,7 +425,11 @@ class PanoramaWorkflow {
       const key =
         owner +
         ":prepare:" +
-        domain.hash({ propertyId: input.propertyId, config: input.config });
+        domain.hash({
+          propertyId: input.propertyId,
+          config: input.config,
+          templateVersion: input.templateVersion,
+        });
       const previous = this.sourceFlight.get(key);
       if (previous) return previous;
       const pending = this.createDraft(
@@ -422,6 +449,20 @@ class PanoramaWorkflow {
     if (method === "save") {
       const draft = this.draft(owner, input.id, input.revision);
       const c = domain.config(input.config, [{ id: draft.config.templateId }]);
+      if (draft.sample && draft.property.id === "panorama-cc0-sample")
+        domain.ensure(
+          c.ttsProvider === draft.config.ttsProvider &&
+            c.voice === draft.config.voice &&
+            c.avatarId === draft.config.avatarId,
+          "内置测试任务使用本机测试配音，请重新选择测试模板",
+        );
+      if (draft.templateSnapshot)
+        domain.ensure(
+          Object.entries(draft.templateSnapshot.production.config).every(
+            ([key, value]) => c[key] === value,
+          ),
+          "已确认模板的制作规则不可修改，请重新选择模板",
+        );
       domain.ensure(
         c.leadSceneId === (draft.config.leadSceneId || ""),
         "开场镜头改变后，请重新生成文案",
@@ -488,6 +529,9 @@ class PanoramaWorkflow {
         scenes: structuredClone(draft.scenes),
         segments: structuredClone(draft.segments),
         templateVersion: draft.templateVersion,
+        templateSnapshot: draft.templateSnapshot
+          ? structuredClone(draft.templateSnapshot)
+          : undefined,
         status: "running",
         stage:
           draft.confirmation === "whole" &&
@@ -560,7 +604,48 @@ class PanoramaWorkflow {
         property && typeof property.title === "string",
         "房源不存在，请重新选择",
       );
-      const c = domain.config(input.config, state.templates);
+      let templateSnapshot;
+      if (preparing) {
+        domain.ensure(this.remote, "请连接服务并选择管理员已上架的模板");
+        templateSnapshot = await this.remote(
+          "template",
+          {
+            id: input.config?.templateId,
+            version: input.templateVersion,
+          },
+          controller.signal,
+        );
+        assertCurrent();
+        domain.ensure(
+          templateSnapshot?.id === input.config?.templateId &&
+            templateSnapshot.production?.schemaVersion === 1,
+          "模板制作规则无效，请刷新后重试",
+        );
+      }
+      const c = domain.config(
+        {
+          ...input.config,
+          ...(templateSnapshot?.production.config || {}),
+        },
+        templateSnapshot ? [templateSnapshot] : state.templates,
+      );
+      if (preparing && property.id === "panorama-cc0-sample") {
+        domain.ensure(
+          property.sample === true && c.videoMode === "voiceover",
+          "内置测试房源请选择配音模板；露脸制作请使用本人形象与真实房源",
+        );
+        const caps = await this.capabilities();
+        assertCurrent();
+        const voice = caps.voices.find((v) => v.language === c.language);
+        domain.ensure(
+          voice,
+          "内置测试需要对应语言的本机声音，请使用中文模板并安装系统中文语音",
+        );
+        c.ttsProvider = "system";
+        c.voice = voice.name;
+        c.scriptProvider = "template";
+        c.avatarId = "";
+      }
       await this.requireAvatar(c);
       assertCurrent();
       domain.ensure(
@@ -581,6 +666,7 @@ class PanoramaWorkflow {
         c.leadSceneId = "";
         c.coverSceneId = "";
         c.coverTitle = "";
+        for (const scene of scenes) scene.direction = c.direction;
       }
       for (const key of ["leadSceneId", "coverSceneId"])
         domain.ensure(
@@ -618,7 +704,7 @@ class PanoramaWorkflow {
               ),
               expected,
             )
-          : expected;
+          : domain.validateSegments(expected, expected);
       assertCurrent();
       const draft = {
         id: crypto.randomUUID(),
@@ -628,8 +714,12 @@ class PanoramaWorkflow {
         confirmation: preparing ? "whole" : undefined,
         scenes,
         config: c,
+        templateSnapshot: templateSnapshot
+          ? structuredClone(templateSnapshot)
+          : undefined,
         templateVersion: String(
-          state.templates.find((t) => t.id === c.templateId)?.version ||
+          templateSnapshot?.version ||
+            state.templates.find((t) => t.id === c.templateId)?.version ||
             domain.templates.find((t) => t.id === c.templateId)?.version ||
             "1",
         ),
@@ -677,7 +767,9 @@ class PanoramaWorkflow {
     );
     if (draft.config.ttsProvider === "system")
       domain.ensure(
-        !caps.managedVoices &&
+        (!caps.managedVoices ||
+          (draft.sample === true &&
+            draft.property.id === "panorama-cc0-sample")) &&
           caps.voices.some(
             (v) =>
               v.name === draft.config.voice &&
