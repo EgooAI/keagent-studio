@@ -144,7 +144,12 @@ func respond(w http.ResponseWriter, value any, err error) {
 			log.Printf("request failed: %T", err)
 		}
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(object{"error": object{"message": message}})
+		details := object{"message": message}
+		var coded interface{ ErrorCode() string }
+		if errors.As(err, &coded) {
+			details["code"] = coded.ErrorCode()
+		}
+		_ = json.NewEncoder(w).Encode(object{"error": details})
 		return
 	}
 	_ = json.NewEncoder(w).Encode(value)
@@ -200,6 +205,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/session" {
 		respond(w, object{"userId": a.UserID, "sessionId": a.SessionID, "name": a.Name, "email": a.Email, "role": a.Role}, nil)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/media-assets/") || strings.HasPrefix(r.URL.Path, "/v1/artifacts/") || strings.HasPrefix(r.URL.Path, "/v1/artifact-handoffs/") {
+		if r.Method != "POST" {
+			respond(w, nil, fail(405, "成片交接接口仅支持 POST"))
+			return
+		}
+		v, e := s.artifactExchange(r.Context(), a, r.URL.Path, body)
+		respond(w, v, e)
 		return
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/panorama/") {
@@ -878,6 +892,9 @@ func main() {
 	}
 	if _, err = db.Exec(userAvatarSchema); err != nil {
 		log.Fatal("user avatar migration failed")
+	}
+	if _, err = db.Exec(artifactExchangeSchema); err != nil {
+		log.Fatal("artifact exchange migration failed")
 	}
 	verifier, err := newJWTVerifier()
 	if err != nil {

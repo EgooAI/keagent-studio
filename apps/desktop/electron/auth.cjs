@@ -179,7 +179,10 @@ function registerAuth() {
         (route === "/v1/session" || route === "/v1/devices/register")
       )
         workflow.stop();
-      throw new Error(data.error?.message || data.message || "服务请求失败");
+      throw Object.assign(
+        new Error(data.error?.message || data.message || "服务请求失败"),
+        { status: response.status, code: data.error?.code },
+      );
     }
     if (!business && next && token) {
       token = next;
@@ -295,6 +298,34 @@ function registerAuth() {
     ) {
       return (await request(`/v1/avatars/${method.slice(7)}`, args[0] || {}))
         .data;
+    }
+    const exchangeRoutes = {
+      "asset.register": "/v1/media-assets/register",
+      "asset.get": "/v1/media-assets/get",
+      "asset.availability": "/v1/media-assets/availability",
+      "artifact.create": "/v1/artifacts/create",
+      "artifact.get": "/v1/artifacts/get",
+      "artifact.list": "/v1/artifacts/list",
+      "artifact.review": "/v1/artifacts/review",
+      "artifactHandoff.create": "/v1/artifact-handoffs/create",
+      "artifactHandoff.get": "/v1/artifact-handoffs/get",
+    };
+    if (Object.hasOwn(exchangeRoutes, method)) {
+      try {
+        return {
+          ok: true,
+          data: (await request(exchangeRoutes[method], args[0] || {})).data,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            message: error.message,
+            status: error.status || 0,
+            code: error.code,
+          },
+        };
+      }
     }
     if (typeof method === "string" && method.startsWith("panorama.")) {
       const generation = identityGeneration;

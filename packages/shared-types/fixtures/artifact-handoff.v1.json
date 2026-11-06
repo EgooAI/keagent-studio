@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "cccccccccccccccccccccccccccccccc",
+  "ownerId": "fixture-owner",
+  "deviceId": "fixture-device",
+  "artifact": {
+    "schemaVersion": 1,
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ownerId": "fixture-owner",
+    "source": {
+      "producer": "fixture-producer",
+      "taskId": "fixture-task",
+      "revision": 1
+    },
+    "content": {
+      "title": "交接契约测试成片",
+      "script": "此数据仅用于接口开发，不代表真实房源或真实生成的视频。",
+      "property": { "id": "fixture-property", "title": "交接测试房源" }
+    },
+    "assets": {
+      "video": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+      "cover": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"
+    },
+    "review": {
+      "state": "approved",
+      "revision": 2,
+      "reviewedAt": "2026-11-07T00:00:00Z"
+    },
+    "createdAt": "2026-11-07T00:00:00Z"
+  },
+  "assets": [
+    {
+      "schemaVersion": 1,
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+      "ownerId": "fixture-owner",
+      "kind": "video",
+      "mimeType": "video/mp4",
+      "byteSize": 1024,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "width": 720,
+      "height": 1280,
+      "durationMs": 4000,
+      "location": {
+        "kind": "local",
+        "deviceId": "fixture-device",
+        "fileToken": "fixture_video_token_0001"
+      },
+      "availability": {
+        "state": "available",
+        "revision": 1,
+        "reportedAt": "2026-11-07T00:00:00Z"
+      },
+      "createdAt": "2026-11-07T00:00:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
+      "ownerId": "fixture-owner",
+      "kind": "cover",
+      "mimeType": "image/jpeg",
+      "byteSize": 256,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "width": 720,
+      "height": 1280,
+      "location": {
+        "kind": "local",
+        "deviceId": "fixture-device",
+        "fileToken": "fixture_cover_token_0001"
+      },
+      "availability": {
+        "state": "available",
+        "revision": 1,
+        "reportedAt": "2026-11-07T00:00:00Z"
+      },
+      "createdAt": "2026-11-07T00:00:00Z"
+    }
+  ],
+  "createdAt": "2026-11-07T00:00:00Z"
+}

@@ -1,4 +1,9 @@
 import { serviceRequest } from "./transport";
+export {
+  artifactExchange,
+  createArtifactExchange,
+  type ArtifactTransport,
+} from "./artifacts";
 import type {
   AgentProfile,
   Avatar,
@@ -1122,6 +1127,7 @@ export {
   authRequest,
   clearAccessToken,
   serviceRequest,
+  ServiceRequestError,
   type SessionUser,
 } from "./transport";
 const remoteListeners = new Set<() => void>();

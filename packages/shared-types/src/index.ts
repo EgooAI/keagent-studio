@@ -1,4 +1,5 @@
 export type VideoMode = "voiceover" | "avatar";
+export type * from "./artifact";
 export type * from "./panorama";
 export type TaskStatus =
   | "queued"

@@ -5,6 +5,17 @@ export interface SessionUser {
   email: string;
   role: string;
 }
+
+export class ServiceRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "ServiceRequestError";
+  }
+}
 declare global {
   interface Window {
     desktop?: {
@@ -116,7 +127,11 @@ export async function serviceRequest<T>(
       clearAccessToken();
       window.dispatchEvent(new Event("keagent:unauthorized"));
     }
-    throw new Error(data.error?.message || data.message || "请求失败");
+    throw new ServiceRequestError(
+      data.error?.message || data.message || "请求失败",
+      response.status,
+      data.error?.code,
+    );
   }
   return data as T;
 }
@@ -124,8 +139,39 @@ export async function authRequest<T>(
   method: string,
   args: unknown[] = [],
 ): Promise<T> {
-  if (window.desktop?.request)
-    return (await window.desktop.request(method, args)) as T;
+  const exchangeRoutes: Record<string, string> = {
+    "asset.register": "/v1/media-assets/register",
+    "asset.get": "/v1/media-assets/get",
+    "asset.availability": "/v1/media-assets/availability",
+    "artifact.create": "/v1/artifacts/create",
+    "artifact.get": "/v1/artifacts/get",
+    "artifact.list": "/v1/artifacts/list",
+    "artifact.review": "/v1/artifacts/review",
+    "artifactHandoff.create": "/v1/artifact-handoffs/create",
+    "artifactHandoff.get": "/v1/artifact-handoffs/get",
+  };
+  if (window.desktop?.request) {
+    const reply = await window.desktop.request(method, args);
+    if (Object.hasOwn(exchangeRoutes, method)) {
+      // New exchange IPC preserves HTTP status/code explicitly; Electron strips
+      // custom properties from exceptions crossing the IPC boundary.
+      const envelope = reply as {
+        ok: boolean;
+        data?: T;
+        error?: { message: string; status: number; code?: string };
+      };
+      if (!envelope.ok)
+        throw new ServiceRequestError(
+          envelope.error?.message || "交接请求失败",
+          envelope.error?.status || 0,
+          envelope.error?.code,
+        );
+      return envelope.data as T;
+    }
+    return reply as T;
+  }
+  if (Object.hasOwn(exchangeRoutes, method))
+    return serviceRequest<T>(exchangeRoutes[method], args[0] ?? {});
   if (
     [
       "voice.list",
