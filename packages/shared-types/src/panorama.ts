@@ -1,4 +1,5 @@
 export interface PanoramaConfig {
+  materialMode?: "panorama" | "expand";
   templateId: string;
   language: "zh-CN" | "en-US";
   scriptProvider: "template" | "ai";
@@ -16,13 +17,32 @@ export interface PanoramaConfig {
   aspectRatio: "9:16" | "16:9";
   resolution: "720p" | "1080p";
   subtitles: boolean;
+  design?: "standard" | "classic";
+  brandColor?: string;
+  subtitleSize?: "standard" | "large";
+  leadSceneId?: string;
+  coverSceneId?: string;
+  coverTitle?: string;
+  agentName?: string;
+  agentContact?: string;
+}
+export interface PanoramaTemplate {
+  id: string;
+  name: string;
+  version: number;
+  config: Partial<PanoramaConfig>;
+  updatedAt: string;
 }
 export interface PanoramaScene {
+  kind?: "panorama" | "photo" | "expanded";
+  approved?: boolean;
+  sourceAsset?: string;
   id: string;
   asset: string;
   room: string;
   description: string;
   yaw: number;
+  direction?: 1 | -1;
   url?: string;
 }
 export interface PanoramaSegment {
@@ -42,6 +62,7 @@ export interface PanoramaProperty {
   sample?: boolean;
 }
 export interface PanoramaDraft {
+  templateVersion?: string;
   id: string;
   revision: number;
   property: PanoramaProperty;
@@ -73,10 +94,20 @@ export interface PanoramaJob extends Omit<PanoramaDraft, "revision"> {
   avatar?: { key: string; taskId?: string; submitting?: boolean };
 }
 export interface PanoramaState {
+  templates?: PanoramaTemplate[];
+  properties?: PanoramaProperty[];
+  imageTasks?: {
+    id: string;
+    sceneId: string;
+    status: string;
+    error?: string;
+  }[];
   drafts: PanoramaDraft[];
   jobs: PanoramaJob[];
 }
 export interface PanoramaCapabilities {
+  beike?: boolean;
+  imageExpansion?: boolean;
   ffmpeg: boolean;
   ffprobe: boolean;
   voices: { name: string; language: string }[];

@@ -8,7 +8,7 @@ export async function request<T>(method: string, input?: unknown): Promise<T> {
 export const stageNames = {
   tts: "生成分段配音",
   avatar: "火山数字人开场",
-  render: "渲染全景与合成",
+  render: "渲染镜头与合成",
   cover: "成片校验与封面",
 };
 export const statusNames = {

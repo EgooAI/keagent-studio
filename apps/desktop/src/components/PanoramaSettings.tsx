@@ -41,8 +41,9 @@ export function PanoramaSettings({
       {" "}
       <h2>模板与声音</h2>
       <div className="panorama-form-grid">
-        <Form.Item label="文案套路">
+        <Form.Item label="成片模板">
           <Select
+            aria-label="成片模板"
             value={config.templateId}
             options={caps.templates.map((t) => ({
               value: t.id,
@@ -74,7 +75,7 @@ export function PanoramaSettings({
             options={[
               {
                 value: "voiceover",
-                label: "全程不露脸 · 全景讲解",
+                label: "全程不露脸 · 房源讲解",
               },
               {
                 value: "avatar",
@@ -274,12 +275,13 @@ export function PanoramaSettings({
             label: "镜头、字幕与输出",
             children: (
               <div className="panorama-form-grid">
-                <Form.Item label="旋转速度">
+                <Form.Item label="全景旋转速度">
                   <InputNumber
                     min={0.5}
                     max={12}
                     step={0.5}
                     value={config.speed}
+                    disabled={config.materialMode === "expand"}
                     onChange={(speed) => patch({ speed: speed ?? 4 })}
                     addonAfter="°/秒"
                   />
@@ -299,6 +301,7 @@ export function PanoramaSettings({
                     min={1}
                     max={180}
                     value={config.maxSweep}
+                    disabled={config.materialMode === "expand"}
                     onChange={(maxSweep) =>
                       patch({ maxSweep: maxSweep ?? 100 })
                     }
@@ -332,7 +335,9 @@ export function PanoramaSettings({
                   />
                 </Form.Item>
                 <p className="muted panorama-span">
-                  配音决定镜头时长。达到最大转角后镜头停留，讲解继续完整播放。
+                  {config.materialMode === "expand"
+                    ? "AI扩图使用小幅横向运镜，不作360°全景投影；成片始终标注AI扩图示意。"
+                    : "配音决定镜头时长。达到最大转角后镜头停留，讲解继续完整播放。"}
                 </p>
               </div>
             ),

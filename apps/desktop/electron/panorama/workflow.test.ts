@@ -38,7 +38,7 @@ function fixture() {
   const owner = workflow.owner("user-a");
   workflow.store(owner);
   fs.mkdirSync(path.join(root, owner, "assets"));
-  const asset = `${"a".repeat(64)}.jpg`;
+  const asset = `${domain.hash("fake image")}.jpg`;
   fs.writeFileSync(path.join(root, owner, "assets", asset), "fake image");
   const scenes = [
     {
@@ -58,6 +58,110 @@ function fixture() {
   return { workflow, owner, scenes, config };
 }
 describe("panorama domain", () => {
+  it("saves reusable templates without property-specific or identity fields and freezes draft versions", async () => {
+    const { workflow, scenes, config } = fixture();
+    const template = await workflow.handle("user-a", "template-save", {
+      name: "门店带看",
+      config: {
+        ...config,
+        agentName: "本人",
+        agentContact: "测试联系方式",
+        coverTitle: "本套房屋",
+        leadSceneId: scenes[0].id,
+      },
+    });
+    for (const key of [
+      "voice",
+      "avatarId",
+      "agentName",
+      "agentContact",
+      "coverTitle",
+      "coverSceneId",
+      "leadSceneId",
+      "materialMode",
+      "templateId",
+    ])
+      expect(template.config).not.toHaveProperty(key);
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      {
+        scenes,
+        config: { ...config, ...template.config, templateId: template.id },
+      },
+      property,
+    );
+    expect(draft.templateVersion).toBe("1");
+    const updated = await workflow.handle("user-a", "template-save", {
+      id: template.id,
+      version: 1,
+      name: "门店带看",
+      config: { ...draft.config, brandColor: "#CC5522" },
+    });
+    expect(updated.version).toBe(2);
+    const reopened = new PanoramaWorkflow(workflow.root, "", {});
+    expect(
+      (await reopened.handle("user-a", "state")).templates[0].version,
+    ).toBe(2);
+    expect(
+      (await reopened.handle("user-a", "state")).drafts[0].templateVersion,
+    ).toBe("1");
+    expect(draft.config.brandColor).toBe(config.brandColor);
+    expect(draft.templateVersion).toBe("1");
+    await expect(
+      workflow.handle("user-a", "template-save", {
+        id: template.id,
+        version: 1,
+        name: "覆盖旧版",
+        config,
+      }),
+    ).rejects.toThrow("已更新");
+    await expect(
+      workflow.handle(
+        "user-b",
+        "generate",
+        { scenes, config: { ...config, templateId: template.id } },
+        property,
+      ),
+    ).rejects.toThrow("模板不存在");
+  });
+  it("uses the selected lead scene and skips absent descriptions and unknown facts", async () => {
+    const { workflow, scenes, config } = fixture();
+    const second = {
+      ...scenes[0],
+      id: "22222222-2222-4222-8222-222222222222",
+      room: "卧室",
+      description: "",
+    };
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      {
+        scenes: [...scenes, second],
+        config: {
+          ...config,
+          leadSceneId: second.id,
+          coverSceneId: scenes[0].id,
+        },
+      },
+      { ...property, areaSqm: 0, priceCents: 0, layout: "" },
+    );
+    expect(draft.segments[0].sceneId).toBe(second.id);
+    expect(draft.segments.at(-1).sceneId).toBe(second.id);
+    expect(draft.segments[2].text).toBe("这里是卧室。");
+    expect(draft.segments[0].text).not.toMatch(/0平方米|0万元/);
+    await expect(
+      workflow.handle(
+        "user-a",
+        "generate",
+        { scenes, config: { ...config, coverSceneId: second.id } },
+        property,
+      ),
+    ).rejects.toThrow("已移除");
+    expect(() =>
+      domain.config({ ...config, brandColor: "red\\Ninjection" }),
+    ).toThrow("品牌色");
+  });
   it("requires a user-owned uploaded photo before generating digital-human scripts", async () => {
     const { workflow, scenes, config } = fixture();
     const remote = vi.fn(
@@ -170,7 +274,7 @@ describe("panorama domain", () => {
     expect(segments[1]).toMatchObject({
       id: "s",
       sceneId: "s",
-      text: "来到客厅。白墙",
+      text: "这里是客厅。白墙",
     });
     expect(() => domain.fill("{school}", {})).toThrow("未知模板变量");
     expect(() =>

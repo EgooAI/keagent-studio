@@ -35,14 +35,15 @@ type actor struct {
 	Nonce     string `json:"nonce"`
 }
 type server struct {
-	db      *sql.DB
-	secret  string
-	nonces  sync.Map
-	jwt     *jwtVerifier
-	origins []string
-	speech  func(context.Context, string, object, string) ([]byte, error)
-	storage func(context.Context, string, string, []byte, string) ([]byte, error)
-	vision  func(context.Context, string, object) (object, error)
+	db         *sql.DB
+	secret     string
+	nonces     sync.Map
+	jwt        *jwtVerifier
+	origins    []string
+	speech     func(context.Context, string, object, string) ([]byte, error)
+	storage    func(context.Context, string, string, []byte, string) ([]byte, error)
+	vision     func(context.Context, string, object) (object, error)
+	sourceHTTP func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
 }
 type fault struct {
 	status  int
@@ -165,6 +166,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	limit := int64(1 << 20)
 	if r.URL.Path == "/v1/panorama/audio" {
 		limit = 2 << 20
+	}
+	if r.URL.Path == "/v1/panorama/image-submit" {
+		limit = 15 << 20
 	}
 	if r.URL.Path == "/v1/voices/create" {
 		limit = 14 << 20
@@ -883,6 +887,9 @@ func main() {
 	}
 	if _, err = db.Exec(avatarSchema); err != nil {
 		log.Fatal("panorama migration failed")
+	}
+	if _, err = db.Exec(productionImageSchema); err != nil {
+		log.Fatal("production image migration failed")
 	}
 	if _, err = db.Exec(voiceSchema); err != nil {
 		log.Fatal("voice migration failed")

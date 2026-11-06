@@ -16,9 +16,11 @@ function registerAuth() {
     {
       open: async () => {
         const result = await dialog.showOpenDialog({
-          title: "导入等距柱状全景图",
+          title: "导入制作图片",
           properties: ["openFile", "multiSelections"],
-          filters: [{ name: "全景图片", extensions: ["jpg", "jpeg", "png"] }],
+          filters: [
+            { name: "JPEG / PNG 图片", extensions: ["jpg", "jpeg", "png"] },
+          ],
         });
         return result.canceled ? [] : result.filePaths;
       },

@@ -6,6 +6,8 @@ const { setTimeout: delay } = require("node:timers/promises");
 const domain = require("./domain.cjs");
 const media = require("./media.cjs");
 const providers = require("./providers.cjs");
+const sources = require("../production/sources.cjs");
+const templateLibrary = require("../production/templates.cjs");
 const uuid = /^[a-f0-9-]{36}$/;
 const assetName = /^[a-f0-9]{64}\.(jpg|png)$/;
 
@@ -19,6 +21,7 @@ class PanoramaWorkflow {
     this.active = new Map();
     this.previews = new Set();
     this.capabilityPromise = null;
+    this.sourceFlight = new Map();
   }
   owner(userId) {
     domain.ensure(
@@ -51,6 +54,11 @@ class PanoramaWorkflow {
         job.error = "客户端退出导致中断，可重试并复用已完成素材";
       }
     this.stores.set(owner, state);
+    state.properties ??= [];
+    state.imageTasks ??= [];
+    state.assetMetadata ??= {};
+    state.imports ??= {};
+    state.templates ??= [];
     this.persist(owner);
     return state;
   }
@@ -83,6 +91,14 @@ class PanoramaWorkflow {
   view(owner, state) {
     return {
       ...state,
+      assetMetadata: undefined,
+      imports: undefined,
+      imageTasks: state.imageTasks.map(({ id, sceneId, status, error }) => ({
+        id,
+        sceneId,
+        status,
+        error,
+      })),
       drafts: state.drafts.map((d) => ({
         ...d,
         scenes: d.scenes.map((s) => ({
@@ -123,20 +139,32 @@ class PanoramaWorkflow {
       volcTts: !!cloud.volcTts,
       volcAvatar: !!cloud.volcAvatar,
       managedVoices: !!cloud.managedVoices,
+      beike: !!cloud.beike,
+      imageExpansion: !!cloud.imageExpansion,
     };
   }
-  async importFile(owner, file, room) {
+  async importFile(owner, file, room, kind = "panorama") {
     const stat = await fsp.stat(file);
     domain.ensure(
       stat.isFile() && stat.size <= 50 * 1024 * 1024 && stat.size > 32,
       "图片需小于 50 MB",
     );
-    const data = await fsp.readFile(file);
+    return this.importBytes(owner, await fsp.readFile(file), room, kind);
+  }
+  async importBytes(owner, data, room, kind = "panorama") {
+    domain.ensure(
+      ["panorama", "photo", "expanded"].includes(kind),
+      "图片类型无效",
+    );
+    domain.ensure(
+      data.length > 32 && data.length <= 50 * 1024 * 1024,
+      "图片需小于50MB",
+    );
     const jpeg = data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
     const png = data
       .subarray(0, 8)
       .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    domain.ensure(jpeg || png, "仅支持 JPEG / PNG 全景图");
+    domain.ensure(jpeg || png, "仅支持 JPEG / PNG 图片");
     const asset = `${domain.hash(data)}.${jpeg ? "jpg" : "png"}`;
     const target = path.join(this.directory(owner), "assets");
     await fsp.mkdir(target, { recursive: true });
@@ -148,12 +176,25 @@ class PanoramaWorkflow {
     const stream = info.streams[0];
     domain.ensure(
       ["mjpeg", "png"].includes(stream.codec_name) &&
-        stream.width === stream.height * 2 &&
-        stream.width >= 2048 &&
-        stream.width <= 16384,
-      "需要宽高比 2:1、宽度 2048–16384 的等距柱状全景图；普通照片不能作为全景旋转",
+        stream.width >= 512 &&
+        stream.height >= 512 &&
+        stream.width <= 16384 &&
+        stream.height <= 16384 &&
+        (kind !== "panorama" ||
+          (stream.width === stream.height * 2 && stream.width >= 2048)),
+      "全景图需要2:1等距柱状投影且宽度至少2048；普通图片短边需至少512像素",
     );
+    const state = this.store(owner);
+    const entry = (state.assetMetadata[asset] ??= { kinds: [] });
+    Object.assign(entry, {
+      width: stream.width,
+      height: stream.height,
+      byteSize: data.length,
+    });
+    if (!entry.kinds.includes(kind)) entry.kinds.push(kind);
+    this.persist(owner);
     return {
+      kind,
       id: crypto.randomUUID(),
       asset,
       room,
@@ -164,7 +205,7 @@ class PanoramaWorkflow {
       url: this.url(owner, `assets/${asset}`),
     };
   }
-  scenes(owner, input) {
+  scenes(owner, input, allowPhoto = false) {
     domain.ensure(
       Array.isArray(input) && input.length >= 1 && input.length <= 20,
       "请添加 1–20 个空间",
@@ -173,6 +214,25 @@ class PanoramaWorkflow {
     return input.map((s) => {
       domain.ensure(uuid.test(s.id) && !seen.has(s.id), "空间 ID 无效或重复");
       seen.add(s.id);
+      const kind = s.kind || "panorama";
+      const metadata = this.store(owner).assetMetadata[s.asset];
+      domain.ensure(
+        kind !== "panorama" || !metadata?.kinds.includes("expanded"),
+        "AI扩图结果不能作为真实全景图使用",
+      );
+      domain.ensure(
+        ["panorama", "photo", "expanded"].includes(kind) &&
+          (metadata ? metadata.kinds.includes(kind) : kind === "panorama"),
+        "图片来源类型无效，请重新导入",
+      );
+      domain.ensure(
+        allowPhoto || kind !== "photo",
+        "普通照片须先完成AI扩图并审核，不能直接制作视频",
+      );
+      domain.ensure(
+        allowPhoto || kind !== "expanded" || s.approved === true,
+        "请先审核AI扩图结果",
+      );
       domain.ensure(
         assetName.test(s.asset) &&
           fs.existsSync(path.join(this.directory(owner), "assets", s.asset)),
@@ -185,11 +245,19 @@ class PanoramaWorkflow {
         "初始视角应为 -180° 到 180°",
       );
       return {
+        kind,
+        approved: s.approved === true,
+        sourceAsset: kind === "expanded" ? s.sourceAsset : undefined,
         id: s.id,
         asset: s.asset,
         room: domain.text(s.room, "空间名称", 80),
-        description: domain.text(s.description, "空间说明", 1500),
+        description: domain.optionalText(s.description, "空间说明", 1500),
         yaw: s.yaw,
+        direction:
+          s.direction === undefined
+            ? undefined
+            : (domain.ensure([1, -1].includes(s.direction), "空间镜头方向无效"),
+              s.direction),
       };
     });
   }
@@ -240,6 +308,25 @@ class PanoramaWorkflow {
     assertCurrent();
     const owner = this.owner(userId);
     const state = this.store(owner);
+    if (method === "template-save") {
+      const result = templateLibrary.save(state, input);
+      this.persist(owner);
+      return result;
+    }
+    if (sources.methods.has(method)) {
+      const flightKey = `${owner}:${method}`;
+      domain.ensure(
+        !this.sourceFlight.has(flightKey),
+        "素材操作处理中，请稍候",
+      );
+      const pending = sources.handle(this, owner, method, input, assertCurrent);
+      this.sourceFlight.set(flightKey, pending);
+      try {
+        return await pending;
+      } finally {
+        this.sourceFlight.delete(flightKey);
+      }
+    }
     if (method === "state") return this.view(owner, state);
     if (method === "capabilities") return this.capabilities();
     if (method === "preview-system") {
@@ -291,16 +378,18 @@ class PanoramaWorkflow {
             owner,
             file,
             path.basename(file, path.extname(file)).slice(0, 80),
+            input.kind === "photo" ? "photo" : "panorama",
           ),
         );
       return results;
     }
     if (method === "generate") {
+      property ??= state.properties.find((p) => p.id === input.propertyId);
       domain.ensure(
         property && typeof property.title === "string",
         "房源不存在，请重新选择",
       );
-      const c = domain.config(input.config);
+      const c = domain.config(input.config, state.templates);
       await this.requireAvatar(c);
       assertCurrent();
       domain.ensure(
@@ -308,6 +397,19 @@ class PanoramaWorkflow {
         "未连接云端 AI 服务",
       );
       const scenes = this.scenes(owner, input.scenes);
+      for (const key of ["leadSceneId", "coverSceneId"])
+        domain.ensure(
+          !c[key] || scenes.some((s) => s.id === c[key]),
+          "开场或封面空间已移除，请重新选择",
+        );
+      domain.ensure(
+        scenes.every((s) =>
+          c.materialMode === "expand"
+            ? s.kind === "expanded"
+            : s.kind === "panorama",
+        ),
+        "素材与所选制作方式不一致",
+      );
       const expected = domain.segments(property, scenes, c);
       const segments =
         c.scriptProvider === "ai"
@@ -337,7 +439,11 @@ class PanoramaWorkflow {
         sample: property.sample === true,
         scenes,
         config: c,
-        templateVersion: "1",
+        templateVersion: String(
+          state.templates.find((t) => t.id === c.templateId)?.version ||
+            domain.templates.find((t) => t.id === c.templateId)?.version ||
+            "1",
+        ),
         segments,
         createdAt: new Date().toISOString(),
       };
@@ -347,9 +453,18 @@ class PanoramaWorkflow {
     }
     if (method === "save") {
       const draft = this.draft(owner, input.id, input.revision);
-      const c = domain.config(input.config);
+      const c = domain.config(input.config, [{ id: draft.config.templateId }]);
+      domain.ensure(
+        c.leadSceneId === (draft.config.leadSceneId || ""),
+        "开场镜头改变后，请重新生成文案",
+      );
+      domain.ensure(
+        !c.coverSceneId || draft.scenes.some((s) => s.id === c.coverSceneId),
+        "封面空间不存在",
+      );
       domain.ensure(
         c.language === draft.config.language &&
+          c.materialMode === (draft.config.materialMode || "panorama") &&
           c.templateId === draft.config.templateId &&
           c.scriptProvider === draft.config.scriptProvider &&
           ["openingTemplate", "sceneTemplate", "closingTemplate"].every(
@@ -372,7 +487,7 @@ class PanoramaWorkflow {
           job.status !== "canceled",
       );
       if (existing) return existing;
-      await this.preflight(draft);
+      await this.preflight(draft, owner);
       this.draft(owner, input.id, input.revision);
       assertCurrent();
       const avatarKey = domain.hash([
@@ -431,7 +546,7 @@ class PanoramaWorkflow {
         !job.avatar?.submitting || job.avatar.taskId,
         "数字人提交结果未知，已停止自动重提；请先在火山控制台核对，避免重复扣费",
       );
-      await this.preflight(job);
+      await this.preflight(job, owner);
       assertCurrent();
       job.status = "running";
       job.error = undefined;
@@ -452,7 +567,19 @@ class PanoramaWorkflow {
     }
     throw new Error("未知全景工作流操作");
   }
-  async preflight(draft) {
+  async preflight(draft, owner) {
+    if (owner) {
+      this.scenes(owner, draft.scenes);
+      for (const scene of draft.scenes) {
+        const bytes = await fsp.readFile(
+          path.join(this.directory(owner), "assets", scene.asset),
+        );
+        domain.ensure(
+          domain.hash(bytes) === scene.asset.split(".")[0],
+          "制作素材已改变，请重新导入并审核",
+        );
+      }
+    }
     domain.ensure(
       this.active.size === 0,
       "本机正在生成视频，请等待完成后再提交",
