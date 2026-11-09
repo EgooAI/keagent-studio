@@ -132,6 +132,11 @@ func TestAdminQueriesPostgres(t *testing.T) {
 	INSERT INTO "user" VALUES ('u1','搜索用户','viewer@example.test','user',false,NULL,'2026-11-01T00:00:00Z'),('u2','管理员','admin@example.test','admin',false,NULL,'2026-11-02T00:00:00Z');
 	INSERT INTO keagent_device VALUES ('d1','u1','工作电脑','win32',false,'2026-11-01T00:00:00Z'),('d2','missing-owner','旧电脑','win32',true,'2026-11-02T00:00:00Z');
 	INSERT INTO keagent_resource VALUES ('r1','{"id":"r1","name":"资源一","type":"prompt","version":"1","published":true,"publishedOnce":true}'),('r2','{"id":"r2","name":"资源二","type":"style","version":"1","published":false,"publishedOnce":true}');
+	INSERT INTO keagent_resource VALUES
+	('r3','{"id":"r3","name":"房源带看","type":"video","version":"1.0.0","published":true,"production":{"schemaVersion":1}}'),
+	('r4','{"id":"r4","name":"房源带看","type":"video","version":"2.0.0","published":true}'),
+	('r5','{"id":"r5","name":"封面","type":"cover","version":"1","published":true}'),
+	('r6','{"id":"r6","name":"字幕","type":"subtitle","version":"1","published":true}');
 	INSERT INTO keagent_audit VALUES ('a1','u2','resources','r1','{"name":"资源一","token":"must-not-leak"}','2026-11-02T00:00:00Z');
 	INSERT INTO "adminAuditLog" VALUES ('aa1','u2','u1','admin.ban-user','2026-11-02T00:00:00Z','op1','succeeded','Admin API request'),('aa2','u2','new-user','admin.create-user','2026-11-02T00:00:00Z','op2','succeeded','Admin API request'),('aa3','u2','missing-session','admin.revoke-user-session','2026-11-02T00:00:00Z','op3','succeeded','Admin API request');`)
 	if err != nil {
@@ -167,6 +172,18 @@ func TestAdminQueriesPostgres(t *testing.T) {
 	result, err = queryAdminList(t.Context(), tx, "resources", url.Values{"state": {"unpublished"}})
 	if err != nil || result["items"].([]any)[0].(object)["id"] != "r2" {
 		t.Fatal("unpublished filter failed", result, err)
+	}
+	result, err = queryAdminList(t.Context(), tx, "resources", url.Values{"productionOnly": {"true"}, "state": {"published"}, "limit": {"1"}})
+	if err != nil || result["total"] != 1 || result["items"].([]any)[0].(object)["id"] != "r3" {
+		t.Fatal("production filter must apply before version grouping and pagination", result, err)
+	}
+	if versions, err := queryResourceVersions(t.Context(), tx, "r3"); err != nil || len(versions) != 1 || versions[0].(object)["id"] != "r3" {
+		t.Fatal("production history included incomplete video versions", versions, err)
+	}
+	for _, id := range []string{"r1", "r4"} {
+		if _, err := queryResourceVersions(t.Context(), tx, id); err == nil {
+			t.Fatal("hidden template could still be opened", id)
+		}
 	}
 	result, err = queryAdminList(t.Context(), tx, "users", url.Values{"offset": {"99"}})
 	if err != nil || result["total"] != 2 || len(result["items"].([]any)) != 0 {

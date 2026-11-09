@@ -579,6 +579,12 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		return s.adminVoices(r, a, body)
 	}
 	if r.Method == "GET" {
+		if kind == "resources/versions" {
+			return queryResourceVersions(ctx, s.db, r.URL.Query().Get("id"))
+		}
+		if kind == "resources/preview" {
+			return s.previewProduction(ctx, a, object{"id": r.URL.Query().Get("id")}, false)
+		}
 		if strings.HasSuffix(kind, "/list") {
 			return queryAdminList(ctx, s.db, strings.TrimSuffix(kind, "/list"), r.URL.Query())
 		}
@@ -597,7 +603,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		case "devices":
 			query = `SELECT jsonb_build_object('id',id,'ownerId',owner_id,'name',name,'platform',platform,'revoked',revoked,'lastSeenAt',seen_at) FROM keagent_device ORDER BY seen_at DESC LIMIT 100`
 		case "resources":
-			query = `SELECT payload FROM keagent_resource ORDER BY id`
+			query = `SELECT payload - 'previewSegments' FROM keagent_resource ORDER BY id`
 		case "tasks":
 			query = `SELECT t.value || jsonb_build_object('ownerId',owner_id) FROM keagent_workspace CROSS JOIN LATERAL jsonb_array_elements(payload->'tasks') t(value) LIMIT 100`
 		case "audit":
@@ -646,11 +652,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		return nil, fail(400, "参数无效")
 	}
 	if kind == "resources/preview" {
-		ctx, err := s.activeAI(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return s.previewProduction(ctx, a, input)
+		return s.previewProduction(ctx, a, input, true)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -679,6 +681,10 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			return nil, fail(404, "设备不存在")
 		}
 	case "resources":
+		source := str(input["versionOf"])
+		if source != "" && target != "" {
+			return nil, fail(422, "新版本须使用独立编号")
+		}
 		input = pickFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "published", "sizeMb", "production")
 		if target == "" {
 			target = id()
@@ -686,6 +692,11 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		}
 		// Row locks cannot protect a client-supplied ID before its first insert.
 		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('keagent-resource:' || $1, 0))`, target); err != nil {
+			return nil, err
+		}
+		var family string
+		family, err = resourceFamily(ctx, tx, target, source, input)
+		if err != nil {
 			return nil, err
 		}
 		var old []byte
@@ -703,14 +714,15 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		if prior == nil {
 			action = "resource.create"
 		}
-		if input["published"] == true && (prior == nil || prior["published"] != true) {
+		if input["published"] == true {
 			action = "resource.publish"
 		}
 		if input["published"] == false && prior != nil && prior["published"] == true {
 			action = "resource.unpublish"
 		}
-		if prior != nil && prior["publishedOnce"] == true {
-			if _, ok := input["published"].(bool); !ok {
+		published, hasPublication := input["published"].(bool)
+		if prior != nil && (prior["publishedOnce"] == true || prior["published"] == true || (hasPublication && len(input) == 2)) {
+			if !hasPublication {
 				return nil, fail(422, "请明确指定上下架状态")
 			}
 			for k, v := range input {
@@ -723,11 +735,24 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 				}
 			}
 			input = prior
-			var patch object
-			_ = json.Unmarshal(body, &patch)
-			input["published"] = patch["published"]
+			input["published"] = published
 		} else if err = validateResource(input); err != nil {
 			return nil, err
+		}
+		if input["description"] == nil {
+			input["description"] = ""
+		}
+		if input["category"] == nil {
+			input["category"] = "通用"
+		}
+		if prior == nil || prior["version"] != input["version"] {
+			var duplicate bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id<>$1 AND `+resourceFamilySQL+`=$2 AND payload->>'version'=$3)`, target, family, str(input["version"])).Scan(&duplicate); err != nil {
+				return nil, err
+			}
+			if duplicate {
+				return nil, fail(409, "此模板已使用该版本号，请填写其他版本号")
+			}
 		}
 		if input["production"] != nil {
 			catalogKey := strings.ToLower(strings.TrimSpace(str(input["name"]))) + "@" + str(input["version"])
@@ -743,20 +768,21 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			}
 			if prior != nil && prior["previewDigest"] == productionDigest(input) {
 				input["previewDigest"] = prior["previewDigest"]
+				if prior["previewSegments"] != nil {
+					input["previewSegments"] = prior["previewSegments"]
+				}
 			}
 			if input["published"] == true && input["previewDigest"] != productionDigest(input) {
 				return nil, fail(422, "请先保存并预览校验当前模板，再上架")
 			}
 		}
 		if input["published"] == true {
+			if _, err = tx.ExecContext(ctx, `UPDATE keagent_resource SET payload=payload || '{"published":false,"publishedOnce":true}'::jsonb WHERE id<>$1 AND `+resourceFamilySQL+`=$2 AND payload->>'published'='true'`, target, family); err != nil {
+				return nil, err
+			}
 			input["publishedOnce"] = true
 		}
-		if input["description"] == nil {
-			input["description"] = ""
-		}
-		if input["category"] == nil {
-			input["category"] = "通用"
-		}
+		input["familyId"] = family
 		if input["thumbnail"] == nil {
 			input["thumbnail"] = ""
 		}

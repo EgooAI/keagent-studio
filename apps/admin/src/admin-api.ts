@@ -47,7 +47,7 @@ export function useAdminParams() {
 const filters: Record<keyof AdminListTypes, string[]> = {
   users: ["q", "role", "banned"],
   devices: ["q", "ownerId", "revoked"],
-  resources: ["q", "type", "state"],
+  resources: ["q", "state"],
   tasks: ["q", "ownerId", "status", "stage"],
   audit: ["q", "actorId", "targetId", "action", "from", "to"],
   "auth-audit": ["q", "actorId", "targetId", "action", "status", "from", "to"],
@@ -59,6 +59,7 @@ export function useAdminList<K extends keyof AdminListTypes>(kind: K) {
     limit: params.get("limit") || "20",
     offset: params.get("offset") || "0",
   });
+  if (kind === "resources") query.set("productionOnly", "true");
   for (const key of filters[kind]) {
     const value = params.get(key);
     if (value) query.set(key, value);

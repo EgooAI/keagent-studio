@@ -137,7 +137,11 @@ func (s *server) productionTemplates(ctx context.Context) ([]any, error) {
 	if s.db == nil {
 		return result, nil
 	} // Provider-only unit fixtures have no catalog.
-	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE payload->>'published'='true' AND payload->'production'->>'schemaVersion' IN ('1','2') ORDER BY payload->'production'->>'schemaVersion' DESC,payload->>'name',id`)
+	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM (
+		SELECT DISTINCT ON (`+resourceFamilySQL+`) id, payload FROM keagent_resource
+		WHERE payload->>'published'='true' AND `+productionResourceSQL+`
+		ORDER BY `+resourceFamilySQL+`, `+resourceVersionOrderSQL+`
+	) current_versions ORDER BY payload->'production'->>'schemaVersion' DESC, payload->>'name', id`)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +185,7 @@ func (s *server) productionTemplate(ctx context.Context, input object) (object, 
 	return publicProduction(resource), nil
 }
 
-func (s *server) previewProduction(ctx context.Context, a actor, input object) (any, error) {
+func (s *server) previewProduction(ctx context.Context, a actor, input object, generate bool) (any, error) {
 	var b []byte
 	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1`, str(input["id"])).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -197,9 +201,15 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object) (
 	if err = validateProduction(resource); err != nil {
 		return nil, err
 	}
+	digest := productionDigest(resource)
+	if resource["previewDigest"] == digest && len(rows(resource["previewSegments"])) > 0 {
+		return object{"template": publicProduction(resource), "segments": resource["previewSegments"]}, nil
+	}
+	if !generate {
+		return nil, nil
+	}
 	recipe := obj(resource["production"])
 	c := obj(recipe["config"])
-	digest := productionDigest(resource)
 	var segments []object
 	if number(recipe["schemaVersion"]) == 2 {
 		images := rows(input["images"])
@@ -207,7 +217,11 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object) (
 			obj(images[0])["kind"] != "photo" || obj(images[1])["kind"] != "photo" {
 			return nil, fail(422, "新版模板预览需要两张示例图片")
 		}
-		segments, err = generateVisionScript(ctx, resource, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images)
+		aiCtx, err := s.activeAI(ctx)
+		if err != nil {
+			return nil, err
+		}
+		segments, err = generateVisionScript(aiCtx, resource, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +249,11 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object) (
 	if productionDigest(current) != digest {
 		return nil, fail(409, "预览期间模板已修改，请重新预览")
 	}
+	if current["previewDigest"] == digest && len(rows(current["previewSegments"])) > 0 {
+		return object{"template": publicProduction(current), "segments": current["previewSegments"]}, nil
+	}
 	current["previewDigest"] = digest
+	current["previewSegments"] = segments
 	resource = current
 	b, _ = json.Marshal(resource)
 	if _, err = tx.ExecContext(ctx, `UPDATE keagent_resource SET payload=$2 WHERE id=$1`, resource["id"], b); err != nil {

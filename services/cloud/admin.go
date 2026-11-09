@@ -124,14 +124,21 @@ func taskSummarySQL() string {
 	CASE WHEN t.value->>'error' IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('error',t.value->>'error') END`
 }
 
-func adminSource(kind string) (string, error) {
+func adminSource(kind string, productionOnly bool) (string, error) {
 	switch kind {
 	case "users":
 		return `SELECT jsonb_build_object('id',u.id,'name',u.name,'email',u.email,'role',COALESCE(u.role,'user'),'banned',COALESCE(u.banned,false),'banReason',u."banReason",'createdAt',u."createdAt") data, u."createdAt" sort_at, concat_ws(' ',u.id,u.name,u.email) search FROM "user" u`, nil
 	case "devices":
 		return `SELECT jsonb_build_object('id',d.id,'ownerId',d.owner_id,'owner',` + identitySQL("u") + `,'name',d.name,'platform',d.platform,'revoked',d.revoked,'lastSeenAt',d.seen_at) data, d.seen_at sort_at, concat_ws(' ',d.id,d.name,d.platform,d.owner_id,u.name,u.email) search FROM keagent_device d LEFT JOIN "user" u ON u.id=d.owner_id`, nil
 	case "resources":
-		return `SELECT r.payload || jsonb_build_object('id',r.id,'state',CASE WHEN r.payload->>'published'='true' THEN 'published' WHEN r.payload->>'publishedOnce'='true' THEN 'unpublished' ELSE 'draft' END) data, NULL::timestamptz sort_at, concat_ws(' ',r.id,r.payload->>'name',r.payload->>'category',r.payload->>'description',r.payload->>'version') search FROM keagent_resource r`, nil
+		where := ""
+		if productionOnly {
+			where = " WHERE " + productionResourceSQL
+		}
+		return `SELECT payload || jsonb_build_object('id',id,'state',CASE WHEN payload->>'published'='true' THEN 'published' WHEN payload->>'publishedOnce'='true' THEN 'unpublished' ELSE 'draft' END) data,
+			NULL::timestamptz sort_at, concat_ws(' ',id,payload->>'name',payload->>'category',payload->>'description',payload->>'version') search
+			FROM (SELECT DISTINCT ON (` + resourceFamilySQL + `) id, payload FROM keagent_resource` + where + `
+			ORDER BY ` + resourceFamilySQL + `, (payload->>'published'='true') DESC NULLS LAST, ` + resourceVersionOrderSQL + `) current_versions`, nil
 	case "tasks":
 		return `SELECT ` + taskSummarySQL() + ` data, (t.value->>'createdAt')::timestamptz sort_at, concat_ws(' ',t.value->>'id',t.value->>'batchId',t.value#>>'{propertySnapshot,title}',t.value#>>'{propertySnapshot,propertyNumber}',w.owner_id,u.name,u.email) search` + taskFrom, nil
 	case "audit":
@@ -143,7 +150,7 @@ func adminSource(kind string) (string, error) {
 }
 
 func queryAdminList(ctx context.Context, db adminQuerier, kind string, q url.Values) (object, error) {
-	source, err := adminSource(kind)
+	source, err := adminSource(kind, q.Get("productionOnly") == "true")
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +284,7 @@ func queryAdminTask(ctx context.Context, db adminQuerier, taskID string) (object
 func queryAdminOverview(ctx context.Context, db adminQuerier) (object, error) {
 	out := object{}
 	var users, devices, resources, failed int
-	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM keagent_device WHERE NOT revoked), (SELECT count(*) FROM keagent_resource WHERE payload->>'published'='true'), (SELECT count(*) FROM keagent_workspace w CROSS JOIN LATERAL jsonb_array_elements(COALESCE(w.payload->'tasks','[]'::jsonb)) t(value) WHERE t.value->>'status'='failed')`).Scan(&users, &devices, &resources, &failed)
+	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM keagent_device WHERE NOT revoked), (SELECT count(DISTINCT `+resourceFamilySQL+`) FROM keagent_resource WHERE payload->>'published'='true' AND `+productionResourceSQL+`), (SELECT count(*) FROM keagent_workspace w CROSS JOIN LATERAL jsonb_array_elements(COALESCE(w.payload->'tasks','[]'::jsonb)) t(value) WHERE t.value->>'status'='failed')`).Scan(&users, &devices, &resources, &failed)
 	if err != nil {
 		return nil, err
 	}

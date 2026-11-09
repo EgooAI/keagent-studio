@@ -331,6 +331,20 @@ a {
 .admin-notice {
   margin-bottom: 20px;
 }
+.admin-template-versions-heading {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+.admin-template-readonly
+  :is(
+    .ant-input:disabled,
+    .ant-input-number-input:disabled,
+    .ant-select-disabled .ant-select-content,
+    .ant-select-disabled .ant-select-selection-item-content
+  ) {
+  color: var(--admin-ink);
+  -webkit-text-fill-color: currentColor;
+}
 .admin-text-button {
   padding: 0;
   height: auto;
@@ -494,6 +508,10 @@ a {
   gap: 12px;
   padding: 8px 0 14px;
   margin-bottom: 0;
+}
+.admin-refined .admin-template-version-toolbar {
+  border-bottom: 1px solid var(--admin-line);
+  margin-bottom: 20px;
 }
 .admin-refined .admin-toolbar > .ant-space:first-child {
   flex: 1;
