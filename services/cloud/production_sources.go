@@ -11,7 +11,6 @@ import (
 	_ "image/png"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -21,7 +20,10 @@ const productionImageSchema = `CREATE TABLE IF NOT EXISTS keagent_production_ima
 
 // Fixed provider origins keep service credentials away from caller-supplied URLs.
 func dashscopeBase() (string, error) {
-	base := strings.TrimRight(os.Getenv("DASHSCOPE_BASE_URL"), "/")
+	return validateDashscopeBase(aiValue(context.Background(), "DASHSCOPE_BASE_URL"))
+}
+func validateDashscopeBase(raw string) (string, error) {
+	base := strings.TrimRight(raw, "/")
 	if base == "" {
 		return "https://dashscope.aliyuncs.com", nil
 	}
@@ -149,7 +151,13 @@ func (s *server) productionBody(ctx context.Context, method, endpoint string, he
 	return providerBody(ctx, method, endpoint, headers, body, limit)
 }
 func (s *server) fetchBeike(ctx context.Context, input object) (object, error) {
-	token := strings.TrimSpace(os.Getenv("BEIKE_ACCESS_TOKEN"))
+	return s.lookupBeike(ctx, input, func(string) error { return nil })
+}
+func (s *server) lookupBeike(ctx context.Context, input object, step func(string) error) (object, error) {
+	token := strings.TrimSpace(aiValue(ctx, "BEIKE_ACCESS_TOKEN"))
+	if aiSnapshotFrom(ctx).locked["beike"] {
+		return nil, fail(503, "贝壳生效配置无法解密")
+	}
 	if token == "" {
 		return nil, fail(503, "服务端未配置 BEIKE_ACCESS_TOKEN")
 	}
@@ -163,12 +171,18 @@ func (s *server) fetchBeike(ctx context.Context, input object) (object, error) {
 	}
 	headers := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}
 	headers.Set("access_token", token)
+	if err := step("查询房屋档案"); err != nil {
+		return nil, err
+	}
 	factsData, err := s.productionBody(ctx, "POST", "https://gw-open.ke.com/api/images-distinguish/houseInfo", headers, []byte(values.Encode()), 2<<20)
 	if err != nil {
 		return nil, err
 	}
 	facts, err := decodeBeike(factsData)
 	if err != nil {
+		return nil, err
+	}
+	if err = step("查询室内图片"); err != nil {
 		return nil, err
 	}
 	values.Set("type", "2")
@@ -183,6 +197,18 @@ func (s *server) fetchBeike(ctx context.Context, input object) (object, error) {
 	return normalizeBeike(values.Get("cityName"), values.Get("address"), facts, pictures)
 }
 
+func expansionConnection(ctx context.Context) (string, http.Header, error) {
+	if aiSnapshotFrom(ctx).locked["expansion"] {
+		return "", nil, fail(503, "百炼生效配置无法解密")
+	}
+	apiKey := aiValue(ctx, "DASHSCOPE_API_KEY")
+	if apiKey == "" {
+		return "", nil, fail(503, "百炼扩图服务尚未配置")
+	}
+	base, err := validateDashscopeBase(aiValue(ctx, "DASHSCOPE_BASE_URL"))
+	return base, http.Header{"Authorization": {"Bearer " + apiKey}, "Content-Type": {"application/json"}}, err
+}
+
 func (s *server) productionImage(ctx context.Context, a actor, operation string, input object) (any, error) {
 	if operation == "beike-import" {
 		return s.fetchBeike(ctx, input)
@@ -191,17 +217,12 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 	if len(key) < 16 || len(key) > 100 || !resourceID.MatchString(key) {
 		return nil, fail(422, "扩图请求标识无效")
 	}
-	apiKey := strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
-	if apiKey == "" {
-		return nil, fail(503, "服务端未配置 DASHSCOPE_API_KEY")
-	}
-	base, err := dashscopeBase()
-	if err != nil {
-		return nil, err
-	}
-	headers := http.Header{"Authorization": {"Bearer " + apiKey}, "Content-Type": {"application/json"}}
 	var saved []byte
 	if operation == "image-submit" {
+		base, headers, err := expansionConnection(ctx)
+		if err != nil {
+			return nil, err
+		}
 		payload, err := expansionPayload(input)
 		if err != nil {
 			return nil, err
@@ -209,7 +230,9 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		body, _ := json.Marshal(payload)
 		hash := digestBytes(body)
 		// Reserve before submitting. Unknown results never cause an automatic paid resubmission.
-		result, err := s.db.ExecContext(ctx, `INSERT INTO keagent_production_image(owner_id,request_key,input_hash,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, a.UserID, key, hash, []byte(`{"status":"submitting"}`))
+		version := aiSnapshotFrom(ctx).versions["expansion"]
+		pending, _ := json.Marshal(object{"status": "submitting", "configVersion": version})
+		result, err := s.db.ExecContext(ctx, `INSERT INTO keagent_production_image(owner_id,request_key,input_hash,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, a.UserID, key, hash, pending)
 		if err != nil {
 			return nil, fail(500, "无法保存扩图提交检查点")
 		}
@@ -239,14 +262,15 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		if json.Unmarshal(data, &vendor) != nil || !resourceID.MatchString(vendor.Output.TaskID) {
 			return nil, fail(502, "扩图未返回任务ID，请核对百炼控制台后处理")
 		}
-		record := object{"status": "PENDING", "taskId": vendor.Output.TaskID}
+		record := object{"status": "PENDING", "taskId": vendor.Output.TaskID, "configVersion": version}
 		saved, _ = json.Marshal(record)
 		if _, err = s.db.ExecContext(ctx, `UPDATE keagent_production_image SET payload=$3 WHERE owner_id=$1 AND request_key=$2`, a.UserID, key, saved); err != nil {
 			return nil, fail(500, "扩图提交已发送但检查点保存失败，请核对控制台")
 		}
 		return record, nil
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_production_image WHERE owner_id=$1 AND request_key=$2`, a.UserID, key).Scan(&saved); err == sql.ErrNoRows {
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_production_image WHERE owner_id=$1 AND request_key=$2`, a.UserID, key).Scan(&saved)
+	if err == sql.ErrNoRows {
 		return nil, fail(404, "扩图任务不存在")
 	}
 	if err != nil {
@@ -262,6 +286,15 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 	}
 	if str(record["status"]) == "SUCCEEDED" {
 		return record, nil
+	}
+	version := number(record["configVersion"])
+	ctx, err = s.pinnedAI(ctx, "expansion", int64(version))
+	if err != nil {
+		return nil, err
+	}
+	base, headers, err := expansionConnection(ctx)
+	if err != nil {
+		return nil, err
 	}
 	data, err := s.productionBody(ctx, "GET", base+"/api/v1/tasks/"+taskID, headers, nil, 2<<20)
 	if err != nil {
@@ -283,7 +316,7 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 	default:
 		return nil, fail(502, "扩图状态无效")
 	}
-	record = object{"status": vendor.Output.Status, "taskId": taskID}
+	record = object{"status": vendor.Output.Status, "taskId": taskID, "configVersion": version}
 	if vendor.Output.Status == "SUCCEEDED" {
 		if len(vendor.Output.Results) != 1 {
 			return nil, fail(502, "扩图结果缺少图片")

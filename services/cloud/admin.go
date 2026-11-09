@@ -227,7 +227,7 @@ func publicFields(input object, keys ...string) object {
 
 func auditDetails(input object) object {
 	out := object{}
-	for _, key := range []string{"name", "type", "version", "published", "ownerId", "platform", "reason"} {
+	for _, key := range []string{"name", "type", "version", "published", "ownerId", "platform", "reason", "service", "result"} {
 		if value, ok := input[key]; ok {
 			if _, nested := value.(map[string]any); !nested {
 				out[key] = fmt.Sprint(value)
@@ -286,6 +286,6 @@ func queryAdminOverview(ctx context.Context, db adminQuerier) (object, error) {
 		return nil, err
 	}
 	out["users"], out["devices"], out["publishedResources"], out["failedTasks"] = users, devices, resources, failed
-	out["recentFailedTasks"], out["services"] = list["items"], aiServices()
+	out["recentFailedTasks"], out["services"] = list["items"], aiServicesFor(ctx)
 	return out, nil
 }

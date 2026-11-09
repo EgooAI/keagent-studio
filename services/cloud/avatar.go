@@ -10,7 +10,6 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
-	"os"
 	"strings"
 	"time"
 )
@@ -36,6 +35,8 @@ type storedAvatar struct {
 	Mime         string `json:"mime"`
 	AuthorizedAt string `json:"authorizedAt"`
 	Version      int64  `json:"version"`
+	Bucket       string `json:"bucket,omitempty"`
+	Region       string `json:"region,omitempty"`
 }
 
 func validateAvatarPhoto(input object) ([]byte, string, error) {
@@ -65,14 +66,20 @@ func validateAvatarPhoto(input object) ([]byte, string, error) {
 	return data, mime, nil
 }
 func (s *server) privateObject(ctx context.Context, method, key string, data []byte, mime string) ([]byte, error) {
+	return s.privateObjectAt(ctx, method, key, data, mime, aiValue(ctx, "VOLC_TOS_BUCKET"), aiValue(ctx, "VOLC_TOS_REGION"))
+}
+func (s *server) privateObjectAt(ctx context.Context, method, key string, data []byte, mime, bucket, region string) ([]byte, error) {
 	if s.storage != nil {
 		return s.storage(ctx, method, key, data, mime)
 	}
-	u, region, err := tosEndpoint()
+	u, region, err := tosLocation(bucket, region)
 	if err != nil {
 		return nil, err
 	}
-	ak, sk := os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY")
+	if aiSnapshotFrom(ctx).locked["avatar"] {
+		return nil, fail(503, "数字人生效配置无法解密")
+	}
+	ak, sk := aiValue(ctx, "VOLC_ACCESS_KEY_ID"), aiValue(ctx, "VOLC_SECRET_ACCESS_KEY")
 	if ak == "" || sk == "" {
 		return nil, fail(503, "云端未配置照片私有存储凭证")
 	}
@@ -82,6 +89,12 @@ func (s *server) privateObject(ctx context.Context, method, key string, data []b
 		headers.Set("Content-Type", mime)
 	}
 	return providerBody(ctx, method, u.String(), headers, data, maxAvatarPhoto)
+}
+func avatarBucket(ctx context.Context, avatar storedAvatar) (string, string) {
+	if avatar.Bucket != "" {
+		return avatar.Bucket, avatar.Region
+	}
+	return aiValue(ctx, "VOLC_TOS_BUCKET"), aiValue(ctx, "VOLC_TOS_REGION")
 }
 func (s *server) avatarVision(ctx context.Context, action string, payload object) (object, error) {
 	if s.vision != nil {
@@ -143,14 +156,14 @@ func (s *server) avatars(ctx context.Context, a actor, operation string, body []
 			}
 			result = append(result, v.userAvatar)
 		}
-		return object{"avatars": result, "uploadEnabled": aiServices()[2].State == "configured"}, records.Err()
+		return object{"avatars": result, "uploadEnabled": aiServicesFor(ctx)[2].State == "configured"}, records.Err()
 	}
 	if operation == "create" {
 		data, mime, err := validateAvatarPhoto(input)
 		if err != nil {
 			return nil, err
 		}
-		if aiServices()[2].State != "configured" {
+		if aiServicesFor(ctx)[2].State != "configured" {
 			return nil, fail(503, "管理员尚未配置本人照片的私有存储及数字人服务")
 		}
 		hash := digestBytes(data)
@@ -161,6 +174,7 @@ func (s *server) avatars(ctx context.Context, a actor, operation string, body []
 			extension = "png"
 		}
 		v := storedAvatar{userAvatar: userAvatar{ID: avatarID, Name: strings.TrimSpace(str(input["name"])), Status: "submitting", CreatedAt: now()}, ObjectKey: "/keagent/" + digestBytes([]byte(a.UserID)) + "/avatars/" + avatarID + "." + extension, Hash: hash, Mime: mime, AuthorizedAt: now()}
+		v.Bucket, v.Region = avatarBucket(ctx, v)
 		raw, _ := json.Marshal(v)
 		inserted, err := s.db.ExecContext(ctx, `INSERT INTO keagent_user_avatar(id,owner_id,request_key,fingerprint,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_id,request_key) DO NOTHING`, v.ID, a.UserID, str(input["requestKey"]), fingerprint, raw)
 		if err != nil {
@@ -200,7 +214,8 @@ func (s *server) avatars(ctx context.Context, a actor, operation string, body []
 	}
 	switch operation {
 	case "preview", "refresh":
-		data, err := s.privateObject(ctx, "GET", v.ObjectKey, nil, "")
+		bucket, region := avatarBucket(ctx, v)
+		data, err := s.privateObjectAt(ctx, "GET", v.ObjectKey, nil, "", bucket, region)
 		if err != nil {
 			if operation == "refresh" {
 				v.Status = "unknown"

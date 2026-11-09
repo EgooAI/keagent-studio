@@ -94,7 +94,7 @@ func initial(name string) object {
 	return w
 }
 
-const schema = `
+const schema = aiSettingsSchema + `
 CREATE TABLE IF NOT EXISTS keagent_workspace (owner_id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_resource (id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_device (id text PRIMARY KEY, owner_id text NOT NULL, session_id text NOT NULL, name text NOT NULL, platform text NOT NULL, revoked boolean NOT NULL DEFAULT false, seen_at timestamptz NOT NULL DEFAULT now());
@@ -182,6 +182,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/avatars/create" {
 		limit = 8 << 20
 	}
+	if r.URL.Path == "/v1/admin/ai-config/test" {
+		limit = 15 << 20
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		respond(w, nil, fail(413, "请求过大"))
@@ -203,6 +206,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respond(w, nil, fail(403, "设备已解绑，请重新登录或联系管理员"))
 			return
 		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/panorama/") || strings.HasPrefix(r.URL.Path, "/v1/voices/") ||
+		strings.HasPrefix(r.URL.Path, "/v1/avatars/") {
+		ctx, err := s.activeAI(r.Context())
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		r = r.WithContext(ctx)
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/admin/") {
 		if !strings.Contains(","+a.Role+",", ",admin,") {
@@ -560,6 +572,9 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		return s.adminDouyin(r, a, body)
 	}
 	kind := strings.TrimPrefix(r.URL.Path, "/v1/admin/")
+	if kind == "ai-config" || strings.HasPrefix(kind, "ai-config/") {
+		return s.manageAI(r, a, kind, body)
+	}
 	if kind == "voices" {
 		return s.adminVoices(r, a, body)
 	}
@@ -568,6 +583,10 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			return queryAdminList(ctx, s.db, strings.TrimSuffix(kind, "/list"), r.URL.Query())
 		}
 		if kind == "overview" {
+			ctx, err := s.activeAI(ctx)
+			if err != nil {
+				return nil, err
+			}
 			return queryAdminOverview(ctx, s.db)
 		}
 		if strings.HasPrefix(kind, "tasks/") {
@@ -583,8 +602,6 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			query = `SELECT t.value || jsonb_build_object('ownerId',owner_id) FROM keagent_workspace CROSS JOIN LATERAL jsonb_array_elements(payload->'tasks') t(value) LIMIT 100`
 		case "audit":
 			query = `SELECT jsonb_build_object('id',id,'actorId',actor_id,'action',action,'targetId',target_id,'createdAt',created_at) FROM keagent_audit ORDER BY created_at DESC LIMIT 100`
-		case "ai-config":
-			return adminAIConfig(), nil
 		case "releases", "remote-config":
 			var b []byte
 			err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_setting WHERE id=$1`, kind).Scan(&b)
@@ -629,6 +646,10 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		return nil, fail(400, "参数无效")
 	}
 	if kind == "resources/preview" {
+		ctx, err := s.activeAI(ctx)
+		if err != nil {
+			return nil, err
+		}
 		return s.previewProduction(ctx, a, input)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -826,7 +847,11 @@ func (s *server) workOnce(ctx context.Context) {
 	if tx.Commit() != nil {
 		return
 	}
-	text, callErr := generate(ctx, obj(task["propertySnapshot"]))
+	providerCtx, callErr := s.activeAI(ctx)
+	var text string
+	if callErr == nil {
+		text, callErr = generate(providerCtx, obj(task["propertySnapshot"]))
+	}
 	tx, err = s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return
@@ -869,13 +894,16 @@ func generateWithInstruction(ctx context.Context, p object, instruction string) 
 	return generateWithContent(ctx, string(property), instruction)
 }
 func generateWithContent(ctx context.Context, content any, instruction string) (string, error) {
-	service := aiServices()[0]
+	service := aiServicesFor(ctx)[0]
+	if aiSnapshotFrom(ctx).locked["script"] {
+		return "", fail(503, "生效的文案配置无法解密")
+	}
 	if service.State != "configured" {
 		return "", errors.New("云端 AI 服务未配置，请联系管理员")
 	}
 	client, transport := providerClient()
 	defer transport.CloseIdleConnections()
-	return completionWithContent(ctx, client, service.Endpoint+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), content, instruction)
+	return completionWithContent(ctx, client, service.Endpoint+"/chat/completions", aiValue(ctx, "AI_MODEL"), aiValue(ctx, "AI_API_KEY"), content, instruction)
 }
 func providerClient() (*http.Client, *http.Transport) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -888,7 +916,7 @@ func providerClient() (*http.Client, *http.Transport) {
 			return nil, err
 		}
 		for _, ip := range ips {
-			if !ip.IP.IsGlobalUnicast() || ip.IP.IsPrivate() || ip.IP.IsLoopback() || ip.IP.IsLinkLocalUnicast() {
+			if !publicProviderIP(ip.IP) {
 				return nil, errors.New("private target refused")
 			}
 		}
@@ -899,6 +927,13 @@ func providerClient() (*http.Client, *http.Transport) {
 	}}
 	client := &http.Client{Transport: transport, Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
 	return client, transport
+}
+func publicProviderIP(ip net.IP) bool {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	v4 := ip.To4()
+	return v4 == nil || v4[0] != 100 || v4[1] < 64 || v4[1] >= 128
 }
 func completion(ctx context.Context, client *http.Client, endpoint, model, key string, p object) (string, error) {
 	return completionWithInstruction(ctx, client, endpoint, model, key, p, "你是房产视频文案助手。仅依据给定房源资料写中文口播文案，不编造价格、配套或承诺。")
@@ -997,6 +1032,7 @@ func main() {
 	s := &server{db: db, secret: secret, jwt: verifier, origins: strings.Split(origins, ",")}
 	go s.work(context.Background())
 	go s.douyinBackground(context.Background())
+	go s.runAIProbes(context.Background())
 	log.Println("Go business API listening on 127.0.0.1:18081")
 	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
 }

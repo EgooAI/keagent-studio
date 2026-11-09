@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -31,22 +30,18 @@ type userVoice struct {
 }
 type storedVoice struct {
 	userVoice
-	Speaker      string `json:"speaker"`
-	Resource     string `json:"resource"`
-	PreviewURL   string `json:"previewURL,omitempty"`
-	AuthorizedAt string `json:"authorizedAt"`
-	Version      int64  `json:"version"`
+	Speaker       string `json:"speaker"`
+	Resource      string `json:"resource"`
+	PreviewURL    string `json:"previewURL,omitempty"`
+	AuthorizedAt  string `json:"authorizedAt"`
+	Version       int64  `json:"version"`
+	ConfigVersion int64  `json:"configVersion"`
 }
 
-func cloneConfigured() bool {
-	return os.Getenv("VOLC_VOICE_CLONE_ENABLED") == "true" && strings.TrimSpace(os.Getenv("VOLC_TTS_API_KEY")) != "" && speechResourceID.MatchString(cloneResource())
+func cloneConfigured(ctx context.Context) bool {
+	return aiValue(ctx, "VOLC_VOICE_CLONE_ENABLED") == "true" && aiValue(ctx, "VOLC_TTS_API_KEY") != "" && speechResourceID.MatchString(cloneResource(ctx))
 }
-func cloneResource() string {
-	if value := os.Getenv("VOLC_VOICE_CLONE_RESOURCE_ID"); value != "" {
-		return value
-	}
-	return "seed-icl-2.0"
-}
+func cloneResource(ctx context.Context) string { return aiValue(ctx, "VOLC_VOICE_CLONE_RESOURCE_ID") }
 
 // Only fixed speech operations are exposed; clients never supply provider URLs or speaker IDs.
 func (s *server) speechCall(ctx context.Context, operation string, payload object, resource string) ([]byte, error) {
@@ -56,7 +51,10 @@ func (s *server) speechCall(ctx context.Context, operation string, payload objec
 	if operation != "voice_clone" && operation != "get_voice" && operation != "unidirectional" {
 		return nil, fail(400, "无效的语音操作")
 	}
-	key := os.Getenv("VOLC_TTS_API_KEY")
+	if aiSnapshotFrom(ctx).locked["speech"] {
+		return nil, fail(503, "火山语音生效配置无法解密")
+	}
+	key := aiValue(ctx, "VOLC_TTS_API_KEY")
 	if key == "" {
 		return nil, fail(503, "云端未配置火山语音密钥")
 	}
@@ -149,6 +147,13 @@ func voiceResult(v *storedVoice, raw []byte) error {
 	return nil
 }
 func (s *server) refreshVoice(ctx context.Context, owner string, v storedVoice) (storedVoice, error) {
+	if v.Status != "ready" {
+		pinned, err := s.pinnedAI(ctx, "speech", v.ConfigVersion)
+		if err != nil {
+			return v, err
+		}
+		ctx = pinned
+	}
 	raw, err := s.speechCall(ctx, "get_voice", object{"speaker_id": "custom_speaker_id", "custom_speaker_id": v.Speaker}, "")
 	if err != nil {
 		return v, err
@@ -197,7 +202,7 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 		for _, v := range catalog {
 			public = append(public, v.publicVoice)
 		}
-		return object{"voices": result, "cloneEnabled": cloneConfigured(), "publicVoices": public, "cloudEnabled": aiServices()[1].State == "configured"}, nil
+		return object{"voices": result, "cloneEnabled": cloneConfigured(ctx), "publicVoices": public, "cloudEnabled": aiServicesFor(ctx)[1].State == "configured"}, nil
 	}
 	if operation == "preview-public" {
 		return s.previewPublicVoice(ctx, a, str(input["id"]))
@@ -207,12 +212,12 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 		if err != nil {
 			return nil, err
 		}
-		if !cloneConfigured() {
+		if !cloneConfigured(ctx) {
 			return nil, fail(503, "管理员尚未开通声音复刻；仍可使用系统音色")
 		}
 		fingerprint := digestBytes(append([]byte(strings.TrimSpace(str(input["name"]))+"|"+str(input["language"])+"|"+str(input["format"])+"|"), data...))
 		voiceID := id()
-		v := storedVoice{userVoice: userVoice{ID: voiceID, Name: strings.TrimSpace(str(input["name"])), Language: str(input["language"]), Status: "submitting", CreatedAt: now()}, Speaker: "keagent" + voiceID, Resource: cloneResource(), AuthorizedAt: now()}
+		v := storedVoice{userVoice: userVoice{ID: voiceID, Name: strings.TrimSpace(str(input["name"])), Language: str(input["language"]), Status: "submitting", CreatedAt: now()}, Speaker: "keagent" + voiceID, Resource: cloneResource(ctx), AuthorizedAt: now(), ConfigVersion: aiSnapshotFrom(ctx).versions["speech"]}
 		raw, _ := json.Marshal(v)
 		inserted, err := s.db.ExecContext(ctx, `INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_id,request_key) DO NOTHING`, voiceID, a.UserID, str(input["requestKey"]), fingerprint, raw)
 		if err != nil {
@@ -302,7 +307,7 @@ func (s *server) synthesizeVoice(ctx context.Context, a actor, input object) (an
 	}
 	var resource string
 	if kind == "personal" {
-		if !cloneConfigured() {
+		if !cloneConfigured(ctx) {
 			return nil, fail(503, "管理员尚未启用本人音色合成，请选择系统音色")
 		}
 		v, err := s.ownedVoice(ctx, a.UserID, voice)
@@ -322,10 +327,14 @@ func (s *server) synthesizeVoice(ctx context.Context, a actor, input object) (an
 	} else {
 		return nil, fail(422, "音色类型无效")
 	}
+	return s.synthesizePCM(ctx, a.UserID, text, voice, resource, rate)
+}
+
+func (s *server) synthesizePCM(ctx context.Context, userID, text, voice, resource string, rate float64) (any, error) {
 	if !speechResourceID.MatchString(resource) {
 		return nil, fail(503, "云端配音资源未配置")
 	}
-	raw, err := s.speechCall(ctx, "unidirectional", object{"user": object{"uid": a.UserID}, "req_params": object{"text": text, "speaker": voice, "audio_params": object{"format": "pcm", "sample_rate": 24000, "speech_rate": int((rate - 1) * 100)}}}, resource)
+	raw, err := s.speechCall(ctx, "unidirectional", object{"user": object{"uid": userID}, "req_params": object{"text": text, "speaker": voice, "audio_params": object{"format": "pcm", "sample_rate": 24000, "speech_rate": int((rate - 1) * 100)}}}, resource)
 	if err != nil {
 		return nil, err
 	}

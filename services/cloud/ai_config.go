@@ -1,9 +1,8 @@
 package main
 
 import (
-	"net"
+	"context"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -23,76 +22,69 @@ type aiService struct {
 	Note     string   `json:"note"`
 }
 
-func (s *aiService) checkRequired(keys ...string) {
-	for _, key := range keys {
-		if strings.TrimSpace(os.Getenv(key)) == "" {
-			s.Missing = append(s.Missing, key)
-		}
+func publicAIURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return ""
 	}
+	return raw
 }
 
-func (s *aiService) setState(credentialMissing bool) {
-	s.State = "configured"
-	if len(s.Missing) != 0 || len(s.Issues) != 0 {
-		s.State = "incomplete"
-	}
-	if credentialMissing {
-		s.State = "missing"
-	}
-}
-
-func aiServices() []aiService {
-	note := "仅检查服务端配置；未发送供应商请求，不代表已通过真实生成验证。"
-	script := aiService{ID: "script", Label: "AI 文案", Purpose: "云端批次文案与全景分段文案", Provider: "OpenAI 兼容接口", Model: os.Getenv("AI_MODEL"), Missing: []string{}, Issues: []string{}, Note: note}
-	script.checkRequired("AI_API_KEY", "AI_MODEL", "AI_BASE_URL", "AI_ALLOWED_HOSTS")
-	u, err := url.Parse(os.Getenv("AI_BASE_URL"))
-	validURL := err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
-	if validURL {
-		ip := net.ParseIP(u.Hostname())
-		if strings.EqualFold(u.Hostname(), "localhost") || (ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast())) {
-			validURL = false
-		}
-	}
-	if validURL {
-		script.Endpoint = strings.TrimRight(u.String(), "/")
-		allowed := false
-		for _, host := range strings.Split(os.Getenv("AI_ALLOWED_HOSTS"), ",") {
-			if strings.EqualFold(strings.TrimSpace(host), u.Hostname()) {
-				allowed = true
+func aiServicesFor(ctx context.Context) []aiService {
+	snapshot := aiSnapshotFrom(ctx)
+	services := make([]aiService, 0, len(aiSpecs))
+	for _, spec := range aiSpecs {
+		values := snapshot.values
+		missing, issues := aiConfigIssues(spec, values)
+		service := aiService{ID: spec.ID, Label: spec.Name, Provider: spec.Vendor, State: "configured", Missing: missing, Issues: issues, Note: "配置状态仅表示字段完整性，实际能力以测试记录为准。"}
+		switch spec.ID {
+		case "script":
+			service.Purpose = "批次与逐图文案"
+			service.Model = values["AI_MODEL"]
+			service.Endpoint = strings.TrimRight(publicAIURL(values["AI_BASE_URL"]), "/")
+		case "tts":
+			service.Purpose = "公共音色语音合成"
+			service.Model = "由公共音色指定"
+			service.Endpoint = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+		case "avatar":
+			service.Purpose = "本人照片与开场音频生成数字人"
+			service.Model = photoAvatarProvider
+			service.Endpoint = "https://visual.volcengineapi.com"
+		case "voice-clone":
+			service.Purpose = "本人音色训练和查询"
+			service.Model = values["VOLC_VOICE_CLONE_RESOURCE_ID"]
+			service.Endpoint = "https://openspeech.bytedance.com/api/v3/tts/get_voice"
+			if values["VOLC_VOICE_CLONE_ENABLED"] != "true" {
+				service.Missing = append(service.Missing, "VOLC_VOICE_CLONE_ENABLED")
 			}
+		case "expansion":
+			service.Purpose = "普通房源照片扩图"
+			service.Model = "wanx2.1-imageedit"
+			service.Endpoint = publicAIURL(values["DASHSCOPE_BASE_URL"])
+		case "beike":
+			service.Purpose = "查询房屋档案与室内照片"
+			service.Endpoint = "https://gw-open.ke.com"
 		}
-		if !allowed {
-			script.Issues = append(script.Issues, "AI 服务域名未加入服务端允许列表")
+		if len(service.Missing)+len(service.Issues) > 0 {
+			service.State = "incomplete"
 		}
-	} else if os.Getenv("AI_BASE_URL") != "" {
-		script.Issues = append(script.Issues, "AI_BASE_URL 必须是无凭据、查询参数及片段的公共 HTTPS 地址")
-	}
-	script.setState(strings.TrimSpace(os.Getenv("AI_API_KEY")) == "")
-	tts := aiService{ID: "tts", Label: "火山配音", Purpose: "全景讲解的云端语音合成", Provider: "火山引擎", Model: "由公共音色目录指定合成资源", Endpoint: "https://openspeech.bytedance.com/api/v3/tts/unidirectional", Missing: []string{}, Issues: []string{}, Note: note}
-	tts.checkRequired("VOLC_TTS_API_KEY")
-	tts.setState(strings.TrimSpace(os.Getenv("VOLC_TTS_API_KEY")) == "")
-	avatar := aiService{ID: "avatar", Label: "火山数字人", Purpose: "用用户本人上传的照片生成数字人开场", Provider: "火山引擎", Model: photoAvatarProvider, Endpoint: "https://visual.volcengineapi.com", Missing: []string{}, Issues: []string{}, Note: note}
-	avatar.checkRequired("VOLC_ACCESS_KEY_ID", "VOLC_SECRET_ACCESS_KEY", "VOLC_TOS_BUCKET")
-	if os.Getenv("VOLC_TOS_BUCKET") != "" {
-		if _, _, err := tosEndpoint(); err != nil {
-			avatar.Issues = append(avatar.Issues, "TOS 私有桶或地域格式无效")
+		if spec.Fields[len(spec.Fields)-1].Kind == "secret" && values[spec.Fields[len(spec.Fields)-1].Key] == "" ||
+			spec.Group == "speech" && values["VOLC_TTS_API_KEY"] == "" ||
+			spec.ID == "avatar" && values["VOLC_ACCESS_KEY_ID"] == "" && values["VOLC_SECRET_ACCESS_KEY"] == "" {
+			service.State = "missing"
 		}
+		if snapshot.locked[spec.Group] {
+			service.State = "incomplete"
+			service.Issues = []string{"生效配置无法解密，请检查服务端加密密钥"}
+		}
+		services = append(services, service)
 	}
-	avatar.setState(strings.TrimSpace(os.Getenv("VOLC_ACCESS_KEY_ID")) == "" && strings.TrimSpace(os.Getenv("VOLC_SECRET_ACCESS_KEY")) == "")
-	clone := aiService{ID: "voice-clone", Label: "声音复刻", Purpose: "用户上传录音创建个人音色，供全景讲解使用", Provider: "火山引擎", Model: cloneResource(), Endpoint: "https://openspeech.bytedance.com/api/v3/tts/voice_clone", Missing: []string{}, Issues: []string{}, Note: note}
-	clone.checkRequired("VOLC_TTS_API_KEY")
-	if os.Getenv("VOLC_VOICE_CLONE_ENABLED") != "true" {
-		clone.Missing = append(clone.Missing, "VOLC_VOICE_CLONE_ENABLED")
-	}
-	if !speechResourceID.MatchString(cloneResource()) {
-		clone.Issues = append(clone.Issues, "声音复刻资源编号格式无效")
-	}
-	clone.setState(strings.TrimSpace(os.Getenv("VOLC_TTS_API_KEY")) == "")
-	return []aiService{script, tts, avatar, clone}
+	return services
 }
 
+func aiServices() []aiService { return aiServicesFor(context.Background()) }
 func adminAIConfig() object {
 	services := aiServices()
 	script := services[0]
-	return object{"configured": script.State == "configured", "model": script.Model, "baseURL": script.Endpoint, "note": "密钥仅通过服务端环境配置；本页不展示密钥。", "checkedAt": now(), "services": services}
+	return object{"configured": script.State == "configured", "model": script.Model, "baseURL": script.Endpoint, "services": services, "checkedAt": now()}
 }

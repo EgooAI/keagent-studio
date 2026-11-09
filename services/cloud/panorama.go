@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -89,16 +88,25 @@ func providerBody(ctx context.Context, method, endpoint string, headers http.Hea
 	}
 	defer response.Body.Close()
 	if response.StatusCode/100 != 2 {
+		if method == http.MethodPost && response.StatusCode >= 500 {
+			return nil, fail(502, "供应商提交结果未知，请核对后处理")
+		}
 		return nil, fail(502, fmt.Sprintf("供应商 HTTP %d；请检查云端配置，提交结果请先核对", response.StatusCode))
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil || int64(len(data)) > limit {
+		if method == http.MethodPost {
+			return nil, fail(502, "供应商提交结果未知，请核对后处理")
+		}
 		return nil, fail(502, "供应商响应不完整或过大")
 	}
 	return data, nil
 }
 func visualCall(ctx context.Context, action string, payload object) (object, error) {
-	ak, sk := os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY")
+	if aiSnapshotFrom(ctx).locked["avatar"] {
+		return nil, fail(503, "数字人生效配置无法解密")
+	}
+	ak, sk := aiValue(ctx, "VOLC_ACCESS_KEY_ID"), aiValue(ctx, "VOLC_SECRET_ACCESS_KEY")
 	if ak == "" || sk == "" {
 		return nil, fail(503, "云端未配置火山数字人 AK / SK")
 	}
@@ -111,15 +119,17 @@ func visualCall(ctx context.Context, action string, payload object) (object, err
 		return nil, err
 	}
 	var output struct {
-		Code      int    `json:"code"`
-		Data      object `json:"data"`
-		RequestID string `json:"request_id"`
+		Code int    `json:"code"`
+		Data object `json:"data"`
 	}
 	if json.Unmarshal(data, &output) != nil {
-		return nil, fail(502, "数字人返回无效数据，请核对提交结果")
+		if action == "CVSubmitTask" {
+			return nil, fail(502, "数字人提交结果未知，请核对火山控制台")
+		}
+		return nil, fail(502, "数字人查询返回无效数据")
 	}
 	if output.Code != 10000 {
-		return nil, fail(502, fmt.Sprintf("数字人 code=%d，request_id=%s", output.Code, output.RequestID))
+		return nil, fail(502, fmt.Sprintf("数字人请求失败（code=%d）", output.Code))
 	}
 	return output.Data, nil
 }
@@ -179,12 +189,13 @@ func validOpeningWAV(data []byte) bool {
 	}
 	return formatOK && audioOK
 }
-func tosEndpoint() (*url.URL, string, error) {
-	region := os.Getenv("VOLC_TOS_REGION")
+func tosEndpoint(ctx context.Context) (*url.URL, string, error) {
+	return tosLocation(aiValue(ctx, "VOLC_TOS_BUCKET"), aiValue(ctx, "VOLC_TOS_REGION"))
+}
+func tosLocation(bucket, region string) (*url.URL, string, error) {
 	if region == "" {
 		region = "cn-beijing"
 	}
-	bucket := os.Getenv("VOLC_TOS_BUCKET")
 	if !regionID.MatchString(region) || !bucketID.MatchString(bucket) {
 		return nil, "", fail(503, "云端未配置 TOS 私有桶 / 地域")
 	}
@@ -204,9 +215,9 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if err != nil {
 			return nil, err
 		}
-		services := aiServices()
-		_, imageConfigErr := dashscopeBase()
-		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true, "beike": strings.TrimSpace(os.Getenv("BEIKE_ACCESS_TOKEN")) != "", "imageExpansion": strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")) != "" && imageConfigErr == nil}, nil
+		services := aiServicesFor(ctx)
+		_, _, imageConfigErr := expansionConnection(ctx)
+		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "imageExpansion": imageConfigErr == nil}, nil
 	case "template":
 		return s.productionTemplate(ctx, input)
 	case "script-vision":
@@ -246,11 +257,11 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if err != nil || !validOpeningWAV(data) {
 			return nil, fail(422, "开场音频必须为30秒以内的24kHz单声道 WAV")
 		}
-		u, region, err := tosEndpoint()
+		u, region, err := tosEndpoint(ctx)
 		if err != nil {
 			return nil, err
 		}
-		ak, sk := os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY")
+		ak, sk := aiValue(ctx, "VOLC_ACCESS_KEY_ID"), aiValue(ctx, "VOLC_SECRET_ACCESS_KEY")
 		if ak == "" || sk == "" {
 			return nil, fail(503, "云端未配置火山 AK / SK")
 		}
@@ -260,23 +271,45 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if _, err = providerBody(ctx, "PUT", u.String(), headers, data, 1<<20); err != nil {
 			return nil, err
 		}
+		if _, err = s.db.ExecContext(ctx, `INSERT INTO keagent_ai_avatar_audio(owner_id,host,path,version,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour') ON CONFLICT(owner_id,host,path) DO UPDATE SET version=EXCLUDED.version,expires_at=EXCLUDED.expires_at`, a.UserID, u.Host, u.Path, aiSnapshotFrom(ctx).versions["avatar"]); err != nil {
+			return nil, err
+		}
 		return object{"url": tosReadURL(u, ak, sk, region, time.Now())}, nil
 	case "avatar-submit":
 		avatar, ownErr := s.activeAvatar(ctx, a.UserID, str(input["avatarId"]))
 		if ownErr != nil {
 			return nil, ownErr
 		}
-		if os.Getenv("VOLC_ACCESS_KEY_ID") == "" || os.Getenv("VOLC_SECRET_ACCESS_KEY") == "" {
-			return nil, fail(503, "云端未配置火山数字人 AK / SK")
-		}
 		audioURL, err := url.Parse(str(input["audioUrl"]))
-		tos, _, tosErr := tosEndpoint()
 		prefix := "/keagent/" + digestBytes([]byte(a.UserID)) + "/"
-		if err != nil || tosErr != nil || audioURL.Scheme != "https" || audioURL.User != nil || audioURL.Host != tos.Host || !strings.HasPrefix(audioURL.Path, prefix) || !audioObject.MatchString(strings.TrimPrefix(audioURL.Path, prefix)) {
+		if err != nil || audioURL.Scheme != "https" || audioURL.User != nil || !strings.HasPrefix(audioURL.Path, prefix) || !audioObject.MatchString(strings.TrimPrefix(audioURL.Path, prefix)) {
 			return nil, fail(422, "数字人形象或开场音频地址无效")
 		}
+		version := aiSnapshotFrom(ctx).versions["avatar"]
+		err = s.db.QueryRowContext(ctx, `SELECT version FROM keagent_ai_avatar_audio WHERE owner_id=$1 AND host=$2 AND path=$3 AND expires_at>now()`, a.UserID, audioURL.Host, audioURL.Path).Scan(&version)
+		if err == nil {
+			ctx, err = s.pinnedAI(ctx, "avatar", version)
+			if err != nil {
+				return nil, err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		tos, region, tosErr := tosEndpoint(ctx)
+		if tosErr != nil || audioURL.Host != tos.Host {
+			return nil, fail(422, "开场音频地址无效或配置已变更，请重新上传")
+		}
+		ak, sk := aiValue(ctx, "VOLC_ACCESS_KEY_ID"), aiValue(ctx, "VOLC_SECRET_ACCESS_KEY")
+		if ak == "" || sk == "" {
+			return nil, fail(503, "数字人凭证不可用")
+		}
+		bucket, photoRegion := avatarBucket(ctx, avatar)
+		photoURL, photoRegion, photoErr := tosLocation(bucket, photoRegion)
+		if photoErr != nil {
+			return nil, photoErr
+		}
 		cacheKey := digestBytes([]byte("photo-v1|" + avatar.ID + "|" + avatar.Hash + "|" + audioURL.Path))
-		pending, _ := json.Marshal(object{"submitting": true})
+		pending, _ := json.Marshal(object{"submitting": true, "configVersion": version})
 		result, err := s.db.ExecContext(ctx, `INSERT INTO keagent_panorama_avatar(owner_id,cache_key,payload) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, a.UserID, cacheKey, pending)
 		if err != nil {
 			return nil, err
@@ -293,19 +326,17 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 			}
 			return object{"task_id": existing["taskId"]}, nil
 		}
-		_, region, _ := tosEndpoint()
 		audioURL.RawQuery = ""
 		audioURL.Fragment = ""
-		photoURL, _, _ := tosEndpoint()
 		photoURL.Path = avatar.ObjectKey
-		data, err := s.avatarVision(ctx, "CVSubmitTask", object{"req_key": photoAvatarProvider, "image_url": tosReadURL(photoURL, os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY"), region, time.Now()), "audio_url": tosReadURL(audioURL, os.Getenv("VOLC_ACCESS_KEY_ID"), os.Getenv("VOLC_SECRET_ACCESS_KEY"), region, time.Now())})
+		data, err := s.avatarVision(ctx, "CVSubmitTask", object{"req_key": photoAvatarProvider, "image_url": tosReadURL(photoURL, ak, sk, photoRegion, time.Now()), "audio_url": tosReadURL(audioURL, ak, sk, region, time.Now())})
 		if err != nil {
 			return nil, err
 		}
 		if str(data["task_id"]) == "" {
 			return nil, fail(502, "数字人未返回任务 ID，请核对控制台")
 		}
-		saved, _ := json.Marshal(object{"taskId": str(data["task_id"]), "submitting": false, "provider": photoAvatarProvider, "avatarId": avatar.ID})
+		saved, _ := json.Marshal(object{"taskId": str(data["task_id"]), "submitting": false, "provider": photoAvatarProvider, "avatarId": avatar.ID, "configVersion": version})
 		if _, err = s.db.ExecContext(ctx, `UPDATE keagent_panorama_avatar SET payload=$3 WHERE owner_id=$1 AND cache_key=$2`, a.UserID, cacheKey, saved); err != nil {
 			return nil, fail(502, "数字人已提交但检查点保存失败，请核对控制台")
 		}
@@ -331,6 +362,10 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if provider == "" {
 			provider = "realman_avatar_creation_task"
 		} // Historical tasks remain queryable.
+		ctx, err = s.pinnedAI(ctx, "avatar", int64(number(checkpoint["configVersion"])))
+		if err != nil {
+			return nil, err
+		}
 		return s.avatarVision(ctx, "CVGetResult", object{"req_key": provider, "task_id": taskID})
 	}
 	return nil, fail(404, "全景供应商能力不存在")
