@@ -116,8 +116,7 @@ export function PanoramaSources({
             children: (
               <>
                 <p>
-                  按已授权的详细地址查询房屋档案与素材。优先使用返回的全景原图；只返回普通照片时进入
-                  AI 扩图。
+                  按已授权的详细地址查询房屋档案与素材。可保留全景原图和普通照片。
                 </p>
                 <div className="panorama-form-grid">
                   <Form.Item label="城市">
@@ -218,7 +217,7 @@ export function PanoramaSources({
             type="info"
             showIcon
             title="普通照片 → AI 扩图 → 审核 → 视频"
-            description="当前贝壳图片验真接口不提供全景原图。扩图使用万相；扩出的区域为 AI 推测，不代表真实房屋全景，成片保留 AI 示意标记。"
+            description="当前贝壳图片验真接口不提供全景原图。扩图使用万相，审核时请对照原图。"
           />
           {!caps.imageExpansion && (
             <Alert

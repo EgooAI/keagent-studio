@@ -106,5 +106,122 @@
         "subtitleSize": "standard"
       }
     }
+  },
+  {
+    "id": "standard-tour-vision",
+    "name": "标准房源带看",
+    "description": "按图片顺序，完整介绍房源的各个空间。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "2.0.0",
+    "thumbnail": "",
+    "compatibleModes": ["voiceover"],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "voiceover",
+        "rate": 1,
+        "speed": 4,
+        "direction": 1,
+        "maxSweep": 100,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "standard",
+        "brandColor": "#167D8D",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "按素材顺序自然带看整套房源，避免重复，面向有意预约看房的买家。",
+        "opening": "用一两句说明房源和本次带看重点。",
+        "scene": "围绕当前图片实际可见的内容写一两句，可参考其他图理解和衔接；避免逐图重复房源事实。",
+        "closing": "简短收束，邀请有意向的买家预约实地看房。"
+      }
+    }
+  },
+  {
+    "id": "highlights-vision",
+    "name": "卖点先行",
+    "description": "围绕已核实的房源亮点，生成更有重点的介绍。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "2.0.0",
+    "thumbnail": "",
+    "compatibleModes": ["voiceover"],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "voiceover",
+        "rate": 1,
+        "speed": 4,
+        "direction": 1,
+        "maxSweep": 100,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "standard",
+        "brandColor": "#167D8D",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "优先介绍有资料或画面支持的卖点；没有已知卖点时按画面自然讲解。",
+        "opening": "先讲一个有证据的卖点，再介绍房源。",
+        "scene": "围绕当前图片实际可见的内容写一两句，可参考其他图理解和衔接；避免逐图重复房源事实。",
+        "closing": "简短收束，邀请有意向的买家预约实地看房。"
+      }
+    }
+  },
+  {
+    "id": "concise-vision",
+    "name": "简洁介绍",
+    "description": "用更精简的文字，快速展示这套房源。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "2.0.0",
+    "thumbnail": "",
+    "compatibleModes": ["voiceover"],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "voiceover",
+        "rate": 1,
+        "speed": 4,
+        "direction": 1,
+        "maxSweep": 100,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "standard",
+        "brandColor": "#167D8D",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "简洁直接，开场和结尾各一句，每张图只介绍一个可见要点。",
+        "opening": "一句话引入房源。",
+        "scene": "围绕当前图片实际可见的内容写一两句，可参考其他图理解和衔接；避免逐图重复房源事实。",
+        "closing": "简短收束，邀请有意向的买家预约实地看房。"
+      }
+    }
   }
 ]

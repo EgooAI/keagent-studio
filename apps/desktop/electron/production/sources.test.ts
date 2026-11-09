@@ -57,17 +57,24 @@ function fixture() {
   return { workflow, bytes, property };
 }
 describe("production sources", () => {
-  it("prefers validated panorama assets over photographs and isolates cached sources by user", async () => {
+  it("keeps panoramas, photographs and reference images in the owner's cache", async () => {
     const { workflow, property } = fixture();
     workflow.remote.mockResolvedValue({
       property,
       images: [{ url: "https://p.ljcdn.com/photo.jpg", room: "照片" }],
       panoramas: [{ url: "https://p.ljcdn.com/pano.jpg", room: "全景" }],
+      referenceImages: [
+        { url: "https://p.ljcdn.com/plan.jpg", room: "户型图" },
+      ],
     });
     const source = await workflow.handle("a", "beike-import", {});
-    expect(source.materialMode).toBe("panorama");
-    expect(source.scenes[0].kind).toBe("panorama");
-    expect(providers.downloadImage).toHaveBeenCalledTimes(1);
+    expect(source.materialMode).toBe("expand");
+    expect(source.scenes.map((scene: { kind: string }) => scene.kind)).toEqual([
+      "panorama",
+      "photo",
+    ]);
+    expect(source.references).toHaveLength(1);
+    expect(providers.downloadImage).toHaveBeenCalledTimes(3);
     expect(providers.downloadImage.mock.calls[0][0]).toContain("pano.jpg");
     expect(
       (
@@ -75,7 +82,7 @@ describe("production sources", () => {
           propertyId: property.id,
         })
       ).scenes,
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     await expect(
       workflow.handle("b", "source-restore", { propertyId: property.id }),
     ).rejects.toThrow("没有");

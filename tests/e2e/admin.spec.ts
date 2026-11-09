@@ -245,7 +245,8 @@ async function fixture(page: Page) {
               id: "opening",
               text: "一起看看示例小区两居室。建筑面积约80平方米。",
             },
-            { id: "scene", text: "这里是客厅。原图展示客厅的空间布局。" },
+            { id: "preview-1", text: "这里是客厅。原图展示客厅的空间布局。" },
+            { id: "preview-2", text: "这是另一张室内照片。" },
             {
               id: "closing",
               text: "欢迎预约实地看房，具体情况以现场核验为准。",
@@ -469,9 +470,12 @@ test("完整视频模板通过参数表单保存，预览后才允许上架", as
   await dialog
     .getByLabel("适用说明", { exact: true })
     .fill("适合完整介绍一套房源。");
-  await expect(
-    dialog.getByLabel("每张图片对应的空间文案", { exact: true }),
-  ).toHaveValue(defaultProduction.config.sceneTemplate);
+  await expect(dialog.getByLabel("逐图文案规则", { exact: true })).toHaveValue(
+    defaultProduction.scriptRules.scene,
+  );
+  await dialog
+    .getByLabel("整片文案规则", { exact: true })
+    .fill("围绕已核实卖点自然讲解。");
   await dialog.getByLabel("品牌色", { exact: true }).fill("#336699");
   await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
   await expect(dialog).toBeHidden();
@@ -481,11 +485,11 @@ test("完整视频模板通过参数表单保存，预览后才允许上架", as
     version: "1.0.0",
     compatibleModes: ["voiceover"],
     production: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       config: {
         brandColor: "#336699",
-        sceneTemplate: "这里是{room}。{description}",
       },
+      scriptRules: { overall: "围绕已核实卖点自然讲解。" },
     },
   });
   const row = page.locator('tr[data-row-key="new-resource"]');
@@ -498,11 +502,23 @@ test("完整视频模板通过参数表单保存，预览后才允许上架", as
     page.getByRole("dialog", { name: "制作模板预览校验", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText(
-      "这是示例房源的文案和版式示意，不生成收费 AI 图片、配音或视频。真实文案会依据所选房源生成，最终效果以生成视频为准。",
-      { exact: true },
-    ),
+    page.getByText("多模态模型根据示例图片生成文案，供检查图文对应和版式。", {
+      exact: true,
+    }),
   ).toBeVisible();
+  const previewRequest = data.writes.find((write) =>
+    write.path.endsWith("/resources/preview"),
+  );
+  expect(previewRequest?.body.images).toEqual([
+    expect.objectContaining({
+      id: "preview-1",
+      jpeg: expect.stringMatching(/^\/9j\//),
+    }),
+    expect.objectContaining({
+      id: "preview-2",
+      jpeg: expect.stringMatching(/^\/9j\//),
+    }),
+  ]);
   await page.screenshot({
     path: "output/template-verification/admin-preview.png",
     fullPage: true,

@@ -336,7 +336,7 @@ export function PanoramaSettings({
                 </Form.Item>
                 <p className="muted panorama-span">
                   {config.materialMode === "expand"
-                    ? "AI扩图使用小幅横向运镜，不作360°全景投影；成片始终标注AI扩图示意。"
+                    ? "扩图使用小幅横向运镜。"
                     : "配音决定镜头时长。达到最大转角后镜头停留，讲解继续完整播放。"}
                 </p>
               </div>

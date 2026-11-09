@@ -170,6 +170,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/panorama/image-submit" {
 		limit = 15 << 20
 	}
+	if r.URL.Path == "/v1/panorama/script-vision" {
+		limit = 16 << 20
+	}
+	if r.URL.Path == "/v1/admin/resources/preview" {
+		limit = 2 << 20
+	}
 	if r.URL.Path == "/v1/voices/create" {
 		limit = 14 << 20
 	}
@@ -859,13 +865,17 @@ func generate(ctx context.Context, p object) (string, error) {
 	return generateWithInstruction(ctx, p, "你是房产视频文案助手。仅依据给定房源资料写中文口播文案，不编造价格、配套或承诺。")
 }
 func generateWithInstruction(ctx context.Context, p object, instruction string) (string, error) {
+	property, _ := json.Marshal(p)
+	return generateWithContent(ctx, string(property), instruction)
+}
+func generateWithContent(ctx context.Context, content any, instruction string) (string, error) {
 	service := aiServices()[0]
 	if service.State != "configured" {
 		return "", errors.New("云端 AI 服务未配置，请联系管理员")
 	}
 	client, transport := providerClient()
 	defer transport.CloseIdleConnections()
-	return completionWithInstruction(ctx, client, service.Endpoint+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), p, instruction)
+	return completionWithContent(ctx, client, service.Endpoint+"/chat/completions", os.Getenv("AI_MODEL"), os.Getenv("AI_API_KEY"), content, instruction)
 }
 func providerClient() (*http.Client, *http.Transport) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -895,7 +905,10 @@ func completion(ctx context.Context, client *http.Client, endpoint, model, key s
 }
 func completionWithInstruction(ctx context.Context, client *http.Client, endpoint, model, key string, p object, instruction string) (string, error) {
 	property, _ := json.Marshal(p)
-	payload, _ := json.Marshal(object{"model": model, "messages": []any{object{"role": "system", "content": instruction}, object{"role": "user", "content": string(property)}}})
+	return completionWithContent(ctx, client, endpoint, model, key, string(property), instruction)
+}
+func completionWithContent(ctx context.Context, client *http.Client, endpoint, model, key string, content any, instruction string) (string, error) {
+	payload, _ := json.Marshal(object{"model": model, "messages": []any{object{"role": "system", "content": instruction}, object{"role": "user", "content": content}}})
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", errors.New("AI 请求配置无效")

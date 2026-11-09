@@ -5,7 +5,7 @@ const { ensure, hash, sentences, motion, audioKey } = require("./domain.cjs");
 const presentation = require("../production/presentation.cjs");
 const ffmpeg = () => process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobe = () => process.env.FFPROBE_PATH || "ffprobe";
-function run(command, args, cwd, signal, onTime) {
+function run(command, args, cwd, signal, onTime, encoding = "utf8") {
   return new Promise((resolve, reject) => {
     const child = execFile(
       command,
@@ -13,6 +13,7 @@ function run(command, args, cwd, signal, onTime) {
       {
         cwd,
         signal,
+        encoding,
         windowsHide: true,
         timeout: 30 * 60 * 1000,
         maxBuffer: 2 * 1024 * 1024,
@@ -47,6 +48,37 @@ function run(command, args, cwd, signal, onTime) {
       });
     }
   });
+}
+async function scriptImage(file, cwd, signal) {
+  const jpeg = await run(
+    ffmpeg(),
+    [
+      "-v",
+      "error",
+      "-i",
+      file,
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=1280:1280:force_original_aspect_ratio=decrease",
+      "-c:v",
+      "mjpeg",
+      "-q:v",
+      "8",
+      "-f",
+      "image2pipe",
+      "pipe:1",
+    ],
+    cwd,
+    signal,
+    undefined,
+    "buffer",
+  );
+  ensure(
+    jpeg.length > 0 && jpeg.length <= 512 * 1024,
+    "房源原图无法压缩到文案服务允许的大小",
+  );
+  return jpeg.toString("base64");
 }
 async function probe(file, cwd, signal) {
   return JSON.parse(
@@ -306,9 +338,9 @@ async function render(
     // Wrap the start angle for FFmpeg while preserving continuous turns across segments.
     const start = ((((camera.start + 180) % 360) + 360) % 360) - 180;
     const avatar = segment.kind === "opening" && c.videoMode === "avatar";
-    const label = `${scene.room}${expanded ? " · AI扩图示意，非实拍全景" : ""}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
+    const label = `${scene.room}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
     const key = hash([
-      expanded ? "render-v5-expanded" : "render-v3-panorama",
+      expanded ? "render-v6-expanded" : "render-v4-panorama",
       scene.kind || "panorama",
       scene.asset,
       segment,
@@ -368,7 +400,7 @@ async function render(
           avatar ? avatarFile : path.join(ownerDir, "assets", scene.asset),
           "-vf",
           base +
-            (c.subtitles || expanded || c.design === "standard"
+            (c.subtitles || job.sample || c.design === "standard"
               ? `,ass=${ass}`
               : ""),
           "-an",
@@ -484,7 +516,7 @@ async function render(
       job.scenes[0];
     const expanded = scene.kind === "expanded";
     const caption = "cover.ass";
-    const label = `${expanded ? "AI扩图示意，非实拍全景" : ""}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
+    const label = job.sample ? "独立测试场景，非在售房源" : "";
     await fs.writeFile(
       path.join(jobDir, caption),
       presentation.decorate(
@@ -545,6 +577,7 @@ async function render(
 }
 module.exports = {
   run,
+  scriptImage,
   probe,
   duration,
   capabilities,

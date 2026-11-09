@@ -209,6 +209,12 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true, "beike": strings.TrimSpace(os.Getenv("BEIKE_ACCESS_TOKEN")) != "", "imageExpansion": strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")) != "" && imageConfigErr == nil}, nil
 	case "template":
 		return s.productionTemplate(ctx, input)
+	case "script-vision":
+		template, err := s.productionTemplate(ctx, object{"id": input["templateId"], "version": input["templateVersion"]})
+		if err != nil {
+			return nil, err
+		}
+		return generateVisionScript(ctx, template, obj(input["property"]), rows(input["images"]))
 	case "script":
 		expected := rows(input["segments"])
 		language := str(input["language"])

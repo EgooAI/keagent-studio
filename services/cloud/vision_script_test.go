@@ -1,0 +1,89 @@
+package main
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"image"
+	"image/jpeg"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestVisionScriptProviderPayload(t *testing.T) {
+	var catalog []object
+	if err := json.Unmarshal(videoTemplateSeeds, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	template := catalog[len(catalog)-1]
+	if err := validateProduction(template); err != nil {
+		t.Fatal(err)
+	}
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 16, 16)), nil); err != nil {
+		t.Fatal(err)
+	}
+	imageData := base64.StdEncoding.EncodeToString(jpg.Bytes())
+	images := []any{
+		object{"id": "room-photo", "kind": "photo", "jpeg": imageData},
+		object{"id": "floor-plan", "kind": "reference", "jpeg": imageData},
+		object{"id": "room-pano", "kind": "panorama", "jpeg": imageData},
+	}
+	parts, ids, err := visionContent(template, object{"title": "测试房源", "areaSqm": 80}, images)
+	if err != nil || !slices.Equal(ids, []string{"opening", "room-photo", "room-pano", "closing"}) {
+		t.Fatalf("invalid segment plan: %v, %v", ids, err)
+	}
+	response := `[{"id":"opening","text":"开场"},{"id":"room-photo","text":"普通图"},{"id":"room-pano","text":"全景图"},{"id":"closing","text":"结尾"}]`
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Messages []struct{ Content json.RawMessage }
+		}
+		var content []object
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload.Messages) != 2 {
+			t.Error("missing provider messages")
+			return
+		}
+		if err := json.Unmarshal(payload.Messages[1].Content, &content); err != nil || len(content) != 7 {
+			t.Error("provider did not receive three visual inputs")
+			return
+		}
+		if text := str(content[0]["text"]); !strings.Contains(text, "测试房源") || !strings.Contains(text, "overall") {
+			t.Error("missing property facts or template rules")
+		}
+		for i := range images {
+			if !strings.Contains(str(content[1+i*2]["text"]), str(obj(images[i])["id"])) ||
+				str(obj(content[2+i*2]["image_url"])["url"]) != "data:image/jpeg;base64,"+imageData {
+				t.Error("image ID or original image bytes missing")
+			}
+		}
+		_ = json.NewEncoder(w).Encode(object{"choices": []object{{"message": object{"content": response}}}})
+	}))
+	defer provider.Close()
+	value, err := completionWithContent(t.Context(), provider.Client(), provider.URL, "vision-model", "test-key", parts, visionInstruction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateVisionSegments(value, ids); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{
+		strings.Replace(value, "room-photo", "floor-plan", 1),
+		strings.Replace(value, "room-pano", "room-photo", 1),
+		`[{"id":"opening","text":"开场"},{"id":"closing","text":"结尾"}]`,
+	} {
+		if _, err := validateVisionSegments(bad, ids); err == nil {
+			t.Fatal("accepted incomplete or misaligned image script")
+		}
+	}
+	obj(images[0])["jpeg"] = "not-an-image"
+	if _, _, err := visionContent(template, object{"title": "测试房源"}, images); err == nil {
+		t.Fatal("accepted invalid image data")
+	}
+	delete(obj(obj(template["production"])["scriptRules"]), "overall")
+	if err := validateProduction(template); err == nil {
+		t.Fatal("accepted a v2 template without overall instructions")
+	}
+}

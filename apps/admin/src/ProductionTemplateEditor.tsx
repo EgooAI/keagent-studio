@@ -13,13 +13,19 @@ import type {
   ProductionTemplatePreview,
 } from "@keagent/shared-types";
 
-export const defaultProduction: ProductionTemplateRecipe = {
-  schemaVersion: 1,
+export const defaultProduction: Extract<
+  ProductionTemplateRecipe,
+  { schemaVersion: 2 }
+> = {
+  schemaVersion: 2,
+  scriptRules: {
+    overall: "面向潜在买家，语气自然，按素材顺序讲完整套房源，避免重复。",
+    opening: "用一两句交代本次带看的重点，仅引用已核实的房源事实。",
+    scene: "围绕当前照片可见的内容写一两句，用其他图片辅助理解和衔接。",
+    closing: "简短收束，邀请有意向的买家预约实地看房。",
+  },
   config: {
     language: "zh-CN",
-    openingTemplate: "一起看看{title}。{facts}",
-    sceneTemplate: "这里是{room}。{description}",
-    closingTemplate: "欢迎预约实地看房，具体情况以现场核验为准。",
     videoMode: "voiceover",
     rate: 1,
     speed: 4,
@@ -39,13 +45,14 @@ const choices = (values: [string | number, string][]) =>
   values.map(([value, label]) => ({ value, label }));
 
 export function ProductionTemplateEditor() {
+  const legacy = Form.useWatch(["production", "schemaVersion"]) === 1;
   return (
     <>
       <Alert
         type="info"
         showIcon
         title="一套模板包含整条视频的制作规则"
-        description="固定为开场 → 按原图顺序逐空间介绍 → 结尾。优先使用原全景图；仅有普通图时先扩图。封面取第一张素材和房源标题。"
+        description="模型参考整套房源资料和图片，按原图顺序撰写开场、逐图讲解和结尾。全景图和普通照片可在同一成片中使用。"
       />
       <Form.Item name={["production", "schemaVersion"]} hidden>
         <InputNumber />
@@ -77,21 +84,29 @@ export function ProductionTemplateEditor() {
           />
         </Form.Item>
       </div>
-      <p className="admin-secondary">
-        支持变量：房源标题 {"{title}"}、已核实参数 {"{facts}"}、房源卖点{" "}
-        {"{sellingPoints}"}。空间文案另支持 {"{room}"} 和 {"{description}"}
-        ，必须包含 {"{room}"}。不要写入具体房源事实或未经核实的承诺。
-      </p>
-      {(
-        [
-          ["openingTemplate", "开场文案"],
-          ["sceneTemplate", "每张图片对应的空间文案"],
-          ["closingTemplate", "结尾文案"],
-        ] as const
+      {legacy && (
+        <p className="admin-secondary">
+          支持变量：房源标题 {"{title}"}、已核实参数 {"{facts}"}、房源卖点{" "}
+          {"{sellingPoints}"}。空间文案另支持 {"{room}"} 和 {"{description}"}
+          ，必须包含 {"{room}"}。不要写入具体房源事实或未经核实的承诺。
+        </p>
+      )}
+      {(legacy
+        ? [
+            ["openingTemplate", "开场文案"],
+            ["sceneTemplate", "每张图片对应的空间文案"],
+            ["closingTemplate", "结尾文案"],
+          ]
+        : [
+            ["overall", "整片文案规则"],
+            ["opening", "开场文案规则"],
+            ["scene", "逐图文案规则"],
+            ["closing", "结尾文案规则"],
+          ]
       ).map(([key, label]) => (
         <Form.Item
           key={key}
-          name={field(key)}
+          name={legacy ? field(key) : ["production", "scriptRules", key]}
           label={label}
           rules={[{ required: true, whitespace: true, max: 1500 }]}
         >
@@ -218,7 +233,11 @@ export function ProductionPreview({
         showIcon
         type="success"
         title="规则校验通过，可以上架此版本"
-        description="这是示例房源的文案和版式示意，不生成收费 AI 图片、配音或视频。真实文案会依据所选房源生成，最终效果以生成视频为准。"
+        description={
+          value.template.production.schemaVersion === 2
+            ? "多模态模型根据示例图片生成文案，供检查图文对应和版式。"
+            : "这是示例房源的文案和版式示意，不生成收费 AI 图片、配音或视频。真实文案会依据所选房源生成，最终效果以生成视频为准。"
+        }
       />
       <h2>
         {value.template.name} · {value.template.version}
@@ -313,13 +332,26 @@ export function ProductionPreview({
             borderRadius: 8,
           }}
         >
-          <Tag>{["开场", "图片 1 · 客厅", "结尾"][index]}</Tag>
+          <Tag>
+            {segment.id === "opening"
+              ? "开场"
+              : segment.id === "closing"
+                ? "结尾"
+                : `图片 ${index}`}
+          </Tag>
+          {segment.id.startsWith("preview-") && (
+            <img
+              src={`/media/interior-${index}.jpg`}
+              alt={`示例图片 ${index}`}
+              width={180}
+              style={{ display: "block", marginTop: 8 }}
+            />
+          )}
           <p style={{ whiteSpace: "pre-wrap" }}>{segment.text}</p>
         </div>
       ))}
       <p className="admin-secondary">
-        多张图片时，中间的空间文案按原素材顺序逐张生成。AI
-        文案服务可按上述句式改写；用户确认整条文案后才开始制作。声音使用用户可用的配音，模板不绑定个人声音或形象。
+        按原图顺序逐张生成文案，用户确认整条文案后才开始制作。配音和形象使用用户自己的设置。
       </p>
     </>
   );
@@ -335,20 +367,16 @@ export function ProductionTemplateRules() {
       <h3>2. 结构与素材处理固定</h3>
       <p>
         开场 → 每张图片一个空间 →
-        结尾，保持房源素材顺序。原全景图优先；没有全景图时普通图先进行 AI
-        扩图，并在结果保留 AI
-        标识。封面默认第一张图与房源标题。模板不能改变此流程。
+        结尾，保持房源素材顺序。全景图旋转运镜，普通照片在文案确认后扩图并平移运镜。封面默认第一张图与房源标题。
       </p>
       <h3>3. 只填写可复用规则</h3>
       <p>
-        使用字段旁说明中的变量，空间句式必须包含 {"{room}"}
-        。开场和结尾不能使用空间专属变量。每段最多 1500 字，版本使用 1.0.0
-        格式。禁止把特定房源价格、面积、学区、收益承诺写成固定文案；禁止放入密钥、素材链接、个人声音或形象
-        ID。
+        写清整片受众与风格、开场重点、逐图要求和结尾方式。每条规则最多 1500
+        字。具体房源事实来自房源资料，模板只规定写法。
       </p>
       <h3>4. 保存、预览、上架</h3>
       <p>
-        先保存草稿，再在列表点击“预览校验”。服务会检查变量、参数范围和规则完整性。检查示例文案与版式后上架。修改任何制作内容后，需要重新预览。
+        保存草稿后，点击“预览校验”让模型根据示例图片写稿。检查图文对应与版式后上架。修改制作内容后需要重新预览。
       </p>
       <h3>5. 发布后的版本保持不变</h3>
       <p>

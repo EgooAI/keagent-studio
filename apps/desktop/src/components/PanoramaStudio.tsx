@@ -176,7 +176,7 @@ export function PanoramaStudio() {
       )?.id ||
       avatars.data?.avatars.find((a) => a.status === "ready")?.id ||
       "";
-    value.scriptProvider = caps.data.ai ? "ai" : "template";
+    value.scriptProvider = "ai";
     if (property?.sample && property.id === "panorama-cc0-sample") {
       value.ttsProvider = "system";
       value.voice =
@@ -580,11 +580,6 @@ export function PanoramaStudio() {
                     </span>
                   }
                 />
-              )}
-              {draft.config.materialMode === "expand" && (
-                <p className="factory-ai-note">
-                  普通照片会自动扩图处理，生成视频保留 AI 示意标记。
-                </p>
               )}
               <div className="factory-confirm">
                 <p>确认后自动完成图片处理、配音和视频合成。</p>

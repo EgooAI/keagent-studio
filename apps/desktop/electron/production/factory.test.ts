@@ -61,6 +61,9 @@ async function fixture() {
     voices: [{ name: "test", language: "zh-CN" }],
   });
   vi.spyOn(providers, "downloadImage").mockResolvedValue(bytes(8));
+  vi.spyOn(media, "scriptImage").mockImplementation(async (file: unknown) =>
+    fs.readFileSync(String(file)).toString("base64"),
+  );
   const synthesize = vi
     .spyOn(media, "synthesize")
     .mockImplementation(async (...args: unknown[]) => ({
@@ -80,11 +83,14 @@ async function fixture() {
           throw new Error("模板已下架或版本变化");
         return structuredClone(template);
       }
-      if (method === "script")
-        return (input.segments as { id: string; text: string }[]).map((s) => ({
-          id: s.id,
-          text: `生成的${s.id}介绍`,
-        }));
+      if (method === "script-vision")
+        return [
+          "opening",
+          ...(input.images as { id: string; kind: string }[])
+            .filter((image) => image.kind !== "reference")
+            .map((image) => image.id),
+          "closing",
+        ].map((id) => ({ id, text: `生成的${id}介绍` }));
       if (method === "image-submit") return { status: "PENDING" };
       if (method === "image-query")
         return {
@@ -182,7 +188,7 @@ describe("simple video factory", () => {
     ).toEqual(draft.scenes.map((s: { id: string }) => s.id));
     expect(workflow.remote.mock.calls.map((c: unknown[]) => c[0])).toEqual([
       "template",
-      "script",
+      "script-vision",
     ]);
     expect(synthesize).not.toHaveBeenCalled();
     expect(render).not.toHaveBeenCalled();
@@ -227,8 +233,9 @@ describe("simple video factory", () => {
       ),
     ).toHaveLength(count);
   });
-  it("prioritizes existing panoramas and avoids expansion after confirmation", async () => {
-    const { workflow, owner, property, config, bytes } = await fixture();
+  it("sends every original and reference, then expands only the ordinary photos after approval", async () => {
+    const { workflow, owner, property, config, bytes, scenes } =
+      await fixture();
     const pano = await workflow.importBytes(
       owner,
       bytes(9),
@@ -236,14 +243,54 @@ describe("simple video factory", () => {
       "panorama",
     );
     workflow.store(owner).imports[property.id].scenes.push(pano);
+    const planFile = path.join(workflow.root, "户型图.jpg");
+    fs.writeFileSync(planFile, bytes(10));
+    workflow.dialogs.open = async () => [planFile];
+    await workflow.handle(
+      "a",
+      "property-import",
+      { kind: "reference" },
+      property,
+    );
+    const [plan] = workflow.store(owner).imports[property.id].references;
     const draft = await workflow.handle(
       "a",
       "prepare",
-      { propertyId: property.id, config },
+      {
+        propertyId: property.id,
+        config: {
+          ...config,
+          templateId: "standard-tour-vision",
+          scriptProvider: "template",
+        },
+        templateVersion: "2.0.0",
+      },
       property,
     );
-    expect(draft.config.materialMode).toBe("panorama");
-    expect(draft.scenes).toHaveLength(1);
+    expect(draft.config.materialMode).toBe("expand");
+    expect(draft.templateSnapshot.production.schemaVersion).toBe(2);
+    const ids = [
+      ...scenes.map((scene) => scene.id).filter((id) => id !== pano.id),
+      pano.id,
+    ];
+    expect(draft.scenes.map((scene: { id: string }) => scene.id)).toEqual(ids);
+    expect(draft.segments.map((segment: { id: string }) => segment.id)).toEqual(
+      ["opening", ...ids, "closing"],
+    );
+    expect(workflow.remote.mock.calls[1]).toEqual([
+      "script-vision",
+      expect.objectContaining({
+        property: expect.objectContaining({ title: property.title }),
+        images: [...ids, plan.id].map((id, index) =>
+          expect.objectContaining({
+            id,
+            kind: ["photo", "photo", "panorama", "reference"][index],
+            jpeg: bytes([1, 2, 9, 10][index]).toString("base64"),
+          }),
+        ),
+      }),
+      expect.any(AbortSignal),
+    ]);
     const job = await workflow.handle("a", "start", {
       id: draft.id,
       revision: 1,
@@ -251,10 +298,17 @@ describe("simple video factory", () => {
     });
     await workflow.active.get(job.id)?.promise;
     expect(job.status).toBe("succeeded");
-    expect(workflow.remote.mock.calls.map((c: unknown[]) => c[0])).toEqual([
-      "template",
-      "script",
-    ]);
+    expect(
+      job.scenes.map((scene: { id: string; kind: string }) => [
+        scene.id,
+        scene.kind,
+      ]),
+    ).toEqual(ids.map((id, i) => [id, i === 2 ? "panorama" : "expanded"]));
+    expect(
+      workflow.remote.mock.calls.filter(
+        (c: unknown[]) => c[0] === "image-submit",
+      ),
+    ).toHaveLength(2);
   });
   it("does not repeat uncertain paid image submissions on video retry", async () => {
     const { workflow, property, config, synthesize } = await fixture();

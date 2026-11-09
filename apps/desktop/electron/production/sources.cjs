@@ -26,6 +26,10 @@ async function handle(
     domain.ensure(saved, "没有这套房源的本机素材记录");
     return {
       ...saved,
+      references: (saved.references || []).map((scene) => ({
+        ...scene,
+        url: workflow.url(owner, `assets/${scene.asset}`),
+      })),
       scenes: saved.scenes.map((scene) => {
         const result = state.imageTasks.find(
           (t) => t.sceneId === scene.id,
@@ -46,23 +50,30 @@ async function handle(
       const result = await workflow.remote("beike-import", input, signal);
       assertCurrent();
       const scenes = [];
-      const usePanoramas =
-        Array.isArray(result.panoramas) && result.panoramas.length > 0;
-      const images = usePanoramas ? result.panoramas : result.images;
+      const images = [
+        ...(result.panoramas || []).map((image) => ({
+          ...image,
+          kind: "panorama",
+        })),
+        ...(result.images || []).map((image) => ({ ...image, kind: "photo" })),
+      ];
+      const referenceImages = result.referenceImages || [];
+      const references = [];
       domain.ensure(
-        Array.isArray(images) && images.length >= 1 && images.length <= 20,
-        "房源没有可用图片",
+        images.length >= 1 && images.length + referenceImages.length <= 20,
+        "房源需有出镜图片，最多支持20张图片（含参考图）",
       );
-      for (const image of images) {
+      for (const image of [...images, ...referenceImages]) {
         const bytes = await providers.downloadImage(image.url, "beike", signal);
         signal.throwIfAborted();
         assertCurrent();
-        scenes.push({
+        const reference = !image.kind;
+        (reference ? references : scenes).push({
           ...(await workflow.importBytes(
             owner,
             bytes,
             image.room,
-            usePanoramas ? "panorama" : "photo",
+            image.kind || "reference",
           )),
           description: image.description || "",
         });
@@ -72,10 +83,13 @@ async function handle(
         result.property,
         ...state.properties.filter((p) => p.id !== result.property.id),
       ];
-      const materialMode = usePanoramas ? "panorama" : "expand";
+      const materialMode = scenes.some((scene) => scene.kind === "photo")
+        ? "expand"
+        : "panorama";
       const saved = {
         property: result.property,
         scenes,
+        references,
         materialMode,
         panoramaAvailability: result.panoramaAvailability,
       };

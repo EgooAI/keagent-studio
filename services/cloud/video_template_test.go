@@ -105,7 +105,7 @@ func TestProductionTemplateLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := s.productionTemplates(t.Context())
-	if err != nil || len(list) != 3 {
+	if err != nil || len(list) != 6 || number(obj(obj(list[0])["production"])["schemaVersion"]) != 2 {
 		t.Fatalf("seed catalog: %v %v", list, err)
 	}
 	resource := seedTemplate(t)
@@ -121,7 +121,8 @@ func TestProductionTemplateLifecycle(t *testing.T) {
 		t.Fatal("published without preview")
 	}
 	value, err := write("resources/preview", object{"id": resource["id"]})
-	if err != nil || len(rows(obj(value)["segments"])) != 3 {
+	segments, _ := obj(value)["segments"].([]object)
+	if err != nil || len(segments) != 3 {
 		t.Fatalf("preview: %v %v", value, err)
 	}
 	// An edit after preview invalidates its proof.
@@ -166,7 +167,7 @@ func TestProductionTemplateLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err = s.productionTemplates(t.Context())
-	if err != nil || len(list) != 3 {
+	if err != nil || len(list) != 6 {
 		t.Fatalf("legacy or unlisted templates leaked: %v %v", list, err)
 	}
 	// Repeating the seed must also preserve an administrator's unlisting of a seed.
@@ -177,7 +178,7 @@ func TestProductionTemplateLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err = s.productionTemplates(t.Context())
-	if err != nil || len(list) != 2 {
+	if err != nil || len(list) != 5 {
 		t.Fatal("restart republished a seed", err)
 	}
 	// Duplicate visible identity/version is rejected, including copies of unlisted versions.

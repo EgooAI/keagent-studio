@@ -477,12 +477,15 @@ export function PropertyDetailPage() {
     enabled: !!window.desktop && !!propertyId,
     retry: false,
     queryFn: () =>
-      productionRequest<{ scenes: PanoramaScene[] }>("source-restore", {
+      productionRequest<{
+        scenes: PanoramaScene[];
+        references?: Pick<PanoramaScene, "id" | "url" | "room">[];
+      }>("source-restore", {
         propertyId,
       }),
   });
   const property = data?.properties.find((p) => p.id === propertyId);
-  const addMaterial = async (kind: "photo" | "panorama") => {
+  const addMaterial = async (kind: "photo" | "panorama" | "reference") => {
     setImporting(true);
     try {
       const value = await productionRequest<{ count: number }>(
@@ -490,10 +493,7 @@ export function PropertyDetailPage() {
         { propertyId, kind },
       );
       await material.refetch();
-      if (value.count)
-        void message.success(
-          `已保存${value.count}张制作图片，可前往AI视频工厂制作`,
-        );
+      if (value.count) void message.success(`已保存${value.count}张房源图片`);
     } catch (error) {
       void message.error(
         error instanceof Error ? error.message : "导入素材失败",
@@ -606,16 +606,31 @@ export function PropertyDetailPage() {
               张制作图片
             </p>
             <div className="asset-grid">
-              {(material.data?.scenes.map((s) => s.url) || property.images).map(
-                (image, i) => (
-                  <img
-                    key={`${image}-${i}`}
-                    src={image}
-                    alt={`房源图片 ${i + 1}`}
-                  />
-                ),
-              )}
+              {(material.data?.scenes.length
+                ? material.data.scenes.map((s) => s.url)
+                : property.images
+              ).map((image, i) => (
+                <img
+                  key={`${image}-${i}`}
+                  src={image}
+                  alt={`房源图片 ${i + 1}`}
+                />
+              ))}
             </div>
+            {!!material.data?.references?.length && (
+              <>
+                <p className="muted">仅供文案参考的图片</p>
+                <div className="asset-grid">
+                  {material.data.references.map((reference) => (
+                    <img
+                      key={reference.id}
+                      src={reference.url}
+                      alt={reference.room}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
             {property.sample ? (
               <p className="muted">内置素材已就绪，可直接创建视频任务。</p>
             ) : window.desktop ? (
@@ -632,6 +647,12 @@ export function PropertyDetailPage() {
                   onClick={() => void addMaterial("panorama")}
                 >
                   添加已有全景图
+                </Button>
+                <Button
+                  loading={importing}
+                  onClick={() => void addMaterial("reference")}
+                >
+                  添加参考图
                 </Button>
                 <Button
                   type="primary"

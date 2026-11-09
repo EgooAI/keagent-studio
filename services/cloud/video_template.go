@@ -15,25 +15,31 @@ import (
 //go:embed video_templates.json
 var videoTemplateSeeds []byte
 
-var recipeKeys = []string{"language", "openingTemplate", "sceneTemplate", "closingTemplate", "videoMode", "rate", "speed", "direction", "maxSweep", "aspectRatio", "resolution", "subtitles", "design", "brandColor", "subtitleSize"}
+var recipeKeys = []string{"language", "videoMode", "rate", "speed", "direction", "maxSweep", "aspectRatio", "resolution", "subtitles", "design", "brandColor", "subtitleSize"}
+var legacyScriptKeys = []string{"openingTemplate", "sceneTemplate", "closingTemplate"}
 var templateVariable = regexp.MustCompile(`\{([^{}]*)\}`)
 var templateColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 var templateVersion = regexp.MustCompile(`^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,4}$`)
 
 func validateProduction(resource object) error {
 	recipe := obj(resource["production"])
-	if recipe == nil || resource["type"] != "video" || len(recipe) != 2 || number(recipe["schemaVersion"]) != 1 {
-		return fail(422, "视频制作模板需要 schemaVersion=1 的完整制作规则")
+	schema := number(recipe["schemaVersion"])
+	if recipe == nil || resource["type"] != "video" || (schema != 1 && schema != 2) || len(recipe) != int(schema)+1 {
+		return fail(422, "视频制作模板缺少完整制作规则")
 	}
 	if !templateVersion.MatchString(str(resource["version"])) {
 		return fail(422, "制作模板版本号请使用 1.0.0 格式")
 	}
 	c := obj(recipe["config"])
-	if len(c) != len(recipeKeys) {
+	keys := recipeKeys
+	if schema == 1 {
+		keys = append(slices.Clone(keys), legacyScriptKeys...)
+	}
+	if len(c) != len(keys) {
 		return fail(422, "制作规则字段不完整或包含不支持的字段")
 	}
 	for key := range c {
-		if !slices.Contains(recipeKeys, key) {
+		if !slices.Contains(keys, key) {
 			return fail(422, "制作规则不支持字段："+key)
 		}
 	}
@@ -58,9 +64,21 @@ func validateProduction(resource object) error {
 	if !slices.ContainsFunc(rows(resource["compatibleModes"]), func(v any) bool { return v == c["videoMode"] }) {
 		return fail(422, "适用模式必须包含模板使用的视频模式")
 	}
-	for _, key := range []string{"openingTemplate", "sceneTemplate", "closingTemplate"} {
+	if schema == 2 {
+		rules := obj(recipe["scriptRules"])
+		if len(rules) != 4 {
+			return fail(422, "请填写整片、开场、逐图和结尾文案规则")
+		}
+		for _, key := range []string{"overall", "opening", "scene", "closing"} {
+			if !validScriptRule(str(rules[key])) {
+				return fail(422, "文案规则需为 1–1500 字纯文本")
+			}
+		}
+		return nil
+	}
+	for _, key := range legacyScriptKeys {
 		text := str(c[key])
-		if strings.TrimSpace(text) == "" || len([]rune(text)) > 1500 || strings.ContainsAny(text, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f") {
+		if !validScriptRule(text) {
 			return fail(422, "开场、空间和结尾文案需为 1–1500 字纯文本")
 		}
 		allowed := []string{"title", "facts", "sellingPoints"}
@@ -80,6 +98,10 @@ func validateProduction(resource object) error {
 		return fail(422, "空间文案必须包含 {room}，以保持图片与文案对应")
 	}
 	return nil
+}
+
+func validScriptRule(text string) bool {
+	return strings.TrimSpace(text) != "" && len([]rune(text)) <= 1500 && !strings.ContainsAny(text, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f")
 }
 
 func productionDigest(resource object) string {
@@ -115,7 +137,7 @@ func (s *server) productionTemplates(ctx context.Context) ([]any, error) {
 	if s.db == nil {
 		return result, nil
 	} // Provider-only unit fixtures have no catalog.
-	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE payload->>'published'='true' AND payload->'production'->>'schemaVersion'='1' ORDER BY payload->>'name',id`)
+	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE payload->>'published'='true' AND payload->'production'->>'schemaVersion' IN ('1','2') ORDER BY payload->'production'->>'schemaVersion' DESC,payload->>'name',id`)
 	if err != nil {
 		return nil, err
 	}
@@ -160,13 +182,8 @@ func (s *server) productionTemplate(ctx context.Context, input object) (object, 
 }
 
 func (s *server) previewProduction(ctx context.Context, a actor, input object) (any, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 	var b []byte
-	err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 FOR UPDATE`, str(input["id"])).Scan(&b)
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1`, str(input["id"])).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fail(404, "模板不存在，请先保存草稿")
 	}
@@ -180,16 +197,46 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object) (
 	if err = validateProduction(resource); err != nil {
 		return nil, err
 	}
-	c := obj(obj(resource["production"])["config"])
-	values := strings.NewReplacer("{title}", "示例小区两居室", "{facts}", "建筑面积约80平方米，2室1厅。", "{sellingPoints}", "已核实的空间布局", "{room}", "客厅", "{description}", "原图展示客厅的空间布局。")
-	if c["language"] == "en-US" {
-		values = strings.NewReplacer("{title}", "Sample two-bedroom home", "{facts}", "Approximately 80 square meters, two bedrooms.", "{sellingPoints}", "Verified room layout", "{room}", "Living room", "{description}", "The original photo shows the living room layout.")
+	recipe := obj(resource["production"])
+	c := obj(recipe["config"])
+	digest := productionDigest(resource)
+	var segments []object
+	if number(recipe["schemaVersion"]) == 2 {
+		images := rows(input["images"])
+		if len(images) != 2 || obj(images[0])["id"] != "preview-1" || obj(images[1])["id"] != "preview-2" ||
+			obj(images[0])["kind"] != "photo" || obj(images[1])["kind"] != "photo" {
+			return nil, fail(422, "新版模板预览需要两张示例图片")
+		}
+		segments, err = generateVisionScript(ctx, resource, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		values := strings.NewReplacer("{title}", "示例小区两居室", "{facts}", "建筑面积约80平方米，2室1厅。", "{sellingPoints}", "已核实的空间布局", "{room}", "客厅", "{description}", "原图展示客厅的空间布局。")
+		if c["language"] == "en-US" {
+			values = strings.NewReplacer("{title}", "Sample two-bedroom home", "{facts}", "Approximately 80 square meters, two bedrooms.", "{sellingPoints}", "Verified room layout", "{room}", "Living room", "{description}", "The original photo shows the living room layout.")
+		}
+		for _, item := range []struct{ id, key string }{{"opening", "openingTemplate"}, {"scene", "sceneTemplate"}, {"closing", "closingTemplate"}} {
+			segments = append(segments, object{"id": item.id, "text": values.Replace(str(c[item.key]))})
+		}
 	}
-	segments := []any{}
-	for _, item := range []struct{ id, key string }{{"opening", "openingTemplate"}, {"scene", "sceneTemplate"}, {"closing", "closingTemplate"}} {
-		segments = append(segments, object{"id": item.id, "text": values.Replace(str(c[item.key]))})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
 	}
-	resource["previewDigest"] = productionDigest(resource)
+	defer tx.Rollback()
+	if err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 FOR UPDATE`, str(input["id"])).Scan(&b); err != nil {
+		return nil, err
+	}
+	var current object
+	if err = json.Unmarshal(b, &current); err != nil {
+		return nil, err
+	}
+	if productionDigest(current) != digest {
+		return nil, fail(409, "预览期间模板已修改，请重新预览")
+	}
+	current["previewDigest"] = digest
+	resource = current
 	b, _ = json.Marshal(resource)
 	if _, err = tx.ExecContext(ctx, `UPDATE keagent_resource SET payload=$2 WHERE id=$1`, resource["id"], b); err != nil {
 		return nil, err

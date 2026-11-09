@@ -130,7 +130,16 @@ func normalizeBeike(city, address string, facts, pictures object) (object, error
 		return nil, fail(502, "贝壳未返回1–20张可用室内图片")
 	}
 	property := object{"id": "beike-" + digestBytes([]byte(city+"|"+address)), "title": title, "description": "贝壳开放平台房屋档案；价格及建筑面积未提供，空间对应关系需人工核对。", "areaSqm": 0, "priceCents": 0, "layout": str(house["frame"]), "sellingPoints": []string{}, "source": object{"provider": "beike", "fetchedAt": now(), "city": city, "floorplanAreaSqm": house["frameArea"]}}
-	return object{"property": property, "images": assets, "panoramas": []object{}, "panoramaAvailability": "not_exposed_by_this_interface"}, nil
+	references := []object{}
+	for i, value := range rows(pictures["frame"]) {
+		raw := str(value)
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || !strings.HasSuffix(u.Hostname(), ".ljcdn.com") {
+			return nil, fail(502, "贝壳户型图地址不符合已支持的官方素材格式")
+		}
+		references = append(references, object{"url": raw, "room": "户型图" + strconv.Itoa(i+1)})
+	}
+	return object{"property": property, "images": assets, "panoramas": []object{}, "referenceImages": references, "panoramaAvailability": "not_exposed_by_this_interface"}, nil
 }
 
 func (s *server) productionBody(ctx context.Context, method, endpoint string, headers http.Header, body []byte, limit int64) ([]byte, error) {

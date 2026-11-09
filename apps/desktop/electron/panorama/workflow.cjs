@@ -163,7 +163,7 @@ class PanoramaWorkflow {
   }
   async importBytes(owner, data, room, kind = "panorama") {
     domain.ensure(
-      ["panorama", "photo", "expanded"].includes(kind),
+      ["panorama", "photo", "expanded", "reference"].includes(kind),
       "图片类型无效",
     );
     domain.ensure(
@@ -184,15 +184,16 @@ class PanoramaWorkflow {
       this.directory(owner),
     );
     const stream = info.streams[0];
+    const minSide = kind === "reference" ? 128 : 512;
     domain.ensure(
       ["mjpeg", "png"].includes(stream.codec_name) &&
-        stream.width >= 512 &&
-        stream.height >= 512 &&
+        stream.width >= minSide &&
+        stream.height >= minSide &&
         stream.width <= 16384 &&
         stream.height <= 16384 &&
         (kind !== "panorama" ||
           (stream.width === stream.height * 2 && stream.width >= 2048)),
-      "全景图需要2:1等距柱状投影且宽度至少2048；普通图片短边需至少512像素",
+      "全景图需为2:1且宽度至少2048像素；普通照片短边至少512像素，参考图至少128像素",
     );
     const state = this.store(owner);
     const entry = (state.assetMetadata[asset] ??= { kinds: [] });
@@ -618,7 +619,7 @@ class PanoramaWorkflow {
         assertCurrent();
         domain.ensure(
           templateSnapshot?.id === input.config?.templateId &&
-            templateSnapshot.production?.schemaVersion === 1,
+            [1, 2].includes(templateSnapshot.production?.schemaVersion),
           "模板制作规则无效，请刷新后重试",
         );
       }
@@ -646,6 +647,7 @@ class PanoramaWorkflow {
         c.scriptProvider = "template";
         c.avatarId = "";
       }
+      if (preparing && !property.sample) c.scriptProvider = "ai";
       await this.requireAvatar(c);
       assertCurrent();
       domain.ensure(
@@ -660,9 +662,9 @@ class PanoramaWorkflow {
         preparing,
       );
       if (preparing) {
-        c.materialMode = scenes.every((s) => s.kind === "panorama")
-          ? "panorama"
-          : "expand";
+        c.materialMode = scenes.some((s) => s.kind !== "panorama")
+          ? "expand"
+          : "panorama";
         c.leadSceneId = "";
         c.coverSceneId = "";
         c.coverTitle = "";
@@ -674,28 +676,46 @@ class PanoramaWorkflow {
           "开场或封面空间已移除，请重新选择",
         );
       domain.ensure(
-        scenes.every((s) =>
-          c.materialMode === "expand"
-            ? s.kind === "expanded" || (preparing && s.kind === "photo")
-            : s.kind === "panorama",
-        ),
+        preparing ||
+          scenes.every((s) =>
+            c.materialMode === "expand"
+              ? s.kind === "expanded" || (preparing && s.kind === "photo")
+              : s.kind === "panorama",
+          ),
         "素材与所选制作方式不一致",
       );
       const expected = domain.segments(property, scenes, c);
       const segments =
-        c.scriptProvider === "ai"
+        preparing && !property.sample
           ? domain.validateSegments(
               await this.remote(
-                "script",
+                "script-vision",
                 {
-                  property,
-                  scenes: scenes.map(({ room, description }) => ({
-                    room,
-                    description,
-                  })),
-                  template: c,
-                  language: c.language,
-                  segments: expected,
+                  property: Object.fromEntries(
+                    [
+                      "title",
+                      "propertyNumber",
+                      "city",
+                      "district",
+                      "community",
+                      "layout",
+                      "areaSqm",
+                      "priceCents",
+                      "description",
+                      "sellingPoints",
+                      "lastVerifiedAt",
+                      "source",
+                    ].map((key) => [key, property[key]]),
+                  ),
+                  templateId: templateSnapshot.id,
+                  templateVersion: templateSnapshot.version,
+                  images: await factory.scriptImages(
+                    this,
+                    owner,
+                    scenes,
+                    state.imports[property.id]?.references || [],
+                    controller.signal,
+                  ),
                 },
                 AbortSignal.any([
                   controller.signal,
@@ -704,7 +724,28 @@ class PanoramaWorkflow {
               ),
               expected,
             )
-          : domain.validateSegments(expected, expected);
+          : c.scriptProvider === "ai"
+            ? domain.validateSegments(
+                await this.remote(
+                  "script",
+                  {
+                    property,
+                    scenes: scenes.map(({ room, description }) => ({
+                      room,
+                      description,
+                    })),
+                    template: c,
+                    language: c.language,
+                    segments: expected,
+                  },
+                  AbortSignal.any([
+                    controller.signal,
+                    AbortSignal.timeout(65000),
+                  ]),
+                ),
+                expected,
+              )
+            : domain.validateSegments(expected, expected);
       assertCurrent();
       const draft = {
         id: crypto.randomUUID(),

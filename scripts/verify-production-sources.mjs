@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import {
   copyFile,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   writeFile,
@@ -17,10 +18,7 @@ const domain = require("../apps/desktop/electron/panorama/domain.cjs");
 const root = fileURLToPath(new URL("../", import.meta.url));
 const output = path.join(root, "output/production-source-verification");
 await mkdir(output, { recursive: true });
-const photo = path.join(
-  root,
-  "output/property-samples/beike-official-pic-verify/living-room-01.jpg",
-);
+const photo = path.join(root, "apps/desktop/public/media/interior-1.jpg");
 const pano = path.join(root, "apps/desktop/public/media/panoramas/lebombo.jpg");
 const results = [];
 for (const [kind, input, aspectRatio] of [
@@ -28,9 +26,8 @@ for (const [kind, input, aspectRatio] of [
   ["expanded", photo, "16:9"],
   ["expanded", photo, "9:16"],
 ]) {
-  const directory = path.join(
-    output,
-    `${kind}-${aspectRatio.replace(":", "x")}`,
+  const directory = await mkdtemp(
+    path.join(output, `${kind}-${aspectRatio.replace(":", "x")}-`),
   );
   const cache = path.join(directory, "cache");
   const jobDir = path.join(directory, "job");
@@ -152,11 +149,13 @@ for (const [kind, input, aspectRatio] of [
     const captionFiles = (await readdir(cache)).filter((file) =>
       file.endsWith(".ass"),
     );
-    assert.ok(
-      (await readFile(path.join(cache, captionFiles[0]), "utf8")).includes(
-        "AI扩图示意",
-      ),
-    );
+    assert.ok(captionFiles.length > 0);
+    for (const file of captionFiles)
+      assert.doesNotMatch(
+        await readFile(path.join(cache, file), "utf8"),
+        /AI扩图示意/,
+      );
+    assert.doesNotMatch(coverASS, /AI扩图示意/);
     assert.ok(result.timeline.every((segment) => segment.camera === null));
   }
   await media.run(

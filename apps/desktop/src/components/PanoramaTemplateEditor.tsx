@@ -241,7 +241,7 @@ export function PanoramaTemplateEditor({
               <div className="template-preview-label">
                 {scene.room}
                 {scene.kind === "expanded"
-                  ? " · AI扩图示意，非实拍全景"
+                  ? " · 已扩图"
                   : scene.kind === "photo"
                     ? " · 原图待扩图"
                     : ""}
@@ -408,7 +408,7 @@ export function PanoramaTemplateEditor({
                               })
                             }
                           >
-                            已审核扩图结果，同意标注 AI 示意
+                            已审核扩图结果
                           </Checkbox>
                         )}
                         {scene.kind === "photo" && (

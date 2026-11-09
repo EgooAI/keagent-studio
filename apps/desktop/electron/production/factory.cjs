@@ -2,19 +2,10 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const { setTimeout: delay } = require("node:timers/promises");
 const domain = require("../panorama/domain.cjs");
+const media = require("../panorama/media.cjs");
 const providers = require("../panorama/providers.cjs");
 const sources = require("./sources.cjs");
 
-function select(scenes) {
-  const panoramas = scenes.filter(
-    (scene) => !scene.kind || scene.kind === "panorama",
-  );
-  return panoramas.length
-    ? panoramas
-    : scenes.filter(
-        (scene) => scene.kind === "photo" || scene.kind === "expanded",
-      );
-}
 async function load(workflow, owner, property, assertCurrent) {
   if (property.id === "panorama-cc0-sample")
     return (await workflow.loadSample(owner, assertCurrent)).scenes;
@@ -22,23 +13,33 @@ async function load(workflow, owner, property, assertCurrent) {
   const saved = state.imports[property.id];
   const panoramas = Array.isArray(property.panoramas) ? property.panoramas : [];
   const photos = Array.isArray(property.images) ? property.images : [];
-  const urls = panoramas.length ? panoramas : photos;
+  const images = [
+    ...panoramas.map((url) => ({ url, kind: "panorama" })),
+    ...photos.map((url) => ({ url, kind: "photo" })),
+  ];
   const fingerprint = domain.hash({ panoramas, photos });
   if (
     saved &&
-    (!saved.remoteFingerprint || saved.remoteFingerprint === fingerprint)
+    ((!images.length && !saved.remoteFingerprint) ||
+      (saved.remoteFingerprint === fingerprint &&
+        (saved.remoteSceneIds || saved.scenes.length === images.length)))
   )
-    return select(saved.scenes);
+    return saved.scenes;
+  const scenes = (saved?.scenes || []).filter((scene) =>
+    saved.remoteSceneIds
+      ? !saved.remoteSceneIds.includes(scene.id)
+      : !saved.remoteFingerprint,
+  );
   domain.ensure(
-    urls.length > 0,
+    scenes.length + images.length > 0,
     "这套房源还没有制作图片，请先到房源详情补充素材",
   );
-  domain.ensure(urls.length <= 20, "每套房源最多使用20张制作图片");
+  domain.ensure(images.length <= 20, "每套房源最多使用20张制作图片");
   const controller = new AbortController();
   workflow.previews.add(controller);
   try {
-    const scenes = [];
-    for (const [index, url] of urls.entries()) {
+    const remoteSceneIds = [];
+    for (const [index, { url, kind }] of images.entries()) {
       domain.ensure(
         typeof url === "string",
         "房源图片地址无效，请在房源详情更新素材",
@@ -54,20 +55,30 @@ async function load(workflow, owner, property, assertCurrent) {
       }
       assertCurrent();
       controller.signal.throwIfAborted();
-      scenes.push(
-        await workflow.importBytes(
-          owner,
-          bytes,
-          `图片 ${index + 1}`,
-          panoramas.length ? "panorama" : "photo",
-        ),
+      const scene = await workflow.importBytes(
+        owner,
+        bytes,
+        `图片 ${index + 1}`,
+        kind,
       );
+      if (!scenes.some((s) => s.asset === scene.asset && s.kind === kind)) {
+        scenes.push(scene);
+        remoteSceneIds.push(scene.id);
+      }
     }
+    domain.ensure(
+      scenes.length + (saved?.references?.length || 0) <= 20,
+      "每套房源最多使用20张图片（含参考图）",
+    );
     state.imports[property.id] = {
+      ...saved,
       property,
       scenes,
-      materialMode: panoramas.length ? "panorama" : "expand",
+      materialMode: scenes.some((s) => s.kind !== "panorama")
+        ? "expand"
+        : "panorama",
       remoteFingerprint: fingerprint,
+      remoteSceneIds,
     };
     workflow.persist(owner);
     return scenes;
@@ -75,15 +86,50 @@ async function load(workflow, owner, property, assertCurrent) {
     workflow.previews.delete(controller);
   }
 }
+async function scriptImages(workflow, owner, scenes, references, signal) {
+  const images = [];
+  const cwd = workflow.directory(owner);
+  for (const scene of [...scenes, ...references]) {
+    signal.throwIfAborted();
+    const asset = scene.kind === "expanded" ? scene.sourceAsset : scene.asset;
+    domain.ensure(
+      /^[a-f0-9]{64}\.(jpg|png)$/.test(asset || ""),
+      "找不到用于编写文案的原图，请重新导入素材",
+    );
+    const file = path.join(cwd, "assets", asset);
+    domain.ensure(
+      domain.hash(await fs.readFile(file)) === asset.split(".")[0],
+      "房源原图已改变，请重新导入素材",
+    );
+    images.push({
+      id: scene.id,
+      room: scene.room,
+      description: scene.description,
+      kind:
+        scene.kind === "panorama" || scene.kind === "reference"
+          ? scene.kind
+          : "photo",
+      jpeg: await media.scriptImage(file, cwd, signal),
+    });
+  }
+  return images;
+}
 async function importProperty(workflow, owner, property, input, assertCurrent) {
   domain.ensure(property, "房源不存在，请重新选择");
   const files = await workflow.dialogs.open();
   assertCurrent();
   const state = workflow.store(owner);
-  const previous = state.imports[property.id]?.scenes || [];
+  const saved = state.imports[property.id];
+  const previous = saved?.scenes || [];
+  const references = saved?.references || [];
+  const kind = input.kind || "photo";
   domain.ensure(
-    previous.length + files.length <= 20,
-    "每套房源最多保存20张制作图片",
+    ["photo", "panorama", "reference"].includes(kind),
+    "图片类型无效",
+  );
+  domain.ensure(
+    previous.length + references.length + files.length <= 20,
+    "每套房源最多保存20张图片（含参考图）",
   );
   const added = [];
   for (const file of files) {
@@ -92,26 +138,29 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
       file,
       path.basename(file, path.extname(file)).slice(0, 80) ||
         `图片 ${previous.length + added.length + 1}`,
-      input.kind === "panorama" ? "panorama" : "photo",
+      kind,
     );
     assertCurrent();
     added.push(scene);
   }
-  if (!added.length) return { count: previous.length };
-  const all = [...previous, ...added];
+  if (!added.length) return { count: previous.length + references.length };
+  const referenceOnly = kind === "reference";
+  const all = referenceOnly ? previous : [...previous, ...added];
   state.imports[property.id] = {
+    ...saved,
     property,
     scenes: all,
-    materialMode: all.some((s) => s.kind === "panorama")
-      ? "panorama"
-      : "expand",
+    references: referenceOnly ? [...references, ...added] : references,
+    materialMode: all.some((s) => s.kind !== "panorama")
+      ? "expand"
+      : "panorama",
   };
   state.properties = [
     property,
     ...state.properties.filter((p) => p.id !== property.id),
   ];
   workflow.persist(owner);
-  return { count: all.length };
+  return { count: previous.length + references.length + added.length };
 }
 async function expand(workflow, owner, job, signal, onProgress) {
   const state = workflow.store(owner);
@@ -178,4 +227,4 @@ async function expand(workflow, owner, job, signal, onProgress) {
     onProgress((index + 1) / job.scenes.length);
   }
 }
-module.exports = { load, importProperty, expand };
+module.exports = { load, importProperty, scriptImages, expand };

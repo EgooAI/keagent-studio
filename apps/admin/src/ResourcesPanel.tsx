@@ -73,6 +73,21 @@ export default function ResourcesPanel() {
   function showEditor(source?: Resource, clone = false) {
     setEditor({ source, clone });
     form.resetFields();
+    let production = source?.production || defaultProduction;
+    if (clone && production.schemaVersion === 1) {
+      const { openingTemplate, sceneTemplate, closingTemplate, ...config } =
+        production.config;
+      production = {
+        ...defaultProduction,
+        config,
+        scriptRules: {
+          ...defaultProduction.scriptRules,
+          opening: openingTemplate,
+          scene: sceneTemplate,
+          closing: closingTemplate,
+        },
+      };
+    }
     form.setFieldsValue(
       source
         ? {
@@ -82,7 +97,7 @@ export default function ResourcesPanel() {
             version: clone ? "" : source.version,
             type: source.type,
             compatibleModes: source.compatibleModes,
-            production: structuredClone(source.production || defaultProduction),
+            production: structuredClone(production),
           }
         : {
             name: "",
@@ -121,9 +136,33 @@ export default function ResourcesPanel() {
   }
   async function showPreview(resource: Resource) {
     await run(async () => {
+      const images =
+        resource.production?.schemaVersion === 2
+          ? await Promise.all(
+              [1, 2].map(async (index) => {
+                const response = await fetch(`/media/interior-${index}.jpg`);
+                if (!response.ok) throw new Error("无法读取模板预览图片");
+                const blob = await response.blob();
+                const jpeg = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () =>
+                    resolve(String(reader.result).split(",")[1]);
+                  reader.onerror = () =>
+                    reject(new Error("无法读取模板预览图片"));
+                  reader.readAsDataURL(blob);
+                });
+                return {
+                  id: `preview-${index}`,
+                  kind: "photo",
+                  room: `图片 ${index}`,
+                  jpeg,
+                };
+              }),
+            )
+          : undefined;
       const result = await serviceRequest<ProductionTemplatePreview>(
         "/v1/admin/resources/preview",
-        { id: resource.id },
+        { id: resource.id, images },
       );
       setPreview(result);
     }, "模板规则校验通过");
