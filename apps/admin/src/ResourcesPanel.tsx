@@ -199,14 +199,26 @@ export default function ResourcesPanel() {
   }
   return (
     <>
-      <Alert
-        className="admin-notice"
-        type="info"
-        showIcon
-        title="完整视频模板与 AI 视频工厂同步"
-        description="含制作规则的视频模板，经预览校验并上架后，用户即可选择。文案、镜头、字幕和封面配置会真实用于制作。旧版仅有目录说明的条目不会进入新版视频工厂。"
-      />
-      <section className="admin-panel" aria-label="模板目录">
+      <section
+        className="admin-panel admin-table-panel"
+        aria-labelledby="admin-template-list"
+      >
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="admin-template-list">模板目录</h2>
+            <p className="admin-secondary">
+              完整视频模板经预览校验并上架后，会同步到 AI
+              视频工厂。旧版目录条目可在这里查看。
+            </p>
+          </div>
+          <Button
+            type="primary"
+            icon={<Plus size={16} />}
+            onClick={() => showEditor()}
+          >
+            新建模板草稿
+          </Button>
+        </div>
         <div className="admin-toolbar">
           <Space wrap>
             <Input.Search
@@ -251,13 +263,6 @@ export default function ResourcesPanel() {
               loading={query.isFetching}
             >
               刷新
-            </Button>
-            <Button
-              type="primary"
-              icon={<Plus size={16} />}
-              onClick={() => showEditor()}
-            >
-              新建模板草稿
             </Button>
           </Space>
         </div>
@@ -308,7 +313,7 @@ export default function ResourcesPanel() {
               render: (type: ResourceType) =>
                 resourceTypeLabels[type] || "其他模板",
             },
-            { title: "版本", dataIndex: "version" },
+            { title: "版本", dataIndex: "version", width: 100 },
             {
               title: "适用模式",
               key: "modes",
@@ -319,6 +324,7 @@ export default function ResourcesPanel() {
             {
               title: "状态",
               key: "state",
+              width: 100,
               render: (_, r) => (
                 <Tag color={r.published ? "green" : "default"}>
                   {resourceState(r)}
@@ -328,18 +334,9 @@ export default function ResourcesPanel() {
             {
               title: "操作",
               key: "actions",
-              width: 260,
+              width: 325,
               render: (_, r) => (
                 <Space wrap>
-                  {r.production && (
-                    <Button
-                      size="small"
-                      disabled={busy}
-                      onClick={() => void showPreview(r)}
-                    >
-                      预览校验
-                    </Button>
-                  )}
                   {!r.published && !r.publishedOnce && (
                     <Button
                       size="small"
@@ -347,6 +344,15 @@ export default function ResourcesPanel() {
                       onClick={() => showEditor(r)}
                     >
                       编辑草稿
+                    </Button>
+                  )}
+                  {r.production && (
+                    <Button
+                      size="small"
+                      disabled={busy}
+                      onClick={() => void showPreview(r)}
+                    >
+                      预览校验
                     </Button>
                   )}
                   <Button
@@ -378,6 +384,7 @@ export default function ResourcesPanel() {
         />
       </section>
       <Drawer
+        rootClassName="admin-detail-drawer"
         title="模板详情"
         open={!!detail}
         onClose={() => setDetail(null)}
@@ -385,7 +392,13 @@ export default function ResourcesPanel() {
       >
         {detail && (
           <>
-            <h2>{detail.name}</h2>
+            <div className="admin-detail-summary">
+              <h2>{detail.name}</h2>
+              <Tag color={detail.published ? "green" : "default"}>
+                {resourceState(detail)}
+              </Tag>
+              <span>版本 {detail.version}</span>
+            </div>
             <Descriptions
               bordered
               column={1}
@@ -395,16 +408,10 @@ export default function ResourcesPanel() {
                   label: "类型",
                   children: resourceTypeLabels[detail.type],
                 },
-                { key: "version", label: "版本", children: detail.version },
                 {
                   key: "category",
                   label: "分类",
                   children: detail.category || "未分类",
-                },
-                {
-                  key: "state",
-                  label: "状态",
-                  children: resourceState(detail),
                 },
                 {
                   key: "modes",
@@ -435,7 +442,11 @@ export default function ResourcesPanel() {
               发布过的版本内容不可修改。需要调整时，请复制为新版本。
             </p>
             {detail.production && (
-              <Button onClick={() => void showPreview(detail)} disabled={busy}>
+              <Button
+                className="admin-block"
+                onClick={() => void showPreview(detail)}
+                disabled={busy}
+              >
                 查看制作规则与预览
               </Button>
             )}
@@ -559,6 +570,7 @@ export default function ResourcesPanel() {
         </Form>
       </Modal>
       <Drawer
+        rootClassName="admin-detail-drawer"
         title="视频模板添加规则"
         open={rulesOpen}
         onClose={() => setRulesOpen(false)}
@@ -567,6 +579,7 @@ export default function ResourcesPanel() {
         <ProductionTemplateRules />
       </Drawer>
       <Drawer
+        rootClassName="admin-detail-drawer"
         title="制作模板预览校验"
         open={!!preview}
         onClose={() => setPreview(undefined)}

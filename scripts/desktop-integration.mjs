@@ -148,7 +148,7 @@ try {
     .fill(process.env.BOOTSTRAP_ADMIN_PASSWORD);
   await page.locator('button[type="submit"]').click();
   await page
-    .getByRole("heading", { name: "管理概览", exact: true })
+    .getByRole("heading", { name: "管理工作台", exact: true })
     .waitFor({ timeout: 30000 });
   await page.getByRole("menuitem", { name: "用户与设备", exact: true }).click();
   await page.getByRole("tab", { name: "设备", exact: true }).click();

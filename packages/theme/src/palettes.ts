@@ -5,7 +5,11 @@ export const palettes = [
   { id: "green", name: "松石绿", primary: "#087f6f" },
   { id: "rose", name: "玫瑰红", primary: "#b83264" },
 ] as const;
-export type PaletteId = (typeof palettes)[number]["id"];
-export function resolvePalette(value: string | null) {
-  return palettes.find((palette) => palette.id === value) ?? palettes[0];
+export type ThemePalette = { id: string; name: string; primary: string };
+
+export function resolvePalette(
+  value: string | null,
+  defaultPalette: ThemePalette = palettes[0],
+): ThemePalette {
+  return palettes.find((palette) => palette.id === value) ?? defaultPalette;
 }

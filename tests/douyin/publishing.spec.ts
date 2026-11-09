@@ -377,10 +377,14 @@ test("an unknown result is resolved explicitly in the artifact detail", async ({
     page.getByText("你已确认该视频未发布，可以重新操作。", { exact: true }),
   ).toBeVisible();
 });
-test("admin publishing diagnostics are read-only and save alert recipient configuration", async ({
+test("admin publishing diagnostics link to mail settings with retry and recipient removal", async ({
   page,
 }) => {
   let recipient = "ops@example.test";
+  let readFailures = 1;
+  let saveFailures = 1;
+  let smtpConfigured = false;
+  const attemptedRecipients: string[] = [];
   const record = {
     id: "e".repeat(32),
     ownerId: fixture.ownerId,
@@ -415,12 +419,26 @@ test("admin publishing diagnostics are read-only and save alert recipient config
     else if (url.pathname.endsWith("/douyin/summary"))
       data = { total: 1, states: { accepted: 1 } };
     else if (url.pathname.endsWith("/douyin/health"))
-      data = { failures: 0, incident: false, pendingEmails: 0 };
+      data = { failures: 0, incident: false, pendingEmails: 2 };
     else if (url.pathname.endsWith("/douyin/detail")) data = record;
     else if (url.pathname.endsWith("/douyin/settings")) {
-      if (route.request().method() === "POST")
-        recipient = route.request().postDataJSON().operationsEmail;
-      data = { operationsEmail: recipient, smtpConfigured: false };
+      if (route.request().method() === "POST") {
+        const email = route.request().postDataJSON().operationsEmail;
+        attemptedRecipients.push(email);
+        if (saveFailures-- > 0)
+          return route.fulfill({
+            status: 503,
+            json: { error: { message: "暂时无法保存" } },
+          });
+        recipient = email;
+        smtpConfigured = true;
+      } else if (readFailures-- > 0) {
+        return route.fulfill({
+          status: 503,
+          json: { error: { message: "暂时无法读取" } },
+        });
+      }
+      data = { operationsEmail: recipient, smtpConfigured };
     } else if (url.pathname.endsWith("/users/list"))
       data = { items: [], total: 0 };
     await route.fulfill({ json: data });
@@ -435,10 +453,41 @@ test("admin publishing diagnostics are read-only and save alert recipient config
     page.getByRole("button", { name: /重试发布|取消发布/ }),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await page
-    .getByLabel("运维邮箱", { exact: true })
-    .fill("next-ops@example.test");
-  await page.getByRole("button", { name: "保存邮箱" }).click();
-  await expect.poll(() => recipient).toBe("next-ops@example.test");
+  await expect(page.getByText(/待投递邮件：2/)).toBeVisible();
+  await expect(page.getByLabel("运维邮箱", { exact: true })).toHaveCount(0);
   await page.screenshot({ path: "output/douyin-admin.png", fullPage: true });
+  await page.getByRole("link", { name: "管理邮件通知" }).click();
+  await expect(page).toHaveURL(/admin\/settings\?tab=mail$/);
+  await expect(
+    page.getByText("邮件设置读取失败", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "重试读取", exact: true }).click();
+  await expect(
+    page.getByText("SMTP 尚未完整配置", { exact: true }),
+  ).toBeVisible();
+  const email = page.getByLabel("运维邮箱", { exact: true });
+  const save = page.getByRole("button", { name: "保存邮箱", exact: true });
+  await expect(email).toHaveValue("ops@example.test");
+  await email.fill("invalid");
+  await save.click();
+  await expect(page.getByText("请输入有效邮箱", { exact: true })).toBeVisible();
+  expect(attemptedRecipients).toEqual([]);
+  await email.fill("next-ops@example.test");
+  await save.click();
+  await expect(page.getByText("保存邮箱失败", { exact: true })).toBeVisible();
+  await expect(email).toHaveValue("next-ops@example.test");
+  expect(recipient).toBe("ops@example.test");
+  await save.click();
+  await expect(page.getByText("运维邮箱已保存", { exact: true })).toBeVisible();
+  await expect(page.getByText("SMTP 已配置", { exact: true })).toBeVisible();
+  await email.clear();
+  await save.click();
+  await expect.poll(() => recipient).toBe("");
+  await page.reload();
+  await expect(email).toHaveValue("");
+  expect(attemptedRecipients).toEqual([
+    "next-ops@example.test",
+    "next-ops@example.test",
+    "",
+  ]);
 });

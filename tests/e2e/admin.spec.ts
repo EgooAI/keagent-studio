@@ -143,6 +143,7 @@ async function fixture(page: Page) {
     revokeFailures: 0,
     deviceFailures: 0,
     slowUsers: false,
+    failedTasks: 1,
   };
   await page.route("**/api/auth/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -180,13 +181,19 @@ async function fixture(page: Page) {
       return route.fulfill({ status: 204, headers: cors });
     if (url.pathname === "/v1/session")
       return json({ ...admin, role: state.deny ? "user" : "admin" });
+    if (url.pathname === "/v1/admin/douyin/summary")
+      return json({ total: 0, states: {} });
+    if (url.pathname === "/v1/admin/douyin/health")
+      return json({ failures: 0, incident: false, pendingEmails: 0 });
+    if (url.pathname === "/v1/admin/douyin/settings")
+      return json({ operationsEmail: "", smtpConfigured: false });
     if (url.pathname === "/v1/admin/overview")
       return json({
         users: 123,
         devices: 1,
         publishedResources: 1,
-        failedTasks: 1,
-        recentFailedTasks: [task],
+        failedTasks: state.failedTasks,
+        recentFailedTasks: state.failedTasks ? [task] : [],
         services,
       });
     if (url.pathname === "/v1/admin/ai-config")
@@ -494,23 +501,30 @@ test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ pa
 
 test("管理入口职责明确，真实路由和旧入口可恢复", async ({ page }) => {
   await fixture(page);
-  for (const [route, label] of [
-    ["dashboard", "管理概览"],
+  const menus = [
+    ["dashboard", "管理工作台"],
     ["users", "用户与设备"],
     ["resources", "公共模板"],
     ["tasks", "云端任务"],
     ["ai", "AI 服务"],
     ["audit", "操作记录"],
-  ]) {
-    await page.goto(`${adminBase}/#/admin/${route}`);
+    ["douyin", "抖音发布"],
+    ["settings", "设置"],
+  ];
+  await page.goto(adminBase);
+  await expect(page).toHaveURL(/#\/admin\/dashboard$/);
+  await expect(
+    page.getByRole("heading", { name: "管理工作台", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("menuitem")).toHaveText(
+    menus.map(([, label]) => label),
+  );
+  for (const [route, label] of menus) {
+    await page.goto(adminBase + "/#/admin/" + route);
     await expect(
       page.getByRole("heading", { name: label, exact: true }),
     ).toBeVisible();
     await expect(page.locator(".admin-page-heading p")).not.toBeEmpty();
-    await expect(page.getByRole("menuitem")).toHaveCount(7);
-    await expect(
-      page.getByRole("menuitem", { name: "抖音发布", exact: true }),
-    ).toBeVisible();
   }
   await page.goto(adminBase + "/#/admin/devices");
   await expect(page).toHaveURL(/admin\/users\?tab=devices/);
@@ -521,6 +535,72 @@ test("管理入口职责明确，真实路由和旧入口可恢复", async ({ pa
     page.getByRole("columnheader", { name: /^最近活动/ }),
   ).toBeVisible();
   await expect(page.getByText("Windows", { exact: true })).toBeVisible();
+  await page.goto(adminBase + "/#/admin/auth-audit");
+  await expect(page).toHaveURL(/admin\/audit\?tab=account/);
+  await page.goto(adminBase + "/#/admin/ai-config");
+  await expect(page).toHaveURL(/admin\/ai$/);
+});
+
+test("工作台指标跳转到筛选结果，近期失败任务直达详情", async ({ page }) => {
+  const { task, state } = await fixture(page);
+  await page.goto(adminBase);
+  await expect(
+    page.getByRole("heading", { name: "1 项任务待排查" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "查看任务", exact: true }),
+  ).toHaveAttribute("href", "#/admin/tasks?status=failed");
+  const serviceIssues = page.getByRole("region", { name: "AI 配置缺项" });
+  await expect(
+    serviceIssues.getByRole("link", { name: "文案生成" }),
+  ).toHaveAttribute("href", "#/admin/ai?service=script");
+  const metrics = page.getByRole("region", { name: "业务指标" });
+  await expect(metrics.getByRole("link", { name: /用户账号/ })).toHaveAttribute(
+    "href",
+    "#/admin/users",
+  );
+  await expect(
+    metrics.getByRole("link", { name: /已绑定设备/ }),
+  ).toHaveAttribute("href", "#/admin/users?tab=devices&revoked=false");
+  await expect(
+    metrics.getByRole("link", { name: /已上架模板/ }),
+  ).toHaveAttribute("href", "#/admin/resources?state=published");
+  await metrics.getByRole("link", { name: /失败任务/ }).click();
+  await expect(page).toHaveURL(/admin\/tasks\?status=failed/);
+  await page.goBack();
+  const failed = page.getByRole("region", { name: "近期失败任务" });
+  await failed.getByRole("link", { name: task.propertyTitle }).click();
+  await expect(
+    page.getByRole("dialog", { name: "云端任务详情" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "生成配置快照" }),
+  ).toBeVisible();
+
+  state.failedTasks = 0;
+  await page.goto(adminBase + "/#/admin/dashboard");
+  await expect(page.getByText("目前没有失败的云端任务。")).toBeVisible();
+  await expect(failed.getByText("暂无失败任务")).toBeVisible();
+});
+
+test("旧外观链接进入设置，刷新后保留主题", async ({ page }) => {
+  await fixture(page);
+  await page.goto(adminBase + "/#/admin/users?appearance=1");
+  await expect(page).toHaveURL(/admin\/settings\?tab=appearance/);
+  await expect(page.getByRole("tab", { name: "外观" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("radio", { name: "雾蓝" })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-palette",
+    "mist-blue",
+  );
+  await page.getByText("经典蓝", { exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "blue");
+  await page.reload();
+  await expect(page.getByRole("radio", { name: "经典蓝" })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "blue");
 });
 
 test("服务端分页可查第123位用户，搜索和刷新保留URL", async ({ page }) => {
@@ -843,7 +923,7 @@ test("操作记录搜索在切换来源和清除筛选时移除隐藏条件", as
   await expect(
     page.getByRole("tab", { name: "账号操作", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("tab", { name: "模板与设备操作", exact: true }).click();
+  await page.getByRole("tab", { name: "业务操作", exact: true }).click();
   await search.fill("第二次搜索");
   await search.press("Enter");
   await expect(page).toHaveURL(/[?&]q=/);

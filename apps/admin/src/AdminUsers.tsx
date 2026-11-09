@@ -204,7 +204,27 @@ function UsersTable({
     }
   }
   return (
-    <section className="admin-panel">
+    <section
+      className="admin-panel admin-table-panel"
+      aria-labelledby="admin-users-list"
+    >
+      <div className="admin-section-heading">
+        <div>
+          <h2 id="admin-users-list">用户账号</h2>
+          <p className="admin-secondary">
+            账号由管理员开通。停用和强制退出会立即影响用户登录，房源与制作记录会保留。
+          </p>
+        </div>
+        <Button
+          type="primary"
+          onClick={() => {
+            createForm.resetFields();
+            setCreateOpen(true);
+          }}
+        >
+          创建用户
+        </Button>
+      </div>
       <div className="admin-toolbar">
         <Space wrap>
           <Input.Search
@@ -241,27 +261,10 @@ function UsersTable({
             ]}
           />
         </Space>
-        <Space>
-          <Button
-            loading={query.isFetching}
-            onClick={() => void query.refetch()}
-          >
-            刷新列表
-          </Button>
-          <Button
-            type="primary"
-            onClick={() => {
-              createForm.resetFields();
-              setCreateOpen(true);
-            }}
-          >
-            创建用户
-          </Button>
-        </Space>
+        <Button loading={query.isFetching} onClick={() => void query.refetch()}>
+          刷新列表
+        </Button>
       </div>
-      <p className="admin-secondary admin-list-description">
-        账号由管理员开通。停用和强制退出会立即影响用户登录，不删除房源或制作记录。
-      </p>
       {query.error && (
         <Alert
           className="admin-block"
@@ -277,8 +280,12 @@ function UsersTable({
         loading={query.isPending || query.isFetching}
         dataSource={query.data?.items || []}
         pagination={listPagination(query.data, params, setParams)}
-        scroll={{ x: 1050 }}
-        locale={{ emptyText: <Empty description="没有符合条件的用户" /> }}
+        scroll={{ x: 880 }}
+        locale={{
+          emptyText: (
+            <Empty description="没有符合条件的用户。可调整搜索或账号筛选。" />
+          ),
+        }}
         columns={[
           {
             title: "用户",
@@ -318,10 +325,11 @@ function UsersTable({
           { title: "创建时间", dataIndex: "createdAt", render: dateTime },
           {
             title: "操作",
+            align: "right",
             key: "actions",
-            width: 340,
+            width: 236,
             render: (_, row) => (
-              <Space wrap size={0}>
+              <Space className="admin-row-actions" size={4}>
                 <Button
                   type="link"
                   disabled={action.busy || row.id === currentUser.userId}
@@ -490,7 +498,18 @@ function DevicesTable() {
   const query = useAdminList("devices");
   const action = useAdminAction();
   return (
-    <section className="admin-panel">
+    <section
+      className="admin-panel admin-table-panel"
+      aria-labelledby="admin-devices-list"
+    >
+      <div className="admin-section-heading">
+        <div>
+          <h2 id="admin-devices-list">用户设备</h2>
+          <p className="admin-secondary">
+            最近活动为设备最后一次上报时间。解绑会撤销设备的业务访问权限，本机文件会保留。
+          </p>
+        </div>
+      </div>
       <div className="admin-toolbar">
         <Space wrap>
           <Input.Search
@@ -524,9 +543,6 @@ function DevicesTable() {
           刷新列表
         </Button>
       </div>
-      <p className="admin-secondary admin-list-description">
-        最近活动为设备最后一次上报时间。解绑后该设备的后续业务请求会被拒绝，不会删除用户电脑上的文件。
-      </p>
       {query.error && (
         <Alert
           className="admin-block"
@@ -542,8 +558,12 @@ function DevicesTable() {
         loading={query.isPending || query.isFetching}
         dataSource={query.data?.items || []}
         pagination={listPagination(query.data, params, setParams)}
-        scroll={{ x: 950 }}
-        locale={{ emptyText: <Empty description="没有符合条件的设备" /> }}
+        scroll={{ x: 760 }}
+        locale={{
+          emptyText: (
+            <Empty description="没有符合条件的设备。可调整搜索或绑定状态。" />
+          ),
+        }}
         columns={[
           {
             title: "设备名称",
@@ -587,6 +607,7 @@ function DevicesTable() {
           { title: "最近活动", dataIndex: "lastSeenAt", render: dateTime },
           {
             title: "操作",
+            align: "right",
             key: "action",
             render: (_, row) => (
               <Button
@@ -645,6 +666,7 @@ function UserDetail() {
   const user = query.data;
   return (
     <Drawer
+      rootClassName="admin-detail-drawer"
       title="用户详情"
       width={580}
       open={!!userId}

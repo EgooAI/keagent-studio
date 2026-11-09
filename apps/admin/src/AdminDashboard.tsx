@@ -1,13 +1,9 @@
-import { Alert, Button, Empty, Spin, Table, Tag } from "antd";
+import { Alert, Button, Empty, Skeleton } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { ArrowUpRight, CircleAlert } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
-import {
-  stageLabels,
-  statusLabels,
-  type AdminOverview,
-  type AdminTaskSummary,
-} from "@keagent/shared-types";
+import { stageLabels, type AdminOverview } from "@keagent/shared-types";
 import { dateTime, userLabel } from "./admin-api";
 import { AIState, configLabel } from "./AdminAI";
 
@@ -18,9 +14,13 @@ export default function AdminDashboard() {
   });
   if (query.isPending)
     return (
-      <div className="admin-loading">
-        <Spin tip="正在汇总管理数据…" />
-      </div>
+      <section
+        className="admin-panel"
+        aria-label="正在汇总管理数据"
+        aria-busy="true"
+      >
+        <Skeleton active paragraph={{ rows: 4 }} />
+      </section>
     );
   if (query.error)
     return (
@@ -34,115 +34,138 @@ export default function AdminDashboard() {
     );
   const data = query.data;
   if (!data) return null;
+  const serviceIssues = data.services.filter(
+    (service) => service.state !== "configured",
+  );
   return (
-    <>
-      <div className="admin-toolbar">
-        <p className="admin-secondary">
-          以下为云端真实记录，点击数量进入对应列表。
-        </p>
-        <Button loading={query.isFetching} onClick={() => void query.refetch()}>
-          刷新概览
-        </Button>
+    <div className="admin-workbench-grid">
+      <div className="admin-workbench-primary">
+        <section
+          className="admin-workbench-focus"
+          aria-labelledby="admin-workbench-focus"
+        >
+          <CircleAlert size={22} aria-hidden="true" />
+          <div>
+            <h2 id="admin-workbench-focus">{data.failedTasks} 项任务待排查</h2>
+            <p>
+              {data.failedTasks
+                ? "先查看失败阶段，再决定下一步。"
+                : "目前没有失败的云端任务。"}
+            </p>
+          </div>
+          <Link to="/admin/tasks?status=failed" className="admin-focus-action">
+            查看任务 <ArrowUpRight size={16} aria-hidden="true" />
+          </Link>
+        </section>
+        <section
+          className="admin-workbench-queue"
+          aria-labelledby="admin-workbench-tasks"
+        >
+          <div className="admin-section-heading">
+            <h2 id="admin-workbench-tasks">近期失败任务</h2>
+            <Button
+              loading={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              刷新概览
+            </Button>
+          </div>
+          {data.recentFailedTasks.length === 0 ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="暂无失败任务"
+            />
+          ) : (
+            <ul className="admin-workbench-rows">
+              {data.recentFailedTasks.map((row) => (
+                <li key={row.id}>
+                  <div>
+                    <Link
+                      className="admin-workbench-task"
+                      to={"/admin/tasks?taskId=" + encodeURIComponent(row.id)}
+                    >
+                      {row.propertyTitle ||
+                        row.propertyNumber ||
+                        "房源信息不可用"}
+                    </Link>
+                    <p className="admin-secondary">
+                      {row.propertyNumber || "未记录房源号"}
+                    </p>
+                  </div>
+                  <div>
+                    <strong>{stageLabels[row.stage] || "未知阶段"}</strong>
+                    <p className="admin-secondary">
+                      {row.error || "尚未提供诊断"}
+                    </p>
+                  </div>
+                  <div>
+                    <Link
+                      to={
+                        "/admin/users?userId=" + encodeURIComponent(row.ownerId)
+                      }
+                    >
+                      {userLabel(row.owner, row.ownerId)}
+                    </Link>
+                    <p className="admin-secondary">{dateTime(row.createdAt)}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
-      <div className="admin-overview-counts">
-        <Link to="/admin/users">
-          <span>用户账号</span>
-          <strong>{data.users}</strong>
-          <small>查看账号与登录状态</small>
-        </Link>
-        <Link to="/admin/users?tab=devices&revoked=false">
-          <span>已绑定设备</span>
-          <strong>{data.devices}</strong>
-          <small>查看设备与最近活动</small>
-        </Link>
-        <Link to="/admin/resources?state=published">
-          <span>已上架模板</span>
-          <strong>{data.publishedResources}</strong>
-          <small>用户可选的公共目录</small>
-        </Link>
-        <Link to="/admin/tasks?status=failed">
-          <span>失败任务</span>
-          <strong>{data.failedTasks}</strong>
-          <small>需要进一步排查</small>
-        </Link>
-      </div>
-      <section className="admin-panel">
-        <div className="admin-section-heading">
-          <h2>优先排查的失败任务</h2>
-          <Link to="/admin/tasks?status=failed">查看全部失败任务</Link>
-        </div>
-        <Table<AdminTaskSummary>
-          rowKey="id"
-          dataSource={data.recentFailedTasks}
-          pagination={false}
-          scroll={{ x: 850 }}
-          locale={{ emptyText: <Empty description="暂无失败任务" /> }}
-          columns={[
-            {
-              title: "任务与房源",
-              key: "property",
-              render: (_, row) => (
-                <>
-                  <Link
-                    to={`/admin/tasks?taskId=${encodeURIComponent(row.id)}`}
-                  >
-                    {row.propertyTitle ||
-                      row.propertyNumber ||
-                      "房源信息不可用"}
-                  </Link>
-                  <p className="admin-secondary">
-                    {row.propertyNumber || "未记录房源号"}
-                  </p>
-                </>
-              ),
-            },
-            {
-              title: "所属用户",
-              key: "owner",
-              render: (_, row) => (
-                <Link
-                  to={`/admin/users?userId=${encodeURIComponent(row.ownerId)}`}
-                >
-                  {userLabel(row.owner, row.ownerId)}
-                </Link>
-              ),
-            },
-            {
-              title: "当前阶段",
-              key: "stage",
-              render: (_, row) => stageLabels[row.stage] || "未知阶段",
-            },
-            {
-              title: "状态",
-              key: "status",
-              render: (_, row) => (
-                <Tag color="red">{statusLabels[row.status] || "未知状态"}</Tag>
-              ),
-            },
-            {
-              title: "失败原因",
-              dataIndex: "error",
-              ellipsis: true,
-              render: (value) => value || "尚未提供诊断",
-            },
-            { title: "创建时间", dataIndex: "createdAt", render: dateTime },
-          ]}
-        />
-      </section>
-      <section className="admin-panel admin-block">
-        <div className="admin-section-heading">
-          <h2>AI 配置缺项</h2>
-          <Link to="/admin/ai">查看所有 AI 服务</Link>
-        </div>
-        {data.services.filter((service) => service.state !== "configured")
-          .length === 0 ? (
-          <p className="admin-secondary">
-            各项配置已齐全；实际连接和生成结果仍需在业务中验证。
-          </p>
-        ) : (
-          data.services
-            .filter((service) => service.state !== "configured")
-            .map((service) => (
+      <aside className="admin-workbench-sidebar">
+        <h2>运营概况</h2>
+        <section className="admin-workbench-metrics" aria-label="业务指标">
+          <Link to="/admin/users">
+            <span className="admin-metric-label">
+              用户账号
+              <ArrowUpRight size={16} aria-hidden="true" />
+            </span>
+            <strong>{data.users}</strong>
+          </Link>
+          <Link to="/admin/users?tab=devices&revoked=false">
+            <span className="admin-metric-label">
+              已绑定设备
+              <ArrowUpRight size={16} aria-hidden="true" />
+            </span>
+            <strong>{data.devices}</strong>
+          </Link>
+          <Link to="/admin/resources?state=published">
+            <span className="admin-metric-label">
+              已上架模板
+              <ArrowUpRight size={16} aria-hidden="true" />
+            </span>
+            <strong>{data.publishedResources}</strong>
+          </Link>
+          <Link to="/admin/tasks?status=failed">
+            <span className="admin-metric-label">
+              失败任务
+              <ArrowUpRight size={16} aria-hidden="true" />
+            </span>
+            <strong
+              className={
+                data.failedTasks ? "admin-metric-attention" : undefined
+              }
+            >
+              {data.failedTasks}
+            </strong>
+          </Link>
+        </section>
+        <section
+          className="admin-workbench-health"
+          aria-labelledby="admin-workbench-ai"
+        >
+          <div className="admin-section-heading">
+            <h2 id="admin-workbench-ai">AI 配置缺项</h2>
+            <Link to="/admin/ai">查看 AI 服务</Link>
+          </div>
+          {serviceIssues.length === 0 ? (
+            <p className="admin-secondary">
+              各项配置已齐全；实际连接和生成结果仍需在业务中验证。
+            </p>
+          ) : (
+            serviceIssues.map((service) => (
               <div key={service.id} className="admin-service-row">
                 <div>
                   <Link
@@ -160,11 +183,9 @@ export default function AdminDashboard() {
                 <AIState state={service.state} />
               </div>
             ))
-        )}
-      </section>
-      <p className="admin-secondary admin-block">
-        任务统计仅包含云端生产任务。本机全景制作、安装包分发与远程功能开关尚未接入本后台。
-      </p>
-    </>
+          )}
+        </section>
+      </aside>
+    </div>
   );
 }

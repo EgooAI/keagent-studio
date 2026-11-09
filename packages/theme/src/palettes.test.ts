@@ -6,6 +6,12 @@ describe("appearance palettes", () => {
     expect(resolvePalette("removed-theme").id).toBe("royal-purple");
     expect(resolvePalette("green").primary).toBe("#087f6f");
   });
+  it("supports an app-specific fallback without replacing saved choices", () => {
+    const fallback = { id: "mist-blue", name: "雾蓝", primary: "#3d607d" };
+    expect(resolvePalette(null, fallback)).toBe(fallback);
+    expect(resolvePalette(fallback.id, fallback)).toBe(fallback);
+    expect(resolvePalette("blue", fallback).id).toBe("blue");
+  });
   it("keeps white primary-button labels above AA contrast", () => {
     for (const palette of palettes) {
       const rgb = palette.primary

@@ -4,7 +4,6 @@ import {
   App,
   Button,
   Card,
-  Drawer,
   Form,
   Input,
   Layout,
@@ -24,20 +23,20 @@ import {
 } from "react-router-dom";
 import {
   Boxes,
-  ChevronRight,
   ClipboardList,
   Cpu,
   LayoutDashboard,
-  Palette,
+  Layers,
+  Settings,
   ShieldCheck,
   Users,
+  Video,
 } from "lucide-react";
 import {
   authRequest,
   clearAccessToken,
   type SessionUser,
 } from "@keagent/api-client";
-import { ThemeSettings } from "@keagent/theme";
 import type { AdminUser } from "@keagent/shared-types";
 import AdminUsers from "./AdminUsers";
 import AdminTasks from "./AdminTasks";
@@ -45,27 +44,16 @@ import AdminDouyin from "./AdminDouyin";
 import AdminDashboard from "./AdminDashboard";
 import AdminAI from "./AdminAI";
 import AdminAudit from "./AdminAudit";
+import AdminSettings from "./AdminSettings";
 import ResourcesPanel from "./ResourcesPanel";
-import {
-  auth,
-  unwrap,
-  useAdminAction,
-  useAdminParams,
-  userLabel,
-} from "./admin-api";
+import { auth, unwrap, useAdminAction, userLabel } from "./admin-api";
 
 const pages = [
   {
-    key: "douyin",
-    label: "抖音发布",
-    icon: <ClipboardList size={18} />,
-    description: "查看抖音发布回执、执行日志和流程告警。",
-  },
-  {
     key: "dashboard",
-    label: "管理概览",
+    label: "管理工作台",
     icon: <LayoutDashboard size={18} />,
-    description: "查看账号、设备和公共模板，优先处理失败任务与服务配置缺项。",
+    description: "掌握账号、设备与视频制作情况。",
   },
   {
     key: "users",
@@ -100,6 +88,18 @@ const pages = [
     description:
       "追溯谁在什么时间对哪个对象做了什么，区分业务操作与账号安全记录。",
   },
+  {
+    key: "douyin",
+    label: "抖音发布",
+    icon: <Video size={18} />,
+    description: "查看抖音发布回执、执行日志和流程告警。",
+  },
+  {
+    key: "settings",
+    label: "设置",
+    icon: <Settings size={18} />,
+    description: "管理告警通知和当前浏览器的后台外观。",
+  },
 ];
 
 export default function LiveAdmin() {
@@ -115,7 +115,6 @@ export default function LiveAdmin() {
   const mounted = useRef(true);
   const location = useLocation();
   const navigate = useNavigate();
-  const { params, setParams } = useAdminParams();
   const page = pages.find((item) => location.pathname === `/admin/${item.key}`);
   function clearAdminState() {
     client.clear();
@@ -237,6 +236,8 @@ export default function LiveAdmin() {
         </Card>
       </main>
     );
+  if (new URLSearchParams(location.search).get("appearance") === "1")
+    return <Navigate replace to="/admin/settings?tab=appearance" />;
   return (
     <Layout className="admin-shell">
       <a
@@ -251,12 +252,18 @@ export default function LiveAdmin() {
       </a>
       <Layout.Sider
         theme="light"
-        width={222}
+        width={204}
         breakpoint="lg"
         collapsedWidth={68}
       >
-        <Link to="/admin/dashboard" className="admin-brand">
-          <span className="admin-brand-mark">K</span>
+        <Link
+          to="/admin/dashboard"
+          className="admin-brand"
+          aria-label="KeAgent Studio 管理工作台"
+        >
+          <span className="admin-brand-mark">
+            <Layers size={18} aria-hidden="true" />
+          </span>
           <div>
             <strong>KeAgent Studio</strong>
             <small>管理后台</small>
@@ -265,7 +272,12 @@ export default function LiveAdmin() {
         <Menu
           mode="inline"
           selectedKeys={[page?.key || "dashboard"]}
-          items={pages.map(({ key, label, icon }) => ({ key, label, icon }))}
+          items={pages.map(({ key, label, icon }) => ({
+            key,
+            label,
+            icon,
+            "aria-label": label,
+          }))}
           onClick={({ key }) => navigate(`/admin/${key}`)}
         />
         <div className="admin-sidebar-foot">
@@ -274,26 +286,27 @@ export default function LiveAdmin() {
         </div>
       </Layout.Sider>
       <Layout>
-        <Layout.Header className="admin-header">
-          <Space>
-            <span>管理后台</span>
-            <ChevronRight size={14} />
-            <span>{page?.label || "管理概览"}</span>
-          </Space>
-          <Space wrap className="admin-account-controls">
-            <span className="admin-account-email">{user.email}</span>
-            <Button
-              icon={<Palette size={16} />}
-              onClick={() => setParams({ appearance: "1" }, false)}
-            >
-              外观设置
-            </Button>
-            <Button loading={busy} onClick={() => void logout()}>
-              退出登录
-            </Button>
-          </Space>
-        </Layout.Header>
-        <Layout.Content className="admin-content" id="admin-main" tabIndex={-1}>
+        <Layout.Content
+          className={
+            page?.key === "ai" ? "admin-content" : "admin-content admin-refined"
+          }
+          id="admin-main"
+          tabIndex={-1}
+        >
+          <header className="admin-page-head">
+            {page && (
+              <div className="admin-page-heading">
+                <h1>{page.label}</h1>
+                <p>{page.description}</p>
+              </div>
+            )}
+            <Space wrap className="admin-account-controls">
+              <span className="admin-account-email">{user.email}</span>
+              <Button loading={busy} onClick={() => void logout()}>
+                退出登录
+              </Button>
+            </Space>
+          </header>
           {pendingExit && (
             <Alert
               className="admin-notice"
@@ -324,12 +337,6 @@ export default function LiveAdmin() {
                 </Button>
               }
             />
-          )}
-          {page && (
-            <div className="admin-page-heading">
-              <h1>{page.label}</h1>
-              <p>{page.description}</p>
-            </div>
           )}
           <Routes>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
@@ -363,10 +370,7 @@ export default function LiveAdmin() {
               path="/admin/ai-config"
               element={<Navigate replace to="/admin/ai" />}
             />
-            <Route
-              path="/admin/settings"
-              element={<Navigate replace to="/admin/dashboard?appearance=1" />}
-            />
+            <Route path="/admin/settings" element={<AdminSettings />} />
             <Route
               path="*"
               element={<Navigate replace to="/admin/dashboard" />}
@@ -374,17 +378,6 @@ export default function LiveAdmin() {
           </Routes>
         </Layout.Content>
       </Layout>
-      <Drawer
-        title="外观设置"
-        open={params.get("appearance") === "1"}
-        onClose={() => setParams({ appearance: undefined }, false)}
-        width={480}
-      >
-        <ThemeSettings />
-        <p className="admin-secondary">
-          只影响当前浏览器，不更改用户客户端或系统功能。
-        </p>
-      </Drawer>
     </Layout>
   );
 }

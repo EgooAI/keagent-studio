@@ -1,19 +1,26 @@
-import { useLayoutEffect, useSyncExternalStore, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { App, ConfigProvider, Radio } from "antd";
 import {
   palettes,
   resolvePalette,
   THEME_STORAGE_KEY,
-  type PaletteId,
+  type ThemePalette,
 } from "./palettes";
 import "./theme.css";
 
+const ThemeDefault = createContext<ThemePalette>(palettes[0]);
 const listeners = new Set<() => void>();
 function readPalette() {
   try {
-    return resolvePalette(localStorage.getItem(THEME_STORAGE_KEY)).id;
+    return localStorage.getItem(THEME_STORAGE_KEY);
   } catch {
-    return palettes[0].id;
+    return null;
   }
 }
 function subscribe(listener: () => void) {
@@ -27,18 +34,25 @@ function subscribe(listener: () => void) {
     window.removeEventListener("storage", onStorage);
   };
 }
-function usePalette() {
+function usePalette(defaultPalette: ThemePalette) {
   return resolvePalette(
-    useSyncExternalStore(subscribe, readPalette, () => palettes[0].id),
+    useSyncExternalStore(subscribe, readPalette, () => null),
+    defaultPalette,
   );
 }
-function selectPalette(id: PaletteId) {
+function selectPalette(id: string) {
   // 存储失败时保留原主题，避免界面显示“已保存”却无法恢复。
   localStorage.setItem(THEME_STORAGE_KEY, id);
   listeners.forEach((listener) => listener());
 }
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const palette = usePalette();
+export function ThemeProvider({
+  children,
+  defaultPalette = palettes[0],
+}: {
+  children: ReactNode;
+  defaultPalette?: ThemePalette;
+}) {
+  const palette = usePalette(defaultPalette);
   useLayoutEffect(() => {
     document.documentElement.style.setProperty("--accent", palette.primary);
     document.documentElement.dataset.palette = palette.id;
@@ -47,17 +61,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       ?.setAttribute("content", palette.primary);
   }, [palette]);
   return (
-    <ConfigProvider
-      theme={{
-        token: { colorPrimary: palette.primary, colorInfo: palette.primary },
-      }}
-    >
-      {children}
-    </ConfigProvider>
+    <ThemeDefault.Provider value={defaultPalette}>
+      <ConfigProvider
+        theme={{
+          token: { colorPrimary: palette.primary, colorInfo: palette.primary },
+        }}
+      >
+        {children}
+      </ConfigProvider>
+    </ThemeDefault.Provider>
   );
 }
 export function ThemeSettings() {
-  const palette = usePalette();
+  const defaultPalette = useContext(ThemeDefault);
+  const palette = usePalette(defaultPalette);
+  const choices = palettes.some((item) => item.id === defaultPalette.id)
+    ? palettes
+    : [defaultPalette, ...palettes];
   const { message } = App.useApp();
   return (
     <section className="theme-settings" aria-labelledby="theme-settings-title">
@@ -69,13 +89,13 @@ export function ThemeSettings() {
           value={palette.id}
           onChange={(event) => {
             try {
-              selectPalette(event.target.value as PaletteId);
+              selectPalette(event.target.value);
             } catch {
               message.error("配色未保存，请检查本地存储权限后重试。");
             }
           }}
         >
-          {palettes.map((item) => (
+          {choices.map((item) => (
             <Radio.Button key={item.id} value={item.id}>
               <span
                 className="theme-swatch"

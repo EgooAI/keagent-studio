@@ -126,15 +126,23 @@ export default function AdminAudit() {
         onChange={changeTab}
         items={[
           { key: "account", label: "账号操作" },
-          { key: "business", label: "模板与设备操作" },
+          { key: "business", label: "业务操作" },
         ]}
       />
-      <p className="admin-secondary admin-notice">
-        {account
-          ? "记录管理员的账号管理操作，不包含所有用户的登录历史。同一次操作可能分别记录开始和最终结果。"
-          : "这里记录已成功提交的模板与设备变更。旧记录未保存完整动作和对象摘要时，会保留原始编号供核查。"}
-      </p>
-      <section className="admin-panel" aria-label="操作记录列表">
+      <section
+        className="admin-panel admin-table-panel"
+        aria-labelledby="admin-audit-list"
+      >
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="admin-audit-list">记录列表</h2>
+            <p className="admin-secondary">
+              {account
+                ? "记录管理员的账号管理操作，不包含所有用户的登录历史。同一次操作可能分别记录开始和最终结果。"
+                : "这里记录模板变更、设备解绑和 AI 服务管理操作。旧记录可能仅保留原始编号。"}
+            </p>
+          </div>
+        </div>
         <div className="admin-toolbar">
           <Space wrap>
             <Select
@@ -179,7 +187,7 @@ export default function AdminAudit() {
                 key={params.get("q") || ""}
                 defaultValue={params.get("q") || ""}
                 aria-label="搜索操作对象"
-                placeholder="搜索模板或设备名称"
+                placeholder="搜索操作对象"
                 allowClear
                 onSearch={(q) => setParams({ q })}
                 style={{ width: 240 }}
@@ -310,6 +318,7 @@ export default function AdminAudit() {
               title: "详情",
               key: "details",
               width: 85,
+              align: "right",
               render: (_, r) => (
                 <Button size="small" onClick={() => setDetail(r)}>
                   查看
@@ -320,6 +329,7 @@ export default function AdminAudit() {
         />
       </section>
       <Drawer
+        rootClassName="admin-detail-drawer"
         title="操作记录详情"
         open={!!detail}
         onClose={() => setDetail(null)}
@@ -336,28 +346,19 @@ export default function AdminAudit() {
                 children: dateTime(detail.createdAt),
               },
               {
-                key: "action",
-                label: "操作",
-                children: auditActionLabels[detail.action] || "其他管理操作",
-              },
-              {
                 key: "actor",
                 label: "操作人",
                 children: userLabel(detail.actor, detail.actorId),
               },
               {
+                key: "action",
+                label: "操作",
+                children: auditActionLabels[detail.action] || "其他管理操作",
+              },
+              {
                 key: "target",
                 label: "对象",
                 children: detail.targetLabel || "对象不可用",
-              },
-              {
-                key: "targetId",
-                label: "对象编号",
-                children: (
-                  <Typography.Text copyable>
-                    {detail.targetId || "未记录"}
-                  </Typography.Text>
-                ),
               },
               ...(account
                 ? [
@@ -368,6 +369,15 @@ export default function AdminAudit() {
                     },
                   ]
                 : []),
+              {
+                key: "targetId",
+                label: "对象编号",
+                children: (
+                  <Typography.Text copyable>
+                    {detail.targetId || "未记录"}
+                  </Typography.Text>
+                ),
+              },
               ...(detail.reason
                 ? [{ key: "reason", label: "原因", children: detail.reason }]
                 : []),

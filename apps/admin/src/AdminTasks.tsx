@@ -7,7 +7,7 @@ import {
   Input,
   Select,
   Space,
-  Spin,
+  Skeleton,
   Table,
   Tag,
   Typography,
@@ -45,13 +45,18 @@ export default function AdminTasks() {
   const task = detail.data?.task;
   return (
     <>
-      <Alert
-        type="info"
-        showIcon
-        title="这里只排查云端任务"
-        description="不包含保存在用户电脑上的全景制作。管理员可查看诊断，文案审核、重试与制作操作由用户在客户端完成。"
-      />
-      <section className="admin-panel admin-block">
+      <section
+        className="admin-panel admin-table-panel"
+        aria-labelledby="admin-task-list"
+      >
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="admin-task-list">任务列表</h2>
+            <p className="admin-secondary">
+              在这里排查云端生产任务。文案审核、重试和本机全景制作在用户客户端完成。
+            </p>
+          </div>
+        </div>
         <div className="admin-toolbar">
           <Space wrap>
             <Input.Search
@@ -187,19 +192,7 @@ export default function AdminTasks() {
               title: "状态",
               dataIndex: "status",
               render: (value: AdminTaskSummary["status"]) => (
-                <Tag
-                  color={
-                    value === "failed"
-                      ? "red"
-                      : value === "succeeded"
-                        ? "green"
-                        : value === "awaiting_review"
-                          ? "orange"
-                          : "default"
-                  }
-                >
-                  {statusLabels[value] || "未知状态"}
-                </Tag>
+                <TaskStatus value={value} />
               ),
             },
             {
@@ -219,12 +212,13 @@ export default function AdminTasks() {
         />
       </section>
       <Drawer
+        rootClassName="admin-detail-drawer"
         title="云端任务详情"
         width={720}
         open={!!taskId}
         onClose={() => setParams({ taskId: undefined }, false)}
       >
-        {detail.isPending && <Spin tip="正在读取任务…" />}
+        {detail.isPending && <Skeleton active />}
         {detail.error && (
           <Alert
             type="error"
@@ -236,6 +230,27 @@ export default function AdminTasks() {
         )}
         {task && detail.data && (
           <>
+            <div className="admin-detail-summary">
+              <TaskStatus value={task.status} />
+              <span>当前阶段 · {stageLabels[task.stage] || "未知阶段"}</span>
+            </div>
+            {(task.status === "failed" || task.error) && (
+              <Alert
+                type="error"
+                showIcon
+                title="失败原因"
+                description={
+                  <>
+                    <p>
+                      {task.error ||
+                        "服务端尚未提供诊断，请核对任务阶段与服务配置。"}
+                    </p>
+                    <Link to="/admin/ai">前往 AI 服务检查配置</Link>
+                  </>
+                }
+              />
+            )}
+            <h3 className="admin-detail-heading">任务信息</h3>
             <Descriptions
               column={1}
               bordered
@@ -272,16 +287,6 @@ export default function AdminTasks() {
                   children: `${task.propertySnapshot.title || task.propertySnapshot.community} · ${task.propertySnapshot.propertyNumber}`,
                 },
                 {
-                  key: "status",
-                  label: "任务状态",
-                  children: statusLabels[task.status] || "未知状态",
-                },
-                {
-                  key: "stage",
-                  label: "当前阶段",
-                  children: stageLabels[task.stage] || "未知阶段",
-                },
-                {
                   key: "time",
                   label: "创建时间",
                   children: dateTime(task.createdAt),
@@ -295,23 +300,6 @@ export default function AdminTasks() {
                 },
               ]}
             />
-            {(task.status === "failed" || task.error) && (
-              <Alert
-                className="admin-block"
-                type="error"
-                showIcon
-                title="失败原因"
-                description={
-                  <>
-                    <p>
-                      {task.error ||
-                        "服务端尚未提供诊断，请核对任务阶段与服务配置。"}
-                    </p>
-                    <Link to="/admin/ai">前往 AI 服务检查配置</Link>
-                  </>
-                }
-              />
-            )}
             <h3 className="admin-detail-heading">生成配置快照</h3>
             <Descriptions
               column={1}
@@ -388,5 +376,23 @@ export default function AdminTasks() {
         )}
       </Drawer>
     </>
+  );
+}
+
+function TaskStatus({ value }: { value: AdminTaskSummary["status"] }) {
+  return (
+    <Tag
+      color={
+        value === "failed"
+          ? "red"
+          : value === "succeeded"
+            ? "green"
+            : value === "awaiting_review"
+              ? "orange"
+              : "default"
+      }
+    >
+      {statusLabels[value] || "未知状态"}
+    </Tag>
   );
 }

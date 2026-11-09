@@ -8,6 +8,12 @@ import LiveAdmin from "./LiveAdmin";
 import "antd/dist/reset.css";
 import "./admin.css";
 
+const defaultAdminPalette = {
+  id: "mist-blue",
+  name: "雾蓝",
+  primary: "#3d607d",
+};
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
 });
@@ -39,7 +45,7 @@ class AdminBoundary extends Component<
 
 export default function App() {
   return (
-    <ThemeProvider>
+    <ThemeProvider defaultPalette={defaultAdminPalette}>
       <ConfigProvider
         locale={zhCN}
         theme={{

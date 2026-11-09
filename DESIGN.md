@@ -22,11 +22,12 @@ colors:
   demo-bg: "#fff6e5"
   demo-ink: "#a66612"
   error-ink: "#b75243"
-  admin-ink: "#111827"
-  admin-muted: "#667085"
-  admin-canvas: "#f7f8fa"
-  admin-line: "#e7ebf0"
-  admin-focus: "#8e58da"
+  admin-primary: "#3d607d"
+  admin-ink: "#232b34"
+  admin-muted: "#555f6a"
+  admin-canvas: "#f4f1e9"
+  admin-surface: "#fffdf8"
+  admin-line: "#e6e0d5"
 typography:
   headline:
     fontFamily: '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
@@ -149,7 +150,7 @@ components:
 
 - **操作蓝**（`primary`）：主按钮、房源与资源选中边框、文字链接；悬停与按下沿用 Ant Design 主题从主色实际生成的两个变体。
 - **选择浅蓝 / 选择蓝字**（`selected-bg` / `selected-ink`）：桌面当前导航，背景面积与文字同时表达当前位置。
-- **焦点蓝**（`focus`）：键盘焦点轮廓；后台使用其现有 `admin-focus` 变体。
+- **焦点蓝**（`focus`）：键盘焦点轮廓；后台的焦点轮廓随当前配色切换。
 
 ### Neutral
 
@@ -191,7 +192,7 @@ components:
 
 房源与发布卡片默认三列，房源网格在（min-width: 1650px）变为四列。制作表单与预览使用双栏；预览面板距顶部（20px），最大高度为 `calc(100vh - 215px)` 并在面板内部滚动，底部提交操作保持可见。竖版预览使用（9:16），横版使用（16:9）。
 
-桌面在（max-width: 1300px）收紧页边距与栏间距；（1080px）侧栏缩至（190px）、卡片两列、制作页单列；（760px）侧栏成为（65px）图标栏，内容网格单列、页边距收至（16px）。后台侧栏内容偏移为（222px），在（991px）收至（68px），在（700px）将表单改为单列、摘要改为两列。优先使用场景为（1440×900）与（1280×800）。
+桌面在（max-width: 1300px）收紧页边距与栏间距；（1080px）侧栏缩至（190px）、卡片两列、制作页单列；（760px）侧栏成为（65px）图标栏，内容网格单列、页边距收至（16px）。后台侧栏内容偏移为（204px），在（991px）收至（68px），在（700px）将表单改为单列、摘要改为两列。优先使用场景为（1440×900）与（1280×800）。
 
 ## Elevation & Depth
 
@@ -256,4 +257,6 @@ components:
 - **Don't** 为新增次要文字随意选取更浅的灰色。
 - **Don't** 把桌面和后台的实际中性色差异当作尚未实现的统一主题。
 
-默认配色为皇冠紫。桌面设置和后台右上角的外观设置可切换经典蓝、松石绿、玫瑰红，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量；成功、警告、错误语义色不参与替换。
+桌面默认配色为皇冠紫。管理后台采用米白工作面、暖灰侧栏与雾蓝主操作。后台工作台左侧放待排查任务，右侧集中运营指标与 AI 配置缺项。后台列表以横向细线和留白分组，使用浅米色表头标明列结构。
+
+桌面设置和后台的「外观」可切换配色，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。后台的新浏览器默认雾蓝，已保存的配色优先。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量。成功、警告、错误语义色保留各自的含义。

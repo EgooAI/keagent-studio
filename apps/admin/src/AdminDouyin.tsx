@@ -2,20 +2,20 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
-  App,
   Button,
   DatePicker,
   Descriptions,
   Drawer,
-  Form,
+  Empty,
   Input,
   Select,
+  Skeleton,
   Space,
-  Statistic,
   Table,
   Tag,
   Timeline,
 } from "antd";
+import { Link } from "react-router-dom";
 import { serviceRequest } from "@keagent/api-client";
 import {
   douyinStateLabels,
@@ -27,10 +27,7 @@ export default function AdminDouyin() {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState("");
-  const { message } = App.useApp();
   const client = useQueryClient();
-  const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm();
   const params = new URLSearchParams({
     ...filters,
     limit: "20",
@@ -62,13 +59,6 @@ export default function AdminDouyin() {
       }>("/v1/admin/douyin/health"),
     refetchInterval: 10000,
   });
-  const settings = useQuery({
-    queryKey: ["admin", "douyin", "settings"],
-    queryFn: () =>
-      serviceRequest<{ operationsEmail: string; smtpConfigured: boolean }>(
-        "/v1/admin/douyin/settings",
-      ),
-  });
   const detail = useQuery({
     queryKey: ["admin", "douyin", "detail", selected],
     enabled: !!selected,
@@ -86,98 +76,88 @@ export default function AdminDouyin() {
     });
     setPage(1);
   }
-  async function save(values: { operationsEmail?: string }) {
-    setSaving(true);
-    try {
-      await serviceRequest("/v1/admin/douyin/settings", {
-        operationsEmail: values.operationsEmail || "",
-      });
-      await client.invalidateQueries({
-        queryKey: ["admin", "douyin", "settings"],
-      });
-      message.success("运维邮箱已保存");
-    } catch (error) {
-      message.error((error as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
   return (
     <>
-      <Alert
-        type="info"
-        showIcon
-        title="发布记录与步骤只读"
-        description="由用户在桌面客户端直接发布；平台回执不等同于作品审核通过。管理员不持有抖音登录资料。"
-      />
-      {[records.error, summary.error, health.error, settings.error]
+      {[records.error, summary.error, health.error]
         .filter(Boolean)
         .map((error, index) => (
-          <Alert key={index} type="error" title={error!.message} />
+          <Alert
+            key={index}
+            className="admin-notice"
+            type="error"
+            showIcon
+            title={error!.message}
+          />
         ))}
-      <section className="admin-panel admin-block">
-        <Space wrap size="large">
-          <Statistic title="发布尝试" value={summary.data?.total || 0} />
-          <Statistic
-            title="已提交抖音"
-            value={summary.data?.states.accepted || 0}
-          />
-          <Statistic
-            title="结果待核对"
-            value={summary.data?.states.unknown || 0}
-          />
-          <Statistic
-            title="符合告警条件的连续失败"
-            value={health.data?.failures || 0}
-          />
-          <Tag color={health.data?.incident ? "red" : "green"}>
-            {health.data?.incident ? "发布流程异常" : "暂无流程告警"}
-          </Tag>
-        </Space>
+      <section className="admin-panel admin-metrics" aria-label="发布指标">
+        <div>
+          <span>发布尝试</span>
+          <strong>{summary.data?.total ?? "—"}</strong>
+        </div>
+        <div>
+          <span>已提交抖音</span>
+          <strong>
+            {summary.data ? (summary.data.states.accepted ?? 0) : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>结果待核对</span>
+          <strong>
+            {summary.data ? (summary.data.states.unknown ?? 0) : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>符合告警条件的连续失败</span>
+          <strong>{health.data?.failures ?? "—"}</strong>
+        </div>
       </section>
-      <section className="admin-panel admin-block">
-        <h2>发布流程告警</h2>
-        <p>
+      <section
+        className="admin-panel admin-block"
+        aria-labelledby="admin-publish-alerts"
+      >
+        <div className="admin-section-heading">
+          <Space wrap>
+            <h2 id="admin-publish-alerts">发布流程告警</h2>
+            <Tag
+              color={
+                health.data?.incident
+                  ? "red"
+                  : health.data
+                    ? "green"
+                    : "default"
+              }
+            >
+              {health.data?.incident
+                ? "发布流程异常"
+                : health.data
+                  ? "暂无流程告警"
+                  : "状态待获取"}
+            </Tag>
+          </Space>
+          <Link to="/admin/settings?tab=mail">管理邮件通知</Link>
+        </div>
+        <p className="admin-secondary">
           24 小时内连续 3
-          次执行失败时通知，之后首次自动成功发送恢复通知。登录、文件、验收、未知结果和人工核对不计入。
+          次执行失败时发送告警，之后首次自动成功时发送恢复通知。登录、文件、验收、未知结果和人工核对不计入。
         </p>
-        <Alert
-          type={settings.data?.smtpConfigured ? "success" : "warning"}
-          title={
-            settings.data?.smtpConfigured
-              ? "SMTP 已配置，实际投递结果以邮件队列为准"
-              : "SMTP 尚未完整配置，管理员保存邮箱后仍需配置服务端环境"
-          }
-        />
-        <Form
-          form={form}
-          layout="inline"
-          key={settings.data?.operationsEmail || "empty"}
-          initialValues={{
-            operationsEmail: settings.data?.operationsEmail || "",
-          }}
-          onFinish={save}
-        >
-          <Form.Item
-            name="operationsEmail"
-            label="运维邮箱"
-            rules={[{ type: "email", message: "请输入有效邮箱" }]}
-          >
-            <Input placeholder="留空关闭邮件通知" style={{ width: 300 }} />
-          </Form.Item>
-          <Button
-            htmlType="submit"
-            loading={saving}
-            disabled={settings.isPending}
-          >
-            保存邮箱
-          </Button>
-        </Form>
-        <p className="muted">
-          待投递邮件：{health.data?.pendingEmails || 0}；失败后每 5 分钟重试。
+        <p className="admin-secondary">
+          待投递邮件：{health.data?.pendingEmails ?? "—"}。投递失败后每 5
+          分钟重试。
         </p>
       </section>
-      <section className="admin-panel admin-block">
+      <section
+        className="admin-panel admin-table-panel admin-block"
+        aria-labelledby="admin-publish-records"
+      >
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="admin-publish-records">发布记录</h2>
+            <p className="admin-secondary">
+              <strong>发布记录与步骤只读</strong>
+              。用户在桌面客户端发起发布，作品审核结果以抖音为准。
+            </p>
+          </div>
+        </div>
         <div className="admin-toolbar">
           <Space wrap>
             <AdminUserSelect
@@ -226,9 +206,14 @@ export default function AdminDouyin() {
         </div>
         <Table<DouyinPublishRecord>
           rowKey="id"
-          loading={records.isFetching}
+          loading={records.isPending}
           dataSource={records.data?.items || []}
           scroll={{ x: 1100 }}
+          locale={{
+            emptyText: (
+              <Empty description="没有符合条件的发布记录。可调整筛选条件。" />
+            ),
+          }}
           pagination={{
             current: page,
             pageSize: 20,
@@ -240,14 +225,19 @@ export default function AdminDouyin() {
             {
               title: "发布记录",
               dataIndex: "id",
+              width: 288,
               render: (id) => (
-                <Button type="link" onClick={() => setSelected(id)}>
+                <Button
+                  type="link"
+                  className="admin-cell-link"
+                  onClick={() => setSelected(id)}
+                >
                   {id}
                 </Button>
               ),
             },
-            { title: "所属用户", dataIndex: "ownerId" },
-            { title: "设备", dataIndex: "deviceId" },
+            { title: "所属用户", dataIndex: "ownerId", width: 110 },
+            { title: "设备", dataIndex: "deviceId", width: 120 },
             {
               title: "成片 / 账号",
               render: (_, row) => (
@@ -260,25 +250,49 @@ export default function AdminDouyin() {
             {
               title: "状态",
               dataIndex: "state",
-              render: (state: keyof typeof douyinStateLabels) =>
-                douyinStateLabels[state],
+              width: 120,
+              render: (state: keyof typeof douyinStateLabels) => (
+                <Tag
+                  color={
+                    state === "accepted"
+                      ? "green"
+                      : state === "failed"
+                        ? "red"
+                        : state === "unknown"
+                          ? "orange"
+                          : "default"
+                  }
+                >
+                  {douyinStateLabels[state]}
+                </Tag>
+              ),
             },
-            { title: "错误类别", dataIndex: "errorCode" },
+            { title: "错误类别", dataIndex: "errorCode", width: 145 },
             {
               title: "时间",
               dataIndex: "createdAt",
+              width: 170,
               render: (value) => new Date(value).toLocaleString("zh-CN"),
             },
           ]}
         />
       </section>
       <Drawer
+        rootClassName="admin-detail-drawer"
         title="抖音发布诊断"
         open={!!selected}
         onClose={() => setSelected("")}
         size={640}
       >
-        {detail.error && <Alert type="error" title={detail.error.message} />}{" "}
+        {detail.isPending && <Skeleton active />}
+        {detail.error && (
+          <Alert
+            type="error"
+            showIcon
+            title={detail.error.message}
+            action={<Button onClick={() => void detail.refetch()}>重试</Button>}
+          />
+        )}
         {detail.data && (
           <>
             <Descriptions
@@ -319,7 +333,7 @@ export default function AdminDouyin() {
             <Timeline
               items={detail.data.logs?.map((log, index) => ({
                 key: index,
-                children: (
+                content: (
                   <>
                     <strong>{log.step}</strong>
                     <p>
