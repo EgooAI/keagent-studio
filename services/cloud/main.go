@@ -267,6 +267,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, v, e)
 		return
 	}
+	if r.Method == "POST" && r.URL.Path == "/v1/factory/properties" {
+		v, e := s.factoryProperties(r.Context(), a, body)
+		respond(w, v, e)
+		return
+	}
 	if r.Method == "POST" && r.URL.Path == "/v1/devices/register" {
 		var input struct {
 			Name     string
@@ -300,7 +305,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, nil, fail(404, "接口不存在"))
 }
-func (s *server) workspace(ctx context.Context, a actor) (object, error) {
+func (s *server) workspacePayload(ctx context.Context, a actor) (object, error) {
 	seed, _ := json.Marshal(initial(a.Name))
 	_, err := s.db.ExecContext(ctx, `INSERT INTO keagent_workspace(owner_id,payload) VALUES($1,$2) ON CONFLICT DO NOTHING`, a.UserID, seed)
 	if err != nil {
@@ -313,6 +318,14 @@ func (s *server) workspace(ctx context.Context, a actor) (object, error) {
 	}
 	var w object
 	if err = json.Unmarshal(b, &w); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (s *server) workspace(ctx context.Context, a actor) (object, error) {
+	w, err := s.workspacePayload(ctx, a)
+	if err != nil {
 		return nil, err
 	}
 	properties := []any{builtinTestProperty()}

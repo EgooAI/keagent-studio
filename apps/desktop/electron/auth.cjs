@@ -48,6 +48,8 @@ function registerAuth() {
       return result.data;
     },
   );
+  workflow.factoryProperties = (input) =>
+    request("/v1/factory/properties", input).then((value) => value.data);
   const base = (
     process.env.CONTROL_API_URL || "http://127.0.0.1:18080"
   ).replace(/\/$/, "");
@@ -412,6 +414,17 @@ function registerAuth() {
   });
   app.on("before-quit", () => workflow.stop());
   return {
+    setArchiveOutput(register) {
+      workflow.archiveOutput = async (userId, jobId, assertCurrent) => {
+        const identity = await this.publishingIdentity();
+        assertCurrent();
+        if (identity.userId !== userId) throw new Error("登录状态已改变");
+        return register(
+          workflow.completedArtifactOutput(userId, jobId),
+          identity,
+        );
+      };
+    },
     onInvalidated(listener) {
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);

@@ -211,12 +211,37 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 	case "beike-import", "image-submit", "image-query":
 		return s.productionImage(ctx, a, operation, input)
 	case "capabilities":
-		templates, err := s.productionTemplates(ctx)
-		if err != nil {
-			return nil, err
+		templates := []any{}
+		if input["runtimeOnly"] != true {
+			var err error
+			templates, err = s.productionTemplates(ctx)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if refs, ok := input["templateIds"].([]any); ok {
+			selected := map[string]bool{}
+			for _, ref := range refs {
+				selected[str(ref)] = true
+			}
+			filtered := templates[:0]
+			for _, template := range templates {
+				if selected[str(obj(template)["id"])] {
+					filtered = append(filtered, template)
+				}
+			}
+			templates = filtered
 		}
 		services := aiServicesFor(ctx)
 		_, _, imageConfigErr := expansionConnection(ctx)
+		if input["summary"] == true {
+			for i, template := range templates {
+				item := obj(template)
+				summary := pickFields(item, "id", "name", "version", "description")
+				summary["config"] = pickFields(obj(obj(item["production"])["config"]), "language", "videoMode", "aspectRatio", "resolution")
+				templates[i] = summary
+			}
+		}
 		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "volcAvatar": services[2].State == "configured", "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "imageExpansion": imageConfigErr == nil}, nil
 	case "template":
 		return s.productionTemplate(ctx, input)

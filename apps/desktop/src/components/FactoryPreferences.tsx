@@ -149,7 +149,10 @@ export function FactoryPreferences() {
               voiceId: values.voiceId || "",
               avatarId: values.avatarId || "",
             });
-            await client.invalidateQueries({ queryKey: ["workspace"] });
+            await Promise.all([
+              client.invalidateQueries({ queryKey: ["workspace"] }),
+              client.invalidateQueries({ queryKey: ["factory-preferences"] }),
+            ]);
             void message.success("默认制作配置已保存，新视频将使用这些偏好");
           } catch (error) {
             void message.error(

@@ -9,6 +9,7 @@ const providers = require("./providers.cjs");
 const sources = require("../production/sources.cjs");
 const templateLibrary = require("../production/templates.cjs");
 const factory = require("../production/factory.cjs");
+const { ProductionQueue } = require("../production/queue.cjs");
 const uuid = /^[a-f0-9-]{36}$/;
 const assetName = /^[a-f0-9]{64}\.(jpg|png)$/;
 
@@ -23,6 +24,7 @@ class PanoramaWorkflow {
     this.previews = new Set();
     this.capabilityPromise = null;
     this.sourceFlight = new Map();
+    this.queue = new ProductionQueue(this);
   }
   owner(userId) {
     domain.ensure(
@@ -49,6 +51,12 @@ class PanoramaWorkflow {
         Array.isArray(state.jobs),
       "本机工作流记录损坏；原文件已保留",
     );
+    if (
+      fs.existsSync(file) &&
+      !state.production &&
+      !fs.existsSync(file + ".pre-batch")
+    )
+      fs.copyFileSync(file, file + ".pre-batch", fs.constants.COPYFILE_EXCL);
     for (const job of state.jobs)
       if (job.status === "running") {
         job.status = "failed";
@@ -94,6 +102,7 @@ class PanoramaWorkflow {
       ...state,
       assetMetadata: undefined,
       imports: undefined,
+      production: undefined,
       imageTasks: state.imageTasks.map(({ id, sceneId, status, error }) => ({
         id,
         sceneId,
@@ -127,7 +136,15 @@ class PanoramaWorkflow {
       })),
     };
   }
-  async capabilities() {
+  draftView(owner, draft) {
+    return this.view(owner, { drafts: [draft], jobs: [], imageTasks: [] })
+      .drafts[0];
+  }
+  jobView(owner, job) {
+    return this.view(owner, { drafts: [], jobs: [job], imageTasks: [] })
+      .jobs[0];
+  }
+  async capabilities(mode) {
     this.capabilityPromise ??= media
       .capabilities(path.join(this.root, "runtime"))
       .catch((error) => {
@@ -135,15 +152,27 @@ class PanoramaWorkflow {
         throw error;
       });
     const local = await this.capabilityPromise;
-    const cloud = this.remote ? await this.remote("capabilities", {}) : {};
+    const cloud = this.remote
+      ? await this.remote(
+          "capabilities",
+          mode === "runtime"
+            ? { runtimeOnly: true }
+            : mode === true
+              ? { summary: true }
+              : mode || {},
+        )
+      : {};
     return {
       ...local,
-      templates: (cloud.templates || []).map((template) => ({
-        ...template,
-        opening: template.production.config.openingTemplate,
-        scene: template.production.config.sceneTemplate,
-        closing: template.production.config.closingTemplate,
-      })),
+      templates:
+        mode === true || mode === "runtime"
+          ? cloud.templates || []
+          : (cloud.templates || []).map((template) => ({
+              ...template,
+              opening: template.production.config.openingTemplate,
+              scene: template.production.config.sceneTemplate,
+              closing: template.production.config.closingTemplate,
+            })),
       defaultConfig: domain.defaultConfig,
       ai: !!cloud.ai,
       volcTts: !!cloud.volcTts,
@@ -328,10 +357,25 @@ class PanoramaWorkflow {
     );
     return draft;
   }
-  async handle(userId, method, input = {}, property, assertCurrent = () => {}) {
+  async handle(
+    userId,
+    method,
+    input = {},
+    property,
+    assertCurrent = () => {},
+    productionItem,
+  ) {
     assertCurrent();
     const owner = this.owner(userId);
     const state = this.store(owner);
+    if (method.startsWith("factory-"))
+      return this.queue.handle(
+        userId,
+        owner,
+        method.slice(8),
+        input,
+        assertCurrent,
+      );
     if (method === "template-save") {
       const result = templateLibrary.save(state, input);
       this.persist(owner);
@@ -449,6 +493,7 @@ class PanoramaWorkflow {
     }
     if (method === "save") {
       const draft = this.draft(owner, input.id, input.revision);
+      this.queue.assertEditable(owner, draft.id);
       const c = domain.config(input.config, [{ id: draft.config.templateId }]);
       if (draft.sample && draft.property.id === "panorama-cc0-sample")
         domain.ensure(
@@ -482,14 +527,25 @@ class PanoramaWorkflow {
           ),
         "语言或文案模板改变后，请重新生成分段文案",
       );
+      const previous = {
+        segments: draft.segments,
+        config: draft.config,
+        revision: draft.revision,
+      };
       draft.segments = domain.validateSegments(input.segments, draft.segments);
       draft.config = c;
       draft.revision++;
-      this.persist(owner);
-      return this.view(owner, { ...state, drafts: [draft] }).drafts[0];
+      try {
+        this.persist(owner);
+      } catch (error) {
+        Object.assign(draft, previous);
+        throw error;
+      }
+      return this.draftView(owner, draft);
     }
     if (method === "start") {
       const draft = this.draft(owner, input.id, input.revision);
+      this.queue.assertExecution(owner, draft.id, productionItem);
       const existing = state.jobs.find(
         (job) =>
           job.draftId === draft.id &&
@@ -504,6 +560,8 @@ class PanoramaWorkflow {
       await this.preflight(draft, owner, draft.confirmation === "whole");
       this.draft(owner, input.id, input.revision);
       assertCurrent();
+      this.queue.assertExecution(owner, draft.id, productionItem);
+      domain.ensure(!this.active.size, "本机正在生成视频，请稍后再试");
       const avatarKey = domain.hash([
         "photo-v1",
         domain.audioKey(draft.segments[0], draft.config),
@@ -547,20 +605,39 @@ class PanoramaWorkflow {
             : undefined,
       };
       state.jobs.unshift(job);
-      this.persist(owner);
+      try {
+        if (productionItem)
+          this.queue.update(owner, productionItem, { jobId: job.id });
+        else this.persist(owner);
+      } catch (error) {
+        state.jobs.shift();
+        throw error;
+      }
       this.execute(owner, job);
       return job;
     }
     const job = state.jobs.find((j) => j.id === input.id);
     domain.ensure(job, "本机任务不存在");
     if (method === "cancel") {
+      this.queue.assertExecution(owner, job.draftId, productionItem);
       domain.ensure(job.status === "running", "只有执行中的任务可以取消");
       job.status = "canceled";
+      try {
+        if (productionItem)
+          this.queue.update(owner, productionItem, {
+            phase: "canceled",
+            error: undefined,
+          });
+        else this.persist(owner);
+      } catch (error) {
+        job.status = "running";
+        throw error;
+      }
       this.active.get(job.id)?.controller.abort();
-      this.persist(owner);
       return null;
     }
     if (method === "retry") {
+      this.queue.assertExecution(owner, job.draftId, productionItem);
       domain.ensure(
         job.status === "failed" || job.status === "canceled",
         "只有失败或已取消任务可以重试",
@@ -576,9 +653,17 @@ class PanoramaWorkflow {
         job.confirmation === "whole" && !!job.confirmedAt,
       );
       assertCurrent();
+      this.queue.assertExecution(owner, job.draftId, productionItem);
+      domain.ensure(!this.active.size, "本机正在生成视频，请稍后再试");
+      const previous = { status: job.status, error: job.error };
       job.status = "running";
       job.error = undefined;
-      this.persist(owner);
+      try {
+        this.persist(owner);
+      } catch (error) {
+        Object.assign(job, previous);
+        throw error;
+      }
       this.execute(owner, job);
       return job;
     }
@@ -595,10 +680,21 @@ class PanoramaWorkflow {
     }
     throw new Error("未知全景工作流操作");
   }
-  async createDraft(owner, input, property, preparing, assertCurrent) {
+  async createDraft(
+    owner,
+    input,
+    property,
+    preparing,
+    assertCurrent,
+    item,
+    preparationSignal,
+  ) {
     const state = this.store(owner);
     const controller = new AbortController();
     this.previews.add(controller);
+    const signal = preparationSignal
+      ? AbortSignal.any([preparationSignal, controller.signal])
+      : controller.signal;
     try {
       property ??= state.properties.find((p) => p.id === input.propertyId);
       domain.ensure(
@@ -608,14 +704,16 @@ class PanoramaWorkflow {
       let templateSnapshot;
       if (preparing) {
         domain.ensure(this.remote, "请连接服务并选择管理员已上架的模板");
-        templateSnapshot = await this.remote(
-          "template",
-          {
-            id: input.config?.templateId,
-            version: input.templateVersion,
-          },
-          controller.signal,
-        );
+        templateSnapshot =
+          item?.templateSnapshot ||
+          (await this.remote(
+            "template",
+            {
+              id: input.config?.templateId,
+              version: input.templateVersion,
+            },
+            signal,
+          ));
         assertCurrent();
         domain.ensure(
           templateSnapshot?.id === input.config?.templateId &&
@@ -635,7 +733,7 @@ class PanoramaWorkflow {
           property.sample === true && c.videoMode === "voiceover",
           "内置测试房源请选择配音模板；露脸制作请使用本人形象与真实房源",
         );
-        const caps = await this.capabilities();
+        const caps = await this.capabilities("runtime");
         assertCurrent();
         const voice = caps.voices.find((v) => v.language === c.language);
         domain.ensure(
@@ -657,7 +755,7 @@ class PanoramaWorkflow {
       const scenes = this.scenes(
         owner,
         preparing
-          ? await factory.load(this, owner, property, assertCurrent)
+          ? await factory.load(this, owner, property, assertCurrent, signal)
           : input.scenes,
         preparing,
       );
@@ -714,13 +812,10 @@ class PanoramaWorkflow {
                     owner,
                     scenes,
                     state.imports[property.id]?.references || [],
-                    controller.signal,
+                    signal,
                   ),
                 },
-                AbortSignal.any([
-                  controller.signal,
-                  AbortSignal.timeout(65000),
-                ]),
+                AbortSignal.any([signal, AbortSignal.timeout(65000)]),
               ),
               expected,
             )
@@ -738,10 +833,7 @@ class PanoramaWorkflow {
                     language: c.language,
                     segments: expected,
                   },
-                  AbortSignal.any([
-                    controller.signal,
-                    AbortSignal.timeout(65000),
-                  ]),
+                  AbortSignal.any([signal, AbortSignal.timeout(65000)]),
                 ),
                 expected,
               )
@@ -768,13 +860,29 @@ class PanoramaWorkflow {
         createdAt: new Date().toISOString(),
       };
       state.drafts.unshift(draft);
-      this.persist(owner);
-      return this.view(owner, { ...state, drafts: [draft] }).drafts[0];
+      try {
+        if (item)
+          this.queue.update(owner, item, {
+            draftId: draft.id,
+            phase: "review",
+          });
+        else this.persist(owner);
+      } catch (error) {
+        state.drafts.shift();
+        throw error;
+      }
+      return this.draftView(owner, draft);
     } finally {
       this.previews.delete(controller);
     }
   }
-  async preflight(draft, owner, pendingImages = false) {
+  async preflight(
+    draft,
+    owner,
+    pendingImages = false,
+    reviewOnly = false,
+    checks = {},
+  ) {
     if (owner) {
       this.scenes(owner, draft.scenes, pendingImages);
       for (const scene of draft.scenes) {
@@ -788,10 +896,10 @@ class PanoramaWorkflow {
       }
     }
     domain.ensure(
-      this.active.size === 0,
+      reviewOnly || this.active.size === 0,
       "本机正在生成视频，请等待完成后再提交",
     );
-    const caps = await this.capabilities();
+    const caps = await (checks.capabilities ??= this.capabilities("runtime"));
     domain.ensure(
       !pendingImages ||
         !draft.scenes.some((s) => s.kind === "photo") ||
@@ -799,7 +907,7 @@ class PanoramaWorkflow {
       "图片处理服务尚未配置，请联系管理员",
     );
     domain.ensure(
-      this.active.size === 0,
+      reviewOnly || this.active.size === 0,
       "本机正在生成视频，请等待完成后再提交",
     );
     domain.ensure(
@@ -820,11 +928,14 @@ class PanoramaWorkflow {
       );
     else if (draft.config.ttsProvider === "personal") {
       domain.ensure(this.remote, "未连接本人音色服务");
-      const catalog = await this.remote("voice-list", {});
+      const catalog = await (checks.voices ??= this.remote("voice-list", {}));
       domain.ensure(
         catalog.cloneEnabled &&
           catalog.voices.some(
-            (v) => v.id === draft.config.voice && v.status === "ready",
+            (v) =>
+              v.id === draft.config.voice &&
+              v.status === "ready" &&
+              v.language === draft.config.language,
           ),
         "本人音色不存在或尚未就绪，请重新选择",
       );
@@ -833,27 +944,31 @@ class PanoramaWorkflow {
         caps.volcTts && draft.config.voice,
         "请选择公共音色，并确认配音服务已配置",
       );
-      const catalog = await this.remote("voice-list", {});
+      const catalog = await (checks.voices ??= this.remote("voice-list", {}));
       domain.ensure(
-        catalog.publicVoices.some((voice) => voice.id === draft.config.voice),
+        catalog.publicVoices.some(
+          (voice) =>
+            voice.id === draft.config.voice &&
+            voice.language === draft.config.language,
+        ),
         "公共音色已下架或不存在，请重新选择",
       );
     }
     if (draft.config.videoMode === "avatar") {
-      await this.requireAvatar(draft.config);
+      await this.requireAvatar(draft.config, checks);
       domain.ensure(
         caps.volcAvatar,
         "请配置火山数字人 AK、SK、TOS 私有桶以及形象 ID",
       );
     }
   }
-  async requireAvatar(config) {
+  async requireAvatar(config, checks = {}) {
     if (config.videoMode !== "avatar") return;
     domain.ensure(
       config.avatarId && this.remote,
       "露脸模式必须先上传本人照片并选择形象",
     );
-    const library = await this.remote("avatar-list", {});
+    const library = await (checks.avatars ??= this.remote("avatar-list", {}));
     domain.ensure(
       library.avatars.some(
         (avatar) => avatar.id === config.avatarId && avatar.status === "ready",
@@ -1019,11 +1134,15 @@ class PanoramaWorkflow {
         }
         this.persist(owner);
       })
-      .finally(() => this.active.delete(job.id));
+      .finally(() => {
+        this.active.delete(job.id);
+        this.queue.pump();
+      });
     this.active.get(job.id).promise = promise;
     return promise;
   }
   stop() {
+    this.queue.stop();
     for (const { controller } of this.active.values()) controller.abort();
     for (const controller of this.previews) controller.abort();
   }

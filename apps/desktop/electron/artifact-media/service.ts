@@ -39,7 +39,10 @@ export class ArtifactRegistrationService {
     readonly registry: LocalMediaRegistry,
     private exchange: RegistryExchange,
   ) {}
-  async register(output: CompletedArtifactOutput): Promise<VideoArtifact> {
+  async register(
+    output: CompletedArtifactOutput,
+    expected?: MediaIdentity,
+  ): Promise<VideoArtifact> {
     if (output.sample)
       throw new ArtifactMediaError(
         "SAMPLE_NOT_PUBLISHABLE",
@@ -61,6 +64,7 @@ export class ArtifactRegistrationService {
       );
     output = structuredClone(output);
     const { identity, directory } = await this.registry.context();
+    if (expected) await this.registry.assertIdentity(expected);
     const key = createHash("sha256")
       .update(
         JSON.stringify([identity.userId, identity.deviceId, output.source]),

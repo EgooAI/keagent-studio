@@ -6,7 +6,13 @@ const media = require("../panorama/media.cjs");
 const providers = require("../panorama/providers.cjs");
 const sources = require("./sources.cjs");
 
-async function load(workflow, owner, property, assertCurrent) {
+async function load(
+  workflow,
+  owner,
+  property,
+  assertCurrent,
+  preparationSignal,
+) {
   if (property.id === "panorama-cc0-sample")
     return (await workflow.loadSample(owner, assertCurrent)).scenes;
   const state = workflow.store(owner);
@@ -37,6 +43,9 @@ async function load(workflow, owner, property, assertCurrent) {
   domain.ensure(images.length <= 20, "每套房源最多使用20张制作图片");
   const controller = new AbortController();
   workflow.previews.add(controller);
+  const signal = preparationSignal
+    ? AbortSignal.any([preparationSignal, controller.signal])
+    : controller.signal;
   try {
     const remoteSceneIds = [];
     for (const [index, { url, kind }] of images.entries()) {
@@ -46,15 +55,15 @@ async function load(workflow, owner, property, assertCurrent) {
       );
       let bytes;
       try {
-        bytes = await providers.downloadImage(url, "beike", controller.signal);
+        bytes = await providers.downloadImage(url, "beike", signal);
       } catch (error) {
-        if (controller.signal.aborted) throw error;
+        if (signal.aborted) throw error;
         throw new Error(
           `无法读取第${index + 1}张房源图片，请在房源详情补充可用素材`,
         );
       }
       assertCurrent();
-      controller.signal.throwIfAborted();
+      signal.throwIfAborted();
       const scene = await workflow.importBytes(
         owner,
         bytes,

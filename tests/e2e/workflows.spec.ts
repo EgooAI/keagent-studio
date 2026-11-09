@@ -9,36 +9,16 @@ test.beforeEach(async ({ page }) => {
   ).toBeVisible();
 });
 
-test("视频工厂只提供房源和模板选择，网页提示使用桌面客户端", async ({
-  page,
-}) => {
+test("网页提示使用桌面客户端，并保留房源入口", async ({ page }) => {
   await page.goto("/#/studio");
   await expect(
     page.getByRole("heading", { name: "AI 视频工厂", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("combobox", { name: "选择房源", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("combobox", { name: "选择视频模板", exact: true }),
-  ).toBeVisible();
-  await expect(
     page.getByText("请在桌面客户端制作视频", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("checkbox")).toHaveCount(0);
-  await expect(page.getByRole("tab")).toHaveCount(0);
-  await expect(page.locator(".template-layout")).toHaveCount(0);
-});
-
-test("未连接桌面客户端不会生成模拟成果，仍可管理房源", async ({ page }) => {
-  await page.goto("/#/studio");
-  await expect(
-    page.getByRole("combobox", { name: "选择房源", exact: true }),
-  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: /条文案/ })).toHaveCount(0);
   await expect(page.locator("video")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "确认文案，开始生成" }),
-  ).toHaveCount(0);
   await page.getByRole("link", { name: "管理房源与素材", exact: true }).click();
   await expect(page).toHaveURL(/properties/);
 });
@@ -113,15 +93,4 @@ test("修改已完成文案后仍能查看历史成片与原发布记录", async
   await expect(
     page.locator(".publish-records").getByText("已发布", { exact: true }),
   ).toBeVisible();
-});
-
-test("1280桌面首屏可访问房源和模板选择", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/#/studio");
-  for (const name of ["选择房源", "选择视频模板"]) {
-    const input = page.getByRole("combobox", { name, exact: true });
-    await expect(input).toBeVisible();
-    const box = await input.boundingBox();
-    expect(box!.y + box!.height).toBeLessThanOrEqual(800);
-  }
 });

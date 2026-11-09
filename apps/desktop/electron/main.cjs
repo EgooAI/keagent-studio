@@ -59,6 +59,9 @@ function returnWindowSetup(window) {
       exchange,
       producer: (jobId) => identity.completedArtifactOutput(jobId),
     });
+  identity.setArchiveOutput((output, expected) =>
+    artifactMedia.service.register(output, expected),
+  );
   publishing = require("./publishing/dist/runtime.cjs").registerPublishing(
     window,
     {
@@ -190,7 +193,7 @@ app.whenReady().then(() => {
       const headers = new Headers(response.headers);
       headers.set(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: keagent://media keagent://douyin; media-src 'self' blob: keagent://media keagent://douyin; connect-src 'self'; object-src 'none'; base-uri 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: keagent://media keagent://douyin https://*.ljcdn.com; media-src 'self' blob: keagent://media keagent://douyin; connect-src 'self'; object-src 'none'; base-uri 'self'",
       );
       return new Response(response.body, { status: response.status, headers });
     } catch {

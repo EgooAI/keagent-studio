@@ -2,12 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
 
-async function fixture(page: Page) {
+async function fixture(page: Page, large = false) {
   const catalog = JSON.parse(
     readFileSync("services/cloud/video_templates.json", "utf8"),
   );
   await page.addInitScript(
-    ({ workspace, catalog }) => {
+    ({ workspace, catalog, large }) => {
       const property = {
         id: "panorama-cc0-sample",
         propertyNumber: "TEST-PANORAMA-001",
@@ -39,6 +39,23 @@ async function fixture(page: Page) {
           sample: false,
         },
       ];
+      if (large) {
+        const first = workspace.properties[1];
+        workspace.properties = Array.from({ length: 1000 }, (_, i) => ({
+          ...first,
+          id: "batch-property-" + i,
+          title: "测试房源 " + (i + 1),
+          propertyNumber: "SH" + (100 + i),
+        }));
+        const template = catalog[0];
+        catalog.push(
+          ...Array.from({ length: 100 - catalog.length }, (_, i) => ({
+            ...template,
+            id: "test-template-" + i,
+            name: "测试模板 " + (i + 1),
+          })),
+        );
+      }
       const state = {
         workspace,
         catalog,
@@ -46,6 +63,8 @@ async function fixture(page: Page) {
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
         ],
         calls: [] as { method: string; input: any }[],
+        rows: [] as any[],
+        batches: [] as { id: string; createdAt: string; count: number }[],
       };
       Object.assign(window, {
         factorySettingsTest: state,
@@ -125,55 +144,134 @@ async function fixture(page: Page) {
               });
               return state.workspace.profile.defaults;
             }
-            if (method === "panorama.prepare")
+            const input = args[0] || {};
+            if (method === "panorama.factory-catalog")
               return {
-                id: "sample-draft",
-                revision: 1,
-                property: state.workspace.properties.find(
-                  (p) => p.id === args[0].propertyId,
-                ),
-                sample: args[0].propertyId === "panorama-cc0-sample",
-                confirmation: "whole",
-                config: args[0].config,
-                templateVersion: args[0].templateVersion,
-                scenes: [
-                  {
-                    id: "scene-1",
-                    room: "独立测试场景",
-                    description: "",
-                    asset: "test.jpg",
-                    yaw: 0,
-                    kind: "panorama",
-                    url: property.image,
-                  },
-                ],
-                segments: [
-                  {
-                    id: "opening",
-                    kind: "opening",
-                    sceneId: "scene-1",
-                    text: "这是内置测试房源。",
-                  },
-                  {
-                    id: "scene-1",
-                    kind: "scene",
-                    sceneId: "scene-1",
-                    text: "介绍原全景素材。",
-                  },
-                  {
-                    id: "closing",
-                    kind: "closing",
-                    sceneId: "scene-1",
-                    text: "测试结束。",
-                  },
-                ],
+                templates: state.catalog.map((t: any) => ({
+                  ...t,
+                  config: t.production.config,
+                })),
+                ffmpeg: true,
+                ffprobe: true,
+                managedVoices: true,
+                voices: [],
               };
+            if (method === "panorama.factory-properties") {
+              const matched = state.workspace.properties.filter(
+                (p) =>
+                  (!input.search || p.title.includes(input.search)) &&
+                  (!input.selectedIds || input.selectedIds.includes(p.id)),
+              );
+              if (input.all)
+                return {
+                  rows: matched.map(({ id, title }) => ({ id, title })),
+                };
+              const offset = ((input.page || 1) - 1) * 20;
+              return {
+                rows: matched.slice(offset, offset + 20),
+                total: matched.length,
+                page: input.page || 1,
+                districts: ["独立场景"],
+                defaults: state.workspace.profile.defaults,
+              };
+            }
+            if (method === "panorama.factory-list") {
+              const rows = state.rows.filter(
+                (row) => !input.status || row.phase === input.status,
+              );
+              return {
+                rows,
+                total: rows.length,
+                page: 1,
+                batches: state.batches,
+                paused: false,
+                interrupted: 0,
+                focused: state.rows.find((row) => row.id === input.focusId),
+                counts: {
+                  all: state.rows.length,
+                  queued: state.rows.filter((row) => row.phase === "queued")
+                    .length,
+                  review: state.rows.filter((row) => row.phase === "review")
+                    .length,
+                },
+                nextReviewId: rows.find(
+                  (row) => row.phase === "review" && row.id !== input.afterId,
+                )?.id,
+              };
+            }
+            if (method === "panorama.factory-create") {
+              state.rows = input.pairs.map((pair: any, i: number) => {
+                const p = state.workspace.properties.find(
+                  (item) => item.id === pair.propertyId,
+                )!;
+                const t = state.catalog.find(
+                  (item: any) => item.id === pair.templateId,
+                );
+                const id = "review-" + i;
+                const config = {
+                  ...t.production.config,
+                  voice: state.workspace.profile.defaults.voiceId,
+                };
+                const draft = {
+                  id,
+                  property: p,
+                  revision: 1,
+                  config,
+                  scenes: [],
+                  segments: [
+                    {
+                      id: "opening",
+                      kind: "opening",
+                      text: "请确认这条房源文案。",
+                    },
+                  ],
+                };
+                return {
+                  id,
+                  revision: 1,
+                  propertyTitle: p.title,
+                  propertyNumber: p.propertyNumber,
+                  templateName: t.name,
+                  templateVersion: t.version,
+                  phase: "review",
+                  createdAt: new Date().toISOString(),
+                  progress: 0,
+                  config,
+                  draft,
+                };
+              });
+              state.batches = [
+                {
+                  id: input.requestId,
+                  createdAt: new Date().toISOString(),
+                  count: state.rows.length,
+                },
+              ];
+              return { batchId: input.requestId, issues: [] };
+            }
+            if (method === "panorama.factory-detail")
+              return state.rows.find((row) => row.id === input.id);
+            if (method === "panorama.factory-act")
+              return input.rows.map(({ id }: { id: string }) => {
+                state.rows.find((row) => row.id === id).phase = "queued";
+                return { id, ok: true };
+              });
+            if (method === "panorama.save") {
+              const row = state.rows.find((item) => item.id === input.id);
+              row.revision++;
+              row.draft = {
+                ...row.draft,
+                revision: row.revision,
+                segments: input.segments,
+              };
+              return row.draft;
+            }
             throw new Error("Unexpected fixture method " + method);
           },
         },
       });
     },
-    { workspace: createInitialWorkspace(), catalog },
+    { workspace: createInitialWorkspace(), catalog, large },
   );
 }
 
@@ -218,13 +316,22 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
     page.getByRole("heading", { name: "AI 视频工厂", exact: true }),
   ).toBeVisible();
   await expect(
-    page
-      .locator(".factory-selection")
-      .getByText("标准房源带看 · 1.0.0", { exact: true }),
+    page.getByRole("button", { name: "模板 1 个", exact: true }),
   ).toBeVisible();
-  await choose(page, "选择房源", "本人房源联调测试");
+  await page.getByRole("button", { name: "选择房源", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).factorySettingsTest.rows.length),
+    )
+    .toBe(0);
+  await page.getByRole("button", { name: "生成 1 条文案" }).click();
+  await page.getByRole("button", { name: "审核", exact: true }).click();
   await expect(
-    page.getByRole("textbox", { name: "第 1 张图片文案", exact: true }),
+    page.getByRole("textbox", { name: "开场介绍", exact: true }),
   ).toBeVisible();
   const calls = await page.evaluate(
     () => (window as any).factorySettingsTest.calls,
@@ -238,15 +345,15 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
     avatarId: "own-avatar",
   });
   expect(
-    calls.find((c: any) => c.method === "panorama.prepare").input,
+    calls.find((c: any) => c.method === "panorama.factory-create").input,
   ).toMatchObject({
-    propertyId: "user-property",
-    templateVersion: "1.0.0",
-    config: {
-      voice: "public-zh",
-      ttsProvider: "volcengine",
-      avatarId: "own-avatar",
-    },
+    pairs: [
+      {
+        propertyId: "user-property",
+        templateId: "standard-tour",
+        version: "1.0.0",
+      },
+    ],
   });
   await page.screenshot({
     path: "output/template-verification/settings-to-factory.png",
@@ -290,4 +397,70 @@ test("后台下架模板和音色后可刷新看到失效偏好，正式设置�
       { exact: true },
     ),
   ).toBeVisible();
+});
+
+test("批量选择跨页保留，并在紧凑窗口抽屉中连续审核", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await fixture(page, true);
+  await page.goto("/#/studio");
+  await expect(
+    page.getByRole("button", { name: "选择房源", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "选择房源", exact: true }).click();
+  const picker = page.getByRole("dialog", { name: "选择房源" });
+  await expect(picker.getByText("符合条件 1000 项")).toBeVisible();
+  await picker.getByRole("checkbox", { name: "全选本页" }).check();
+  await picker.getByText("2", { exact: true }).click();
+  await picker
+    .getByRole("checkbox", { name: "选择测试房源 21", exact: true })
+    .check();
+  await picker.getByRole("button", { name: "确认选择（21）" }).click();
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  const templates = page.getByRole("dialog", { name: "选择视频模板" });
+  await expect(templates.getByText("符合条件 100 项")).toBeVisible();
+  await templates
+    .getByRole("textbox", { name: "搜索模板" })
+    .fill("标准房源带看");
+  await templates
+    .getByRole("checkbox", { name: "选择标准房源带看 · 1.0.0", exact: true })
+    .check();
+  await templates.getByRole("button", { name: "确认选择（1）" }).click();
+  await page.getByRole("button", { name: "生成 21 条文案" }).click();
+  await expect(
+    page.getByRole("button", { name: "审核", exact: true }),
+  ).toHaveCount(21);
+  const taskTable = page.locator(".factory-task-table .ant-table-body");
+  const visibleRows = await taskTable.evaluate((table) => {
+    const bounds = table.getBoundingClientRect();
+    return [...table.querySelectorAll(".ant-table-row")].filter((row) => {
+      const rect = row.getBoundingClientRect();
+      return (
+        rect.top >= bounds.top &&
+        rect.bottom <= Math.min(bounds.bottom, window.innerHeight)
+      );
+    }).length;
+  });
+  expect(visibleRows).toBeGreaterThanOrEqual(8);
+  await page.getByRole("button", { name: "审核", exact: true }).first().click();
+  const detail = page.getByRole("dialog", { name: "任务详情" });
+  await detail
+    .getByRole("textbox", { name: "开场介绍" })
+    .fill("已审核的第一条文案。");
+  await detail.getByRole("button", { name: "确认并下一条" }).click();
+  await expect(
+    detail.getByRole("heading", { name: "测试房源 2", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "审核", exact: true }),
+  ).toHaveCount(20);
+  await page.screenshot({
+    path: "output/template-verification/factory-1280.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator(".factory-detail-pane")).toBeVisible();
+  await page.screenshot({
+    path: "output/template-verification/factory-1440.png",
+    animations: "disabled",
+  });
 });

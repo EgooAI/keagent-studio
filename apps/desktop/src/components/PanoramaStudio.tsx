@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Alert,
   App,
@@ -7,675 +11,1048 @@ import {
   Drawer,
   Empty,
   Input,
+  Pagination,
   Select,
-  Skeleton,
-  Spin,
-  Tag,
+  Space,
+  Table,
+  Tooltip,
 } from "antd";
 import {
-  Check,
+  ChevronDown,
+  ChevronUp,
   Clapperboard,
-  Clock3,
-  FileText,
   House,
-  Images,
-  Sparkles,
-  Video,
+  Pause,
+  Play,
+  Search,
 } from "lucide-react";
-import { Link, useSearchParams } from "react-router-dom";
-import type {
-  PanoramaCapabilities,
-  PanoramaConfig,
-  PanoramaDraft,
-  PanoramaJob,
-  PanoramaState,
-} from "@keagent/shared-types";
-import { useWorkspace } from "../lib/workspace";
+import {
+  Link,
+  useBlocker,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
+import type { PanoramaDraft, PanoramaSegment } from "@keagent/shared-types";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { useAvatarLibrary } from "../lib/avatarLibrary";
-import { PageHeader } from "./common";
-import { FactoryResult } from "./FactoryResult";
-import { request, statusNames } from "./panoramaClient";
+import { PageHeader, formatDate } from "./common";
+import { FactoryPicker } from "./FactoryPicker";
+import { FactoryPhaseTag, FactoryTaskDetail } from "./FactoryResult";
+import {
+  factoryRequest,
+  pairKey,
+  phaseLabel,
+  templateKey,
+  type FactoryAction,
+  type FactoryActionResult,
+  type FactoryCatalog,
+  type FactoryDetail,
+  type FactoryIssue,
+  type FactoryList,
+  type FactoryPair,
+  type FactoryProperties,
+  type FactoryProperty,
+  type FactoryRow,
+} from "./factoryClient";
+import { request, stageNames } from "./panoramaClient";
 import "./video-factory.css";
 
-type Phase = "choose" | "preparing" | "ready" | "result" | "error";
+const tabs = [
+  ["all", "全部"],
+  ["preparing", "准备中"],
+  ["review", "待审核"],
+  ["queued", "排队"],
+  ["running", "制作中"],
+  ["done", "完成"],
+  ["failed", "失败"],
+  ["canceled", "取消"],
+];
+const actions: {
+  action: FactoryAction;
+  label: string;
+  matches: (row: FactoryRow) => boolean;
+}[] = [
+  {
+    action: "confirm",
+    label: "确认文案并入队",
+    matches: (row) => row.phase === "review",
+  },
+  {
+    action: "withdraw",
+    label: "撤回",
+    matches: (row) => row.phase === "queued" && !row.started,
+  },
+  {
+    action: "retry",
+    label: "重试",
+    matches: (row) =>
+      ["failed", "archiveFailed", "canceled"].includes(row.phase),
+  },
+  {
+    action: "cancel",
+    label: "取消任务",
+    matches: (row) =>
+      ["pending", "preparing", "review", "queued", "running"].includes(
+        row.phase,
+      ),
+  },
+];
 
 export function PanoramaStudio() {
-  const workspace = useWorkspace();
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const initialProperty = params.get("propertyId");
+  const { modal, message } = App.useApp();
+  const client = useQueryClient();
+  const desktop = !!window.desktop;
   const voices = useVoiceLibrary();
   const avatars = useAvatarLibrary();
-  const { message } = App.useApp();
-  const queryClient = useQueryClient();
-  const [params] = useSearchParams();
-  const enabled = !!window.desktop;
-  const caps = useQuery({
-    queryKey: ["panorama-capabilities"],
-    queryFn: () => request<PanoramaCapabilities>("capabilities"),
-    enabled,
-    retry: false,
-    staleTime: 0,
-    refetchOnWindowFocus: "always",
-  });
-  const state = useQuery({
-    queryKey: ["panorama-state"],
-    queryFn: () => request<PanoramaState>("state"),
-    enabled,
-    refetchInterval: 2500,
-    retry: false,
-  });
-  const [propertyId, setPropertyId] = useState(params.get("propertyId") || "");
-  const [templateId, setTemplateId] = useState("");
-  const [phase, setPhase] = useState<Phase>("choose");
-  const [draft, setDraft] = useState<PanoramaDraft>();
-  const [texts, setTexts] = useState<Record<string, string>>({});
-  const [error, setError] = useState("");
+  const [propertyIds, setPropertyIds] = useState<string[]>(() =>
+    initialProperty ? [initialProperty] : [],
+  );
+  const [templateIds, setTemplateIds] = useState<string[]>([]);
+  const [knownProperties, setKnownProperties] = useState<
+    Record<string, string>
+  >({});
+  const [voiceId, setVoiceId] = useState<string>();
+  const [avatarId, setAvatarId] = useState<string>();
+  const [excluded, setExcluded] = useState(new Set<string>());
+  const [expanded, setExpanded] = useState(false);
+  const [pairPage, setPairPage] = useState(1);
+  const [picker, setPicker] = useState<"property" | "template">();
+  const [issues, setIssues] = useState<FactoryIssue[]>([]);
+  const submission = useRef<{ signature: string; id: string } | undefined>(
+    undefined,
+  );
+  const [search, setSearch] = useState("");
+  const [batchId, setBatchId] = useState<string>();
+  const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(1);
+  const [selection, setSelection] = useState<FactoryRow[]>([]);
+  const [detailId, setDetailId] = useState<string>();
+  const [edits, setEdits] = useState<{
+    draft: PanoramaDraft;
+    segments: PanoramaSegment[];
+  }>();
   const [busy, setBusy] = useState(false);
-  const [jobId, setJobId] = useState("");
-  const [createdJob, setCreatedJob] = useState<PanoramaJob>();
-  const [history, setHistory] = useState(false);
-  const sequence = useRef(0);
-  const preparation = useRef<
-    | {
-        key: string;
-        promise: Promise<PanoramaDraft>;
-      }
-    | undefined
-  >(undefined);
-  const confirming = useRef(false);
-  const defaultTemplateApplied = useRef(false);
-  const mounted = useRef(true);
+  const inFlight = useRef(false);
+  const [wide, setWide] = useState(
+    () => window.matchMedia("(min-width: 1400px)").matches,
+  );
+  const dirty =
+    !!edits &&
+    edits.segments.some((s, i) => s.text !== edits.draft.segments[i].text);
+  const blocker = useBlocker(dirty);
   useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      sequence.current++;
-    };
+    const media = window.matchMedia("(min-width: 1400px)");
+    const update = () => setWide(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
-  const properties = useMemo(
-    () =>
-      Array.from(
-        new Map(
-          [
-            ...(workspace.data?.properties || []),
-            ...(state.data?.properties || []),
-            ...(draft ? [draft.property] : []),
-          ].map((p) => [p.id, p]),
-        ).values(),
-      ),
-    [workspace.data, state.data?.properties, draft],
-  );
-  const property = properties.find((p) => p.id === propertyId);
-  const templates = useMemo(
-    () =>
-      (caps.data?.templates || []).map((t) => ({
-        id: t.id,
-        version: t.version,
-        name: t.name,
-        description: t.description || "按房源图片顺序生成视频介绍。",
-        config: {
-          templateId: t.id,
-          ...t.production?.config,
-          openingTemplate: t.opening,
-          sceneTemplate: t.scene,
-          closingTemplate: t.closing,
-        } as Partial<PanoramaConfig>,
-      })),
-    [caps.data],
-  );
-  const template = templates.find((t) => t.id === templateId);
   useEffect(() => {
-    if (defaultTemplateApplied.current || !caps.data || !workspace.data) return;
-    defaultTemplateApplied.current = true;
-    const preferred = workspace.data.profile.defaults.videoTemplate;
+    if (blocker.state !== "blocked") return;
+    const dialog = modal.confirm({
+      title: "文案尚未保存",
+      content: "离开页面会丢弃本次修改。",
+      okText: "放弃并离开",
+      cancelText: "继续编辑",
+      onOk: () => blocker.proceed(),
+      onCancel: () => blocker.reset(),
+    });
+    return () => dialog.destroy();
+  }, [blocker, modal]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  const catalog = useQuery({
+    queryKey: ["factory-catalog"],
+    queryFn: () => factoryRequest<FactoryCatalog>("catalog"),
+    enabled: desktop,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const defaults = useQuery({
+    queryKey: ["factory-preferences"],
+    queryFn: () => factoryRequest<FactoryProperties>("properties", { page: 1 }),
+    enabled: desktop,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const initialized = useRef(false);
+  useEffect(() => {
+    if (initialized.current || !defaults.data || !catalog.data) return;
+    initialized.current = true;
+    const preferred = defaults.data.defaults?.videoTemplate;
     if (
-      !templateId &&
-      phase === "choose" &&
-      templates.some(
-        (t) => t.id === preferred.id && t.version === preferred.version,
+      preferred &&
+      catalog.data.templates.some(
+        (t) => templateKey(t) === templateKey(preferred),
       )
     )
-      setTemplateId(preferred.id);
-  }, [caps.data, workspace.data, templates, templateId, phase]);
-  useEffect(() => {
-    if (phase === "choose" && caps.data && templateId && !template)
-      setTemplateId("");
-  }, [caps.data, templateId, template, phase]);
-  const config = useMemo(() => {
-    if (!caps.data || !template) return undefined;
-    const value = { ...caps.data.defaultConfig, ...template.config };
-    const preferred = workspace.data?.profile.defaults.voiceId;
-    const own =
-      voices.data?.voices.filter(
-        (v) => v.status === "ready" && v.language === value.language,
-      ) || [];
-    const publicVoices =
-      voices.data?.publicVoices.filter((v) => v.language === value.language) ||
-      [];
-    const personal =
-      own.find((v) => v.id === preferred) ||
-      (value.ttsProvider === "personal" ? own[0] : undefined);
-    const publicVoice =
-      publicVoices.find((v) => v.id === preferred) || publicVoices[0];
-    value.ttsProvider = caps.data.managedVoices
-      ? personal
-        ? "personal"
-        : "volcengine"
-      : "system";
-    value.voice =
-      personal?.id ||
-      publicVoice?.id ||
-      (!caps.data.managedVoices
-        ? caps.data.voices.find((v) => v.language === value.language)?.name
-        : "") ||
-      "";
-    value.avatarId =
-      avatars.data?.avatars.find(
-        (a) =>
-          a.id === workspace.data?.profile.defaults.avatarId &&
-          a.status === "ready",
-      )?.id ||
-      avatars.data?.avatars.find((a) => a.status === "ready")?.id ||
-      "";
-    value.scriptProvider = "ai";
-    if (property?.sample && property.id === "panorama-cc0-sample") {
-      value.ttsProvider = "system";
-      value.voice =
-        caps.data.voices.find((v) => v.language === value.language)?.name || "";
-      value.scriptProvider = "template";
-      value.avatarId = "";
-    }
-    return value;
-  }, [
-    caps.data,
-    template,
-    voices.data,
-    avatars.data,
-    workspace.data?.profile.defaults,
-    property,
-  ]);
-  const job = state.data?.jobs.find((j) => j.id === jobId) || createdJob;
-  const running = state.data?.jobs.find((j) => j.status === "running");
-  useEffect(() => {
-    if (running && !jobId && phase === "choose" && !propertyId) {
-      setJobId(running.id);
-      setPhase("result");
-    }
-  }, [running, jobId, phase, propertyId]);
-  useEffect(() => {
-    if (!enabled || !property || !config || phase !== "choose") return;
-    const token = ++sequence.current;
-    setPhase("preparing");
-    setError("");
-    const key = JSON.stringify({
-      propertyId: property.id,
-      config,
-      templateVersion: template?.version,
-    });
-    if (!preparation.current || preparation.current.key !== key)
-      preparation.current = {
-        key,
-        promise: request<PanoramaDraft>("prepare", {
-          propertyId: property.id,
-          config,
-          templateVersion: template?.version,
-        }),
-      };
-    void preparation.current.promise
-      .then((value) => {
-        if (!mounted.current || sequence.current !== token) return;
-        setDraft(value);
-        setTexts(Object.fromEntries(value.segments.map((s) => [s.id, s.text])));
-        setPhase("ready");
-        void queryClient.invalidateQueries({ queryKey: ["panorama-state"] });
-      })
-      .catch((cause) => {
-        if (!mounted.current || sequence.current !== token) return;
-        setError(
-          cause instanceof Error ? cause.message : "文案准备失败，请重试",
-        );
-        setPhase("error");
-        if (preparation.current?.key === key) preparation.current = undefined;
-      });
-  }, [enabled, property, config, phase, queryClient]);
-  const reset = (nextProperty = propertyId, nextTemplate = templateId) => {
-    sequence.current++;
-    preparation.current = undefined;
-    setPropertyId(nextProperty);
-    setTemplateId(nextTemplate);
-    setDraft(undefined);
-    setTexts({});
-    setJobId("");
-    setCreatedJob(undefined);
-    setError("");
-    setPhase("choose");
+      setTemplateIds((current) =>
+        current.length ? current : [templateKey(preferred)],
+      );
+    setKnownProperties((current) => ({
+      ...Object.fromEntries(
+        defaults.data.rows.map((row) => [row.id, row.title]),
+      ),
+      ...current,
+    }));
+  }, [defaults.data, catalog.data]);
+  const templates = catalog.data?.templates || [];
+  const pairs = useMemo(
+    () =>
+      propertyIds.flatMap((propertyId) =>
+        templateIds
+          .map((key) => {
+            const [templateId, version] = JSON.parse(key) as [string, string];
+            return { propertyId, templateId, version };
+          })
+          .filter((pair) => !excluded.has(pairKey(pair))),
+      ),
+    [propertyIds, templateIds, excluded],
+  );
+  const filters = {
+    search,
+    batchId,
+    status: status === "all" ? undefined : status,
   };
-  const act = async (action: () => Promise<void>) => {
+  const list = useQuery({
+    queryKey: ["factory-list", filters, page, detailId],
+    queryFn: () =>
+      factoryRequest<FactoryList>("list", {
+        ...filters,
+        page,
+        focusId: detailId,
+      }),
+    enabled: desktop,
+    retry: false,
+    refetchInterval: 2500,
+    placeholderData: keepPreviousData,
+  });
+  const detail = useQuery({
+    queryKey: ["factory-detail", detailId],
+    queryFn: () => factoryRequest<FactoryDetail>("detail", { id: detailId }),
+    enabled: desktop && !!detailId,
+    retry: false,
+  });
+  const focused =
+    list.data?.focused?.id === detailId ? list.data?.focused : undefined;
+  const loaded = detail.data;
+  const refetchDetail = detail.refetch;
+  useEffect(() => {
+    if (
+      focused &&
+      loaded &&
+      (focused.phase !== loaded.phase || focused.revision !== loaded.revision)
+    )
+      void refetchDetail();
+  }, [
+    focused?.id,
+    focused?.phase,
+    focused?.revision,
+    loaded?.id,
+    loaded?.phase,
+    loaded?.revision,
+    refetchDetail,
+  ]);
+  const row =
+    loaded &&
+    (focused
+      ? {
+          ...loaded,
+          progress: focused.progress,
+          stage: focused.stage,
+        }
+      : loaded);
+  const detailPane = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (wide && loaded?.id) detailPane.current?.focus({ preventScroll: true });
+  }, [wide, loaded?.id]);
+  const segments = edits?.segments || row?.draft?.segments || [];
+  const refresh = () =>
+    Promise.all([
+      client.invalidateQueries({ queryKey: ["factory-list"] }),
+      client.invalidateQueries({ queryKey: ["factory-detail"] }),
+    ]);
+  async function run(action: () => Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       await action();
-      await queryClient.invalidateQueries({ queryKey: ["panorama-state"] });
-    } catch (cause) {
+    } catch (error) {
       void message.error(
-        cause instanceof Error ? cause.message : "操作失败，请重试",
+        error instanceof Error ? error.message : "操作失败，请重试",
       );
     } finally {
-      if (mounted.current) setBusy(false);
+      inFlight.current = false;
+      setBusy(false);
     }
-  };
-  const confirm = async () => {
-    if (!draft || confirming.current) return;
-    confirming.current = true;
-    await act(async () => {
-      const resolvedConfig =
-        config && config.language === draft.config.language
-          ? {
-              ...draft.config,
-              voice: config.voice,
-              ttsProvider: config.ttsProvider,
-              avatarId: config.avatarId,
-            }
-          : draft.config;
-      const changed =
-        draft.segments.some((s) => texts[s.id] !== s.text) ||
-        JSON.stringify(resolvedConfig) !== JSON.stringify(draft.config);
-      const saved = changed
-        ? await request<PanoramaDraft>("save", {
-            id: draft.id,
-            revision: draft.revision,
-            config: resolvedConfig,
-            segments: draft.segments.map((s) => ({ ...s, text: texts[s.id] })),
-          })
-        : draft;
-      setDraft(saved);
-      const value = await request<PanoramaJob>("start", {
-        id: saved.id,
-        revision: saved.revision,
-        confirmed: true,
-      });
-      setCreatedJob(value);
-      setJobId(value.id);
-      setPhase("result");
+  }
+  function switchDetail(id?: string) {
+    if (id === detailId) return;
+    const change = () => {
+      setEdits(undefined);
+      setDetailId(id);
+    };
+    if (!dirty) {
+      change();
+      return;
+    }
+    modal.confirm({
+      title: "文案尚未保存",
+      content: "可返回保存修改，或放弃修改后切换任务。",
+      okText: "放弃修改",
+      cancelText: "返回编辑",
+      onOk: change,
     });
-    confirming.current = false;
-  };
-  const resume = (value: PanoramaDraft) => {
-    sequence.current++;
-    setPropertyId(value.property.id);
-    setTemplateId(value.config.templateId);
-    setDraft(value);
-    setTexts(Object.fromEntries(value.segments.map((s) => [s.id, s.text])));
-    setPhase("ready");
-    setHistory(false);
-    setError("");
-  };
-  const waiting = phase === "preparing" || busy;
-  const step = phase === "result" ? 2 : phase === "ready" ? 1 : 0;
-  const readyConfig = draft?.config || config;
-  const voiceMissing = !!readyConfig && !(config?.voice || readyConfig.voice);
-  const runtimeError = caps.error || state.error || workspace.error;
+  }
+  function remember(rows: Pick<FactoryProperty, "id" | "title">[]) {
+    setKnownProperties((current) => ({
+      ...current,
+      ...Object.fromEntries(rows.map((p) => [p.id, p.title])),
+    }));
+  }
+  function pairTitle(pair: FactoryPair) {
+    return (
+      (knownProperties[pair.propertyId] || pair.propertyId) +
+      " · " +
+      (templates.find(
+        (t) => t.id === pair.templateId && t.version === pair.version,
+      )?.name || pair.templateId)
+    );
+  }
+  function exclude(rows: FactoryPair[]) {
+    setExcluded((current) => new Set([...current, ...rows.map(pairKey)]));
+    setIssues([]);
+  }
+  async function create() {
+    const signature = JSON.stringify([pairs, voiceId, avatarId]);
+    if (submission.current?.signature !== signature)
+      submission.current = { signature, id: crypto.randomUUID() };
+    const result = await factoryRequest<{
+      batchId?: string;
+      issues: FactoryIssue[];
+    }>("create", {
+      requestId: submission.current.id,
+      pairs,
+      voiceId,
+      avatarId,
+    });
+    setIssues(result.issues);
+    if (!result.batchId) return;
+    void message.success("已创建 " + pairs.length + " 条视频任务");
+    submission.current = undefined;
+    setPropertyIds([]);
+    setExcluded(new Set());
+    setPairPage(1);
+    setBatchId(result.batchId);
+    setStatus("all");
+    setSearch("");
+    setPage(1);
+    setSelection([]);
+    await refresh();
+  }
+  async function save() {
+    const draft = edits?.draft || row?.draft;
+    if (!draft || !dirty) return draft;
+    const saved = await request<PanoramaDraft>("save", {
+      id: draft.id,
+      revision: draft.revision,
+      config: draft.config,
+      segments,
+    });
+    client.setQueryData<FactoryDetail>(
+      ["factory-detail", detailId],
+      (current) =>
+        current && { ...current, draft: saved, revision: saved.revision },
+    );
+    setEdits(undefined);
+    return saved;
+  }
+  async function act(
+    action: FactoryAction,
+    rows: { id: string; revision?: number }[],
+  ) {
+    const results = await factoryRequest<FactoryActionResult[]>("act", {
+      action,
+      rows,
+    });
+    const copied = results.find((result) => result.createdId);
+    if (copied) setDetailId(copied.createdId);
+    const failed = results.filter((result) => !result.ok);
+    setSelection((selected) =>
+      selected.filter(
+        (item) => !results.some((result) => result.id === item.id && result.ok),
+      ),
+    );
+    await refresh();
+    if (failed.length)
+      modal.warning({
+        title:
+          "成功 " +
+          (results.length - failed.length) +
+          " 条，失败 " +
+          failed.length +
+          " 条",
+        content: (
+          <ul className="factory-errors">
+            {failed.map((failure) => (
+              <li key={failure.id}>
+                {list.data?.rows.find((value) => value.id === failure.id)
+                  ?.propertyTitle ||
+                  selection.find((value) => value.id === failure.id)
+                    ?.propertyTitle ||
+                  row?.propertyTitle}
+                ：{failure.error}
+              </li>
+            ))}
+          </ul>
+        ),
+      });
+    else
+      void message.success(
+        action === "confirm"
+          ? "已确认 " + results.length + " 条文案并入队"
+          : "已处理 " + results.length + " 条任务",
+      );
+    return failed.length === 0;
+  }
+  function bulk(action: FactoryAction, selected: FactoryRow[], label: string) {
+    if (dirty && selected.some((value) => value.id === detailId)) {
+      void message.warning("请先保存当前文案，再对这条任务执行操作");
+      return;
+    }
+    const submit = () =>
+      run(async () => {
+        for (let i = 0; i < selected.length; i += 200)
+          await act(action, selected.slice(i, i + 200));
+      });
+    if (action === "confirm" || action === "cancel")
+      modal.confirm({
+        title: label + "（" + selected.length + " 条）",
+        content:
+          action === "confirm"
+            ? "确认后将按顺序自动制作视频。"
+            : "取消所选任务，同批其他任务继续执行。",
+        okText: label,
+        cancelText: "返回",
+        onOk: submit,
+      });
+    else void submit();
+  }
+  async function confirmNext() {
+    if (!row) return;
+    const draft = await save();
+    if (
+      !draft ||
+      !(await act("confirm", [{ id: row.id, revision: draft.revision }]))
+    )
+      return;
+    const result = await factoryRequest<FactoryList>("list", {
+      ...filters,
+      page,
+      afterId: row.id,
+    });
+    setEdits(undefined);
+    setDetailId(result.nextReviewId);
+  }
+  function filter(next: () => void) {
+    next();
+    setSelection([]);
+    setPage(1);
+  }
+
+  const currentRows = list.data?.rows || [];
+  const selectedRows = selection.map(
+    (value) => currentRows.find((current) => current.id === value.id) || value,
+  );
+  const shownPairs = pairs.slice((pairPage - 1) * 8, pairPage * 8);
+  const detailPanel = row ? (
+    <FactoryTaskDetail
+      row={row}
+      segments={segments}
+      dirty={dirty}
+      busy={busy}
+      onClose={wide ? () => switchDetail() : undefined}
+      onEdit={(id, text) => {
+        if (!row.draft) return;
+        const draft = row.draft;
+        setEdits((current) => ({
+          draft: current?.draft || draft,
+          segments: (current?.segments || draft.segments).map((s) =>
+            s.id === id ? { ...s, text } : s,
+          ),
+        }));
+      }}
+      onSave={() =>
+        void run(async () => {
+          await save();
+          await refresh();
+          void message.success("文案已保存");
+        })
+      }
+      onConfirm={() => void run(confirmNext)}
+      onAct={(action) =>
+        bulk(
+          action,
+          [row],
+          actions.find((item) => item.action === action)?.label || action,
+        )
+      }
+      onExport={(action) =>
+        void run(async () => {
+          if (await action()) void message.success("视频已下载");
+        })
+      }
+    />
+  ) : detail.error ? (
+    <Alert
+      type="error"
+      showIcon
+      title={detail.error.message}
+      action={<Button onClick={() => void detail.refetch()}>重试</Button>}
+    />
+  ) : (
+    <p className="muted" role="status">
+      正在读取任务详情…
+    </p>
+  );
+
   return (
     <div className="video-factory">
       <PageHeader
         title="AI 视频工厂"
-        description="选好房源和模板，确认一次文案，等待视频完成。"
         actions={
-          <Button icon={<Clock3 size={16} />} onClick={() => setHistory(true)}>
-            我的视频
-          </Button>
+          <Space>
+            {desktop && (
+              <Button
+                disabled={!list.data || busy}
+                icon={
+                  list.data?.paused ? <Play size={15} /> : <Pause size={15} />
+                }
+                onClick={() =>
+                  void run(async () => {
+                    await factoryRequest(
+                      list.data?.paused ? "resume" : "pause",
+                    );
+                    await refresh();
+                  })
+                }
+              >
+                {list.data?.paused ? "恢复队列" : "暂停队列"}
+              </Button>
+            )}
+            <Button onClick={() => navigate("/publish")}>发布中心</Button>
+          </Space>
         }
       />
-      <div className="factory-steps" aria-label="视频制作流程">
-        {[
-          { icon: House, label: "选择房源和模板" },
-          { icon: FileText, label: "确认文案" },
-          { icon: Video, label: "生成视频" },
-        ].map((item, index) => (
-          <div
-            className={`factory-step ${step === index ? "current" : step > index ? "done" : ""}`}
-            key={item.label}
-          >
-            <span>
-              {step > index ? <Check size={17} /> : <item.icon size={17} />}
-            </span>
-            {item.label}
-          </div>
-        ))}
-      </div>
-      {!enabled && (
+      {!desktop ? (
         <Alert
-          type="info"
           showIcon
+          type="info"
           title="请在桌面客户端制作视频"
-          description="这里会使用房源的真实图片制作视频。"
+          action={<Link to="/properties">管理房源与素材</Link>}
         />
-      )}
-      {runtimeError && (
-        <Alert
-          type="error"
-          title="暂时无法加载创作资料"
-          description={runtimeError.message}
-          action={
-            <Button
-              onClick={() => {
-                void caps.refetch();
-                void state.refetch();
-                void workspace.refetch();
-              }}
-            >
-              重新加载
-            </Button>
-          }
-        />
-      )}
-      {enabled && (!caps.data || !state.data || !workspace.data) ? (
-        <Skeleton active />
       ) : (
         <>
-          {phase !== "result" && (
-            <section
-              className="panel factory-selection"
-              aria-label="选择房源和模板"
-            >
-              <div className="factory-section-heading">
-                <div>
-                  <span className="factory-eyebrow">开始创作</span>
-                  <h2>为一套房源，制作一条视频</h2>
-                </div>
-                <Sparkles size={24} />
-              </div>
-              <div className="factory-select-grid">
-                <label>
-                  <span>房源</span>
-                  <Select
-                    aria-label="选择房源"
-                    size="large"
-                    showSearch
-                    optionFilterProp="label"
-                    placeholder="选择要制作的房源"
-                    value={propertyId || undefined}
-                    disabled={!enabled || waiting}
-                    options={properties.map((p) => ({
-                      value: p.id,
-                      label: p.title,
-                    }))}
-                    onChange={(id) => reset(id)}
-                  />
-                </label>
-                <label>
-                  <span>视频模板</span>
-                  <Select
-                    aria-label="选择视频模板"
-                    size="large"
-                    placeholder="选择一种视频风格"
-                    value={templateId || undefined}
-                    disabled={!enabled || waiting}
-                    options={templates.map((t) => ({
-                      value: t.id,
-                      label: `${t.name} · ${t.version}`,
-                    }))}
-                    onChange={(id) => reset(propertyId, id)}
-                  />
-                </label>
-              </div>
-              <div className="factory-selection-footer">
-                <p>{template?.description || "图片将按房源素材的顺序排列。"}</p>
-                <Link to="/properties">管理房源与素材</Link>
-              </div>
-              {property?.sample && (
-                <p className="factory-ai-note">
-                  内置测试素材来自两个独立场景，不代表真实在售房源。使用模板文案与本机配音，无云端生成费用，可测试成片预览与下载。
-                </p>
-              )}
-            </section>
+          {list.data?.storageError && (
+            <Alert
+              type="error"
+              showIcon
+              title={list.data.storageError}
+              description="请检查本机存储，再恢复队列。"
+            />
           )}
-          {phase === "choose" && (
-            <section className="panel factory-empty">
-              <div className="factory-empty-icon">
-                <Clapperboard size={38} />
-              </div>
-              <h2>你选房源，AI 来准备</h2>
-              <p>
-                每张图片都有对应的介绍文案，确认后自动处理图片、配音并合成视频。
-              </p>
-              {!properties.length && (
-                <Link to="/properties">先去添加一套房源</Link>
-              )}
-              {enabled && caps.data && !templates.length && (
-                <p>暂无已上架的视频模板，请联系管理员添加。</p>
-              )}
-              {enabled && (
+          {!!list.data?.interrupted && (
+            <Alert
+              showIcon
+              type="warning"
+              title={
+                list.data.interrupted + " 条任务在上次退出或登录中断时暂停"
+              }
+              description="恢复队列后继续处理，待审核文案仍需确认。"
+            />
+          )}
+          {(catalog.error || list.error) && (
+            <Alert
+              showIcon
+              type="error"
+              title={(catalog.error || list.error)?.message}
+              action={
                 <Button
-                  type="link"
-                  loading={caps.isFetching}
-                  onClick={() => void caps.refetch()}
+                  onClick={() => {
+                    void catalog.refetch();
+                    void list.refetch();
+                  }}
                 >
-                  刷新视频模板
+                  重新加载
                 </Button>
-              )}
-            </section>
+              }
+            />
           )}
-          {phase === "preparing" && (
-            <section className="panel factory-waiting" role="status">
-              <Spin size="large" />
-              <h2>正在为这套房源准备文案</h2>
-              <p>按图片顺序整理素材，并套用你选择的视频模板。</p>
-            </section>
-          )}
-          {phase === "error" && (
-            <section className="panel factory-error">
-              <Alert
-                showIcon
-                type="error"
-                title="文案还没有准备好"
-                description={error}
-              />
-              <div className="factory-error-actions">
-                <Button type="primary" onClick={() => setPhase("choose")}>
-                  重新准备
-                </Button>
-                <Link
-                  to={propertyId ? `/properties/${propertyId}` : "/properties"}
+          <section className="panel factory-composer" aria-label="批量配置">
+            <div className="factory-compose-main">
+              <div className="factory-compose-picks">
+                <Button
+                  icon={<House size={16} />}
+                  disabled={busy}
+                  onClick={() => setPicker("property")}
                 >
-                  查看房源素材
-                </Link>
-              </div>
-            </section>
-          )}
-          {phase === "ready" && draft && (
-            <section className="panel factory-script" aria-label="整条视频文案">
-              <div className="factory-section-heading">
-                <div>
-                  <span className="factory-eyebrow">文案已准备好</span>
-                  <h2>{draft.property.title}</h2>
-                  <p>
-                    {draft.scenes.length}{" "}
-                    张图片，按以下顺序组成视频。可以直接修改文案，然后一次确认。
-                  </p>
-                </div>
-                <Tag color="green">
-                  <Check size={13} /> 等待确认
-                </Tag>
-              </div>
-              {draft.segments
-                .filter((s) => s.kind === "opening")
-                .map((s) => (
-                  <label className="factory-bookend" key={s.id}>
-                    <span>开场介绍</span>
-                    <Input.TextArea
-                      aria-label="开场介绍"
-                      autoSize={{ minRows: 2, maxRows: 5 }}
-                      maxLength={2000}
-                      value={texts[s.id]}
-                      disabled={busy}
-                      onChange={(e) =>
-                        setTexts((v) => ({ ...v, [s.id]: e.target.value }))
-                      }
-                    />
-                  </label>
-                ))}
-              <div className="factory-script-list">
-                {draft.scenes.map((scene, index) => {
-                  const segment = draft.segments.find(
-                    (s) => s.kind === "scene" && s.sceneId === scene.id,
-                  );
-                  return (
-                    <article className="factory-image-script" key={scene.id}>
-                      <div className="factory-photo">
-                        <img
-                          src={scene.originalUrl || scene.url}
-                          alt={`第 ${index + 1} 张房源图片`}
-                        />
-                        <span>{String(index + 1).padStart(2, "0")}</span>
-                      </div>
-                      <div className="factory-image-copy">
-                        <div className="factory-image-heading">
-                          <Images size={16} />
-                          <strong>{scene.room}</strong>
-                        </div>
-                        {segment && (
-                          <Input.TextArea
-                            aria-label={`第 ${index + 1} 张图片文案`}
-                            value={texts[segment.id]}
-                            disabled={busy}
-                            maxLength={2000}
-                            autoSize={{ minRows: 3, maxRows: 8 }}
-                            onChange={(e) =>
-                              setTexts((v) => ({
-                                ...v,
-                                [segment.id]: e.target.value,
-                              }))
-                            }
-                          />
-                        )}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-              {draft.segments
-                .filter((s) => s.kind === "closing")
-                .map((s) => (
-                  <label className="factory-bookend" key={s.id}>
-                    <span>结束介绍</span>
-                    <Input.TextArea
-                      aria-label="结束介绍"
-                      autoSize={{ minRows: 2, maxRows: 5 }}
-                      maxLength={2000}
-                      value={texts[s.id]}
-                      disabled={busy}
-                      onChange={(e) =>
-                        setTexts((v) => ({ ...v, [s.id]: e.target.value }))
-                      }
-                    />
-                  </label>
-                ))}
-              {voiceMissing && (
-                <Alert
-                  type="info"
-                  title="还没有可用的配音声音"
-                  description={
-                    <span>
-                      请先到<Link to="/settings/voices">声音设置</Link>
-                      配置声音，再开始生成。
-                    </span>
+                  {propertyIds.length
+                    ? "房源 " + propertyIds.length + " 套"
+                    : "选择房源"}
+                </Button>
+                <Button
+                  icon={<Clapperboard size={16} />}
+                  disabled={busy || catalog.isPending}
+                  onClick={() => setPicker("template")}
+                >
+                  {templateIds.length
+                    ? "模板 " + templateIds.length + " 个"
+                    : "选择视频模板"}
+                </Button>
+                <Button
+                  type="text"
+                  aria-expanded={expanded}
+                  disabled={busy}
+                  icon={
+                    expanded ? (
+                      <ChevronUp size={15} />
+                    ) : (
+                      <ChevronDown size={15} />
+                    )
                   }
-                />
-              )}
-              <div className="factory-confirm">
-                <p>确认后自动完成图片处理、配音和视频合成。</p>
+                  onClick={() => setExpanded(!expanded)}
+                >
+                  {expanded ? "收起配置" : "配置与组合"}
+                </Button>
+              </div>
+              <div className="factory-compose-submit">
+                <span className="factory-equation">
+                  {propertyIds.length} 套 × {templateIds.length} 个
+                  {pairs.length === propertyIds.length * templateIds.length
+                    ? " ="
+                    : " · 保留"}{" "}
+                  <strong>{pairs.length}</strong> 条
+                </span>
                 <Button
                   type="primary"
-                  size="large"
-                  icon={<Sparkles size={17} />}
-                  loading={busy}
+                  loading={busy && !!submission.current}
                   disabled={
-                    voiceMissing ||
-                    !!running ||
-                    draft.segments.some((s) => !texts[s.id]?.trim()) ||
-                    !caps.data?.ffmpeg ||
-                    !caps.data.ffprobe
+                    busy ||
+                    !pairs.length ||
+                    pairs.length > 200 ||
+                    !!catalog.error ||
+                    !catalog.data
                   }
-                  onClick={() => void confirm()}
+                  onClick={() => void run(create)}
                 >
-                  确认文案，开始生成
+                  生成 {pairs.length} 条文案
                 </Button>
               </div>
-            </section>
+            </div>
+            {!templates.length && catalog.isSuccess && (
+              <div className="factory-compose-note">
+                暂无已上架的视频模板。
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => void catalog.refetch()}
+                >
+                  刷新模板
+                </Button>
+              </div>
+            )}
+            {pairs.length > 200 && (
+              <Alert
+                showIcon
+                type="warning"
+                title="单批最多 200 条，请减少组合或分批生成。"
+              />
+            )}
+            {issues.length > 0 && (
+              <Alert
+                showIcon
+                type="warning"
+                title={issues.length + " 个组合需要调整"}
+                description={
+                  <ul className="factory-errors">
+                    {issues.map((issue) => (
+                      <li key={pairKey(issue)}>
+                        {issue.propertyTitle && issue.templateName
+                          ? issue.propertyTitle + " · " + issue.templateName
+                          : pairTitle(issue)}
+                        ：{issue.error}
+                      </li>
+                    ))}
+                  </ul>
+                }
+                action={
+                  <Button size="small" onClick={() => exclude(issues)}>
+                    移除这些组合
+                  </Button>
+                }
+              />
+            )}
+            {expanded && (
+              <div className="factory-compose-expanded">
+                <Space wrap>
+                  <label>
+                    音色{" "}
+                    <Select
+                      aria-label="批次音色"
+                      className="factory-config-select"
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="使用默认配置"
+                      value={voiceId}
+                      disabled={busy}
+                      onChange={(value) => {
+                        setVoiceId(value);
+                        setIssues([]);
+                      }}
+                      options={
+                        catalog.data?.managedVoices
+                          ? [
+                              ...(voices.data?.publicVoices || []),
+                              ...(voices.data?.voices || []).filter(
+                                (v) =>
+                                  v.status === "ready" &&
+                                  voices.data?.cloneEnabled,
+                              ),
+                            ].map((v) => ({
+                              value: v.id,
+                              label: v.name + " · " + v.language,
+                            }))
+                          : (catalog.data?.voices || []).map((v) => ({
+                              value: v.name,
+                              label: v.name + " · " + v.language,
+                            }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    形象{" "}
+                    <Select
+                      aria-label="批次形象"
+                      className="factory-config-select"
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="使用默认配置"
+                      value={avatarId}
+                      disabled={busy}
+                      onChange={(value) => {
+                        setAvatarId(value);
+                        setIssues([]);
+                      }}
+                      options={(avatars.data?.avatars || [])
+                        .filter((a) => a.status === "ready")
+                        .map((a) => ({ value: a.id, label: a.name }))}
+                    />
+                  </label>
+                  <Link to="/properties">管理房源素材</Link>
+                  {!!excluded.size && (
+                    <Button
+                      size="small"
+                      disabled={busy}
+                      onClick={() => {
+                        setExcluded(new Set());
+                        setPairPage(1);
+                      }}
+                    >
+                      恢复移除的组合
+                    </Button>
+                  )}
+                </Space>
+                {pairs.length > 0 && (
+                  <>
+                    <ul className="factory-pair-list">
+                      {shownPairs.map((pair) => (
+                        <li key={pairKey(pair)}>
+                          <span>{pairTitle(pair)}</span>
+                          <Button
+                            size="small"
+                            type="text"
+                            disabled={busy}
+                            aria-label={"移除 " + pairTitle(pair)}
+                            onClick={() => {
+                              exclude([pair]);
+                              if (shownPairs.length === 1)
+                                setPairPage(Math.max(1, pairPage - 1));
+                            }}
+                          >
+                            移除
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                    <Pagination
+                      size="small"
+                      current={pairPage}
+                      total={pairs.length}
+                      pageSize={8}
+                      onChange={setPairPage}
+                      showSizeChanger={false}
+                      hideOnSinglePage
+                    />
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+          <section className="panel factory-queue" aria-label="视频任务">
+            <div className="factory-queue-tabs" aria-label="按状态筛选">
+              {tabs.map(([id, label]) => (
+                <button
+                  type="button"
+                  key={id}
+                  aria-pressed={status === id}
+                  onClick={() => filter(() => setStatus(id))}
+                >
+                  {label}
+                  <span>{list.data?.counts[id] || 0}</span>
+                </button>
+              ))}
+            </div>
+            <div className="factory-queue-toolbar">
+              <Space wrap>
+                <Input
+                  aria-label="搜索视频任务"
+                  placeholder="搜索房源号、标题或模板"
+                  prefix={<Search size={15} />}
+                  value={search}
+                  allowClear
+                  maxLength={120}
+                  onChange={(e) => filter(() => setSearch(e.target.value))}
+                />
+                <Select
+                  aria-label="筛选批次"
+                  placeholder="全部批次"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  className="factory-batch-filter"
+                  value={batchId}
+                  onChange={(value) => filter(() => setBatchId(value))}
+                  options={(list.data?.batches || []).map((batch) => ({
+                    value: batch.id,
+                    label:
+                      formatDate(batch.createdAt) + " · " + batch.count + " 条",
+                  }))}
+                />
+              </Space>
+              {!!selection.length && (
+                <Space wrap>
+                  <span>已选 {selection.length} 条</span>
+                  {actions.map(({ action, label, matches }) => {
+                    const eligible = selectedRows.filter(matches);
+                    return (
+                      eligible.length > 0 && (
+                        <Button
+                          key={action}
+                          size="small"
+                          type={action === "confirm" ? "primary" : "default"}
+                          disabled={busy}
+                          onClick={() => bulk(action, eligible, label)}
+                        >
+                          {label} {eligible.length} 条
+                        </Button>
+                      )
+                    );
+                  })}
+                  <Button
+                    size="small"
+                    type="text"
+                    onClick={() => setSelection([])}
+                  >
+                    清空
+                  </Button>
+                </Space>
+              )}
+            </div>
+            <div
+              className={
+                wide && detailId
+                  ? "factory-workbench has-detail"
+                  : "factory-workbench"
+              }
+            >
+              <Table<FactoryRow>
+                className="factory-task-table"
+                size="small"
+                rowKey="id"
+                dataSource={currentRows}
+                loading={list.isPending}
+                scroll={{ y: "max(240px, calc(100vh - 367px))" }}
+                rowClassName={(value) =>
+                  value.id === detailId ? "factory-active-row" : ""
+                }
+                rowSelection={{
+                  preserveSelectedRowKeys: true,
+                  selectedRowKeys: selection.map((item) => item.id),
+                  onChange: (_, selected) => setSelection(selected),
+                  getCheckboxProps: (value) => ({
+                    "aria-label": "选择 " + value.propertyTitle,
+                  }),
+                }}
+                pagination={{
+                  size: "small",
+                  pageSize: 50,
+                  showSizeChanger: false,
+                  current: list.data?.page || 1,
+                  total: list.data?.total || 0,
+                  onChange: setPage,
+                  showTotal: (total) => "共 " + total + " 条",
+                }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description={
+                        search || batchId || status !== "all"
+                          ? "没有符合筛选条件的任务"
+                          : "选好房源和模板后，生成的任务会出现在这里"
+                      }
+                    />
+                  ),
+                }}
+                columns={[
+                  {
+                    title: "房源",
+                    ellipsis: true,
+                    render: (_, value) => (
+                      <Tooltip
+                        title={[
+                          value.propertyTitle,
+                          value.propertyNumber,
+                          formatDate(value.createdAt),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      >
+                        <button
+                          type="button"
+                          className="factory-row-title"
+                          onClick={() => switchDetail(value.id)}
+                        >
+                          {value.propertyTitle}
+                        </button>
+                      </Tooltip>
+                    ),
+                  },
+                  {
+                    title: "模板",
+                    ellipsis: true,
+                    width: wide && detailId ? 130 : "22%",
+                    render: (_, value) => (
+                      <Tooltip
+                        title={
+                          value.templateName +
+                          " · " +
+                          (value.templateVersion || "")
+                        }
+                      >
+                        {value.templateName}
+                      </Tooltip>
+                    ),
+                  },
+                  {
+                    title: "状态",
+                    width: 142,
+                    render: (_, value) => (
+                      <FactoryPhaseTag phase={value.phase} />
+                    ),
+                  },
+                  {
+                    title: "当前步骤",
+                    width: 146,
+                    ellipsis: true,
+                    render: (_, value) =>
+                      value.phase === "running" ? (
+                        (value.stage ? stageNames[value.stage] : "检查配置") +
+                        " " +
+                        value.progress +
+                        "%"
+                      ) : value.error ? (
+                        <Tooltip title={value.error}>{value.error}</Tooltip>
+                      ) : (
+                        "—"
+                      ),
+                  },
+                  {
+                    title: "操作",
+                    width: 84,
+                    render: (_, value) => (
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={() => switchDetail(value.id)}
+                      >
+                        {value.phase === "review"
+                          ? "审核"
+                          : [
+                                "done",
+                                "archiving",
+                                "archived",
+                                "archiveFailed",
+                              ].includes(value.phase)
+                            ? "看成片"
+                            : "详情"}
+                      </Button>
+                    ),
+                  },
+                ]}
+              />
+              {wide && detailId && (
+                <aside
+                  ref={detailPane}
+                  className="factory-detail-pane"
+                  tabIndex={-1}
+                  aria-label="当前任务"
+                >
+                  {detailPanel}
+                </aside>
+              )}
+            </div>
+          </section>
+          {!wide && (
+            <Drawer
+              title="任务详情"
+              open={!!detailId}
+              onClose={() => switchDetail()}
+              size={460}
+              destroyOnHidden
+            >
+              {detailPanel}
+            </Drawer>
           )}
-          {phase === "result" && (
-            <FactoryResult
-              job={job}
-              busy={busy}
-              act={act}
-              onNew={() => reset("", templateId)}
+          {picker && (
+            <FactoryPicker
+              key={picker}
+              kind={picker}
+              templates={templates}
+              value={picker === "property" ? propertyIds : templateIds}
+              onProperties={remember}
+              onClose={() => setPicker(undefined)}
+              onConfirm={(ids) => {
+                if (picker === "property") setPropertyIds(ids);
+                else setTemplateIds(ids);
+                setIssues([]);
+                setPairPage(1);
+                setPicker(undefined);
+              }}
             />
           )}
         </>
       )}
-      <Drawer
-        title="我的视频"
-        open={history}
-        onClose={() => setHistory(false)}
-        size="large"
-      >
-        {!!state.data?.jobs.length && (
-          <div className="factory-history-list">
-            {state.data.jobs.map((value) => (
-              <button
-                className="factory-history-item"
-                key={value.id}
-                onClick={() => {
-                  sequence.current++;
-                  setJobId(value.id);
-                  setCreatedJob(undefined);
-                  setPhase("result");
-                  setHistory(false);
-                }}
-              >
-                {value.coverUrl ? (
-                  <img src={value.coverUrl} alt="" />
-                ) : (
-                  <Video size={25} />
-                )}
-                <span>
-                  <strong>{value.property.title}</strong>
-                  <small>{new Date(value.createdAt).toLocaleString()}</small>
-                </span>
-                <Tag>{statusNames[value.status]}</Tag>
-              </button>
-            ))}
-          </div>
-        )}
-        {!!state.data?.drafts.filter((d) => d.confirmation === "whole")
-          .length && (
-          <>
-            <h3>待确认的文案</h3>
-            {state.data.drafts
-              .filter(
-                (d) =>
-                  d.confirmation === "whole" &&
-                  !state.data.jobs.some((j) => j.draftId === d.id),
-              )
-              .map((value) => (
-                <button
-                  className="factory-history-item"
-                  key={value.id}
-                  onClick={() => resume(value)}
-                >
-                  <FileText size={24} />
-                  <span>
-                    <strong>{value.property.title}</strong>
-                    <small>{value.scenes.length} 张图片 · 继续制作</small>
-                  </span>
-                </button>
-              ))}
-          </>
-        )}
-        {!state.data?.jobs.length &&
-          !state.data?.drafts.some((d) => d.confirmation === "whole") && (
-            <Empty description="还没有制作记录" />
-          )}
-      </Drawer>
     </div>
   );
 }
