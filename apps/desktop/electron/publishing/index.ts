@@ -8,12 +8,14 @@ import {
 } from "./core";
 import { DouyinBrowser } from "./browser";
 import { PublishingFiles, hashFile } from "./files";
+import { PublishQueue, samePublisher } from "./queue";
 import type {
   ArtifactExchange,
   LocalMediaAssetResolver,
   DouyinPublishInput,
   DouyinPublishRecord,
   DouyinDesktopState,
+  DouyinBatchInput,
   MediaAsset,
 } from "@keagent/shared-types";
 
@@ -30,8 +32,8 @@ export function registerPublishing(
   dependencies: PublishingDependencies,
 ) {
   let resolver = dependencies.resolver;
-  let scope = "";
   let recovering = false;
+  let startingDirect = false;
   const files = new PublishingFiles(
     path.join(app.getPath("userData"), "douyin"),
     dependencies.identity,
@@ -98,6 +100,49 @@ export function registerPublishing(
     changed: emit,
     cleanup: (key, identity) => files.cleanup(key, identity),
   });
+  const queue = new PublishQueue({
+    identity: dependencies.identity,
+    directory: (identity) => files.directoryFor(identity),
+    record: (id) => cloud("records/get", { id }),
+    changed: emit,
+    execute: async (entry, _identity, assertCurrent, started) => {
+      await publisher.idle();
+      await assertCurrent();
+      const account = await browser.check(entry.accountId);
+      await assertCurrent();
+      if (account.loginStatus !== "logged_in")
+        throw new PublishingError("LOGIN_REQUIRED", "批次账号需要重新登录");
+      const handoff = await dependencies.exchange.createHandoff({
+        requestKey: entry.id,
+        artifactId: entry.artifactId,
+        expectedReviewRevision: entry.expectedReviewRevision,
+      });
+      await assertCurrent();
+      const record = await publisher.start(
+        {
+          requestKey: entry.id,
+          handoffId: handoff.id,
+          accountId: entry.accountId,
+          title: entry.title,
+          description: entry.description,
+          hashtags: [],
+          batch: true,
+        },
+        assertCurrent,
+      );
+      try {
+        started(record);
+      } catch {
+        throw new PublishingError(
+          "QUEUE_WRITE",
+          "发布记录已创建，但本机队列无法保存",
+        );
+      } finally {
+        await publisher.idle();
+      }
+      return publisher.active?.id === record.id ? publisher.active : record;
+    },
+  });
   async function recover() {
     if (
       recovering ||
@@ -108,7 +153,7 @@ export function registerPublishing(
     recovering = true;
     try {
       const identity = await dependencies.identity();
-      scope = await files.directory();
+      const scope = files.directoryFor(identity);
       for (const saved of files.pending(scope)) {
         if (
           saved.ownerId !== identity.userId ||
@@ -146,6 +191,7 @@ export function registerPublishing(
       resolverAvailable: !!resolver,
       tabs: browser.tabs(),
       activeAccountId: browser.active,
+      queue: queue.view(identity),
       activeRecord:
         publisher.active?.ownerId === identity.userId &&
         publisher.active.deviceId === identity.deviceId
@@ -166,6 +212,8 @@ export function registerPublishing(
     "cover.select",
     "preview",
     "publish.start",
+    "publish.batch",
+    "publish.queue",
   ]);
   ipcMain.handle(
     "douyin:request",
@@ -189,7 +237,6 @@ export function registerPublishing(
         )
           throw new PublishingError("FORBIDDEN", "非法桌面发布请求", 403);
         const requestIdentity = await dependencies.identity();
-        scope = await files.directory();
         const value = input as Record<string, unknown>;
         let data: unknown;
         const accountId =
@@ -264,10 +311,48 @@ export function registerPublishing(
               "成片不在当前设备或文件不可用",
             );
           data = await files.preview(assets, resolver);
+        } else if (method === "publish.batch") {
+          if (!resolver || startingDirect)
+            throw new PublishingError(
+              "DEVICE_BUSY",
+              "请等待当前发布准备结束，并确认文件解析器可用",
+            );
+          data = queue.add(
+            requestIdentity,
+            value as unknown as DouyinBatchInput,
+          );
+        } else if (method === "publish.queue") {
+          if (value.action === "resume" && startingDirect)
+            throw new PublishingError("DEVICE_BUSY", "请等待当前发布准备结束");
+          data = await queue.control(requestIdentity, value.action, value.id);
         } else if (method === "publish.start") {
+          if (queue.busy || startingDirect)
+            throw new PublishingError(
+              "DEVICE_BUSY",
+              "当前设备已有队列任务正在执行",
+            );
           // Recheck and persist the current login before the cloud accepts a direct execution.
-          await browser.check(accountId);
-          data = await publisher.start(value as unknown as DouyinPublishInput);
+          startingDirect = true;
+          try {
+            await browser.check(accountId);
+            const assertCurrent = async () => {
+              if (
+                !samePublisher(requestIdentity, await dependencies.identity())
+              )
+                throw new PublishingError(
+                  "SESSION_CHANGED",
+                  "登录已变更，请重新操作",
+                  403,
+                );
+            };
+            await assertCurrent();
+            data = await publisher.start(
+              value as unknown as DouyinPublishInput,
+              assertCurrent,
+            );
+          } finally {
+            startingDirect = false;
+          }
         }
         const responseIdentity = await dependencies.identity();
         if (
@@ -316,13 +401,14 @@ export function registerPublishing(
     }
   });
   function stop() {
+    queue.stop();
     publisher.stop();
     browser.shutdown();
   }
   window.on("closed", () => {
     clearInterval(recoveryTimer);
     browser.dispose();
-    publisher.stop();
+    stop();
     ipcMain.removeHandler("douyin:request");
   });
   return {

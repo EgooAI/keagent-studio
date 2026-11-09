@@ -4,6 +4,11 @@ import type {
   DouyinDesktopState,
   DouyinPublishInput,
   DouyinPublishRecord,
+  DouyinWorkspace,
+  DouyinWorkspaceStatus,
+  ArtifactReviewState,
+  DouyinBatchInput,
+  DouyinQueue,
 } from "@keagent/shared-types";
 declare global {
   interface Window {
@@ -50,6 +55,13 @@ export async function douyinDesktop<T>(
 }
 export const douyinApi = {
   accounts: () => cloud<{ items: DouyinAccount[] }>("accounts/list"),
+  workspace: (input: {
+    search?: string;
+    review?: ArtifactReviewState;
+    status?: DouyinWorkspaceStatus;
+    offset: number;
+    limit: number;
+  }) => cloud<DouyinWorkspace>("workspace", input),
   records: (artifactId: string, offset = 0) =>
     cloud<{ items: DouyinPublishRecord[]; total: number }>("records/list", {
       artifactId,
@@ -62,4 +74,10 @@ export const douyinApi = {
   state: () => douyinDesktop<DouyinDesktopState>("state"),
   start: (input: DouyinPublishInput) =>
     douyinDesktop<DouyinPublishRecord>("publish.start", input),
+  batch: (input: DouyinBatchInput) =>
+    douyinDesktop<DouyinQueue>("publish.batch", input),
+  queue: (
+    action: "pause" | "resume" | "cancel" | "clear-interrupted",
+    id?: string,
+  ) => douyinDesktop<DouyinQueue>("publish.queue", { action, id }),
 };

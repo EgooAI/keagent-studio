@@ -129,7 +129,10 @@ export class DirectPublisher {
   private pending?: Promise<DouyinPublishRecord>;
   private jobs = new Set<Promise<void>>();
   constructor(private readonly ports: PublishPorts) {}
-  start(input: DouyinPublishInput): Promise<DouyinPublishRecord> {
+  start(
+    input: DouyinPublishInput,
+    checkSession?: () => Promise<void>,
+  ): Promise<DouyinPublishRecord> {
     if (this.active && ["running", "submitting"].includes(this.active.state)) {
       if (this.active.requestKey === input.requestKey)
         return Promise.resolve(this.active);
@@ -137,15 +140,18 @@ export class DirectPublisher {
         new PublishingError("DEVICE_BUSY", "当前设备已有发布正在执行"),
       );
     }
-    if (this.pending) return this.pending.then(() => this.start(input));
-    this.pending = this.prepare(input).finally(() => {
+    if (this.pending)
+      return this.pending.then(() => this.start(input, checkSession));
+    this.pending = this.prepare(input, checkSession).finally(() => {
       this.pending = undefined;
     });
     return this.pending;
   }
   private async prepare(
     input: DouyinPublishInput,
+    checkSession?: () => Promise<void>,
   ): Promise<DouyinPublishRecord> {
+    await checkSession?.();
     const invalid = validateDouyinInput(input);
     if (invalid) throw new PublishingError("INVALID_INPUT", invalid, 422);
     if (!/^[A-Za-z0-9_-]{16,100}$/.test(input.requestKey))
@@ -192,6 +198,7 @@ export class DirectPublisher {
         identity,
       );
       await this.assertIdentity(identity);
+      await checkSession?.();
       created = await this.ports.cloud("records/create", input);
     } catch (error) {
       await this.ports.cleanup(input.requestKey, identity).catch(() => {});
@@ -210,6 +217,7 @@ export class DirectPublisher {
       identity,
       handoff,
       this.controller.signal,
+      checkSession,
     );
     this.jobs.add(job);
     void job.then(
@@ -243,6 +251,7 @@ export class DirectPublisher {
     identity: PublishingIdentity,
     handoff: ArtifactHandoff,
     signal: AbortSignal,
+    checkSession?: () => Promise<void>,
   ): Promise<void> {
     const record = this.active!;
     const add = (entry: DouyinPublishLog) => {
@@ -304,6 +313,7 @@ export class DirectPublisher {
     heartbeat.unref?.();
     try {
       await this.assertIdentity(identity);
+      await checkSession?.();
       signal.throwIfAborted();
       const result = await this.ports.publish(
         input.accountId,
@@ -313,6 +323,7 @@ export class DirectPublisher {
         steps,
         async () => {
           await this.assertIdentity(identity);
+          await checkSession?.();
           signal.throwIfAborted();
           await validateHandoff(this.ports.exchange, handoff, identity);
           // Durable local marker precedes the cloud acknowledgment. Neither side may replay this boundary.

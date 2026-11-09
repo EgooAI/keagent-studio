@@ -67,9 +67,19 @@ async function desktopFixture(
           ]
         : [];
       let activeRecord: unknown;
+      const artifacts = [
+        fixture.artifact,
+        {
+          ...fixture.artifact,
+          id: "f".repeat(32),
+          content: { ...fixture.artifact.content, title: "第二套房源带看" },
+        },
+      ];
+      const queue = { paused: false, rows: [] as Record<string, unknown>[] };
       const okay = (data: unknown) => ({ ok: true, data });
       Object.assign(window, {
         __publishCount: 0,
+        __batchRequests: [] as unknown[],
         __source: fixture,
         __restores: 0,
         __restoreWrong: false,
@@ -89,7 +99,12 @@ async function desktopFixture(
                 limit: 20,
                 offset: 0,
               });
-            if (method === "artifact.get") return okay(fixture.artifact);
+            if (method === "artifact.get")
+              return okay(
+                artifacts.find(
+                  (artifact) => artifact.id === (args[0] as { id: string }).id,
+                ),
+              );
             if (method === "artifact.review") {
               const input = args[0] as {
                 expectedRevision: number;
@@ -121,6 +136,27 @@ async function desktopFixture(
               const op = args[0],
                 input = args[1] as Record<string, unknown>;
               if (op === "accounts/list") return okay({ items: [account] });
+              if (op === "workspace") {
+                const matched = artifacts.filter(
+                  (artifact) =>
+                    !input.search ||
+                    artifact.content.title.includes(String(input.search)),
+                );
+                return okay({
+                  items: matched.map((artifact) => ({
+                    id: artifact.id,
+                    title: artifact.content.title,
+                    propertyTitle: artifact.content.property?.title,
+                    sourceRevision: artifact.source.revision,
+                    review: artifact.review,
+                    createdAt: artifact.createdAt,
+                    status: "unpublished",
+                    deviceReady: resolverAvailable,
+                  })),
+                  counts: { unpublished: matched.length },
+                  total: matched.length,
+                });
+              }
               if (op === "records/list")
                 return okay({ items: records, total: records.length });
               if (op === "records/reconcile") {
@@ -174,6 +210,7 @@ async function desktopFixture(
                   resolverAvailable,
                   tabs: [],
                   activeRecord,
+                  queue,
                 });
               if (method === "preview")
                 return okay({
@@ -185,6 +222,30 @@ async function desktopFixture(
                   ref: "f".repeat(32),
                   url: "/media/interior-2.jpg",
                 });
+              if (method === "publish.batch") {
+                (
+                  window as unknown as { __batchRequests: unknown[] }
+                ).__batchRequests.push(input);
+                queue.rows = (input.entries as Record<string, unknown>[]).map(
+                  (entry, index) => ({
+                    ...entry,
+                    id: String(index),
+                    batchId: input.requestKey,
+                    accountId: input.accountId,
+                    state: "queued",
+                  }),
+                );
+                return okay(queue);
+              }
+              if (method === "publish.queue") {
+                if (input.action === "pause" || input.action === "resume")
+                  queue.paused = input.action === "pause";
+                if (input.action === "cancel")
+                  queue.rows = queue.rows.map((row) =>
+                    row.id === input.id ? { ...row, state: "canceled" } : row,
+                  );
+                return okay(queue);
+              }
               if (method === "publish.start") {
                 if (records.some((record) => record.state === "unknown"))
                   return {
@@ -239,10 +300,12 @@ test("fixture UI receives an approved artifact, edits consumer fields and shows 
 }) => {
   await desktopFixture(page);
   await page.goto("/#/publish");
-  await page.getByRole("link", { name: "查看成片与发布" }).click();
+  await page
+    .getByRole("button", { name: fixture.artifact.content.title, exact: true })
+    .click();
   await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "已接收该版本" }),
+    page.getByText("已接收该版本", { exact: true }).filter({ visible: true }),
   ).toBeVisible();
   await page.getByLabel("发布账号").click();
   await page.getByText(account.name, { exact: true }).click();
@@ -490,4 +553,94 @@ test("admin publishing diagnostics link to mail settings with retry and recipien
     "next-ops@example.test",
     "",
   ]);
+});
+
+test("发布工作台可在详情旁筛选成片，并在明确确认后批量入队", async ({
+  page,
+}) => {
+  await desktopFixture(page);
+  await page.goto("/#/publish");
+  await expect(
+    page.getByRole("heading", { name: "发布中心", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("textbox", { name: "搜索成片" }).fill("第二套");
+  const list = page.getByRole("region", { name: "成片列表" });
+  await list
+    .getByRole("button", { name: "第二套房源带看", exact: true })
+    .waitFor();
+  await expect(
+    list.getByRole("button", {
+      name: fixture.artifact.content.title,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await list
+    .getByRole("button", { name: "第二套房源带看", exact: true })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "成片详情" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "关闭成片详情" }).click();
+  await page.getByRole("textbox", { name: "搜索成片" }).fill("");
+  await list
+    .getByRole("checkbox", {
+      name: "选择 " + fixture.artifact.content.title,
+      exact: true,
+    })
+    .check();
+  await list
+    .getByRole("checkbox", { name: "选择 第二套房源带看", exact: true })
+    .check();
+  await page
+    .getByRole("button", { name: "配置批量发布 2 条", exact: true })
+    .click();
+  const batch = page.getByRole("dialog", { name: "配置批量发布 · 2 条" });
+  await batch
+    .getByRole("textbox", { name: "第 1 条发布标题" })
+    .fill("第一套发布标题");
+  await batch
+    .getByRole("textbox", { name: "第 2 条发布标题" })
+    .fill("第二套发布标题");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__batchRequests.length))
+    .toBe(0);
+  await batch.getByRole("button", { name: "确认公开发布 2 条" }).click();
+  const queue = page.getByRole("region", { name: "本机发布队列" });
+  await expect(queue.getByText("排队中", { exact: true })).toHaveCount(2);
+  const requests = await page.evaluate(() => (window as any).__batchRequests);
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({
+    accountId: account.id,
+    entries: [
+      {
+        artifactId: fixture.artifact.id,
+        expectedReviewRevision: fixture.artifact.review.revision,
+        title: "第一套发布标题",
+      },
+      { artifactId: "f".repeat(32), title: "第二套发布标题" },
+    ],
+  });
+  await page.getByRole("button", { name: "暂停发布队列" }).click();
+  await expect(
+    page.getByRole("button", { name: "恢复发布队列" }),
+  ).toBeVisible();
+  await queue
+    .getByRole("button", { name: "取消", exact: true })
+    .first()
+    .click();
+  await expect(queue.getByText("已取消", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "output/publish-workbench-1440.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await queue
+    .getByRole("button", { name: "详情", exact: true })
+    .first()
+    .click();
+  await expect(page.getByRole("dialog", { name: "成片详情" })).toBeVisible();
+  await page.screenshot({
+    path: "output/publish-workbench-1280.png",
+    animations: "disabled",
+  });
 });

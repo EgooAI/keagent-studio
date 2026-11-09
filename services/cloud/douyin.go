@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS keagent_douyin_publish (
  created_at timestamptz NOT NULL DEFAULT now(), heartbeat_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(owner_id,request_key));
 CREATE INDEX IF NOT EXISTS keagent_douyin_publish_owner ON keagent_douyin_publish(owner_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS keagent_douyin_publish_artifact ON keagent_douyin_publish(owner_id,artifact_id,created_at DESC,id DESC);
 CREATE TABLE IF NOT EXISTS keagent_douyin_health (
  id integer PRIMARY KEY CHECK(id=1), failures integer NOT NULL DEFAULT 0, window_at timestamptz,
  incident boolean NOT NULL DEFAULT false);
@@ -45,6 +46,7 @@ type douyinInput struct {
 	Description string   `json:"description"`
 	Hashtags    []string `json:"hashtags"`
 	CoverRef    string   `json:"coverRef,omitempty"`
+	Batch       bool     `json:"batch,omitempty"`
 }
 type douyinLog struct {
 	Step       string `json:"step"`
@@ -161,6 +163,9 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			items = append(items, v)
 		}
 		return object{"items": items}, rr.Err()
+	}
+	if operation == "workspace" {
+		return s.publishWorkspace(ctx, a, body)
 	}
 	if operation == "records/list" {
 		var in struct {
@@ -343,7 +348,11 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		if handoff.DeviceID != a.DeviceID {
 			return nil, exchangeFail(409, "WRONG_DEVICE", "交接属于另一设备")
 		}
-		current, e := readExchangeArtifact(ctx, tx, a.UserID, handoff.Artifact.ID, " FOR SHARE")
+		lock := " FOR SHARE"
+		if in.Batch {
+			lock = " FOR UPDATE"
+		}
+		current, e := readExchangeArtifact(ctx, tx, a.UserID, handoff.Artifact.ID, lock)
 		if e != nil {
 			return nil, e
 		}
@@ -365,6 +374,21 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		}
 		if busy {
 			return nil, exchangeFail(409, "OUTCOME_UNRESOLVED", "请先核对该成片在此账号的上次发布结果")
+		}
+		if in.Batch {
+			var state string
+			err = tx.QueryRowContext(ctx, `SELECT state FROM keagent_douyin_publish WHERE owner_id=$1 AND artifact_id=$2
+				AND state IN('running','submitting','accepted','unknown')
+				ORDER BY (state='unknown') DESC,created_at DESC,id DESC LIMIT 1`, a.UserID, current.ID).Scan(&state)
+			if err == nil {
+				if state == "unknown" {
+					return nil, exchangeFail(409, "OUTCOME_UNRESOLVED", "请先核对该成片的上次发布结果")
+				}
+				return nil, exchangeFail(409, "ARTIFACT_ALREADY_SUBMITTED", "该成片已有发布提交或正在执行")
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
 		}
 		v := douyinRecord{douyinInput: in, ID: id(), OwnerID: a.UserID, DeviceID: a.DeviceID, ArtifactID: current.ID, State: "running", CreatedAt: now(), UpdatedAt: now(), Logs: []douyinLog{}}
 		raw, _ := json.Marshal(v)

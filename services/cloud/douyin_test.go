@@ -291,3 +291,35 @@ func TestDouyinMailQueueFailureAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPublishWorkspaceAndBatchDuplicateGuard(t *testing.T) {
+	s, a, input := douyinFixture(t)
+	first := mustDouyin(t, s, a, "workspace", object{"status": "unpublished", "limit": 1}).(object)
+	if first["total"] != float64(1) || len(rows(first["items"])) != 1 {
+		t.Fatal("approved artifact missing from workspace", first)
+	}
+	row := obj(rows(first["items"])[0])
+	if row["deviceReady"] != true || row["title"] == "" || row["script"] != nil {
+		t.Fatal("incorrect or excessive workspace fields", row)
+	}
+	record := createdDouyin(t, s, a, input)
+	record.State = "submitting"
+	mustDouyin(t, s, a, "records/report", record)
+	record.State, record.ResultSource, record.ExternalID = "accepted", "platform", "123456789"
+	record.URL, record.Progress = "https://www.douyin.com/video/123456789", 100
+	mustDouyin(t, s, a, "records/report", record)
+	empty := mustDouyin(t, s, a, "workspace", object{"status": "unpublished"}).(object)
+	if empty["total"] != float64(0) || obj(empty["counts"])["accepted"] != float64(1) {
+		t.Fatal("status buckets should count beyond the current filter", empty)
+	}
+	other := a
+	other.UserID = "different-owner"
+	if list := mustDouyin(t, s, other, "workspace", object{}).(object); list["total"] != float64(0) {
+		t.Fatal("other owner should not see this artifact", list)
+	}
+	input.Batch, input.RequestKey = true, id()
+	_, err := douyinCall(s, a, "records/create", input)
+	if fault, ok := err.(exchangeFault); !ok || fault.ErrorCode() != "ARTIFACT_ALREADY_SUBMITTED" {
+		t.Fatal("batch may repeat an accepted submission", err)
+	}
+}

@@ -18,6 +18,7 @@ export interface DouyinPublishInput {
   description: string;
   hashtags: string[];
   coverRef?: string;
+  batch?: boolean;
 }
 export interface DouyinPublishLog {
   step: string;
@@ -56,6 +57,55 @@ export interface DouyinDesktopState {
   tabs: DouyinBrowserTab[];
   activeAccountId?: string;
   activeRecord?: DouyinPublishRecord;
+  queue?: DouyinQueue;
+}
+
+export type DouyinWorkspaceStatus =
+  "unpublished" | "running" | "accepted" | "unknown" | "failed";
+export interface DouyinWorkspaceRow {
+  id: string;
+  title: string;
+  propertyTitle?: string | null;
+  sourceRevision: number;
+  review: import("./artifact").VideoArtifact["review"];
+  createdAt: string;
+  status: DouyinWorkspaceStatus;
+  recordState?: DouyinPublishState | null;
+  recordId?: string | null;
+  progress?: number | null;
+  deviceReady: boolean;
+}
+export interface DouyinWorkspace {
+  items: DouyinWorkspaceRow[];
+  counts: Partial<Record<DouyinWorkspaceStatus, number>>;
+  total: number;
+}
+export interface DouyinQueueEntry {
+  artifactId: string;
+  expectedReviewRevision: number;
+  title: string;
+  description: string;
+}
+export interface DouyinBatchInput {
+  requestKey: string;
+  accountId: string;
+  entries: DouyinQueueEntry[];
+}
+export interface DouyinQueueRow extends Pick<
+  DouyinQueueEntry,
+  "artifactId" | "title"
+> {
+  id: string;
+  batchId: string;
+  accountId: string;
+  state: DouyinPublishState | "queued" | "interrupted";
+  recordId?: string;
+  errorCode?: string;
+  progress?: number;
+}
+export interface DouyinQueue {
+  paused: boolean;
+  rows: DouyinQueueRow[];
 }
 export const douyinStateLabels: Record<DouyinPublishState, string> = {
   running: "正在上传",

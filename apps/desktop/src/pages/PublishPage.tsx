@@ -10,6 +10,7 @@ import {
   Modal,
   Pagination,
   Progress,
+  Segmented,
   Select,
   Space,
   Tag,
@@ -26,6 +27,7 @@ import {
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
+import { PublishWorkbench, reviewLabels } from "../components/PublishWorkbench";
 import { artifactMedia } from "../lib/artifactMedia";
 import {
   douyinApi,
@@ -40,107 +42,27 @@ import DemoPublishPage, {
 } from "./DemoPublishPage";
 
 export default function PublishPage() {
-  return isLive ? <ArtifactLibrary /> : <DemoPublishPage />;
+  return isLive ? (
+    <PublishWorkbench
+      detail={(id, onDirty) => (
+        <ArtifactPublishDetail
+          key={id}
+          artifactId={id}
+          embedded
+          onDirty={onDirty}
+        />
+      )}
+    />
+  ) : (
+    <DemoPublishPage />
+  );
 }
 export function PublishDetailPage() {
-  return isLive ? <ArtifactPublishDetail /> : <DemoPublishDetail />;
-}
-const reviewLabels = {
-  pending: "待验收",
-  approved: "验收通过",
-  rejected: "验收未通过",
-};
-function ArtifactLibrary() {
-  const [review, setReview] = useState<ArtifactReviewState>();
-  const [offset, setOffset] = useState(0);
-  const query = useQuery({
-    queryKey: ["douyin", "artifacts", review, offset],
-    queryFn: () =>
-      artifactExchange.listArtifacts({ review, limit: 20, offset }),
-  });
-  return (
-    <>
-      <PageHeader
-        title="发布中心"
-        description="接收已验收的成片，选择抖音账号后立即发布。"
-      />
-      <div className="property-toolbar">
-        <Select
-          aria-label="成片验收状态"
-          placeholder="全部验收状态"
-          allowClear
-          value={review}
-          style={{ width: 200 }}
-          onChange={(value) => {
-            setReview(value);
-            setOffset(0);
-          }}
-          options={Object.entries(reviewLabels).map(([value, label]) => ({
-            value,
-            label,
-          }))}
-        />
-        <Space>
-          <Link to="/settings/platforms">
-            <Button>管理抖音账号</Button>
-          </Link>
-          <Link to="/publish/demo">
-            <Button type="text">查看原演示</Button>
-          </Link>
-          <Button onClick={() => void query.refetch()}>刷新成片</Button>
-        </Space>
-      </div>
-      {query.error && (
-        <Alert
-          type="error"
-          title="成片加载失败"
-          description={publishingMessage(query.error)}
-        />
-      )}
-      {!query.isPending && !query.data?.items.length && (
-        <div className="panel empty-panel">
-          <Empty description="暂无符合条件的成片">
-            <p className="muted">制作侧完成登记与验收后，成片会出现在这里。</p>
-          </Empty>
-        </div>
-      )}
-      <div className="publish-grid">
-        {query.data?.items.map((artifact) => (
-          <article className="publish-card" key={artifact.id}>
-            <Link
-              className="douyin-artifact-cover"
-              to={`/publish/${artifact.id}`}
-            >
-              <Film size={44} />
-              <span>{artifact.content.title}</span>
-            </Link>
-            <div className="publish-card-content">
-              <h2>{artifact.content.title}</h2>
-              <Tag
-                color={
-                  artifact.review.state === "approved" ? "green" : "default"
-                }
-              >
-                {reviewLabels[artifact.review.state]}
-              </Tag>
-              <p className="muted">
-                版本 {artifact.source.revision} ·{" "}
-                {new Date(artifact.createdAt).toLocaleString("zh-CN")}
-              </p>
-              <p>{artifact.content.property?.title}</p>
-              <Link to={`/publish/${artifact.id}`}>查看成片与发布</Link>
-            </div>
-          </article>
-        ))}
-      </div>
-      <Pagination
-        current={offset / 20 + 1}
-        total={query.data?.total || 0}
-        pageSize={20}
-        showSizeChanger={false}
-        onChange={(page) => setOffset((page - 1) * 20)}
-      />
-    </>
+  const { productionTaskId: artifactId = "" } = useParams();
+  return isLive ? (
+    <ArtifactPublishDetail key={artifactId} artifactId={artifactId} />
+  ) : (
+    <DemoPublishDetail />
   );
 }
 interface EditValues {
@@ -149,11 +71,18 @@ interface EditValues {
   hashtags: string[];
   accountId: string;
 }
-function ArtifactPublishDetail() {
-  const { productionTaskId: artifactId = "" } = useParams();
+function ArtifactPublishDetail({
+  artifactId,
+  embedded,
+  onDirty,
+}: {
+  artifactId: string;
+  embedded?: boolean;
+  onDirty?: (dirty: boolean) => void;
+}) {
   const client = useQueryClient();
   const { message, modal } = App.useApp();
-  const desktop = useDouyinDesktop();
+  const desktop = useDouyinDesktop(!embedded);
   const artifact = useQuery({
     queryKey: ["douyin", "artifact", artifactId],
     queryFn: () => artifactExchange.getArtifact(artifactId),
@@ -163,6 +92,9 @@ function ArtifactPublishDetail() {
     queryFn: douyinApi.accounts,
   });
   const [recordOffset, setRecordOffset] = useState(0);
+  const [detailTab, setDetailTab] = useState<"preview" | "form" | "records">(
+    "preview",
+  );
   const records = useQuery({
     queryKey: ["douyin", "records", artifactId, recordOffset],
     queryFn: () => douyinApi.records(artifactId, recordOffset),
@@ -213,7 +145,11 @@ function ArtifactPublishDetail() {
   }, [artifact.data?.id, form]);
   const current = artifact.data;
   const active = desktop.data?.activeRecord;
-  const running = !!active && ["running", "submitting"].includes(active.state);
+  const running =
+    (!!active && ["running", "submitting"].includes(active.state)) ||
+    !!desktop.data?.queue?.rows.some((row) =>
+      ["running", "submitting"].includes(row.state),
+    );
   const invalid = values
     ? validateDouyinInput({
         title: values.title || "",
@@ -246,6 +182,7 @@ function ArtifactPublishDetail() {
       expectedReviewRevision: current.review.revision,
     });
     setHandoff(value);
+    if (embedded) setDetailTab("form");
     message.success("已固定成片交接版本");
   }
   function review(state: ArtifactReviewState) {
@@ -282,6 +219,8 @@ function ArtifactPublishDetail() {
     });
     if (!["running", "submitting"].includes(record.state))
       publishKey.current = crypto.randomUUID();
+    onDirty?.(false);
+    if (embedded) setDetailTab("records");
     message.info(douyinStateLabels[record.state]);
   }
   useEffect(() => {
@@ -294,7 +233,7 @@ function ArtifactPublishDetail() {
   if (!current)
     return (
       <>
-        <PageHeader title="成片与抖音发布" />
+        {!embedded && <PageHeader title="成片与抖音发布" />}
         {artifact.error ? (
           <Alert type="error" title={publishingMessage(artifact.error)} />
         ) : (
@@ -304,11 +243,23 @@ function ArtifactPublishDetail() {
     );
   return (
     <>
-      <Link to="/publish">← 返回成片列表</Link>
-      <PageHeader
-        title={current.content.title}
-        description={`成片版本 ${current.source.revision} · 验收修订 ${current.review.revision}`}
-      />
+      {embedded ? (
+        <div className="publish-detail-heading">
+          <h2>{current.content.title}</h2>
+          <p className="muted">
+            成片版本 {current.source.revision} · 验收修订{" "}
+            {current.review.revision}
+          </p>
+        </div>
+      ) : (
+        <>
+          <Link to="/publish">← 返回成片列表</Link>
+          <PageHeader
+            title={current.content.title}
+            description={`成片版本 ${current.source.revision} · 验收修订 ${current.review.revision}`}
+          />
+        </>
+      )}
       {!desktopPublishingAvailable() && (
         <Alert
           type="info"
@@ -334,8 +285,23 @@ function ArtifactPublishDetail() {
       {assets.error && (
         <Alert type="error" title={publishingMessage(assets.error)} />
       )}
-      <div className="douyin-publish-layout">
-        <section className="panel">
+      {embedded && (
+        <Segmented
+          className="publish-detail-tabs"
+          value={detailTab}
+          onChange={setDetailTab}
+          options={[
+            { value: "preview", label: "预览验收" },
+            { value: "form", label: "发布配置" },
+            { value: "records", label: "发布记录" },
+          ]}
+        />
+      )}
+      <div
+        className="douyin-publish-layout"
+        hidden={embedded && detailTab === "records"}
+      >
+        <section className="panel" hidden={embedded && detailTab !== "preview"}>
           <div className="douyin-video-preview">
             {preview ? (
               <video
@@ -433,13 +399,15 @@ function ArtifactPublishDetail() {
           </Button>
           {handoff && <p className="muted">交接号：{handoff.id}</p>}
         </section>
-        <section className="panel">
+        <section className="panel" hidden={embedded && detailTab !== "form"}>
           <h2>立即发布到抖音</h2>
+          {embedded && handoff && <Tag color="success">已接收该版本</Tag>}
           <Form
             form={form}
             layout="vertical"
             initialValues={{ hashtags: [], description: "" }}
             onValuesChange={() => {
+              onDirty?.(true);
               publishKey.current = crypto.randomUUID();
             }}
           >
@@ -485,6 +453,7 @@ function ArtifactPublishDetail() {
                   onClick={() =>
                     void act(async () => {
                       setCover(await douyinDesktop("cover.select"));
+                      onDirty?.(true);
                       publishKey.current = crypto.randomUUID();
                     })
                   }
@@ -495,6 +464,7 @@ function ArtifactPublishDetail() {
                   <Button
                     onClick={() => {
                       setCover(undefined);
+                      onDirty?.(true);
                       publishKey.current = crypto.randomUUID();
                     }}
                   >
@@ -533,7 +503,10 @@ function ArtifactPublishDetail() {
         </section>
       </div>
       {active?.artifactId === artifactId && (
-        <section className="panel douyin-result">
+        <section
+          className="panel douyin-result"
+          hidden={embedded && detailTab !== "records"}
+        >
           <h3>{douyinStateLabels[active.state]}</h3>
           <Progress
             percent={active.progress}
@@ -554,7 +527,10 @@ function ArtifactPublishDetail() {
           )}
         </section>
       )}
-      <section className="panel douyin-result">
+      <section
+        className="panel douyin-result"
+        hidden={embedded && detailTab !== "records"}
+      >
         <h2>这份成片的发布记录</h2>
         {records.error && (
           <Alert type="error" title={publishingMessage(records.error)} />

@@ -312,6 +312,7 @@ function registerAuth() {
       if (
         ![
           "accounts/list",
+          "workspace",
           "records/list",
           "records/get",
           "records/reconcile",

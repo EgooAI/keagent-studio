@@ -39,6 +39,7 @@ function returnWindowSetup(window) {
     getHandoff: "/v1/artifact-handoffs/get",
     registerAsset: "/v1/media-assets/register",
     createArtifact: "/v1/artifacts/create",
+    createHandoff: "/v1/artifact-handoffs/create",
     reportAvailability: "/v1/media-assets/availability",
   };
   const exchange = Object.fromEntries(

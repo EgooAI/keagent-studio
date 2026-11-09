@@ -23,6 +23,9 @@ export function publishingFailureText(code: string): string {
     SESSION_CHANGED: "应用登录状态已变化，本次操作已停止。",
     ACCOUNT_CHANGED: "浏览器内的抖音账号已改变，请重新添加账号。",
     ACCOUNT_NOT_SAVED: "请先在账号浏览器点击保存账号。",
+    ACCOUNT_UNAVAILABLE: "发布账号不可用，请检查抖音账号是否已登录并保存。",
+    ARTIFACT_ALREADY_SUBMITTED: "该成片已有发布提交或正在执行，已跳过。",
+    OUTCOME_UNRESOLVED: "这份成片上次的发布结果待核对，请在详情中检查。",
   };
   return labels[code] || "发布未完成，请查看执行步骤或联系管理员。";
 }
@@ -43,7 +46,7 @@ export function publishingMessage(error: unknown): string {
   return error instanceof Error ? error.message : "操作失败，请重试";
 }
 export const desktopPublishingAvailable = () => !!window.desktop?.publishing;
-export function useDouyinDesktop() {
+export function useDouyinDesktop(subscribe = true) {
   const client = useQueryClient();
   const query = useQuery({
     queryKey: ["douyin", "desktop"],
@@ -52,12 +55,20 @@ export function useDouyinDesktop() {
     refetchInterval: 10000,
     retry: false,
   });
-  useEffect(
-    () =>
-      window.desktop?.publishing?.subscribe(() => {
+  useEffect(() => {
+    if (!subscribe) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = window.desktop?.publishing?.subscribe(() => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
         void client.invalidateQueries({ queryKey: ["douyin"] });
-      }),
-    [client],
-  );
+      }, 300);
+    });
+    return () => {
+      clearTimeout(timer);
+      unsubscribe?.();
+    };
+  }, [client, subscribe]);
   return query;
 }
