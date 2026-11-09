@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS keagent_ai_version (
 CREATE TABLE IF NOT EXISTS keagent_ai_head (
  service_group text PRIMARY KEY, revision bigint NOT NULL DEFAULT 0,
  active bigint NOT NULL DEFAULT 0, candidate bigint NOT NULL DEFAULT 0,
- previous bigint, activated_at timestamptz);
+ activated_at timestamptz);
 CREATE TABLE IF NOT EXISTS keagent_ai_probe (
  id text PRIMARY KEY, service_group text NOT NULL, service text NOT NULL,
  version bigint NOT NULL, mode text NOT NULL, status text NOT NULL,
@@ -289,17 +289,16 @@ type aiHead struct {
 	Revision    int64      `json:"revision"`
 	Active      int64      `json:"active"`
 	Candidate   int64      `json:"candidate"`
-	Previous    *int64     `json:"previous"`
 	ActivatedAt *time.Time `json:"activatedAt"`
 }
 
 func readAIHead(ctx context.Context, db aiRowReader, group string, lock bool) (aiHead, error) {
 	var h aiHead
-	query := `SELECT revision,active,candidate,previous,activated_at FROM keagent_ai_head WHERE service_group=$1`
+	query := `SELECT revision,active,candidate,activated_at FROM keagent_ai_head WHERE service_group=$1`
 	if lock {
 		query += " FOR UPDATE"
 	}
-	err := db.QueryRowContext(ctx, query, group).Scan(&h.Revision, &h.Active, &h.Candidate, &h.Previous, &h.ActivatedAt)
+	err := db.QueryRowContext(ctx, query, group).Scan(&h.Revision, &h.Active, &h.Candidate, &h.ActivatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = nil
 	}

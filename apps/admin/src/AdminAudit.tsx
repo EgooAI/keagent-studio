@@ -43,7 +43,7 @@ export const auditActionLabels: Record<string, string> = {
   "resource.publish": "上架模板",
   "resource.unpublish": "下架模板",
   "device.revoke": "解绑设备",
-  "ai.save": "保存 AI 服务候选配置",
+  "ai.save": "保存 AI 服务配置",
   "ai.test": "发起 AI 服务测试",
   "ai.test.result": "记录 AI 服务测试结果",
   "ai.activate": "启用 AI 服务配置",

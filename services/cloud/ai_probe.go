@@ -105,7 +105,7 @@ func (s *server) enqueueAIProbe(ctx context.Context, tx *sql.Tx, a actor, spec a
 		return nil, err
 	}
 	if h.Candidate <= 0 || version != float64(h.Candidate) {
-		return nil, fail(409, "请保存并刷新候选配置后再测试")
+		return nil, fail(409, "请保存并刷新配置后再测试")
 	}
 	if err = validateAIProbeInput(spec.ID, mode, payload); err != nil {
 		return nil, err

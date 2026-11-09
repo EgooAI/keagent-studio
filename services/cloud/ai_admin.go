@@ -55,7 +55,7 @@ func (s *server) aiOverview(ctx context.Context) (object, error) {
 			cf, cs := aiPublicValues(spec, values)
 			missing, issues := aiConfigIssues(spec, values)
 			if e != nil {
-				issues = []string{"候选配置无法解密"}
+				issues = []string{"已保存配置无法解密"}
 			}
 			latest, err := s.latestAIProbe(ctx, spec.ID, h.Candidate)
 			if err != nil {
@@ -76,7 +76,7 @@ func (s *server) aiOverview(ctx context.Context) (object, error) {
 		}
 		result = append(result, object{"summary": services[i], "fields": spec.Fields, "group": spec.Group,
 			"revision": h.Revision, "active": object{"version": h.Active, "source": map[bool]string{true: "managed", false: "environment"}[h.Active > 0], "fields": fields, "secrets": secrets, "activatedAt": h.ActivatedAt, "test": activeTest, "locked": current.locked[spec.Group]},
-			"candidate": candidate, "previous": h.Previous, "canActivate": canActivate})
+			"candidate": candidate, "canActivate": canActivate})
 	}
 	voices, err := s.publicVoices(ctx, false)
 	if err != nil {
@@ -135,29 +135,24 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 	}
 	version := h.Revision + 1
 	switch action {
-	case "ai-config/save", "ai-config/rollback":
-		var values aiValues
-		if action == "ai-config/rollback" {
-			if h.Previous == nil {
-				return nil, fail(409, "没有可恢复的上一个版本")
-			}
-			values, err = readAIValues(ctx, tx, spec.Group, *h.Previous)
-		} else {
-			base := h.Candidate
-			if base == 0 {
-				base = h.Active
-			}
-			if base == 0 {
-				values = environmentAI(spec.Group)
-			} else {
-				values, err = readAIValues(ctx, tx, spec.Group, base)
-			}
-			if err == nil {
-				err = patchAIValues(spec, values, obj(input["fields"]))
-			}
+	case "ai-config/save":
+		base := h.Candidate
+		if base == 0 {
+			base = h.Active
+		}
+		values := environmentAI(spec.Group)
+		if base > 0 {
+			values, err = readAIValues(ctx, tx, spec.Group, base)
 		}
 		if err != nil {
 			return nil, err
+		}
+		changed, err := patchAIValues(spec, values, obj(input["fields"]))
+		if err != nil {
+			return nil, err
+		}
+		if !changed {
+			return object{"version": base, "changed": false}, nil
 		}
 		sealed, err := sealAI(aiVersionLabel(spec.Group, version), values)
 		if err != nil {
@@ -171,14 +166,14 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 		}
 	case "ai-config/activate":
 		if h.Candidate == 0 || number(input["version"]) != float64(h.Candidate) {
-			return nil, fail(409, "候选版本已变化，请刷新")
+			return nil, fail(409, "待启用配置已变化，请刷新")
 		}
 		ready, err := s.aiActivationReady(ctx, tx, spec.Group, h)
 		if err != nil {
 			return nil, err
 		}
 		if !ready {
-			return nil, fail(409, "候选版本缺少最近24小时内通过的必要测试")
+			return nil, fail(409, "请先完成此配置最近 24 小时内所需的实际测试")
 		}
 		if h.Active == 0 {
 			baseline := environmentAI(spec.Group)
@@ -196,7 +191,7 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 			}
 		}
 		version = h.Candidate
-		if _, err = tx.ExecContext(ctx, `UPDATE keagent_ai_head SET revision=revision+1,previous=active,active=candidate,candidate=0,activated_at=now() WHERE service_group=$1`, spec.Group); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE keagent_ai_head SET revision=revision+1,active=candidate,candidate=0,activated_at=now() WHERE service_group=$1`, spec.Group); err != nil {
 			return nil, err
 		}
 	default:
@@ -208,12 +203,12 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return object{"version": version}, nil
+	return object{"version": version, "changed": true}, nil
 }
 
-func patchAIValues(spec aiSpec, values aiValues, patch object) error {
-	if len(patch) == 0 {
-		return fail(422, "没有可保存的配置字段")
+func patchAIValues(spec aiSpec, values aiValues, patch object) (bool, error) {
+	if patch == nil {
+		return false, fail(422, "配置字段无效")
 	}
 	old := maps.Clone(values)
 	for key, raw := range patch {
@@ -225,12 +220,12 @@ func patchAIValues(spec aiSpec, values aiValues, patch object) error {
 			}
 		}
 		if field.Key == "" {
-			return fail(422, "包含不支持的配置字段")
+			return false, fail(422, "包含不支持的配置字段")
 		}
 		if field.Kind == "toggle" {
 			value, ok := raw.(bool)
 			if !ok {
-				return fail(422, "开关配置无效")
+				return false, fail(422, "开关配置无效")
 			}
 			values[key] = map[bool]string{true: "true", false: "false"}[value]
 			continue
@@ -238,11 +233,14 @@ func patchAIValues(spec aiSpec, values aiValues, patch object) error {
 		value, ok := raw.(string)
 		value = strings.TrimSpace(value)
 		if !ok || len(value) > 2048 || strings.ContainsAny(value, "\x00\r\n") {
-			return fail(422, "配置字段格式无效")
+			return false, fail(422, "配置字段格式无效")
 		}
 		if field.Kind != "secret" || value != "" {
 			values[key] = value
 		}
+	}
+	if maps.Equal(old, values) {
+		return false, nil
 	}
 	for urlKey, secretKey := range map[string]string{"AI_BASE_URL": "AI_API_KEY", "DASHSCOPE_BASE_URL": "DASHSCOPE_API_KEY"} {
 		if values[urlKey] != old[urlKey] {
@@ -250,16 +248,16 @@ func patchAIValues(spec aiSpec, values aiValues, patch object) error {
 			next, _ := url.Parse(values[urlKey])
 			if next == nil || previous == nil || !strings.EqualFold(next.Host, previous.Host) {
 				if strings.TrimSpace(str(patch[secretKey])) == "" {
-					return fail(422, "更换服务域名时请重新填写 API Key")
+					return false, fail(422, "更换服务域名时请重新填写 API Key")
 				}
 			}
 		}
 	}
 	_, issues := aiConfigIssues(spec, values)
 	if len(issues) > 0 {
-		return fail(422, issues[0])
+		return false, fail(422, issues[0])
 	}
-	return nil
+	return true, nil
 }
 func (s *server) aiActivationReady(ctx context.Context, db aiRowReader, group string, h aiHead) (bool, error) {
 	values, err := readAIValues(ctx, db, group, h.Candidate)

@@ -83,7 +83,7 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 	}
 	ctx = withAIGroup(ctx, p.Group, p.Version, values)
 	if p.Progress.Task == "" {
-		if err = s.aiStep(ctx, p, "检查候选配置"); err != nil {
+		if err = s.aiStep(ctx, p, "检查已保存的配置"); err != nil {
 			return err
 		}
 		missing, issues := aiConfigIssues(spec, values)
@@ -91,7 +91,7 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 			return fail(422, issues[0])
 		}
 		if len(missing) > 0 {
-			return fail(422, "候选配置仍有缺项，请补充后重测")
+			return fail(422, "配置仍有缺项，请补充后重测")
 		}
 	}
 	if p.Mode == "connection" {
@@ -182,7 +182,7 @@ func (s *server) probeAIConnection(ctx context.Context, p *aiProbe) error {
 }
 func (s *server) probeAIClone(ctx context.Context, p *aiProbe, input object) error {
 	if !cloneConfigured(ctx) {
-		return fail(422, "请先在候选配置中打开声音复刻")
+		return fail(422, "请先打开声音复刻并保存配置")
 	}
 	speaker := str(input["speaker"])
 	if p.Mode == "training" {

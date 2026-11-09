@@ -5,7 +5,6 @@ import { serviceRequest } from "@keagent/api-client";
 import type {
   AdminAIConfig,
   AdminAIManagement,
-  AdminAIProbe,
   AdminAIService,
 } from "@keagent/shared-types";
 import { dateTime, useAdminParams } from "./admin-api";
@@ -14,7 +13,6 @@ import AIConfigDrawer, {
   AIProbeState,
   probeModeLabel,
   probeRunning,
-  versionLabel,
 } from "./AIConfigDrawer";
 
 const configLabels: Record<string, string> = {
@@ -67,17 +65,21 @@ const serviceOrder: AdminAIService["id"][] = [
   "beike",
 ];
 
-function ActiveState({ row }: { row: AdminAIManagement }) {
+function ConfigState({ row }: { row: AdminAIManagement }) {
   if (row.active.locked) return <Tag color="red">配置无法解密</Tag>;
+  if (row.candidate)
+    return row.canActivate ? (
+      <Tag color="blue">待启用</Tag>
+    ) : (
+      <Tag color="orange">待测试</Tag>
+    );
   if (
     row.summary.id === "voice-clone" &&
     !row.active.fields.VOLC_VOICE_CLONE_ENABLED
   )
     return <Tag>已关闭</Tag>;
-  if (row.active.version)
-    return <Tag color="green">{versionLabel(row.active.version)} 已启用</Tag>;
   return row.summary.state === "configured" ? (
-    <Tag>部署配置</Tag>
+    <Tag color="green">已启用</Tag>
   ) : (
     <AIState state={row.summary.state} />
   );
@@ -183,7 +185,7 @@ export default function AdminAI() {
               >
                 <div className="admin-toolbar">
                   <p className="admin-secondary">
-                    修改先保存为候选。测试通过后，手动启用才会切换生产请求。
+                    保存修改后运行真实测试，通过后点击启用。
                   </p>
                   <Button
                     loading={query.isFetching}
@@ -220,10 +222,7 @@ export default function AdminAI() {
                       <thead>
                         <tr>
                           <th scope="col">服务</th>
-                          <th scope="col">当前生效</th>
-                          <th scope="col" className="ai-detail-column">
-                            待启用
-                          </th>
+                          <th scope="col">配置状态</th>
                           <th scope="col" className="ai-detail-column">
                             最近测试
                           </th>
@@ -232,7 +231,9 @@ export default function AdminAI() {
                       </thead>
                       <tbody>
                         {rows.map((row) => {
-                          const test = row.candidate?.test ?? row.active.test;
+                          const test = row.candidate
+                            ? row.candidate.test
+                            : row.active.test;
                           return (
                             <tr key={row.summary.id}>
                               <th scope="row">
@@ -242,21 +243,12 @@ export default function AdminAI() {
                                 </span>
                               </th>
                               <td>
-                                <ActiveState row={row} />
-                              </td>
-                              <td className="ai-detail-column">
-                                {row.candidate ? (
-                                  versionLabel(row.candidate.version) +
-                                  " 待启用"
-                                ) : (
-                                  <span className="admin-secondary">—</span>
-                                )}
+                                <ConfigState row={row} />
                               </td>
                               <td className="ai-detail-column">
                                 <AIProbeState test={test} />
                                 {test && (
                                   <span className="admin-secondary ai-test-meta">
-                                    {versionLabel(test.version)} ·{" "}
                                     {probeModeLabel(test.mode)} ·{" "}
                                     {dateTime(
                                       test.finishedAt ?? test.createdAt,

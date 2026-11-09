@@ -299,7 +299,7 @@ async function fixture(page: Page) {
   return { users, owner, task, resources, requests, writes, state };
 }
 
-test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ page }) => {
+test("AI 服务只有一个配置入口，原样保存保留测试结果", async ({ page }) => {
   await fixture(page);
   const labels = {
     script: "多模态文案",
@@ -340,11 +340,20 @@ test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ pa
         test: null,
       },
       candidate: null,
-      previous: 1,
       canActivate: false,
     }),
   );
   const script = management[0];
+  script.active.test = {
+    id: "previous-test",
+    service: "script",
+    version: 3,
+    mode: "sample",
+    status: "passed",
+    createdAt: stamp,
+    finishedAt: stamp,
+    steps: [],
+  };
   const data: AdminAIConfig = {
     configured: true,
     model: "vision-active",
@@ -372,14 +381,18 @@ test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ pa
         return route.fulfill({ json: data, headers });
       const input = route.request().postDataJSON();
       writes.push({ path, input });
-      if (path.endsWith("/save") || path.endsWith("/rollback")) {
+      if (path.endsWith("/save")) {
+        const saved = script.candidate ?? script.active;
+        if (
+          input.fields.AI_MODEL === saved.fields.AI_MODEL &&
+          !input.fields.AI_API_KEY
+        )
+          return route.fulfill({ json: { changed: false }, headers });
         script.revision++;
         script.candidate = {
           version: script.revision,
           fields: {
-            AI_MODEL: path.endsWith("/rollback")
-              ? "vision-active"
-              : input.fields.AI_MODEL,
+            AI_MODEL: input.fields.AI_MODEL,
           },
           secrets: { AI_API_KEY: true },
           test: null,
@@ -401,7 +414,6 @@ test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ pa
         };
       }
       if (path.endsWith("/activate") && script.candidate) {
-        script.previous = script.active.version;
         script.revision++;
         script.active = { ...script.active, ...script.candidate };
         script.candidate = null;
@@ -443,13 +455,21 @@ test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ pa
     "vision-candidate",
   );
   await page.setViewportSize({ width: 1440, height: 900 });
-  await drawer.getByRole("button", { name: "保存候选", exact: true }).click();
-  await expect(drawer.getByText("V4 待启用")).toBeVisible();
+  const save = drawer.getByRole("button", { name: "保存配置", exact: true });
+  const enable = drawer.getByRole("button", { name: "启用配置", exact: true });
+  const runSample = drawer.getByRole("button", {
+    name: "运行真实样例",
+    exact: true,
+  });
+  const scriptRow = table.getByRole("row", { name: /多模态文案/ });
+  await save.click();
+  await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("未测试", { exact: true })).toBeVisible();
   expect(script.active.fields.AI_MODEL).toBe("vision-active");
   await drawer.getByRole("button", { name: "检查连通性", exact: true }).click();
   await expect(drawer.getByText("连通性通过", { exact: true })).toBeVisible();
-  await expect(drawer.getByRole("button", { name: "启用候选" })).toHaveCount(0);
-  await drawer.getByRole("button", { name: "测试候选", exact: true }).click();
+  await expect(enable).toBeDisabled();
+  await runSample.click();
   await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
   await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
   expect(writes.at(-1)?.input).toMatchObject({
@@ -466,36 +486,30 @@ test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ pa
   await expect(drawer.getByText(probe.message)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(manage).toBeFocused();
-  const scriptRow = table.getByRole("row", { name: /多模态文案/ });
-  await expect(scriptRow.getByText("V3 已启用")).toBeVisible();
-  await expect(scriptRow.getByText("V4 待启用")).toBeVisible();
+  await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
   await expect(scriptRow.getByText("测试失败")).toBeVisible();
   await manage.click();
-  await drawer.getByRole("button", { name: "测试候选", exact: true }).click();
+  await runSample.click();
   await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
   await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
   const retry = script.candidate?.test as AdminAIProbe;
   retry.status = "passed";
   retry.finishedAt = stamp;
   script.canActivate = true;
-  await expect(
-    drawer.getByRole("button", { name: "启用候选", exact: true }),
-  ).toBeEnabled();
+  await expect(enable).toBeEnabled();
+  await save.click();
+  await expect(page.getByText("配置未改动", { exact: true })).toBeVisible();
+  await expect(enable).toBeEnabled();
+  await expect(drawer.getByText("样例通过", { exact: true })).toBeVisible();
   await page.screenshot({
     path: "output/ai-config-ui/drawer-1440.png",
     animations: "disabled",
   });
-  await drawer.getByRole("button", { name: "启用候选", exact: true }).click();
+  await enable.click();
   await page.getByRole("button", { name: "确认启用", exact: true }).click();
-  await expect(drawer.getByText("V4", { exact: true })).toBeVisible();
-  await drawer.getByText("版本记录", { exact: true }).click();
-  await drawer
-    .getByRole("button", { name: "恢复上一版为候选", exact: true })
-    .click();
-  await page.getByRole("button", { name: "恢复为候选", exact: true }).click();
-  await expect(drawer.getByLabel("模型名", { exact: true })).toHaveValue(
-    "vision-active",
-  );
+  await expect(scriptRow.getByText("已启用", { exact: true })).toBeVisible();
+  await expect(enable).toHaveCount(0);
+  await expect(drawer.getByText("版本记录", { exact: true })).toHaveCount(0);
   expect(script.active.fields.AI_MODEL).toBe("vision-candidate");
 });
 

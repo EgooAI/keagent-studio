@@ -3,7 +3,6 @@ import {
   App,
   Button,
   Checkbox,
-  Descriptions,
   Drawer,
   Form,
   Input,
@@ -26,8 +25,6 @@ import { dateTime } from "./admin-api";
 
 export const probeRunning = (test?: AdminAIProbe | null) =>
   test?.status === "queued" || test?.status === "running";
-export const versionLabel = (version: number) =>
-  version ? "V" + version : "部署配置";
 export const probeModeLabel = (mode: AdminAIProbeMode) =>
   ({ connection: "仅连通性", sample: "真实样例", training: "复刻训练" })[mode];
 export function AIProbeState({ test }: { test?: AdminAIProbe | null }) {
@@ -139,16 +136,23 @@ export default function AIConfigDrawer({
   async function submit(
     path: string,
     body: Record<string, unknown>,
-    success: string,
+    success: string | ((changed: boolean) => string),
   ) {
     if (action.current) return false;
     action.current = true;
     setBusy(true);
     setError("");
     try {
-      await serviceRequest(root + path, { service, ...body });
+      const result = await serviceRequest<{ changed?: boolean }>(root + path, {
+        service,
+        ...body,
+      });
       await client.invalidateQueries({ queryKey: ["admin"] });
-      if (success) void message.success(success);
+      void message.success(
+        typeof success === "string"
+          ? success
+          : success(result?.changed !== false),
+      );
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败，请稍后重试");
@@ -170,7 +174,7 @@ export default function AIConfigDrawer({
       await submit(
         "/save",
         { revision: revision.current, fields },
-        "候选配置已保存",
+        (changed) => (changed ? "配置已保存，请运行真实样例" : "配置未改动"),
       )
     ) {
       markDirty(false);
@@ -179,11 +183,11 @@ export default function AIConfigDrawer({
   function activate() {
     if (!candidate) return;
     modal.confirm({
-      title: `启用 ${versionLabel(candidate.version)}？`,
+      title: "启用当前配置？",
       content:
         row.group === "speech"
-          ? "配音与声音复刻的共享配置将一起切换。新请求会立即使用候选配置。"
-          : "新请求会立即使用候选配置，已提交的异步任务继续使用原配置查询。",
+          ? "配音与声音复刻的新请求将使用这份共享配置。"
+          : "新请求将使用这份配置，已提交的异步任务会继续使用提交时的配置。",
       okText: "确认启用",
       cancelText: "取消",
       onOk: () =>
@@ -192,17 +196,6 @@ export default function AIConfigDrawer({
           { revision: row.revision, version: candidate.version },
           "新配置已启用",
         ),
-    });
-  }
-  function rollback() {
-    if (row.previous === null) return;
-    modal.confirm({
-      title: `恢复 ${versionLabel(row.previous)} 为候选？`,
-      content: "这会替换当前候选配置。复测通过并手动启用后，才会影响新请求。",
-      okText: "恢复为候选",
-      cancelText: "取消",
-      onOk: () =>
-        submit("/rollback", { revision: row.revision }, "上一版已载入候选"),
     });
   }
   function openTest(mode: AdminAIProbeMode) {
@@ -285,7 +278,7 @@ export default function AIConfigDrawer({
     }
   }
 
-  const test = candidate?.test ?? row.active.test;
+  const test = candidate ? candidate.test : row.active.test;
   return (
     <Drawer
       open
@@ -294,93 +287,32 @@ export default function AIConfigDrawer({
       onClose={onClose}
       footer={
         <div className="ai-drawer-actions">
-          {dirty || !candidate ? (
+          <Button
+            type={!row.canActivate || dirty ? "primary" : "default"}
+            loading={busy}
+            disabled={locked}
+            onClick={() => void save()}
+          >
+            保存配置
+          </Button>
+          {candidate && (
             <Button
               type="primary"
               loading={busy}
-              disabled={locked}
-              onClick={() => void save()}
-            >
-              保存候选
-            </Button>
-          ) : row.canActivate ? (
-            <Button
-              type="primary"
-              loading={busy}
-              disabled={locked || running}
+              disabled={!row.canActivate || locked || running || dirty}
               onClick={activate}
             >
-              启用候选
-            </Button>
-          ) : (
-            <Button
-              type="primary"
-              loading={busy}
-              disabled={locked || running}
-              onClick={() => openTest("sample")}
-            >
-              测试候选
+              启用配置
             </Button>
           )}
         </div>
       }
     >
       <section className="ai-drawer-section">
-        <h3>当前生效</h3>
-        <Descriptions
-          size="small"
-          column={1}
-          items={[
-            {
-              key: "version",
-              label: "版本",
-              children: (
-                <>
-                  <strong>{versionLabel(row.active.version)}</strong> ·{" "}
-                  {row.active.source === "managed"
-                    ? "管理后台"
-                    : "服务端环境变量"}
-                </>
-              ),
-            },
-            {
-              key: "time",
-              label: "生效时间",
-              children: dateTime(row.active.activatedAt),
-            },
-            {
-              key: "address",
-              label: "服务地址",
-              children: (
-                <span className="admin-break">
-                  {row.summary.endpoint || "未设置"}
-                </span>
-              ),
-            },
-            {
-              key: "model",
-              label: "模型或资源",
-              children: row.summary.model || "未指定",
-            },
-          ]}
-        />
-        {!candidate && row.summary.issues.length > 0 && (
-          <Alert
-            type="warning"
-            title="当前配置需要处理"
-            description={row.summary.issues.join("、")}
-            showIcon
-          />
-        )}
-      </section>
-      <section className="ai-drawer-section">
-        <div className="admin-section-heading">
-          <h3>候选配置</h3>
-          {candidate && <Tag>{versionLabel(candidate.version)} 待启用</Tag>}
-        </div>
+        <h3>服务配置</h3>
         {row.group === "speech" && (
           <p className="admin-secondary">
-            配音与声音复刻共用 API Key 和候选版本。启用前须验证已开启的能力。
+            配音与声音复刻共用 API Key。启用前须验证已开启的能力。
           </p>
         )}
         <Form
@@ -404,12 +336,12 @@ export default function AIConfigDrawer({
                   : undefined
               }
               help={
-                !dirty && candidate?.missing.includes(field.key)
+                !dirty && (candidate ?? row.summary).missing.includes(field.key)
                   ? "请补充该字段后测试"
                   : undefined
               }
               validateStatus={
-                !dirty && candidate?.missing.includes(field.key)
+                !dirty && (candidate ?? row.summary).missing.includes(field.key)
                   ? "warning"
                   : undefined
               }
@@ -460,7 +392,7 @@ export default function AIConfigDrawer({
             </Form.Item>
           ))}
         </Form>
-        {candidate?.issues.map((issue) => (
+        {(candidate ?? row.summary).issues.map((issue) => (
           <Alert key={issue} type="warning" title={issue} showIcon />
         ))}
         {error && !testMode && (
@@ -489,10 +421,10 @@ export default function AIConfigDrawer({
           <h3>可用性测试</h3>
           <AIProbeState test={test} />
         </div>
-        {test ? (
+        {test && (
           <>
             <p className="admin-secondary">
-              {versionLabel(test.version)} · {probeModeLabel(test.mode)} ·{" "}
+              {probeModeLabel(test.mode)} ·{" "}
               {dateTime(test.finishedAt ?? test.createdAt)}
             </p>
             {test.steps.length > 0 && (
@@ -533,16 +465,12 @@ export default function AIConfigDrawer({
               />
             )}
           </>
-        ) : (
-          <p className="admin-secondary">
-            保存候选配置后即可测试。测试不会切换当前生产配置。
-          </p>
         )}
         {candidate && !row.canActivate && !running && (
           <p className="admin-secondary">
             {row.group === "speech"
-              ? "启用前请在配音与声音复刻中分别完成所需测试。"
-              : "启用需要该版本在最近 24 小时内通过真实样例测试。"}
+              ? "启用前须通过配音测试。打开声音复刻时，也须通过复刻测试。"
+              : "启用需要此配置最近 24 小时内通过真实样例测试。"}
           </p>
         )}
         <Space wrap>
@@ -568,23 +496,6 @@ export default function AIConfigDrawer({
           )}
         </Space>
       </section>
-      {row.previous !== null && (
-        <section className="ai-drawer-section">
-          <details>
-            <summary>版本记录</summary>
-            <p className="admin-secondary">
-              当前 {versionLabel(row.active.version)} · 上一版{" "}
-              {versionLabel(row.previous)}
-            </p>
-            <Button
-              onClick={rollback}
-              disabled={locked || busy || dirty || running}
-            >
-              恢复上一版为候选
-            </Button>
-          </details>
-        </section>
-      )}
       <Modal
         open={!!testMode}
         destroyOnHidden

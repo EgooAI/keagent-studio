@@ -125,7 +125,6 @@ export interface AdminAIManagement {
     locked: boolean;
   };
   candidate: (AdminAIValues & { missing: string[]; issues: string[] }) | null;
-  previous: number | null;
   canActivate: boolean;
 }
 export interface AdminOverview {

@@ -27,10 +27,10 @@ func TestAIConfigProtection(t *testing.T) {
 	}
 	t.Setenv("AI_ALLOWED_HOSTS", "first.example,second.example,127.0.0.1")
 	spec, _ := specFor("script")
-	if patchAIValues(spec, values, object{"AI_BASE_URL": "https://second.example"}) == nil {
+	if _, err = patchAIValues(spec, values, object{"AI_BASE_URL": "https://second.example"}); err == nil {
 		t.Fatal("allowed reusing a key at a different origin")
 	}
-	if patchAIValues(spec, values, object{"AI_BASE_URL": "https://127.0.0.1", "AI_API_KEY": "replacement"}) == nil {
+	if _, err = patchAIValues(spec, values, object{"AI_BASE_URL": "https://127.0.0.1", "AI_API_KEY": "replacement"}); err == nil {
 		t.Fatal("allowed a loopback provider")
 	}
 	for _, address := range []string{"127.0.0.1", "10.0.0.2", "100.64.0.1", "169.254.169.254", "::1", "fc00::1"} {
@@ -84,6 +84,14 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 			t.Fatalf("expected HTTP %d, got %v", expected, err)
 		}
 	}
+	assertUnchanged := func(revision, version int64, key string) {
+		t.Helper()
+		result, err := adminCall("/save", object{"service": "tts", "revision": revision, "fields": object{"VOLC_TTS_API_KEY": key}})
+		if err != nil || obj(result)["changed"] != false || obj(result)["version"] != version {
+			t.Fatalf("save should leave the configuration unchanged, got %#v / %v", result, err)
+		}
+	}
+	assertUnchanged(0, 0, "")
 	_, err := adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"VOLC_TTS_API_KEY": "candidate-key"}})
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +129,8 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	if err != nil || obj(result)["status"] != "passed" || calls != 1 {
 		t.Fatalf("expected one passed test, got %#v / %v / %d", result, err, calls)
 	}
+	assertUnchanged(1, 1, "")
+	assertUnchanged(1, 1, " candidate-key ")
 	if _, err = db.ExecContext(ctx, `UPDATE keagent_ai_probe SET finished_at=now()-interval '25 hours' WHERE id=$1`, p.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -140,13 +150,12 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	if err != nil || aiValue(pinned, "VOLC_TTS_API_KEY") != "existing-environment-key" {
 		t.Fatal("in-flight version was not retained", err)
 	}
-	if _, err = adminCall("/rollback", object{"service": "tts", "revision": 2}); err != nil {
+	assertUnchanged(2, 1, "")
+	if _, err = adminCall("/save", object{"service": "tts", "revision": 2, "fields": object{"VOLC_TTS_API_KEY": "replacement"}}); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := readAIValues(ctx, db, "speech", 3)
-	if err != nil || restored["VOLC_TTS_API_KEY"] != "existing-environment-key" {
-		t.Fatal("previous config was not restored as a candidate", err)
-	}
+	_, err = adminCall("/activate", object{"service": "tts", "revision": 3, "version": 3})
+	assertStatus(err, 409)
 	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(append([]byte{1}, make([]byte, 31)...)))
 	active, err = s.activeAI(ctx)
 	if err != nil || !aiSnapshotFrom(active).locked["speech"] || aiValue(active, "VOLC_TTS_API_KEY") != "" {
