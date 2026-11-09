@@ -43,6 +43,11 @@ export const auditActionLabels: Record<string, string> = {
   "resource.publish": "上架模板",
   "resource.unpublish": "下架模板",
   "device.revoke": "解绑设备",
+  "ai.save": "保存 AI 服务候选配置",
+  "ai.test": "发起 AI 服务测试",
+  "ai.test.result": "记录 AI 服务测试结果",
+  "ai.activate": "启用 AI 服务配置",
+  "ai.rollback": "恢复上一版 AI 服务配置为候选",
   resources: "模板目录变更（旧记录）",
   "devices/revoke": "解绑设备（旧记录）",
 };
@@ -63,6 +68,8 @@ const detailLabels: Record<string, string> = {
   email: "邮箱",
   banReason: "停用原因",
   platform: "设备系统",
+  service: "服务",
+  result: "结果",
 };
 
 function detailValue(key: string, value: string) {

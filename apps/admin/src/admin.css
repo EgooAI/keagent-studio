@@ -246,6 +246,70 @@ a {
   gap: 24px;
   margin-top: 20px;
 }
+
+.ai-service-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.ai-service-table th,
+.ai-service-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--admin-line, #e7ebf0);
+  overflow-wrap: anywhere;
+}
+.ai-service-table thead th {
+  font-weight: 600;
+  background: var(--ant-color-fill-quaternary);
+}
+.ai-service-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.ai-service-table th:last-child,
+.ai-service-table td:last-child {
+  text-align: right;
+}
+.ai-service-table .ant-tag {
+  margin-inline-end: 0;
+}
+.ai-provider,
+.ai-test-meta {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+}
+.ai-drawer-section + .ai-drawer-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--admin-line, #e7ebf0);
+}
+.ai-drawer-section h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.ai-probe-steps {
+  display: grid;
+  gap: 8px;
+  padding-inline-start: 22px;
+}
+.ai-probe-steps li > span:first-child {
+  margin-inline-end: 8px;
+}
+.ai-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 700px) {
+  .ai-service-table .ai-detail-column {
+    display: none;
+  }
+  .ai-service-table th,
+  .ai-service-table td {
+    padding-inline: 4px;
+  }
+}
 .admin-service-row {
   display: flex;
   align-items: center;

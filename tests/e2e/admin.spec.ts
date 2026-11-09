@@ -1,5 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import type {
+  AdminAIConfig,
+  AdminAIManagement,
+  AdminAIProbe,
   AdminAIService,
   AdminAudit,
   AdminDevice,
@@ -288,6 +291,206 @@ async function fixture(page: Page) {
   });
   return { users, owner, task, resources, requests, writes, state };
 }
+
+test("AI 服务列表与候选配置支持测试、启用和恢复", async ({ page }) => {
+  await fixture(page);
+  const labels = {
+    script: "多模态文案",
+    tts: "火山配音",
+    "voice-clone": "声音复刻",
+    avatar: "火山数字人",
+    expansion: "百炼扩图",
+    beike: "贝壳取材",
+  } satisfies Record<AdminAIService["id"], string>;
+  const stamp = new Date().toISOString();
+  const management: AdminAIManagement[] = Object.entries(labels).map(
+    ([id, label]) => ({
+      group: id,
+      summary: {
+        id: id as AdminAIService["id"],
+        label,
+        purpose: label,
+        provider: "测试供应商",
+        model: "vision-test",
+        endpoint: "https://api.example.com",
+        state: "configured",
+        missing: [],
+        issues: [],
+        note: "",
+      },
+      fields: [
+        { key: "AI_MODEL", label: "模型名", kind: "text" },
+        { key: "AI_API_KEY", label: "API Key", kind: "secret" },
+      ],
+      revision: 3,
+      active: {
+        version: 3,
+        source: "managed",
+        activatedAt: stamp,
+        locked: false,
+        fields: { AI_MODEL: "vision-active" },
+        secrets: { AI_API_KEY: true },
+        test: null,
+      },
+      candidate: null,
+      previous: 1,
+      canActivate: false,
+    }),
+  );
+  const script = management[0];
+  const data: AdminAIConfig = {
+    configured: true,
+    model: "vision-active",
+    baseURL: "https://api.example.com",
+    note: "",
+    checkedAt: stamp,
+    services: management.map((r) => r.summary),
+    management,
+    voices: [],
+    writable: true,
+  };
+  const writes: { path: string; input: Record<string, unknown> }[] = [];
+  await page.route(
+    /\/v1\/admin\/ai-config(?:\/[^?]*)?(?:\?.*)?$/,
+    async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const headers = {
+        "access-control-allow-origin": adminBase,
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-headers": "authorization, content-type",
+      };
+      if (route.request().method() === "OPTIONS")
+        return route.fulfill({ status: 204, headers });
+      if (path.endsWith("/ai-config"))
+        return route.fulfill({ json: data, headers });
+      const input = route.request().postDataJSON();
+      writes.push({ path, input });
+      if (path.endsWith("/save") || path.endsWith("/rollback")) {
+        script.revision++;
+        script.candidate = {
+          version: script.revision,
+          fields: {
+            AI_MODEL: path.endsWith("/rollback")
+              ? "vision-active"
+              : input.fields.AI_MODEL,
+          },
+          secrets: { AI_API_KEY: true },
+          test: null,
+          missing: [],
+          issues: [],
+        };
+        script.canActivate = false;
+      }
+      if (path.endsWith("/test") && script.candidate) {
+        script.candidate.test = {
+          id: input.requestId,
+          service: "script",
+          version: script.candidate.version,
+          mode: input.mode,
+          status: input.mode === "connection" ? "passed" : "running",
+          createdAt: stamp,
+          finishedAt: null,
+          steps: [],
+        };
+      }
+      if (path.endsWith("/activate") && script.candidate) {
+        script.previous = script.active.version;
+        script.revision++;
+        script.active = { ...script.active, ...script.candidate };
+        script.candidate = null;
+        script.canActivate = false;
+      }
+      return route.fulfill({ json: {}, headers });
+    },
+  );
+  await page.goto(adminBase + "/#/admin/ai");
+  const table = page.getByRole("table");
+  await expect(table.getByRole("row")).toHaveCount(7);
+  const manage = page.getByRole("button", { name: "管理多模态文案" });
+  for (const width of [1440, 1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(manage).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path: `output/ai-config-ui/list-${width}.png`,
+      animations: "disabled",
+    });
+  }
+  await manage.click();
+  const drawer = page.getByRole("dialog", { name: "多模态文案", exact: true });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByLabel("API Key", { exact: true })).toHaveValue("");
+  await page.screenshot({
+    path: "output/ai-config-ui/drawer-390.png",
+    animations: "disabled",
+  });
+  await drawer.getByLabel("模型名", { exact: true }).fill("vision-candidate");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "放弃未保存的修改？" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "继续编辑", exact: true }).click();
+  await expect(drawer.getByLabel("模型名", { exact: true })).toHaveValue(
+    "vision-candidate",
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await drawer.getByRole("button", { name: "保存候选", exact: true }).click();
+  await expect(drawer.getByText("V4 待启用")).toBeVisible();
+  expect(script.active.fields.AI_MODEL).toBe("vision-active");
+  await drawer.getByRole("button", { name: "检查连通性", exact: true }).click();
+  await expect(drawer.getByText("连通性通过", { exact: true })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "启用候选" })).toHaveCount(0);
+  await drawer.getByRole("button", { name: "测试候选", exact: true }).click();
+  await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
+  await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
+  expect(writes.at(-1)?.input).toMatchObject({
+    mode: "sample",
+    version: 4,
+    confirmed: true,
+  });
+  const probe = script.candidate?.test as AdminAIProbe;
+  expect(probe.status).toBe("running");
+  await page.reload();
+  await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
+  probe.status = "failed";
+  probe.message = "供应商鉴权失败，请检查凭证";
+  await expect(drawer.getByText(probe.message)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(manage).toBeFocused();
+  const scriptRow = table.getByRole("row", { name: /多模态文案/ });
+  await expect(scriptRow.getByText("V3 已启用")).toBeVisible();
+  await expect(scriptRow.getByText("V4 待启用")).toBeVisible();
+  await expect(scriptRow.getByText("测试失败")).toBeVisible();
+  await manage.click();
+  await drawer.getByRole("button", { name: "测试候选", exact: true }).click();
+  await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
+  await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
+  const retry = script.candidate?.test as AdminAIProbe;
+  retry.status = "passed";
+  retry.finishedAt = stamp;
+  script.canActivate = true;
+  await expect(
+    drawer.getByRole("button", { name: "启用候选", exact: true }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: "output/ai-config-ui/drawer-1440.png",
+    animations: "disabled",
+  });
+  await drawer.getByRole("button", { name: "启用候选", exact: true }).click();
+  await page.getByRole("button", { name: "确认启用", exact: true }).click();
+  await expect(drawer.getByText("V4", { exact: true })).toBeVisible();
+  await drawer.getByText("版本记录", { exact: true }).click();
+  await drawer
+    .getByRole("button", { name: "恢复上一版为候选", exact: true })
+    .click();
+  await page.getByRole("button", { name: "恢复为候选", exact: true }).click();
+  await expect(drawer.getByLabel("模型名", { exact: true })).toHaveValue(
+    "vision-active",
+  );
+  expect(script.active.fields.AI_MODEL).toBe("vision-candidate");
+});
 
 test("管理入口职责明确，真实路由和旧入口可恢复", async ({ page }) => {
   await fixture(page);

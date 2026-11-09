@@ -91,8 +91,7 @@ const pages = [
     key: "ai",
     label: "AI 服务",
     icon: <Cpu size={18} />,
-    description:
-      "检查文案、配音和数字人的服务配置，维护用户可以选择的公共音色。",
+    description: "配置、测试和启用制作服务，维护用户可以选择的公共音色。",
   },
   {
     key: "audit",

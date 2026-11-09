@@ -67,7 +67,7 @@ export interface AdminAudit {
   details: Record<string, string>;
 }
 export interface AdminAIService {
-  id: "script" | "tts" | "avatar" | "voice-clone";
+  id: "script" | "tts" | "avatar" | "voice-clone" | "expansion" | "beike";
   label: string;
   purpose: string;
   provider: string;
@@ -85,6 +85,48 @@ export interface AdminAIConfig {
   note: string;
   checkedAt: string;
   services: AdminAIService[];
+  writable: boolean;
+  voices: { id: string; name: string }[];
+  management: AdminAIManagement[];
+}
+export type AdminAIProbeMode = "connection" | "sample" | "training";
+export type AdminAIProbeStatus =
+  "queued" | "running" | "passed" | "failed" | "unknown";
+export interface AdminAIProbe {
+  id: string;
+  service: AdminAIService["id"];
+  version: number;
+  mode: AdminAIProbeMode;
+  status: AdminAIProbeStatus;
+  createdAt: string;
+  finishedAt: string | null;
+  steps: { name: string; state: AdminAIProbeStatus }[];
+  message?: string;
+  category?: string;
+}
+interface AdminAIValues {
+  version: number;
+  fields: Record<string, string | boolean>;
+  secrets: Record<string, boolean>;
+  test: AdminAIProbe | null;
+}
+export interface AdminAIManagement {
+  summary: AdminAIService;
+  group: string;
+  revision: number;
+  fields: {
+    key: string;
+    label: string;
+    kind: "url" | "text" | "secret" | "toggle";
+  }[];
+  active: AdminAIValues & {
+    source: "environment" | "managed";
+    activatedAt: string | null;
+    locked: boolean;
+  };
+  candidate: (AdminAIValues & { missing: string[]; issues: string[] }) | null;
+  previous: number | null;
+  canActivate: boolean;
 }
 export interface AdminOverview {
   users: number;

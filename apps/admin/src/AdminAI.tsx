@@ -1,27 +1,41 @@
-import { Alert, Button, Descriptions, Empty, Spin, Tag, Tabs } from "antd";
+import { Alert, App, Button, Empty, Skeleton, Tabs, Tag } from "antd";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { serviceRequest } from "@keagent/api-client";
-import type { AdminAIConfig, AdminAIService } from "@keagent/shared-types";
-import { dateTime } from "./admin-api";
-import { useAdminParams } from "./admin-api";
+import type {
+  AdminAIConfig,
+  AdminAIManagement,
+  AdminAIProbe,
+  AdminAIService,
+} from "@keagent/shared-types";
+import { dateTime, useAdminParams } from "./admin-api";
 import AdminPublicVoices from "./AdminPublicVoices";
+import AIConfigDrawer, {
+  AIProbeState,
+  probeModeLabel,
+  probeRunning,
+  versionLabel,
+} from "./AIConfigDrawer";
 
 const configLabels: Record<string, string> = {
   AI_API_KEY: "文案服务密钥",
   AI_MODEL: "文案模型名称",
   AI_BASE_URL: "文案服务地址",
-  AI_ALLOWED_HOSTS: "允许访问的文案服务域名",
-  VOLC_TTS_API_KEY: "火山配音服务密钥",
+  AI_ALLOWED_HOSTS: "文案服务域名白名单",
+  VOLC_TTS_API_KEY: "火山语音服务密钥",
   VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
-  VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻合成资源编号",
+  VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻资源编号",
   VOLC_ACCESS_KEY_ID: "火山访问密钥编号",
   VOLC_SECRET_ACCESS_KEY: "火山访问密钥",
-  VOLC_TOS_BUCKET: "数字人音频使用的私有存储桶",
-  VOLC_TOS_REGION: "私有存储桶所在地域",
+  VOLC_TOS_BUCKET: "数字人私有存储桶",
+  VOLC_TOS_REGION: "私有存储桶地域",
+  DASHSCOPE_API_KEY: "百炼 API Key",
+  DASHSCOPE_BASE_URL: "百炼服务地址",
+  BEIKE_ACCESS_TOKEN: "贝壳 Access Token",
 };
 
 export function configLabel(key: string) {
-  return `${configLabels[key] || "服务端配置项"}（${key}）`;
+  return configLabels[key] || key;
 }
 
 export function AIState({ state }: { state: AdminAIService["state"] }) {
@@ -36,7 +50,7 @@ export function AIState({ state }: { state: AdminAIService["state"] }) {
       }
     >
       {state === "configured"
-        ? "配置已齐全"
+        ? "配置齐全"
         : state === "incomplete"
           ? "配置不完整"
           : "尚未配置"}
@@ -44,126 +58,260 @@ export function AIState({ state }: { state: AdminAIService["state"] }) {
   );
 }
 
-export default function AdminAI() {
-  const { params, setParams } = useAdminParams();
-  return (
-    <Tabs
-      activeKey={params.get("tab") === "voices" ? "voices" : "services"}
-      onChange={(tab) => setParams({ tab }, false)}
-      destroyOnHidden
-      items={[
-        { key: "services", label: "服务配置", children: <AIConfiguration /> },
-        { key: "voices", label: "公共音色", children: <AdminPublicVoices /> },
-      ]}
-    />
+const serviceOrder: AdminAIService["id"][] = [
+  "script",
+  "tts",
+  "voice-clone",
+  "avatar",
+  "expansion",
+  "beike",
+];
+
+function ActiveState({ row }: { row: AdminAIManagement }) {
+  if (row.active.locked) return <Tag color="red">配置无法解密</Tag>;
+  if (
+    row.summary.id === "voice-clone" &&
+    !row.active.fields.VOLC_VOICE_CLONE_ENABLED
+  )
+    return <Tag>已关闭</Tag>;
+  if (row.active.version)
+    return <Tag color="green">{versionLabel(row.active.version)} 已启用</Tag>;
+  return row.summary.state === "configured" ? (
+    <Tag>部署配置</Tag>
+  ) : (
+    <AIState state={row.summary.state} />
   );
 }
-function AIConfiguration() {
+
+export default function AdminAI() {
+  const { params, setParams } = useAdminParams();
+  const { modal } = App.useApp();
+  const [dirty, setDirty] = useState(false);
+  const [drawerId, setDrawerId] = useState(params.get("service"));
+  const serviceButtons = useRef(new Map<string, HTMLButtonElement>());
+  const lastService = useRef<string | null>(null);
+  const prompted = useRef(false);
+  const requested = params.get("service");
+  const activeTab = params.get("tab") === "voices" ? "voices" : "services";
   const query = useQuery({
     queryKey: ["admin", "ai-config"],
     queryFn: () => serviceRequest<AdminAIConfig>("/v1/admin/ai-config"),
+    enabled: activeTab === "services",
+    refetchInterval: (state) =>
+      state.state.data?.management?.some((row) =>
+        probeRunning(row.candidate?.test),
+      )
+        ? 2000
+        : false,
   });
+  const rows = (query.data?.management ?? [])
+    .slice()
+    .sort(
+      (a, b) =>
+        serviceOrder.indexOf(a.summary.id) - serviceOrder.indexOf(b.summary.id),
+    );
+  const selected = rows.find((row) => row.summary.id === drawerId);
+
+  useEffect(() => {
+    if (drawerId) lastService.current = drawerId;
+    else if (lastService.current)
+      serviceButtons.current.get(lastService.current)?.focus();
+  }, [drawerId]);
+
+  useEffect(() => {
+    if (requested === drawerId || prompted.current) return;
+    if (!dirty) {
+      setDrawerId(requested);
+      return;
+    }
+    prompted.current = true;
+    modal.confirm({
+      title: "放弃未保存的修改？",
+      okText: "放弃修改",
+      cancelText: "继续编辑",
+      onOk: () => {
+        setDirty(false);
+        setDrawerId(requested);
+        prompted.current = false;
+      },
+      onCancel: () => {
+        setParams({ service: drawerId || undefined }, false);
+        prompted.current = false;
+      },
+    });
+  }, [requested, drawerId, dirty, modal, setParams]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  function changeTab(tab: string) {
+    const apply = () => {
+      setDirty(false);
+      setDrawerId(null);
+      setParams({ tab, service: undefined }, false);
+    };
+    if (dirty)
+      modal.confirm({
+        title: "放弃未保存的修改？",
+        okText: "放弃修改",
+        cancelText: "继续编辑",
+        onOk: apply,
+      });
+    else apply();
+  }
+
   return (
-    <>
-      <div className="admin-toolbar">
-        <p className="admin-secondary">
-          只读检查服务端配置，不调用付费生成接口。
-        </p>
-        <Button loading={query.isFetching} onClick={() => void query.refetch()}>
-          重新检查配置
-        </Button>
-      </div>
-      <Alert
-        type="info"
-        showIcon
-        title="配置齐全不代表连接正常"
-        description="这里检查配置是否填写完整，不探测供应商连接、不验证余额，也不显示密钥。配置调整由部署人员在服务端完成。"
-      />
-      <p className="admin-secondary admin-block">
-        如有缺项，请将下方配置名称交给部署人员，在服务端补充后重启 Go
-        业务服务，再点击“重新检查配置”。请勿在此页面或截图中提交密钥。
-      </p>
-      {query.error && (
-        <Alert
-          className="admin-block"
-          type="error"
-          showIcon
-          title="无法读取服务配置"
-          description={query.error.message}
-          action={<Button onClick={() => void query.refetch()}>重试</Button>}
-        />
-      )}
-      {query.isPending ? (
-        <div className="admin-loading">
-          <Spin tip="正在检查配置…" />
-        </div>
-      ) : (
-        query.data && (
-          <>
-            <p className="admin-secondary admin-block">
-              检查时间：{dateTime(query.data.checkedAt)}
-            </p>
-            <div className="admin-service-list">
-              {query.data.services.map((service) => (
-                <section className="admin-panel" key={service.id}>
-                  <div className="admin-section-heading">
-                    <h2>{service.label}</h2>
-                    <AIState state={service.state} />
-                  </div>
-                  <p className="admin-secondary">{service.purpose}</p>
-                  <Descriptions
-                    column={1}
-                    size="small"
-                    className="admin-block"
-                    items={[
-                      {
-                        key: "provider",
-                        label: "服务商",
-                        children: service.provider || "尚未指定",
-                      },
-                      {
-                        key: "model",
-                        label: "模型或资源",
-                        children: service.model || "尚未指定",
-                      },
-                      {
-                        key: "endpoint",
-                        label: "服务地址",
-                        children: (
-                          <span className="admin-break">
-                            {service.endpoint || "尚未指定"}
-                          </span>
-                        ),
-                      },
-                    ]}
+    <Tabs
+      activeKey={activeTab}
+      onChange={changeTab}
+      destroyOnHidden
+      items={[
+        {
+          key: "services",
+          label: "服务配置",
+          children: (
+            <>
+              <section
+                className="admin-panel ai-service-panel"
+                aria-label="AI 服务配置"
+              >
+                <div className="admin-toolbar">
+                  <p className="admin-secondary">
+                    修改先保存为候选。测试通过后，手动启用才会切换生产请求。
+                  </p>
+                  <Button
+                    loading={query.isFetching}
+                    onClick={() => void query.refetch()}
+                  >
+                    刷新状态
+                  </Button>
+                </div>
+                {query.error && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    title="无法读取服务状态"
+                    description={query.error.message}
                   />
-                  {service.missing.length > 0 && (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      title="需要补充的配置"
-                      description={service.missing.map(configLabel).join("、")}
-                    />
-                  )}
-                  {service.issues.length > 0 && (
-                    <Alert
-                      className="admin-block"
-                      type="warning"
-                      showIcon
-                      title="需要处理的问题"
-                      description={service.issues.join("；")}
-                    />
-                  )}
-                  <p className="admin-secondary admin-block">{service.note}</p>
-                </section>
-              ))}
-            </div>
-            {query.data.services.length === 0 && (
-              <Empty description="服务端尚未提供能力状态" />
-            )}
-          </>
-        )
-      )}
-    </>
+                )}
+                {query.data && !query.data.writable && (
+                  <Alert
+                    className="admin-block"
+                    type="warning"
+                    showIcon
+                    title="配置管理暂不可写"
+                    description="请部署人员设置服务端加密密钥。当前仍可查看状态。"
+                  />
+                )}
+                {query.data && rows.length === 0 && (
+                  <Empty description="当前服务端未返回配置管理数据" />
+                )}
+                {query.isPending ? (
+                  <Skeleton active paragraph={{ rows: 6 }} />
+                ) : (
+                  rows.length > 0 && (
+                    <table className="ai-service-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">服务</th>
+                          <th scope="col">当前生效</th>
+                          <th scope="col" className="ai-detail-column">
+                            待启用
+                          </th>
+                          <th scope="col" className="ai-detail-column">
+                            最近测试
+                          </th>
+                          <th scope="col">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row) => {
+                          const test = row.candidate?.test ?? row.active.test;
+                          return (
+                            <tr key={row.summary.id}>
+                              <th scope="row">
+                                <strong>{row.summary.label}</strong>
+                                <span className="admin-secondary ai-provider">
+                                  {row.summary.provider}
+                                </span>
+                              </th>
+                              <td>
+                                <ActiveState row={row} />
+                              </td>
+                              <td className="ai-detail-column">
+                                {row.candidate ? (
+                                  versionLabel(row.candidate.version) +
+                                  " 待启用"
+                                ) : (
+                                  <span className="admin-secondary">—</span>
+                                )}
+                              </td>
+                              <td className="ai-detail-column">
+                                <AIProbeState test={test} />
+                                {test && (
+                                  <span className="admin-secondary ai-test-meta">
+                                    {versionLabel(test.version)} ·{" "}
+                                    {probeModeLabel(test.mode)} ·{" "}
+                                    {dateTime(
+                                      test.finishedAt ?? test.createdAt,
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                              <td>
+                                <Button
+                                  type="link"
+                                  aria-label={"管理" + row.summary.label}
+                                  ref={(button) => {
+                                    if (button instanceof HTMLButtonElement)
+                                      serviceButtons.current.set(
+                                        row.summary.id,
+                                        button,
+                                      );
+                                    else
+                                      serviceButtons.current.delete(
+                                        row.summary.id,
+                                      );
+                                  }}
+                                  onClick={() => {
+                                    setParams(
+                                      { service: row.summary.id },
+                                      false,
+                                    );
+                                  }}
+                                >
+                                  管理
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )
+                )}
+              </section>
+              {selected && query.data && (
+                <AIConfigDrawer
+                  key={selected.summary.id}
+                  row={selected}
+                  voices={query.data.voices}
+                  writable={query.data.writable}
+                  onDirty={setDirty}
+                  onClose={() => setParams({ service: undefined }, false)}
+                />
+              )}
+            </>
+          ),
+        },
+        { key: "voices", label: "公共音色", children: <AdminPublicVoices /> },
+      ]}
+    />
   );
 }

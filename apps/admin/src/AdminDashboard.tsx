@@ -145,7 +145,11 @@ export default function AdminDashboard() {
             .map((service) => (
               <div key={service.id} className="admin-service-row">
                 <div>
-                  <strong>{service.label}</strong>
+                  <Link
+                    to={`/admin/ai?service=${encodeURIComponent(service.id)}`}
+                  >
+                    <strong>{service.label}</strong>
+                  </Link>
                   <p className="admin-secondary">
                     {[
                       ...service.missing.map(configLabel),
