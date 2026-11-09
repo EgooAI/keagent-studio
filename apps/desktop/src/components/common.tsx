@@ -56,14 +56,16 @@ export function StatusTag({ status }: { status: string }) {
 export function formatPrice(priceCents: number) {
   return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(priceCents / 1000000)} 万`;
 }
-export function formatDate(value: string) {
+export function formatDate(value: string | null | undefined) {
+  const date = new Date(value ?? "");
+  if (Number.isNaN(date.getTime())) return "未提供";
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(value));
+  }).format(date);
 }
 
 export function PropertyPhoto({

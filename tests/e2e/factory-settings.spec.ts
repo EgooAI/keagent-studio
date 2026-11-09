@@ -185,6 +185,13 @@ async function choose(page: Page, label: string, option: string) {
     .click();
 }
 
+test("内置房源没有核验日期时仍可查看素材", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/properties/panorama-cc0-sample");
+  await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
+  await expect(page.getByText("资料核验 未提供")).toBeVisible();
+});
+
 test("设置读取后台模板和公共音色，保存后新视频使用相同默认值", async ({
   page,
 }) => {
