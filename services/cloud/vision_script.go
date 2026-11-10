@@ -27,7 +27,7 @@ func visionContent(template, property object, images []any) ([]object, []string,
 	}
 	if recipe["opening"] != nil {
 		rules = pickFields(rules, "overall", "opening", "scene", "closing")
-		rules["opening"] = str(rules["opening"]) + " 只写一句简短口播，朗读目标为 2–6 秒。"
+		rules["opening"] = str(rules["opening"]) + " 开场单独介绍到访地点与本次带看的房源，按模板组织完整口播，朗读建议 6–10 秒且不超过 15 秒。只引用已提供的地点和房源事实，不把参考背景当作已核实的小区实景，不描述第一张室内图片；逐图讲解从下一段开始。"
 	}
 	seen := map[string]bool{"opening": true, "closing": true}
 	ids := []string{"opening"}

@@ -32,9 +32,9 @@ function registerAuth() {
         });
         return result.canceled ? undefined : result.filePaths[0];
       },
-      openIntroPhoto: async () => {
+      openIntroPhoto: async (background = false) => {
         const result = await dialog.showOpenDialog({
-          title: "导入经纪人照片",
+          title: background ? "导入开场背景图" : "导入经纪人照片",
           properties: ["openFile"],
           filters: [
             { name: "JPEG / PNG 图片", extensions: ["jpg", "jpeg", "png"] },
@@ -408,7 +408,21 @@ function registerAuth() {
       }
       return null;
     }
-    if (method === "getWorkspace") return (await request("/v1/workspace")).data;
+    if (method === "getWorkspace") {
+      const generation = identityGeneration;
+      const [{ data: workspace }, { data: identity }] = await Promise.all([
+        request("/v1/workspace"),
+        request("/v1/session"),
+      ]);
+      if (generation !== identityGeneration) throw new Error("请重新登录");
+      return {
+        ...workspace,
+        properties: workflow.withPropertyCovers(
+          identity.userId,
+          workspace.properties,
+        ),
+      };
+    }
     if (!commands.has(method)) throw new Error("此桌面能力未开放");
     return (await request(`/v1/commands/${method}`, args)).data;
   });

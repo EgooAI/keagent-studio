@@ -31,6 +31,7 @@ export type FactoryCatalog = Omit<PanoramaCapabilities, "templates"> & {
   templates: FactoryTemplate[];
   openingClip?: FactoryOpeningClip;
   openingPhoto?: FactoryOpeningPhoto;
+  openingBackground?: FactoryOpeningPhoto & { asset: string };
 };
 export type FactoryProperty = Pick<
   Property,

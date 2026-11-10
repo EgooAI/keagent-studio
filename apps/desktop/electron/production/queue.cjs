@@ -174,6 +174,7 @@ class ProductionQueue {
         ...(await this.workflow.capabilities(true)),
         openingClip: state.openingClip,
         openingPhoto: state.openingPhoto,
+        openingBackground: state.openingBackground,
       };
     if (method === "properties") {
       const readyIds = Object.entries(state.imports)
@@ -384,6 +385,12 @@ class ProductionQueue {
       !input.openingPhoto || input.openingAuthorized === true,
       "请确认经纪人照片和开场素材的使用授权",
     );
+    ensure(
+      input.openingBackground === undefined ||
+        (typeof input.openingBackground === "string" &&
+          /^[a-f0-9]{64}$/.test(input.openingBackground)),
+      "开场背景图引用无效",
+    );
     for (const pair of input.pairs)
       ensure(
         pair &&
@@ -397,6 +404,7 @@ class ProductionQueue {
       input.voiceId,
       input.openingClip ?? input.avatarId,
       ...(input.openingPhoto ? [input.openingPhoto] : []),
+      ...(input.openingBackground ? [input.openingBackground] : []),
       ...(input.openingRecipe === true ? ["opening-recipe"] : []),
     ]);
     const existing = () => {
@@ -576,6 +584,16 @@ class ProductionQueue {
       if (templateOpening) {
         const { location } = templateOpening;
         openingLocation = { source: location.source };
+        if (location.source === "property" && input.openingBackground) {
+          if (input.openingBackground !== state.openingBackground?.id) {
+            issue("开场背景图已更新，请刷新后重新创建");
+            continue;
+          }
+          openingLocation = {
+            source: "personal",
+            asset: state.openingBackground.asset,
+          };
+        }
         if (location.source === "fixed") {
           if (!fixedOpenings.has(template.id)) {
             ensure(

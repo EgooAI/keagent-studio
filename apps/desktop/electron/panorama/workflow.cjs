@@ -97,6 +97,25 @@ class PanoramaWorkflow {
   url(owner, relative) {
     return `keagent://media/${owner}/${relative}`;
   }
+  withPropertyCovers(userId, properties) {
+    const owner = this.owner(userId);
+    let imports;
+    try {
+      imports = this.store(owner).imports;
+    } catch {
+      // The cloud property list remains usable if the local store can't be read.
+    }
+    return properties.map((property) => {
+      const photo = imports?.[property.id]?.scenes?.find(
+        (scene) => scene.kind === "photo",
+      );
+      const image =
+        photo && assetName.test(photo.asset)
+          ? this.url(owner, `assets/${photo.asset}`)
+          : property.images?.[0] || property.image;
+      return { ...property, image };
+    });
+  }
   view(owner, state) {
     return {
       ...state,
@@ -250,15 +269,16 @@ class PanoramaWorkflow {
       await fsp.rm(temp, { force: true });
     }
   }
-  async importOpeningPhoto(owner, state, assertCurrent) {
-    const file = await this.dialogs.openIntroPhoto();
+  async importOpeningPhoto(owner, state, assertCurrent, background = false) {
+    const key = background ? "openingBackground" : "openingPhoto";
+    const file = await this.dialogs.openIntroPhoto(background);
     assertCurrent();
-    if (!file) return state.openingPhoto ?? null;
-    const maxBytes = 3 * 1024 * 1024;
+    if (!file) return null;
+    const maxBytes = (background ? 15 : 3) * 1024 * 1024;
     const stat = await fsp.stat(file);
     domain.ensure(
       stat.isFile() && stat.size <= maxBytes,
-      "请选择 3 MB 以内的 JPEG 或 PNG 照片",
+      `请选择 ${background ? 15 : 3} MB 以内的 JPEG 或 PNG 图片`,
     );
     const bytes = await fsp.readFile(file);
     const jpeg = bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]));
@@ -267,7 +287,7 @@ class PanoramaWorkflow {
       .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     domain.ensure(
       bytes.length <= maxBytes && (jpeg || png),
-      "请选择 3 MB 以内的 JPEG 或 PNG 照片",
+      `请选择 ${background ? 15 : 3} MB 以内的 JPEG 或 PNG 图片`,
     );
     const directory = path.join(this.directory(owner), "opening");
     await fsp.mkdir(directory, { recursive: true });
@@ -289,21 +309,30 @@ class PanoramaWorkflow {
           height <= 4096 &&
           width * 5 >= height * 2 &&
           height * 5 >= width * 2,
-        "请选择宽高 256–4096 像素且比例适中的经纪人照片",
+        "请选择宽高 256–4096 像素、宽高比 0.4–2.5 的图片",
       );
       assertCurrent();
       const target = path.join(directory, `${id}.photo`);
-      if (!(await media.exists(target))) await fsp.rename(temp, target);
+      if (!background && !(await media.exists(target)))
+        await fsp.rename(temp, target);
       assertCurrent();
-      const previous = state.openingPhoto;
-      state.openingPhoto = { id, name: path.basename(file).slice(-120) };
+      const image = background
+        ? await this.importBytes(owner, bytes, "开场背景图", "reference")
+        : undefined;
+      assertCurrent();
+      const previous = state[key];
+      state[key] = {
+        id,
+        name: path.basename(file).slice(-120),
+        ...(image ? { asset: image.asset } : {}),
+      };
       try {
         this.persist(owner);
       } catch (error) {
-        state.openingPhoto = previous;
+        state[key] = previous;
         throw error;
       }
-      return state.openingPhoto;
+      return state[key];
     } finally {
       await fsp.rm(temp, { force: true });
     }
@@ -541,6 +570,27 @@ class PanoramaWorkflow {
       );
     if (method === "opening-photo-import")
       return this.importOpeningPhoto(owner, state, assertCurrent);
+    if (method === "opening-background-import")
+      return this.importOpeningPhoto(owner, state, assertCurrent, true);
+    if (method === "opening-materials") {
+      const photo = state.openingPhoto;
+      const bytes = photo
+        ? await fsp.readFile(
+            path.join(this.directory(owner), "opening", `${photo.id}.photo`),
+          )
+        : undefined;
+      assertCurrent();
+      return {
+        photo: photo && {
+          ...photo,
+          url: `data:image/${bytes[0] === 0xff ? "jpeg" : "png"};base64,${bytes.toString("base64")}`,
+        },
+        background: state.openingBackground && {
+          ...state.openingBackground,
+          url: this.url(owner, `assets/${state.openingBackground.asset}`),
+        },
+      };
+    }
     if (method === "capabilities") return this.capabilities();
     if (method === "preview-system") {
       const caps = await this.capabilities();
@@ -1171,7 +1221,7 @@ class PanoramaWorkflow {
         templateId: templateSnapshot.id,
         templateVersion: templateSnapshot.version,
       };
-      if (location.source === "property") {
+      if (location.source !== "fixed") {
         const file = path.join(dir, "assets", location.asset);
         domain.ensure(
           domain.hash(await fsp.readFile(file)) ===
@@ -1287,11 +1337,11 @@ class PanoramaWorkflow {
         if (
           index === 0 &&
           job.config.openingPhoto &&
-          !(narration.duration >= 2 && narration.duration <= 6)
+          !(narration.duration >= 2 && narration.duration <= 15)
         ) {
           job.reviewOpening = !!job.config.openingLocation;
           throw new Error(
-            `MiniMax 开场解说须为 2–6 秒，当前约 ${narration.duration.toFixed(1)} 秒，请调整开场文案后重新审核`,
+            `MiniMax 开场解说须为 2–15 秒，当前约 ${narration.duration.toFixed(1)} 秒，请调整开场文案后重新审核`,
           );
         }
         audio.push(narration);

@@ -49,7 +49,7 @@ const choices = (values: [string | number, string][]) =>
 
 const defaultOpening: ProductionOpening = {
   prompt:
-    "保持经纪人照片中的人物特征，以地点图片为场景参考。人物面向镜头，以自然中景完成口播，嘴部动作跟随参考音频。保持地点的主要特征，避免添加招牌、字幕或背景音乐。",
+    "保持参考经纪人照片中的面部、发型和服装特征。将人物自然置于背景图片的场景中，保持场景的建筑结构、陈设和光线。经纪人面向镜头缓步向前走两三步，边走边介绍房源，配合轻微自然手势，嘴部动作跟随参考音频。镜头以平稳中景跟随，保持人物清晰完整，避免快速运镜、场景切换和夸张动作，不添加文字、字幕、标识或背景音乐。",
   location: { source: "property" },
 };
 
@@ -86,12 +86,12 @@ function OpeningEditor({
       {value && (
         <>
           <Form.Item
-            label="地点图片"
+            label="开场背景图"
             htmlFor={id + "-location"}
             extra={
               value.location.source === "property"
-                ? "默认采用当前房源第一张可用实拍图，审核时可更换。"
-                : undefined
+                ? "优先使用用户在「设置 → 形象与背景」上传的背景图，未上传时采用房源实拍图。"
+                : "上传经纪人边走边介绍时所在的场景，例如小区入口、园区步道或室内。该背景随模板保存，供使用此模板的任务复用。"
             }
           >
             <Select
@@ -100,7 +100,7 @@ function OpeningEditor({
               value={value.location.source}
               options={choices([
                 ["property", "随房源取图"],
-                ["fixed", "模板固定图片"],
+                ["fixed", "上传固定背景图"],
               ])}
               onChange={(source: "property" | "fixed") => {
                 setError("");
@@ -110,7 +110,7 @@ function OpeningEditor({
           </Form.Item>
           {value.location.source === "fixed" && (
             <Form.Item
-              label="上传固定地点图"
+              label="上传固定背景图"
               htmlFor={id + "-image"}
               extra="请使用已获授权的 JPG 或 PNG，最多 15 MB。"
             >
@@ -120,7 +120,7 @@ function OpeningEditor({
                   height={90}
                   style={{ objectFit: "contain" }}
                   src={openingImageURL(image)}
-                  alt="模板固定地点图预览"
+                  alt="模板固定背景图预览"
                 />
               )}
               <input
@@ -161,7 +161,7 @@ function OpeningEditor({
           <Form.Item
             label="画面提示词"
             htmlFor={id + "-prompt"}
-            extra="描述人物站位、镜头和光线。开场台词由下方的开场文案规则控制。"
+            extra="描述人物如何行走、手势、跟拍镜头和光线。经纪人照片与个人背景在「设置 → 形象与背景」上传，开场文案先合成 2–15 秒配音，再与两张图片一起交给 MiniMax 生成开场。"
           >
             <Input.TextArea
               id={id + "-prompt"}
@@ -232,7 +232,7 @@ export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
                 if (value && !value.prompt.trim())
                   throw new Error("请填写画面提示词");
                 if (value?.location.source === "fixed" && !value.location.image)
-                  throw new Error("请上传模板固定地点图");
+                  throw new Error("请上传模板固定背景图");
               },
             },
           ]}
@@ -490,7 +490,7 @@ export function ProductionPreview({
           items={[
             {
               key: "location",
-              label: "地点图片",
+              label: "开场背景图",
               children:
                 opening.location.source === "fixed" &&
                 opening.location.image ? (
@@ -499,10 +499,10 @@ export function ProductionPreview({
                     height={90}
                     style={{ objectFit: "contain" }}
                     src={openingImageURL(opening.location.image)}
-                    alt="模板固定地点图"
+                    alt="模板固定背景图"
                   />
                 ) : (
-                  <span>随房源取图，审核时可更换</span>
+                  <span>优先使用用户设置的背景图，未上传时随房源取图</span>
                 ),
             },
             { key: "prompt", label: "画面提示词", children: opening.prompt },

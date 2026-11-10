@@ -41,6 +41,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
 import { FactoryPreferences } from "../components/FactoryPreferences";
+import { OpeningMaterials } from "../components/OpeningMaterials";
 import { ThemeSettings } from "@keagent/theme";
 import type {
   AgentProfile,
@@ -663,6 +664,7 @@ export default function SettingsPage() {
   const items = [
     { key: "account", label: "账号信息", children: accountSettings },
     { key: "profile", label: "经纪人资料", children: profileSettings },
+    { key: "appearance", label: "形象与背景", children: <OpeningMaterials /> },
     {
       key: "voices",
       label: "声音与音色",
@@ -701,7 +703,7 @@ export default function SettingsPage() {
             label: (
               <span className="settings-nav-label">
                 {item.key === "account" && <small>个人账号</small>}
-                {item.key === "voices" && <small>视频创作</small>}
+                {item.key === "appearance" && <small>视频创作</small>}
                 {item.key === "theme" && <small>应用设置</small>}
                 {item.label}
               </span>

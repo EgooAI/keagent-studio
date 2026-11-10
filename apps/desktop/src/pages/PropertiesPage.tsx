@@ -504,7 +504,10 @@ export function PropertyDetailPage() {
         "property-import",
         { propertyId, kind },
       );
-      await material.refetch();
+      await Promise.all([
+        material.refetch(),
+        queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+      ]);
       if (value.count) void message.success(`已保存${value.count}张房源图片`);
     } catch (error) {
       void message.error(
