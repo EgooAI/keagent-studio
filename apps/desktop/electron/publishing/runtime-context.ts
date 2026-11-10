@@ -58,8 +58,13 @@ export async function uploadFetch(
       "UPLOAD_HOST_REJECTED",
       "平台返回了未支持的上传地址",
     );
+  const headers = new Headers(init.headers);
+  // Chromium derives these from the URL and body and rejects explicit values.
+  headers.delete("host");
+  headers.delete("content-length");
   return current.fetch(url, {
     ...init,
+    headers,
     redirect: "error",
     credentials: "omit",
     signal: init.signal

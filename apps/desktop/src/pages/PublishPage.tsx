@@ -116,7 +116,6 @@ function ArtifactPublishDetail({
   const inFlight = useRef(false);
   const [handoff, setHandoff] = useState<ArtifactHandoff>();
   const [preview, setPreview] = useState<{ video: string; cover: string }>();
-  const [cover, setCover] = useState<{ ref: string; url: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [reconciling, setReconciling] = useState<DouyinPublishRecord>();
@@ -158,7 +157,6 @@ function ArtifactPublishDetail({
   }
 
   function resetConfiguration() {
-    setCover(undefined);
     setDirty(false);
     setConfiguring(false);
     setError("");
@@ -167,7 +165,6 @@ function ArtifactPublishDetail({
     setHandoff(undefined);
     setRecordOffset(0);
     setPreview(undefined);
-    setCover(undefined);
     handoffKey.current = crypto.randomUUID();
     publishKey.current = crypto.randomUUID();
   }, [artifactId]);
@@ -249,7 +246,6 @@ function ArtifactPublishDetail({
       title: edit.title,
       description: edit.description || "",
       hashtags: edit.hashtags || [],
-      ...(cover ? { coverRef: cover.ref } : {}),
     });
     if (!["running", "submitting"].includes(record.state))
       publishKey.current = crypto.randomUUID();
@@ -633,7 +629,7 @@ function ArtifactPublishDetail({
         }}
       >
         <p className="muted publish-config-notice">
-          立即公开发布，关闭下载，不同步头条。文案和封面仅用于本次发布。
+          立即公开发布，关闭下载，不同步头条。封面由抖音页面处理。
         </p>
         <Form
           className="publish-config-fields"
@@ -690,44 +686,6 @@ function ArtifactPublishDetail({
             <p className="publish-config-account-link">
               <Link to="/settings/platforms">添加或重新登录抖音账号</Link>
             </p>
-            <Form.Item label="封面">
-              <Space>
-                <Button
-                  disabled={!desktopPublishingAvailable() || busy || running}
-                  onClick={() =>
-                    void act(async () => {
-                      const selected = await douyinDesktop<
-                        { ref: string; url: string } | undefined
-                      >("cover.select");
-                      if (!selected) return;
-                      setCover(selected);
-                      setDirty(true);
-                      publishKey.current = crypto.randomUUID();
-                    })
-                  }
-                >
-                  选择本地 JPG / PNG
-                </Button>
-                {cover && (
-                  <Button
-                    onClick={() => {
-                      setCover(undefined);
-                      setDirty(true);
-                      publishKey.current = crypto.randomUUID();
-                    }}
-                  >
-                    恢复成片封面
-                  </Button>
-                )}
-              </Space>
-              {cover && (
-                <img
-                  className="douyin-cover-thumbnail"
-                  alt="本次发布封面"
-                  src={cover.url}
-                />
-              )}
-            </Form.Item>
           </div>
           {invalid && <Alert type="warning" title={invalid} />}
           {configuring && error && (

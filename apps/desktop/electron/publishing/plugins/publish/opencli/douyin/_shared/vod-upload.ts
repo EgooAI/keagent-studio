@@ -47,7 +47,7 @@ function canonicalQuery(url) {
     .join("&");
 }
 
-function computeAws4Headers(url, credentials, options = {}) {
+export function computeAws4Headers(url, credentials, options = {}) {
   const parsedUrl = new URL(url);
   const datetime = nowDatetime();
   const date = datetime.slice(0, 8);
@@ -77,7 +77,7 @@ function computeAws4Headers(url, credentials, options = {}) {
     signedHeaders,
     bodyHash,
   ].join("\n");
-  const service = "vod";
+  const service = options.service ?? "vod";
   const region = "cn-north-1";
   const credentialScope = `${date}/${region}/${service}/aws4_request`;
   const stringToSign = [
@@ -289,6 +289,7 @@ export async function commitVideoUploadInner(uploadInfo, credentials) {
       "",
     width: Number(meta.Width ?? meta.width ?? 720) || 720,
     height: Number(meta.Height ?? meta.height ?? 1280) || 1280,
+    duration: Number(meta.Duration ?? meta.duration) || 0,
     raw: result,
   };
 }

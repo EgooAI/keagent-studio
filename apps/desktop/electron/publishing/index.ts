@@ -7,7 +7,7 @@ import {
   type PublishingIdentity,
 } from "./core";
 import { DouyinBrowser } from "./browser";
-import { PublishingFiles, hashFile } from "./files";
+import { PublishingFiles } from "./files";
 import { PublishQueue, samePublisher } from "./queue";
 import type {
   ArtifactExchange,
@@ -78,17 +78,8 @@ export function registerPublishing(
     cloud,
     snapshot: (key, assets, port, cover, identity) =>
       files.snapshot(key, assets, port, cover, identity),
-    publish: async (account, input, media, signal, steps, before, progress) =>
-      browser.publish(
-        account,
-        input,
-        media,
-        signal,
-        steps,
-        before,
-        progress,
-        await hashFile(media.video),
-      ),
+    publish: (account, input, media, signal, steps, before, progress) =>
+      browser.publish(account, input, media, signal, steps, before, progress),
     journal: (record) =>
       files.journal(
         files.directoryFor({

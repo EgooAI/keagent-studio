@@ -217,11 +217,6 @@ async function desktopFixture(
                   video: "/media/demo-property.mp4",
                   cover: "/media/interior-1.jpg",
                 });
-              if (method === "cover.select")
-                return okay({
-                  ref: "f".repeat(32),
-                  url: "/media/interior-2.jpg",
-                });
               if (method === "publish.batch") {
                 (
                   window as unknown as { __batchRequests: unknown[] }
@@ -335,10 +330,9 @@ test("fixture UI receives an approved artifact, edits consumer fields and shows 
   const title = config.getByLabel("标题", { exact: true });
   await title.fill("抖音独立标题");
   await config.getByLabel("正文", { exact: true }).fill("只修改发布文案");
-  await config.getByRole("button", { name: "选择本地 JPG / PNG" }).click();
-  await expect(config.getByAltText("本次发布封面")).toBeVisible();
+  await expect(config.getByText(/封面由抖音页面处理/)).toBeVisible();
   await page.setViewportSize({ width: 1080, height: 720 });
-  await page.keyboard.press("Escape");
+  await config.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "继续编辑", exact: true }).click();
   await expect(title).toHaveValue("抖音独立标题");
   await page.screenshot({
@@ -469,12 +463,16 @@ test("a new acceptance revision clears the old handoff and permits a fresh expli
     page.getByRole("button", { name: "已接收该版本" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "配置发布" }).click();
-  await expect(page.getByRole("dialog", { name: "配置发布" })).toBeVisible();
+  const config = page.getByRole("dialog", { name: "配置发布" });
+  await expect(config).toBeVisible();
+  await config.getByLabel("发布账号").click();
+  await page.getByText(account.name, { exact: true }).click();
   await page.evaluate(() => {
     (window as unknown as { __source: ArtifactHandoff }).__source.artifact
       .review.revision++;
+    Object.assign(window, { __failPublish: true });
   });
-  await page.getByRole("button", { name: "选择本地 JPG / PNG" }).click();
+  await config.getByRole("button", { name: "立即发布到抖音" }).click();
   await expect(
     page.getByText("发布条件已变化，请返回详情检查验收和本机文件。"),
   ).toBeVisible();

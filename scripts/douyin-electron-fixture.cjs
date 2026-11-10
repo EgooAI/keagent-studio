@@ -21,6 +21,71 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
+const failVideo = process.env.DOUYIN_TEST_UPLOAD_FAILURE === "1";
+function creatorForm(videoHash) {
+  return `<!doctype html><meta charset="utf-8"><style>
+    [contenteditable] { min-height: 40px; white-space: pre-wrap; }
+    #settings { margin-top: 1200px; }
+    label { position: relative; display: inline-block; padding: 8px; }
+    label input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; }
+    label span { pointer-events: none; }
+  </style>
+  <button id="upload">上传视频</button><input id="video" type="file" hidden>
+  <section id="form" hidden>
+    <div id="uploadStatus">取消上传</div>
+    <input id="title" placeholder="填写作品标题，为作品获得更多流量">
+    <div id="caption" contenteditable="true" data-placeholder="添加作品简介"></div>
+    <section id="settings">
+    <label><input type="radio" name="sync" checked value="同时发布"><span>同时发布</span></label>
+    <label><input type="radio" name="sync" value="不同时发布"><span>不同时发布</span></label>
+    <label><input type="radio" name="visibility" checked value="公开"><span>公开</span></label>
+    <label><input type="radio" name="download" checked value="允许"><span>允许</span></label>
+    <label><input type="radio" name="download" value="不允许"><span>不允许</span></label>
+    <label><input type="radio" name="schedule" checked value="立即发布"><span>立即发布</span></label>
+    <button id="submit" disabled>发布</button>
+    </section>
+  </section>
+  <script>
+    const el = id => document.getElementById(id);
+    const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), n => n.toString(16).padStart(2, '0')).join('');
+    let video, caption;
+    let uploaded = false;
+    el('upload').onclick = () => el('video').click();
+    el('video').onchange = async () => {
+      video = await digest(el('video').files[0]);
+      if (video !== ${JSON.stringify(videoHash)}) return;
+      el('upload').hidden = true;
+      el('form').hidden = false;
+      setTimeout(() => {
+        uploaded = ${!failVideo};
+        el('uploadStatus').textContent = uploaded ? '重新上传' : '上传失败，重新上传';
+        el('submit').disabled = !uploaded;
+      }, 600);
+    };
+    el('title').oninput = () => { if (!uploaded) el('title').value = ''; };
+    el('caption').onbeforeinput = event => {
+      if (!uploaded) return;
+      event.preventDefault();
+      if (!event.isTrusted || typeof event.data !== 'string') return;
+      caption = event.data;
+      // The editor can render a different string from the one it submits.
+      el('caption').textContent = caption.replaceAll('\\n', '');
+    };
+    el('submit').onclick = async () => {
+      el('submit').disabled = true;
+      const response = await fetch('/web/api/media/aweme/create_v2/?read_aid=2906', {
+        method: 'POST',
+        body: JSON.stringify({
+          video, title: el('title').value,
+          caption,
+          settings: Array.from(document.querySelectorAll('input:checked'), input => input.value),
+        }),
+      });
+      if ((await response.json()).item_id)
+        history.pushState(null, '', '/creator-micro/content/manage?enter_from=publish');
+    };
+  </script>`;
+}
 app.whenReady().then(async () => {
   const windows = [];
   try {
@@ -202,72 +267,28 @@ app.whenReady().then(async () => {
                 nick_name: "集成测试抖音账号",
               },
             });
-          if (url.pathname.includes("upload/auth/v5"))
-            return json({
-              status_code: 0,
-              auth: JSON.stringify({
-                AccessKeyID: "fixture-ak",
-                SecretAccessKey: "fixture-sk",
-                SessionToken: "fixture-session",
-              }),
+          if (url.pathname === "/creator-micro/content/upload")
+            return new Response(creatorForm(hash(video)), {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
             });
-          if (url.searchParams.get("Action") === "ApplyUploadInner")
-            return json({
-              Result: {
-                Vid: "fixture-video",
-                InnerUploadAddress: {
-                  UploadNodes: [
-                    {
-                      UploadHost: "tos-integration.volces.com",
-                      SessionKey: "fixture-upload-session",
-                      StoreInfos: [
-                        { StoreUri: "test-video", Auth: "fixture-upload-auth" },
-                      ],
-                    },
-                  ],
-                },
-              },
+          if (url.pathname === "/web/api/media/aweme/create_v2/") {
+            assert.equal(request.method, "POST");
+            const submission = await request.json();
+            assert.deepEqual(submission, {
+              video: hash(video),
+              title: "集成测试视频",
+              caption: "仅测试适配器\n\n后续一段 #测试",
+              settings: ["不同时发布", "公开", "不允许", "立即发布"],
             });
-          if (url.searchParams.get("Action") === "CommitUploadInner")
-            return json({
-              Result: {
-                Results: [
-                  {
-                    Vid: "fixture-video",
-                    Meta: { Width: 720, Height: 1280 },
-                    PosterUri: "fixture-poster",
-                  },
-                ],
-              },
-            });
-          if (url.searchParams.get("Action") === "ApplyImageUpload")
-            return json({
-              Result: {
-                UploadAddress: {
-                  StoreInfos: [
-                    {
-                      UploadHost: "tos-integration.volces.com",
-                      StoreUri: "test-cover",
-                    },
-                  ],
-                },
-              },
-            });
-          if (url.searchParams.get("Action") === "CommitImageUpload")
-            return json({ Result: {} });
-          if (url.searchParams.get("phase") === "init")
-            return json({ data: { uploadid: "controlled-multipart-id" } });
-          if (url.searchParams.has("phase"))
-            return json({
-              code: 2000,
-              data: { key: "controlled-upload", crc32: "1" },
-            });
-          if (url.pathname === "/test-cover") return new Response("ok");
-          if (url.pathname.includes("fast_detect"))
-            return json({ status: 0, status_code: 0 });
-          if (url.pathname.includes("create_v2")) {
+            assert.equal(
+              records.get("electron-publish-fixture-0001")?.state,
+              "submitting",
+            );
             submits++;
-            return json({ status_code: 0, aweme_id: "123456789012345" });
+            return new Response(
+              '{"status_code":0,"item_id":7612345678901234567}',
+              { headers: { "Content-Type": "application/json" } },
+            );
           }
           if (url.hostname !== "creator.douyin.com")
             throw new Error("Unexpected fixture host");
@@ -417,12 +438,28 @@ app.whenReady().then(async () => {
       handoffId: fixture.id,
       accountId,
       title: "集成测试视频",
-      description: "仅测试适配器",
+      description: "仅测试适配器\n\n后续一段",
       hashtags: ["测试"],
     };
     const started = await call("publish.start", input);
     assert.equal(started.ok, true, JSON.stringify(started));
     await service.publisher.idle();
+    if (failVideo) {
+      const record = service.publisher.active;
+      assert.equal(record.state, "failed");
+      assert.equal(record.errorCode, "VIDEO_UPLOAD_FAILED");
+      assert.ok(
+        !record.logs.some((entry) => entry.step === "fill_publish_form"),
+      );
+      assert.equal(submits, 0);
+      service.stop();
+      window.destroy();
+      console.log(
+        `Hidden Electron verified: ${record.errorCode} stops before submission.`,
+      );
+      app.exit(0);
+      return;
+    }
     assert.equal(
       service.publisher.active.state,
       "accepted",
@@ -431,8 +468,8 @@ app.whenReady().then(async () => {
     assert.equal(submits, 1);
     await call("publish.start", input);
     assert.equal(submits, 1);
-    assert.ok(requests.some((value) => value.includes("ApplyUploadInner")));
-    assert.ok(requests.some((value) => value.includes("CommitImageUpload")));
+    assert.ok(requests.includes("/creator-micro/content/upload"));
+    assert.equal(service.publisher.active.externalId, "7612345678901234567");
     const publicState = await call("state");
     assert.equal(records.get(input.requestKey).state, "accepted");
     const interrupted = {
@@ -466,7 +503,7 @@ app.whenReady().then(async () => {
     await call("state");
     assert.equal(records.get(interrupted.requestKey).state, "unknown");
     assert.equal(submits, 1);
-    assert.ok(!JSON.stringify(publicState).includes("fixture-sk"));
+    assert.ok(!JSON.stringify(publicState).includes("explicit-test-cookie"));
     assert.ok(!JSON.stringify(publicState).includes(root));
     const hostile = new BrowserWindow({
       show: false,
@@ -490,7 +527,7 @@ app.whenReady().then(async () => {
     service.stop();
     for (const win of windows) win.destroy();
     console.log(
-      "Hidden Electron verified: real file registration + probing + resolver, explicit review, isolated login, intercepted upload + cover + single submit and recovery.",
+      "Hidden Electron verified: real file registration, explicit review, isolated login, video-only upload, form input, single submit and recovery.",
     );
     app.exit(0);
   } catch (error) {

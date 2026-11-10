@@ -46,7 +46,7 @@ export default function DouyinBrowserWorkspace() {
           width: bounds.width,
           height: bounds.height,
         },
-        visible: !overlay && !document.hidden,
+        visible: !locked && !overlay && !document.hidden,
       }).catch(() => {});
     };
     const resize = new ResizeObserver(update);
@@ -72,7 +72,7 @@ export default function DouyinBrowserWorkspace() {
         visible: false,
       }).catch(() => {});
     };
-  }, [tab?.accountId]);
+  }, [tab?.accountId, locked]);
   if (!tab) return null;
   return (
     <section className="douyin-browser-workspace" aria-label="抖音账号浏览器">
@@ -163,7 +163,7 @@ export default function DouyinBrowserWorkspace() {
       {locked && (
         <Alert
           type="info"
-          title="正在发布，账号导航已锁定。可返回工作台查看进度。"
+          title="正在通过抖音网页发布，可返回工作台查看进度。"
         />
       )}
       <div ref={viewport} className="douyin-browser-viewport" />

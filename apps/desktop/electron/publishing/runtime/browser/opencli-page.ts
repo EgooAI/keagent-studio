@@ -176,10 +176,12 @@ export class OpenCliPage {
     query: PublishPageElementQuery,
     state: PublishPageElementState = "visible",
     timeoutMs = 10_000,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.runStep("wait_page_control", "等待平台页面控件", async () => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
+        signal?.throwIfAborted();
         const snapshot = await this.elementSnapshot(query);
         const matched =
           state === "attached"
@@ -198,21 +200,47 @@ export class OpenCliPage {
 
   async clickElement(
     query: PublishPageElementQuery,
-    options: { force?: boolean } = {},
+    options: { signal?: AbortSignal; origin?: string } = {},
   ): Promise<void> {
     await this.runStep("click_page_control", "点击平台页面控件", async () => {
-      // Playwright scrolls locator targets before a mouse click. Electron's raw
-      // input events do not, so long publish forms otherwise receive a click at
-      // coordinates outside the WebContentsView.
-      const snapshot = await this.elementSnapshot(query, true);
-      if (
-        (!snapshot.visible && !options.force) ||
-        snapshot.x === undefined ||
-        snapshot.y === undefined
-      ) {
-        throw new Error(`Element is not visible: ${query.selector}`);
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        options.signal?.throwIfAborted();
+        if (options.origin && new URL(this.getUrl()).origin !== options.origin)
+          throw new Error("The platform page changed before clicking");
+        if ((await this.elementSnapshot(query, true)).visible) break;
+        await delay(100);
       }
-      this.sendNativeClick(snapshot.x, snapshot.y);
+      options.signal?.throwIfAborted();
+      // Observe readiness repeatedly, then invoke the click exactly once.
+      const snapshot = (await this.contents.executeJavaScript(
+        buildElementSnapshotExpression(query, true, options.origin ?? null),
+        true,
+      )) as PublishPageElementSnapshot;
+      if (!snapshot.visible)
+        throw new Error(
+          `The platform control is not clickable: ${query.selector}`,
+        );
+    });
+  }
+
+  async withPublishViewport<T>(action: () => Promise<T>): Promise<T> {
+    return this.withDebugger(async (debuggerApi) => {
+      // Hidden WebContentsViews can otherwise have a zero-sized DOM viewport.
+      await debuggerApi.sendCommand("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      try {
+        return await action();
+      } finally {
+        if (debuggerApi.isAttached())
+          await debuggerApi
+            .sendCommand("Emulation.clearDeviceMetricsOverride")
+            .catch(() => {});
+      }
     });
   }
 
@@ -220,6 +248,7 @@ export class OpenCliPage {
     trigger: PublishPageElementQuery,
     files: string[],
     timeoutMs = 10_000,
+    options: { signal?: AbortSignal; origin?: string } = {},
   ): Promise<void> {
     await this.runStep(
       "upload_media",
@@ -238,15 +267,18 @@ export class OpenCliPage {
           | ((
               event: unknown,
               method: string,
-              params: { backendNodeId?: number },
+              params: { backendNodeId?: number; frameId?: string },
             ) => void)
           | undefined;
-        const chooserPromise = new Promise<number>((resolve, reject) => {
+        const chooserPromise = new Promise<{
+          backendNodeId: number;
+          frameId?: string;
+        }>((resolve, reject) => {
           rejectChooser = reject;
           chooserListener = (
             _event: unknown,
             method: string,
-            params: { backendNodeId?: number },
+            params: { backendNodeId?: number; frameId?: string },
           ): void => {
             if (method !== "Page.fileChooserOpened") return;
             const backendNodeId = params.backendNodeId;
@@ -254,7 +286,7 @@ export class OpenCliPage {
               reject(new Error("File chooser did not expose its input node"));
               return;
             }
-            resolve(backendNodeId);
+            resolve({ backendNodeId, frameId: params.frameId });
           };
           debuggerApi.on("message", chooserListener);
           chooserTimer = setTimeout(
@@ -269,8 +301,19 @@ export class OpenCliPage {
           await debuggerApi.sendCommand("Page.setInterceptFileChooserDialog", {
             enabled: true,
           });
-          await this.clickElement(trigger);
-          const backendNodeId = await chooserPromise;
+          const { frameTree } = (await debuggerApi.sendCommand(
+            "Page.getFrameTree",
+          )) as { frameTree: { frame: { id: string } } };
+          await this.clickElement(trigger, options);
+          const { backendNodeId, frameId } = await chooserPromise;
+          options.signal?.throwIfAborted();
+          if (
+            frameId !== frameTree.frame.id ||
+            (options.origin && new URL(this.getUrl()).origin !== options.origin)
+          )
+            throw new Error(
+              "The file chooser did not belong to the platform page",
+            );
           await debuggerApi.sendCommand("DOM.setFileInputFiles", {
             files,
             backendNodeId,
@@ -330,10 +373,132 @@ export class OpenCliPage {
     );
   }
 
-  async insertText(text: string): Promise<void> {
-    await this.runStep("input_text", `输入 ${text.length} 个字符`, () =>
-      this.contents.insertText(text),
-    );
+  async replaceText(
+    text: string,
+    selector: string,
+    { origin, signal }: { origin: string; signal: AbortSignal },
+  ): Promise<void> {
+    await this.runStep("input_text", `输入 ${text.length} 个字符`, async () => {
+      signal.throwIfAborted();
+      const ready = await this.contents.executeJavaScript(`(() => {
+        const field = document.activeElement;
+        if (location.origin !== ${JSON.stringify(origin)} ||
+            !field?.matches(${JSON.stringify(selector)})) return false;
+        if (field instanceof HTMLInputElement) field.select();
+        else window.getSelection().selectAllChildren(field);
+        if (!${Boolean(text)}) document.execCommand('delete');
+        return true;
+      })()`);
+      signal.throwIfAborted();
+      if (!ready || new URL(this.contents.getURL()).origin !== origin)
+        throw new Error("The platform editor did not accept the input");
+      if (text) await this.contents.insertText(text);
+    });
+  }
+
+  async capturePostResponse(
+    endpoint: string,
+    beforeSubmit: () => Promise<void>,
+    click: () => Promise<void>,
+    signal: AbortSignal,
+  ): Promise<string> {
+    return this.withDebugger(async (debuggerApi) => {
+      await debuggerApi.sendCommand("Network.enable", {
+        maxResourceBufferSize: 64 * 1024,
+        maxTotalBufferSize: 1024 * 1024,
+        maxPostDataSize: 0,
+      });
+      const wait = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
+      let requestId: string | undefined;
+      let armed = false;
+      let success = false;
+      let stop = () => {};
+      let listener: (
+        event: Electron.Event,
+        method: string,
+        params: {
+          requestId?: string;
+          request?: { method: string; url: string };
+          response?: { status: number; url: string };
+        },
+      ) => void;
+      const receipt = new Promise<string>((resolve, reject) => {
+        stop = () =>
+          reject(wait.reason ?? new Error("The platform tab closed"));
+        listener = (_event, method, params) => {
+          if (!armed) return;
+          if (method === "Network.requestWillBeSent" && !requestId) {
+            const request = params.request;
+            if (
+              request?.method === "POST" &&
+              request.url?.split("?")[0] === endpoint
+            )
+              requestId = params.requestId;
+          }
+          if (!requestId || params.requestId !== requestId) return;
+          if (method === "Network.responseReceived" && params.response) {
+            success =
+              params.response.status >= 200 &&
+              params.response.status < 300 &&
+              params.response.url?.split("?")[0] === endpoint;
+          }
+          if (method === "Network.loadingFailed")
+            reject(new Error("The platform response was lost"));
+          if (method === "Network.loadingFinished") {
+            if (!success) {
+              reject(new Error("The platform receipt could not be confirmed"));
+              return;
+            }
+            void debuggerApi
+              .sendCommand("Network.getResponseBody", { requestId })
+              .then(
+                ({ body, base64Encoded }) =>
+                  resolve(
+                    base64Encoded
+                      ? Buffer.from(body, "base64").toString("utf8")
+                      : body,
+                  ),
+                reject,
+              );
+          }
+        };
+        debuggerApi.on("message", listener);
+        debuggerApi.on("detach", stop);
+        wait.addEventListener("abort", stop, { once: true });
+      });
+      void receipt.catch(() => {});
+      try {
+        await beforeSubmit();
+        wait.throwIfAborted();
+        armed = true;
+        await click();
+        return await receipt;
+      } finally {
+        debuggerApi.off("message", listener!);
+        debuggerApi.off("detach", stop);
+        wait.removeEventListener("abort", stop);
+        if (!this.contents.isDestroyed() && debuggerApi.isAttached())
+          await debuggerApi.sendCommand("Network.disable").catch(() => {});
+      }
+    });
+  }
+
+  private async withDebugger<T>(
+    action: (debuggerApi: Electron.Debugger) => Promise<T>,
+  ): Promise<T> {
+    const debuggerApi = this.contents.debugger;
+    const attachedHere = !debuggerApi.isAttached();
+    if (attachedHere) debuggerApi.attach("1.3");
+    try {
+      return await action(debuggerApi);
+    } finally {
+      if (
+        attachedHere &&
+        !this.contents.isDestroyed() &&
+        debuggerApi.isAttached()
+      )
+        debuggerApi.detach();
+    }
   }
 
   async nativeType(text: string): Promise<void> {
@@ -456,49 +621,62 @@ export class OpenCliPage {
 export function buildElementSnapshotExpression(
   query: PublishPageElementQuery,
   scrollIntoView = false,
+  clickOrigin?: string | null,
 ): string {
   const serialized = JSON.stringify(query).replaceAll("<", "\\u003c");
   const prepareForClick = scrollIntoView
-    ? `element.scrollIntoView({ block: 'center', inline: 'center' });`
+    ? `element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });`
     : "";
   const viewportCheck = scrollIntoView
     ? ` && rect.bottom > 0 && rect.right > 0 &&
         rect.top < window.innerHeight && rect.left < window.innerWidth &&
-        x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight`
+        x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight &&
+        !clickTarget.matches(':disabled, [aria-disabled="true"]') &&
+        !(clickTarget instanceof HTMLLabelElement && clickTarget.control?.disabled) &&
+        clickTarget.contains(document.elementFromPoint(x, y))`
     : "";
+  const activate =
+    clickOrigin === undefined
+      ? ""
+      : `
+      if (visible && (!${JSON.stringify(clickOrigin)} || location.origin === ${JSON.stringify(clickOrigin)}) && clickTarget instanceof HTMLElement) {
+        element.focus({ preventScroll: true });
+        clickTarget.click();
+      } else return { count: elements.length, visible: false };`;
   return `(() => {
     const query = ${serialized};
     const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-    let root = document;
-    try {
-      if (query.within) {
-        root = document.querySelector(query.within);
-        if (!root) return { count: 0, visible: false };
-      }
       const expected = normalize(query.text);
-      const elements = Array.from(root.querySelectorAll(query.selector)).filter((element) => {
+      const roots = query.within ? [...document.querySelectorAll(query.within)] : [document];
+      const candidates = new Set(roots.flatMap(root => [...root.querySelectorAll(query.selector)]));
+      const elements = [...candidates].filter((element) => {
         if (query.text === undefined) return true;
         const actual = normalize(element.textContent);
         return query.exactText ? actual === expected : actual.includes(expected);
       });
-      const element = elements[query.index || 0];
+      const rendered = (element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' &&
+          Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+      };
+      const element = query.index === undefined
+        ? elements.find(rendered)
+        : elements[query.index];
       if (!element) return { count: elements.length, visible: false };
+      const clickTarget = element.closest('label, button, a[href], [role="button"], [role="radio"], [role="checkbox"]') || element;
       ${prepareForClick}
-      const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
       const x = rect.left + rect.width / 2;
       const y = rect.top + rect.height / 2;
-      const visible = style.display !== 'none' && style.visibility !== 'hidden' &&
-        Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0${viewportCheck};
+      const visible = rendered(element)${viewportCheck};
+      ${activate}
       return {
         count: elements.length,
         visible,
         x,
         y,
       };
-    } catch {
-      return { count: 0, visible: false };
-    }
   })()`;
 }
 

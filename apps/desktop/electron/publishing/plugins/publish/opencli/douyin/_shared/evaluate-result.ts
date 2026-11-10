@@ -4,8 +4,6 @@
  * Licensed under Apache-2.0. Modified for AutoUp module imports and TypeScript compilation.
  */
 // @ts-nocheck
-import { CommandExecutionError } from "../../../opencli-shim/errors.js";
-
 export function unwrapEvaluateResult(payload) {
   if (
     payload &&
@@ -17,12 +15,4 @@ export function unwrapEvaluateResult(payload) {
     return payload.data;
   }
   return payload;
-}
-
-export function requireObjectEvaluateResult(payload, context) {
-  const result = unwrapEvaluateResult(payload);
-  if (!result || Array.isArray(result) || typeof result !== "object") {
-    throw new CommandExecutionError(`${context}: malformed evaluate payload`);
-  }
-  return result;
 }

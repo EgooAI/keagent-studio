@@ -12,6 +12,8 @@ import {
 } from "../../../opencli-shim/errors.js";
 import { unwrapEvaluateResult } from "./evaluate-result.js";
 
+export class BrowserRequestUnavailable extends CommandExecutionError {}
+
 function isAuthLikeError(code, message) {
   const text = String(message ?? "");
   return (
@@ -33,18 +35,24 @@ export async function browserFetch(page, method, url, options = {}) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), ${Number(options.timeoutMs ?? 30000)});
       try {
-        const res = await fetch(${JSON.stringify(url)}, {
+        const url = ${JSON.stringify(url)};
+        const csrf = new URL(url).origin === location.origin
+          ? document.cookie.split('; ').find(cookie => cookie.startsWith('csrf_token='))?.slice('csrf_token='.length)
+          : undefined;
+        const res = await fetch(url, {
           method: ${JSON.stringify(method)},
           credentials: 'include',
           signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
+            ...(csrf ? {'X-CSRF-Token': csrf} : {}),
             ...${JSON.stringify(options.headers ?? {})}
           },
           ${options.body ? `body: JSON.stringify(${JSON.stringify(options.body)}),` : ""}
         });
         const text = await res.text();
-        if (!res.ok) return {status_code: [401,403].includes(res.status) ? res.status : -3, status_msg: "Platform HTTP response was not successful"};
+        if (!res.ok) return {status_code: [401,403].includes(res.status) ? res.status : -3, http_status: res.status, status_msg: "Platform HTTP " + res.status};
+        if (!text.trim()) return null;
         try {
           return JSON.parse(text);
         } catch (error) {
@@ -68,7 +76,7 @@ export async function browserFetch(page, method, url, options = {}) {
     );
   }
   if (result == null) {
-    throw new CommandExecutionError(
+    throw new BrowserRequestUnavailable(
       `Empty response from Douyin API (${method} ${url})`,
     );
   }
@@ -80,6 +88,10 @@ export async function browserFetch(page, method, url, options = {}) {
   if (result && typeof result === "object" && "status_code" in result) {
     const code = result.status_code;
     if (code !== 0) {
+      if (code === -1 || (code === -3 && result.http_status === 404))
+        throw new BrowserRequestUnavailable(
+          `Douyin API unavailable (${method} ${url})`,
+        );
       if (options.once && ![-1, -2, -3].includes(code))
         throw new ConfirmedPublishRejection(
           "PLATFORM_REJECTED",

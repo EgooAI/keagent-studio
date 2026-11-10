@@ -7,7 +7,6 @@ import type {
   DouyinPublishInput,
   DouyinPublishRecord,
 } from "@keagent/shared-types";
-import { douyinCaption } from "@keagent/shared-types";
 import { BrowserView } from "./runtime/browser/browser-view";
 import { ProfileManager } from "./runtime/profiles/profile-manager";
 import { LoginDetectionService } from "./runtime/login/login-detection";
@@ -15,14 +14,12 @@ import {
   DOUYIN_LOGIN_CONFIG,
   createDouyinLoginDetector,
 } from "./plugins/checkLogin/douyin";
-import { getRegistry } from "./plugins/publish/opencli-shim/registry";
-import "./plugins/publish/opencli/douyin/publish";
+import { publishFromCreatorPage } from "./plugins/publish/opencli/douyin/publish";
 import {
   PublishingError,
   type PublishFiles,
   type PublishingIdentity,
 } from "./core";
-import { withUploadContext } from "./runtime-context";
 import type { ProfileKey } from "./runtime/browser/contracts";
 import type { ExecutionStepReporter } from "./runtime/task-executor/execution-log";
 
@@ -192,7 +189,7 @@ export class DouyinBrowser {
       height: Math.max(0, Math.min(height - y, Math.round(input.height))),
     });
     for (const [id, entry] of this.views)
-      entry.view.setVisible(visible && id === accountId);
+      entry.view.setVisible(visible && id === accountId && id !== this.locked);
   }
   async check(accountId: string, save = false): Promise<DouyinAccount> {
     if (this.locked === accountId)
@@ -320,10 +317,9 @@ export class DouyinBrowser {
     steps: ExecutionStepReporter,
     beforeSubmit: () => Promise<void>,
     onProgress: (value: number) => void,
-    assetHash: string,
   ): Promise<{ externalId: string; url: string }> {
     const account = await this.owned(accountId);
-    const { view, session, profile } = await this.ensure(accountId);
+    const { view, profile } = await this.ensure(accountId);
     const login = await steps.run("check_login", "检查抖音登录", () =>
       this.detection.check(profile, "douyin", "task_execution"),
     );
@@ -343,67 +339,28 @@ export class DouyinBrowser {
         "请先在账号浏览器点击保存账号",
       );
     this.locked = accountId;
+    view.setVisible(false);
     this.changed();
     try {
       const page = view.createOpenCliPage(steps);
-      const command = getRegistry().get("douyin/publish")!;
-      const rows = await steps.run("platform_publish", "执行抖音发布", () =>
-        withUploadContext(
-          {
-            fetch: session.fetch.bind(session) as typeof fetch,
-            signal,
-            beforeSubmit,
-            progress: onProgress,
-            steps,
-            assetHash,
-            accountId,
-          },
-          async () => {
-            await page.goto("https://creator.douyin.com/");
-            return command.func(page, {
-              video: files.video,
-              cover: files.cover,
-              title: input.title,
-              caption: douyinCaption(input.description, input.hashtags),
-              schedule: 0,
-              visibility: "public",
-              allow_download: false,
-              sync_toutiao: false,
-              collection: "",
-              activity: "",
-              poi_id: "",
-              poi_name: "",
-              hotspot: "",
-              no_safety_check: false,
-              __autoup_resume_dir: path.join(
-                this.root,
-                profile.workspaceId,
-                accountId,
-                "douyin-resume",
-              ),
-            });
-          },
-        ),
+      const result = await steps.run(
+        "platform_publish",
+        "执行抖音网页发布",
+        () =>
+          page.withPublishViewport(() =>
+            publishFromCreatorPage(
+              page,
+              input,
+              files,
+              signal,
+              steps,
+              beforeSubmit,
+              onProgress,
+            ),
+          ),
       );
-      const externalId = String(rows[0]?.aweme_id || "");
-      if (!/^[0-9]{5,30}$/.test(externalId))
-        throw new Error("Missing platform receipt");
       await view.flushSession().catch(() => {});
-      return { externalId, url: `https://www.douyin.com/video/${externalId}` };
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      if (code === "AUTH_REQUIRED")
-        throw new PublishingError(
-          "LOGIN_REQUIRED",
-          "抖音账号登录失效，请重新登录",
-        );
-      if (code === "ARGUMENT")
-        throw new PublishingError(
-          "INVALID_INPUT",
-          "抖音参数或文件不符合要求",
-          422,
-        );
-      throw error;
+      return result;
     } finally {
       this.locked = undefined;
       this.changed();

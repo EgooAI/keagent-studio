@@ -9,12 +9,17 @@ export { douyinApi, douyinDesktop };
 export function publishingFailureText(code: string): string {
   const labels: Record<string, string> = {
     EXECUTION_FAILED: "发布执行失败，请查看账号浏览器后重新操作。",
+    VIDEO_UPLOAD_FAILED: "抖音网页报告视频上传失败，请查看账号浏览器中的提示。",
+    VIDEO_UPLOAD_TIMEOUT:
+      "等待抖音网页完成上传超时，请查看账号浏览器中的进度。",
+    PUBLISH_TEXT_MISMATCH: "抖音网页中的文案与任务不一致，已停止提交。",
     LOGIN_REQUIRED: "抖音登录已失效，请重新登录后再发布。",
     ASSET_UNAVAILABLE: "本机成片文件不可用，请恢复文件后重试。",
     ASSET_CHANGED: "本机文件与验收版本不一致，请重新检查成片。",
     REVISION_CONFLICT: "验收状态已变化，请重新接收成片。",
     NOT_APPROVED: "成片尚未通过验收或验收已撤回。",
     CONTENT_REJECTED: "内容预检未通过，请检查并修改发布内容。",
+    PRECHECK_FAILED: "抖音未能完成内容预检，请在创作者中心检查后再试。",
     PRECHECK_TIMEOUT: "平台内容预检超时，请稍后重新操作。",
     PLATFORM_REJECTED: "抖音拒绝了本次提交，请检查内容与登录状态。",
     PUBLISH_OUTCOME_UNKNOWN: "提交结果暂时无法确认，请先到创作者中心核对。",
