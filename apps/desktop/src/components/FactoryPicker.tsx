@@ -416,7 +416,11 @@ export function FactoryPicker({
               render: (_, row) =>
                 [
                   row.config.language === "en-US" ? "英文" : "中文",
-                  row.config.videoMode === "avatar" ? "露脸" : "配音",
+                  row.opening
+                    ? "MiniMax H3"
+                    : row.config.videoMode === "avatar"
+                      ? "露脸"
+                      : "配音",
                   row.config.aspectRatio,
                   row.config.resolution,
                 ].join(" · "),

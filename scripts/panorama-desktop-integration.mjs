@@ -63,7 +63,7 @@ try {
           Response.json({
             ai: false,
             volcTts: true,
-            volcAvatar: false,
+            minimaxOpening: false,
             managedVoices: true,
           }),
         );
@@ -77,7 +77,7 @@ try {
         return Promise.resolve(Response.json({ pcm: pcm.toString("base64") }));
       }
       if (
-        /\/v1\/panorama\/(script|audio|avatar-submit|avatar-query)$/.test(url)
+        /\/v1\/panorama\/(script|opening-submit|opening-query)$/.test(url)
       )
         throw new Error(
           "Paid provider calls are forbidden in the media regression",
@@ -154,7 +154,7 @@ try {
   const copied = resolve(output, "desktop-generated.mp4");
   await writeFile(copied, await readFile(localPath));
   const result = {
-    audio: "Synthetic test tone fixture; no paid TTS or avatar requests",
+    audio: "Synthetic test tone fixture; no paid TTS or MiniMax requests",
     jobId: state.jobs[0].id,
     duration: state.jobs[0].duration,
     video: copied,

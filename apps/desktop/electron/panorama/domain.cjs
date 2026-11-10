@@ -46,7 +46,6 @@ const defaultConfig = {
   ttsProvider: "system",
   voice: "",
   rate: 1,
-  avatarId: "",
   speed: 4,
   direction: 1,
   maxSweep: 100,
@@ -107,10 +106,41 @@ function config(input, personalTemplates = []) {
   for (const key of ["openingTemplate", "sceneTemplate", "closingTemplate"])
     c[key] = text(c[key], "文案模板", 1500);
   ensure(typeof c.voice === "string" && c.voice.length <= 150, "声音无效");
-  ensure(
-    typeof c.avatarId === "string" && /^[a-zA-Z0-9_-]{0,150}$/.test(c.avatarId),
-    "数字人形象 ID 无效",
-  );
+  if (input.openingClip !== undefined) {
+    ensure(
+      (c.videoMode === "avatar" || input.openingPhoto !== undefined) &&
+        typeof input.openingClip === "string" &&
+        /^[a-f0-9]{64}$/.test(input.openingClip),
+      "真人开场素材引用无效",
+    );
+    c.openingClip = input.openingClip;
+  }
+  if (input.openingPhoto !== undefined) {
+    ensure(
+      (c.openingClip || (input.openingLocation && c.videoMode === "avatar")) &&
+        c.ttsProvider !== "system" &&
+        typeof input.openingPhoto === "string" &&
+        /^[a-f0-9]{64}$/.test(input.openingPhoto),
+      "MiniMax 开场需要参考素材、经纪人照片和豆包语音",
+    );
+    c.openingPhoto = input.openingPhoto;
+  }
+  if (input.openingLocation !== undefined) {
+    const { source, asset } = input.openingLocation || {};
+    ensure(
+      c.openingPhoto &&
+        !c.openingClip &&
+        ["property", "fixed"].includes(source) &&
+        (asset === undefined || /^[a-f0-9]{64}\.(jpg|png)$/.test(asset)) &&
+        (source !== "fixed" || asset),
+      "MiniMax 开场地点图无效",
+    );
+    c.openingLocation = { source, asset };
+  }
+  if (input.roomOpening === true) {
+    ensure(!c.openingClip && !c.openingPhoto, "房源开场不能使用其他开场素材");
+    c.roomOpening = true;
+  }
   for (const [key, min, max] of [
     ["rate", 0.5, 2],
     ["speed", 0.5, 12],

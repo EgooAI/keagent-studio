@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,12 +17,10 @@ type aiProbeStep struct {
 	State string `json:"state"`
 }
 type aiProbeProgress struct {
-	Steps      []aiProbeStep      `json:"steps"`
-	Message    string             `json:"message,omitempty"`
-	Category   string             `json:"category,omitempty"`
-	Task       string             `json:"task,omitempty"`
-	Assets     bool               `json:"assets,omitempty"`
-	OldStorage *aiProbeOldStorage `json:"oldStorage,omitempty"`
+	Steps    []aiProbeStep `json:"steps"`
+	Message  string        `json:"message,omitempty"`
+	Category string        `json:"category,omitempty"`
+	Task     string        `json:"task,omitempty"`
 }
 type aiProbe struct {
 	ID, Group, Service, Mode, Status, Actor, Hash, Worker string
@@ -161,10 +160,6 @@ func (s *server) runAIProbes(ctx context.Context) {
 				RETURNING id,actor_id,service,version)
 				INSERT INTO keagent_audit(id,actor_id,action,target_id,metadata)
 				SELECT md5(id||':ai-abandoned'),actor_id,'ai.test.result',service,jsonb_build_object('service',service,'version',version,'result','unknown') FROM abandoned ON CONFLICT DO NOTHING`)
-			_, _ = s.db.ExecContext(ctx, `DELETE FROM keagent_ai_avatar_audio WHERE expires_at<=now()`)
-			cleanup, cancel := context.WithTimeout(ctx, 10*time.Second)
-			s.cleanAIProbeAssets(cleanup)
-			cancel()
 		case <-ticker.C:
 			select {
 			case slots <- struct{}{}:
@@ -211,7 +206,7 @@ func (s *server) executeAIProbe(parent context.Context, p aiProbe) {
 	defer finishCancel()
 	status := "passed"
 	if err != nil {
-		status, p.Progress.Category, p.Progress.Message = aiProbeFailure(err)
+		status, p.Progress.Category, p.Progress.Message = aiProbeFailure(p.Service, err)
 	}
 	if n := len(p.Progress.Steps); n > 0 {
 		p.Progress.Steps[n-1].State = status
@@ -233,7 +228,40 @@ func (s *server) executeAIProbe(parent context.Context, p aiProbe) {
 		_ = tx.Commit()
 	}
 }
-func aiProbeFailure(err error) (status, category, message string) {
+func aiProbeFailure(service string, err error) (status, category, message string) {
+	var upstream providerHTTPError
+	if service == "opening" && errors.As(err, &upstream) {
+		category := "validation"
+		switch upstream.httpStatus {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			category = "authentication"
+		case http.StatusPaymentRequired, http.StatusTooManyRequests:
+			category = "quota"
+		}
+		return "failed", category, upstream.Error()
+	}
+	if service == "tts" && errors.As(err, &upstream) {
+		category, message = "validation", "火山配音请求失败"
+		switch upstream.httpStatus {
+		case http.StatusUnauthorized:
+			category, message = "authentication", "火山配音鉴权失败，请核对豆包语音 API Key"
+			if upstream.code == 45000010 {
+				message = "豆包语音 API Key 无效，请从豆包语音控制台复制有效的 API Key 后重新保存并测试"
+			}
+		case http.StatusForbidden:
+			category, message = "permission", "火山拒绝配音请求，请检查模型和音色权限"
+		case http.StatusPaymentRequired, http.StatusTooManyRequests:
+			category, message = "quota", "火山配音请求限流或额度不足，请在豆包语音控制台核对"
+		}
+		details := fmt.Sprintf("HTTP %d", upstream.httpStatus)
+		if upstream.code != 0 {
+			details += fmt.Sprintf("，火山错误码 %d", upstream.code)
+		}
+		if upstream.logID != "" {
+			details += "，火山日志 ID " + upstream.logID
+		}
+		return "failed", category, message + "（" + details + "）"
+	}
 	raw := err.Error()
 	switch {
 	case strings.Contains(raw, "401"):

@@ -24,7 +24,12 @@ var templateVersion = regexp.MustCompile(`^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,
 func validateProduction(resource object) error {
 	recipe := obj(resource["production"])
 	schema := number(recipe["schemaVersion"])
-	if recipe == nil || resource["type"] != "video" || (schema != 1 && schema != 2) || len(recipe) != int(schema)+1 {
+	_, hasOpening := recipe["opening"]
+	expectedFields := int(schema) + 1
+	if schema == 2 && hasOpening {
+		expectedFields++
+	}
+	if recipe == nil || resource["type"] != "video" || (schema != 1 && schema != 2) || len(recipe) != expectedFields {
 		return fail(422, "视频制作模板缺少完整制作规则")
 	}
 	if !templateVersion.MatchString(str(resource["version"])) {
@@ -65,6 +70,22 @@ func validateProduction(resource object) error {
 		return fail(422, "适用模式必须包含模板使用的视频模式")
 	}
 	if schema == 2 {
+		if hasOpening {
+			opening := obj(recipe["opening"])
+			location := obj(opening["location"])
+			if c["videoMode"] != "avatar" || len(opening) != 2 || !validScriptRule(str(opening["prompt"])) {
+				return fail(422, "MiniMax 开场需要露脸模式和 1–1500 字的画面提示词")
+			}
+			switch {
+			case location["source"] == "property" && len(location) == 1:
+			case location["source"] == "fixed" && len(location) == 2:
+				if _, err := minimaxImage(location["image"], "模板固定地点图", 512<<10); err != nil {
+					return err
+				}
+			default:
+				return fail(422, "请选择有效的地点图片来源")
+			}
+		}
 		rules := obj(recipe["scriptRules"])
 		if len(rules) != 4 {
 			return fail(422, "请填写整片、开场、逐图和结尾文案规则")
@@ -132,16 +153,16 @@ func publicProduction(resource object) object {
 	return pickFields(resource, "id", "name", "version", "description", "production")
 }
 
-func (s *server) productionTemplates(ctx context.Context) ([]any, error) {
+func (s *server) productionTemplates(ctx context.Context, supportsOpening bool) ([]any, error) {
 	result := []any{}
 	if s.db == nil {
 		return result, nil
 	} // Provider-only unit fixtures have no catalog.
 	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM (
 		SELECT DISTINCT ON (`+resourceFamilySQL+`) id, payload FROM keagent_resource
-		WHERE payload->>'published'='true' AND `+productionResourceSQL+`
+		WHERE payload->>'published'='true' AND `+productionResourceSQL+` AND ($1 OR NOT (payload->'production' ? 'opening'))
 		ORDER BY `+resourceFamilySQL+`, `+resourceVersionOrderSQL+`
-	) current_versions ORDER BY payload->'production'->>'schemaVersion' DESC, payload->>'name', id`)
+	) current_versions ORDER BY payload->'production'->>'schemaVersion' DESC, payload->>'name', id`, supportsOpening)
 	if err != nil {
 		return nil, err
 	}
@@ -164,8 +185,15 @@ func (s *server) productionTemplates(ctx context.Context) ([]any, error) {
 }
 
 func (s *server) productionTemplate(ctx context.Context, input object) (object, error) {
+	return s.loadProductionTemplate(ctx, input, false)
+}
+
+func (s *server) loadProductionTemplate(ctx context.Context, input object, allowRetiredOpening bool) (object, error) {
 	var b []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND payload->>'published'='true' AND payload ? 'production'`, str(input["id"])).Scan(&b)
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND payload ? 'production'
+		AND (payload->>'published'='true' OR ($2 AND payload->>'publishedOnce'='true'
+		AND payload->'production' ? 'opening' AND payload->>'version'=$3))`,
+		str(input["id"]), allowRetiredOpening, str(input["version"])).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fail(409, "模板已下架或不存在，请刷新后重新选择")
 	}

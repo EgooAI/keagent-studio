@@ -36,9 +36,6 @@ CREATE TABLE IF NOT EXISTS keagent_ai_probe (
  worker text NOT NULL DEFAULT '');
 CREATE UNIQUE INDEX IF NOT EXISTS keagent_ai_probe_running
  ON keagent_ai_probe(service_group,service) WHERE status IN ('queued','running');
-CREATE TABLE IF NOT EXISTS keagent_ai_avatar_audio (
- owner_id text NOT NULL, host text NOT NULL, path text NOT NULL, version bigint NOT NULL,
- expires_at timestamptz NOT NULL, PRIMARY KEY(owner_id,host,path));
 `
 
 type aiField struct {
@@ -54,10 +51,10 @@ type aiSpec struct {
 var aiSpecs = []aiSpec{
 	{"script", "script", "多模态文案", "OpenAI 兼容接口", []aiField{{"AI_BASE_URL", "服务地址", "url"}, {"AI_MODEL", "模型名", "text"}, {"AI_API_KEY", "API Key", "secret"}}},
 	{"tts", "speech", "火山配音", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}}},
-	{"avatar", "avatar", "火山数字人", "火山引擎", []aiField{{"VOLC_ACCESS_KEY_ID", "访问密钥 AK", "secret"}, {"VOLC_SECRET_ACCESS_KEY", "访问密钥 SK", "secret"}, {"VOLC_TOS_BUCKET", "私有桶名称", "text"}, {"VOLC_TOS_REGION", "私有桶地域", "text"}}},
 	{"voice-clone", "speech", "声音复刻", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}, {"VOLC_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}, {"VOLC_VOICE_CLONE_RESOURCE_ID", "复刻资源编号", "text"}}},
 	{"expansion", "expansion", "百炼扩图", "阿里云百炼", []aiField{{"DASHSCOPE_BASE_URL", "服务地址", "url"}, {"DASHSCOPE_API_KEY", "API Key", "secret"}}},
 	{"beike", "beike", "贝壳取材", "贝壳开放平台", []aiField{{"BEIKE_ACCESS_TOKEN", "Access Token", "secret"}}},
+	{"opening", "opening", "MiniMax 开场", "MiniMax", []aiField{{"MINIMAX_API_KEY", "API Key", "secret"}}},
 }
 
 func specFor(id string) (aiSpec, bool) {
@@ -93,10 +90,6 @@ func environmentAI(group string) aiValues {
 			values["VOLC_VOICE_CLONE_RESOURCE_ID"] = "seed-icl-2.0"
 		}
 		values["VOLC_VOICE_CLONE_ENABLED"] = strconv.FormatBool(values["VOLC_VOICE_CLONE_ENABLED"] == "true")
-	case "avatar":
-		if values["VOLC_TOS_REGION"] == "" {
-			values["VOLC_TOS_REGION"] = "cn-beijing"
-		}
 	case "expansion":
 		if values["DASHSCOPE_BASE_URL"] == "" {
 			values["DASHSCOPE_BASE_URL"] = "https://dashscope.aliyuncs.com"
@@ -267,11 +260,6 @@ func aiConfigIssues(spec aiSpec, values aiValues) (missing []string, issues []st
 		}
 		if strings.TrimSpace(os.Getenv("AI_ALLOWED_HOSTS")) == "" {
 			missing = append(missing, "AI_ALLOWED_HOSTS")
-		}
-	case "avatar":
-		if (values["VOLC_TOS_BUCKET"] != "" && !bucketID.MatchString(values["VOLC_TOS_BUCKET"])) ||
-			(values["VOLC_TOS_REGION"] != "" && (!regionID.MatchString(values["VOLC_TOS_REGION"]) || len(values["VOLC_TOS_REGION"]) > 40)) {
-			issues = append(issues, "私有桶名称或地域格式无效")
 		}
 	case "voice-clone":
 		if !speechResourceID.MatchString(values["VOLC_VOICE_CLONE_RESOURCE_ID"]) {

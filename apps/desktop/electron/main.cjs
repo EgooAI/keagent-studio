@@ -12,7 +12,6 @@ if (!app.isPackaged) {
       "GO_API_URL",
       "FFMPEG_PATH",
       "FFPROBE_PATH",
-      "VOLC_VIDEO_ALLOWED_HOSTS",
     ])
       if (process.env[key] === undefined && values[key] !== undefined)
         process.env[key] = values[key];

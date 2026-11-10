@@ -5,11 +5,41 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestAITTSProbeHTTPFailure(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(`{"header":{"code":45000010,"message":"invalid API key: private-value"}}`)),
+	}
+	response.Header.Set("X-Tt-Logid", "20261110102945ABCD0123ABCD0123ABCD")
+	err := providerResponseFailure(response)
+	status, category, message := aiProbeFailure("tts", err)
+	if status != "failed" || category != "authentication" || !strings.Contains(message, "API Key 无效") ||
+		!strings.Contains(message, "HTTP 401，火山错误码 45000010，火山日志 ID 20261110102945ABCD0123ABCD0123ABCD") ||
+		strings.Contains(message, "private-value") {
+		t.Fatalf("unexpected probe result: %s / %s / %s", status, category, message)
+	}
+	var apiError fault
+	if !errors.As(err, &apiError) || apiError.status != http.StatusBadGateway {
+		t.Fatalf("unexpected client API error: %v", err)
+	}
+
+	response.StatusCode = http.StatusForbidden
+	response.Header.Set("X-Tt-Logid", "private-value")
+	response.Body = io.NopCloser(strings.NewReader(`{"code":1,"message":"private-value"}`))
+	status, category, message = aiProbeFailure("tts", providerResponseFailure(response))
+	if status != "failed" || category != "permission" || !strings.Contains(message, "HTTP 403，火山错误码 1") || strings.Contains(message, "private-value") {
+		t.Fatalf("unexpected probe result: %s / %s / %s", status, category, message)
+	}
+}
 
 func TestAIConfigProtection(t *testing.T) {
 	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
@@ -160,49 +190,5 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	active, err = s.activeAI(ctx)
 	if err != nil || !aiSnapshotFrom(active).locked["speech"] || aiValue(active, "VOLC_TTS_API_KEY") != "" {
 		t.Fatal("bad master key silently fell back to the environment", err)
-	}
-}
-
-func TestAIAvatarOldBucketCleanup(t *testing.T) {
-	db := productionTestDB(t)
-	ctx := t.Context()
-	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	t.Setenv("VOLC_TOS_BUCKET", "old-bucket")
-	t.Setenv("VOLC_TOS_REGION", "cn-beijing")
-	t.Setenv("VOLC_ACCESS_KEY_ID", "old-ak")
-	if _, err := db.ExecContext(ctx, userAvatarSchema); err != nil {
-		t.Fatal(err)
-	}
-	values := aiValues{"VOLC_TOS_BUCKET": "new-bucket", "VOLC_TOS_REGION": "cn-beijing", "VOLC_ACCESS_KEY_ID": "new-ak"}
-	sealed, err := sealAI(aiVersionLabel("avatar", 1), values)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.ExecContext(ctx, `INSERT INTO keagent_ai_version(service_group,version,encrypted,actor_id) VALUES('avatar',1,$1,'admin')`, sealed); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.ExecContext(ctx, `INSERT INTO keagent_ai_probe(id,service_group,service,version,mode,status,actor_id,request_hash,worker) VALUES('avatar-probe','avatar','avatar',1,'sample','running','admin','hash','worker')`); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
-	s := &server{db: db, storage: func(ctx context.Context, method, path string, _ []byte, _ string) ([]byte, error) {
-		key := aiValue(ctx, "VOLC_ACCESS_KEY_ID")
-		calls = append(calls, method+":"+key+":"+strings.TrimPrefix(path, aiProbePath("avatar-probe")))
-		if method == "DELETE" && len(calls) == 3 {
-			return nil, errors.New("interrupted cleanup")
-		}
-		return []byte("keagent-ai-probe"), nil
-	}}
-	p := aiProbe{ID: "avatar-probe", Group: "avatar", Version: 1, Worker: "worker", Progress: aiProbeProgress{Assets: true}}
-	if err = s.probeOldAvatarBuckets(withAIGroup(ctx, "avatar", 1, values), &p); err == nil || !strings.Contains(err.Error(), "旧存储桶的测试对象清理失败") {
-		t.Fatal("expected an interrupted cleanup", err)
-	}
-	if _, err = db.ExecContext(ctx, `UPDATE keagent_ai_probe SET status='failed',finished_at=now()-interval '2 minutes',lease_until=NULL WHERE id=$1`, p.ID); err != nil {
-		t.Fatal(err)
-	}
-	s.cleanAIProbeAssets(ctx)
-	want := "PUT:old-ak:previous-bucket,GET:new-ak:previous-bucket,DELETE:old-ak:previous-bucket,DELETE:new-ak:photo,DELETE:new-ak:audio.wav,DELETE:old-ak:previous-bucket"
-	if got := strings.Join(calls, ","); got != want {
-		t.Fatalf("bucket verification and recovery used unexpected credentials: %s", got)
 	}
 }

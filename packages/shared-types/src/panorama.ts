@@ -10,7 +10,10 @@ export interface PanoramaConfig {
   ttsProvider: "system" | "volcengine" | "personal";
   voice: string;
   rate: number;
-  avatarId: string;
+  openingClip?: string;
+  openingPhoto?: string;
+  openingLocation?: { source: "property" | "fixed"; asset?: string };
+  roomOpening?: boolean;
   speed: number;
   direction: 1 | -1;
   maxSweep: number;
@@ -79,7 +82,7 @@ export interface PanoramaJob extends Omit<PanoramaDraft, "revision"> {
   draftId: string;
   draftRevision: number;
   status: "running" | "succeeded" | "failed" | "canceled";
-  stage: "images" | "tts" | "avatar" | "render" | "cover";
+  stage: "images" | "tts" | "avatar" | "opening" | "render" | "cover";
   confirmedAt?: string;
   progress: number;
   error?: string;
@@ -95,7 +98,6 @@ export interface PanoramaJob extends Omit<PanoramaDraft, "revision"> {
     duration: number;
     camera: { start: number; end: number; sweep: number } | null;
   }[];
-  avatar?: { key: string; taskId?: string; submitting?: boolean };
 }
 export interface PanoramaState {
   templates?: PanoramaTemplate[];
@@ -117,7 +119,7 @@ export interface PanoramaCapabilities {
   voices: { name: string; language: string }[];
   ai: boolean;
   volcTts: boolean;
-  volcAvatar: boolean;
+  minimaxOpening?: boolean;
   managedVoices: boolean;
   defaultConfig: PanoramaConfig;
   templates: {

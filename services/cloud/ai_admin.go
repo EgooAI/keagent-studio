@@ -184,11 +184,6 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 			if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_ai_version(service_group,version,encrypted,actor_id) VALUES($1,0,$2,$3) ON CONFLICT DO NOTHING`, spec.Group, sealed, a.UserID); err != nil {
 				return nil, err
 			}
-			if spec.Group == "avatar" {
-				if _, err = tx.ExecContext(ctx, `UPDATE keagent_user_avatar SET payload=payload||jsonb_build_object('bucket',$1::text,'region',$2::text) WHERE COALESCE(payload->>'bucket','')=''`, baseline["VOLC_TOS_BUCKET"], baseline["VOLC_TOS_REGION"]); err != nil {
-					return nil, err
-				}
-			}
 		}
 		version = h.Candidate
 		if _, err = tx.ExecContext(ctx, `UPDATE keagent_ai_head SET revision=revision+1,active=candidate,candidate=0,activated_at=now() WHERE service_group=$1`, spec.Group); err != nil {

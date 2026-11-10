@@ -25,6 +25,10 @@ func visionContent(template, property object, images []any) ([]object, []string,
 	if rules == nil {
 		rules = object{"opening": config["openingTemplate"], "scene": config["sceneTemplate"], "closing": config["closingTemplate"]}
 	}
+	if recipe["opening"] != nil {
+		rules = pickFields(rules, "overall", "opening", "scene", "closing")
+		rules["opening"] = str(rules["opening"]) + " 只写一句简短口播，朗读目标为 2–6 秒。"
+	}
 	seen := map[string]bool{"opening": true, "closing": true}
 	ids := []string{"opening"}
 	parts := []object{}

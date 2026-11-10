@@ -13,7 +13,6 @@ import type {
 } from "@keagent/shared-types";
 import { Link } from "react-router-dom";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
-import { useAvatarLibrary } from "../lib/avatarLibrary";
 export function PanoramaSettings({
   caps,
   config,
@@ -30,9 +29,6 @@ export function PanoramaSettings({
   invalidate: () => void;
 }) {
   const library = useVoiceLibrary();
-  const avatars = useAvatarLibrary();
-  const ownAvatars =
-    avatars.data?.avatars.filter((avatar) => avatar.status === "ready") || [];
   const publicVoices = library.data?.publicVoices || [];
   const personalVoices =
     library.data?.voices.filter((v) => v.status === "ready") || [];
@@ -79,7 +75,7 @@ export function PanoramaSettings({
               },
               {
                 value: "avatar",
-                label: "经纪人露脸 · 数字人开场",
+                label: "经纪人露脸 · 真人短片开场",
               },
             ]}
             onChange={(videoMode) => patch({ videoMode })}
@@ -170,51 +166,12 @@ export function PanoramaSettings({
             addonAfter="倍"
           />
         </Form.Item>
-        {config.videoMode === "avatar" && (
-          <Form.Item label="本人上传的形象" required>
-            <Select
-              value={
-                ownAvatars.some((avatar) => avatar.id === config.avatarId)
-                  ? config.avatarId
-                  : undefined
-              }
-              placeholder="请先上传本人照片"
-              options={ownAvatars.map((avatar) => ({
-                value: avatar.id,
-                label: avatar.name,
-              }))}
-              onChange={(avatarId) => patch({ avatarId })}
-            />
-            <p>
-              <Link to="/settings/avatars">上传或管理本人照片</Link>
-              。露脸模式必须选择本人上传的形象。
-            </p>
-          </Form.Item>
-        )}
       </div>
       {publicVoices.length === 0 && personalVoices.length === 0 && (
         <Alert
           type="info"
           title="暂无可用音色"
           description="请联系管理员上架公共音色，或前往设置上传本人的声音。"
-        />
-      )}
-      {config.videoMode === "avatar" && ownAvatars.length === 0 && (
-        <Alert
-          type="warning"
-          title="请先上传本人照片"
-          description={
-            <Link to="/settings/avatars">
-              前往设置上传自己的形象；露脸模式不提供预置形象。
-            </Link>
-          }
-        />
-      )}
-      {config.videoMode === "avatar" && avatars.isError && (
-        <Alert
-          type="error"
-          title="无法加载本人形象"
-          description={avatars.error.message}
         />
       )}
       <p>
@@ -226,14 +183,6 @@ export function PanoramaSettings({
           type="warning"
           title="无法加载本人音色"
           description={library.error.message}
-        />
-      )}
-      {config.videoMode === "avatar" && !caps.volcAvatar && (
-        <Alert
-          type="warning"
-          showIcon
-          title="数字人等待火山配置"
-          description="需配置火山访问凭证、照片数字人服务及 TOS 私有桶。只使用用户自己上传的照片。"
         />
       )}
       <Collapse

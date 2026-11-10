@@ -1,4 +1,4 @@
-import { Alert, Button, Input, Progress, Space, Tag } from "antd";
+import { Alert, Button, Input, Progress, Select, Space, Tag } from "antd";
 import { Link } from "react-router-dom";
 import { Download, X } from "lucide-react";
 import type { PanoramaSegment } from "@keagent/shared-types";
@@ -34,6 +34,7 @@ export function FactoryTaskDetail({
   onEdit,
   onSave,
   onConfirm,
+  onOpeningLocation,
   onAct,
   onExport,
 }: {
@@ -45,6 +46,7 @@ export function FactoryTaskDetail({
   onEdit: (id: string, text: string) => void;
   onSave: () => void;
   onConfirm: () => void;
+  onOpeningLocation: (asset: string) => void;
   onAct: (action: FactoryAction) => void;
   onExport: (action: () => Promise<unknown>) => void;
 }) {
@@ -53,6 +55,7 @@ export function FactoryTaskDetail({
   const reviewable =
     !!draft && editable && segments.every((s) => s.text.trim());
   const finished = job?.status === "succeeded";
+  const location = draft?.config.openingLocation;
   return (
     <section className="factory-task-detail" aria-label="当前任务详情">
       <div className="factory-detail-heading">
@@ -77,11 +80,62 @@ export function FactoryTaskDetail({
         <FactoryPhaseTag phase={row.phase} />
         <span>
           {config?.aspectRatio} · {config?.resolution} ·{" "}
-          {config?.videoMode === "avatar" ? "露脸" : "配音"}
+          {config?.openingPhoto
+            ? "MiniMax 开场"
+            : config?.videoMode === "avatar" && !config.roomOpening
+              ? "露脸"
+              : "配音"}
         </span>
+        {finished && config?.openingPhoto && <Tag>AI 生成开场</Tag>}
         <span>{formatDate(row.createdAt)}</span>
       </div>
       {row.error && <Alert showIcon type="error" title={row.error} />}
+      {editable && config?.openingPhoto && (
+        <p className="muted">
+          开场解说建议一句话，豆包语音合成后须为 2–6 秒。确认文案后开始制作。
+        </p>
+      )}
+      {!finished && location && (
+        <div className="factory-review-segment">
+          {row.openingLocationUrl && (
+            <img src={row.openingLocationUrl} alt="开场地点图" />
+          )}
+          <div>
+            <strong>开场地点图</strong>
+            {location.source === "fixed" ? (
+              <p className="muted">模板固定图片</p>
+            ) : row.openingLocations?.length ? (
+              <Select
+                aria-label="更换开场地点图"
+                value={location.asset}
+                disabled={!editable || busy}
+                options={row.openingLocations.map((option, index) => ({
+                  value: option.asset,
+                  url: option.url,
+                  label: `${index + 1} · ${option.label}`,
+                }))}
+                optionRender={({ data }) => (
+                  <Space>
+                    <img
+                      width={48}
+                      height={32}
+                      style={{ objectFit: "cover" }}
+                      src={data.url}
+                      alt=""
+                    />
+                    {data.label}
+                  </Space>
+                )}
+                onChange={onOpeningLocation}
+              />
+            ) : (
+              <p className="muted">
+                这套房源暂无可用实拍图。可补充原图后重新创建任务，或选择「改用房源开场」。
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       {row.phase === "running" && (
         <div className="factory-detail-progress" role="status">
           <span>{row.stage ? stageNames[row.stage] : "正在检查制作配置"}</span>
@@ -151,7 +205,7 @@ export function FactoryTaskDetail({
             </Button>
             <Button
               type="primary"
-              disabled={!reviewable || busy}
+              disabled={!reviewable || busy || (!!location && !location.asset)}
               onClick={onConfirm}
             >
               确认并下一条
@@ -180,6 +234,18 @@ export function FactoryTaskDetail({
             {row.phase === "archiveFailed" ? "重试归档" : "重试任务"}
           </Button>
         )}
+        {row.phase === "failed" && config?.openingPhoto && (
+          <Button disabled={busy} onClick={() => onAct("edit-opening")}>
+            调整开场文案
+          </Button>
+        )}
+        {["review", "failed"].includes(row.phase) &&
+          (config?.openingPhoto ||
+            (config?.videoMode === "avatar" && !config.roomOpening)) && (
+            <Button disabled={busy} onClick={() => onAct("room-opening")}>
+              改用房源开场
+            </Button>
+          )}
         {finished && (
           <>
             <Button
@@ -214,7 +280,11 @@ export function FactoryTaskDetail({
           </Button>
         )}
       </div>
-      {job?.sample && <p className="muted">测试素材可以预览与下载。</p>}
+      {job?.sample && (
+        <p className="muted">
+          测试样片仅供预览与下载。请选择真实房源生成视频，成片归档后会出现在发布中心。
+        </p>
+      )}
     </section>
   );
 }

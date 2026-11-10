@@ -1,3 +1,4 @@
+import { encodeOpeningLocation } from "./openingLocationImage";
 import {
   Alert,
   App,
@@ -112,6 +113,7 @@ export default function AIConfigDrawer({
   const [error, setError] = useState("");
   const [testMode, setTestMode] = useState<AdminAIProbeMode>();
   const [file, setFile] = useState<File>();
+  const [openingLocation, setOpeningLocation] = useState<File>();
   const revision = useRef(row.revision);
   const action = useRef(false);
   const request = useRef<{ key: string; id: string } | null>(null);
@@ -206,6 +208,7 @@ export default function AIConfigDrawer({
     sampleForm.resetFields();
     setError("");
     setFile(undefined);
+    setOpeningLocation(undefined);
     setTestMode(mode);
   }
   async function runTest(mode: AdminAIProbeMode) {
@@ -228,6 +231,9 @@ export default function AIConfigDrawer({
       file?.name,
       file?.size,
       file?.lastModified,
+      openingLocation?.name,
+      openingLocation?.size,
+      openingLocation?.lastModified,
     ]);
     if (request.current?.key !== key)
       request.current = { key, id: crypto.randomUUID() };
@@ -240,19 +246,20 @@ export default function AIConfigDrawer({
       ) {
         sample.images = await fixtureImages(service === "script" ? 2 : 1);
       }
-      if (
-        mode !== "connection" &&
-        (service === "avatar" || mode === "training")
-      ) {
-        const max = service === "avatar" ? 5 : 10;
+      if (mode === "training") {
+        const max = 10;
         if (!file || file.size > max * 1024 * 1024)
           throw new Error(`请选择不超过 ${max} MB 的测试文件`);
-        const encoded = await encodeFile(file);
-        if (service === "avatar") sample.photo = encoded;
-        else {
-          sample.audio = encoded;
-          sample.format = file.name.split(".").at(-1)?.toLowerCase();
-        }
+        sample.audio = await encodeFile(file);
+        sample.format = file.name.split(".").at(-1)?.toLowerCase();
+      }
+      if (mode === "sample" && service === "opening") {
+        if (!openingLocation || !file || file.size > 3 * 1024 * 1024)
+          throw new Error("请选择测试地点图和 3 MB 以内的经纪人照片");
+        [sample.location, sample.photo] = await Promise.all([
+          encodeOpeningLocation(openingLocation),
+          encodeFile(file),
+        ]);
       }
       if (
         await submit(
@@ -270,6 +277,7 @@ export default function AIConfigDrawer({
         request.current = null;
         setTestMode(undefined);
         setFile(undefined);
+        setOpeningLocation(undefined);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法准备测试素材");
@@ -561,21 +569,46 @@ export default function AIConfigDrawer({
                 <Input maxLength={300} />
               </Form.Item>
             ))}
-          {(service === "avatar" || testMode === "training") && (
-            <Form.Item
-              label={service === "avatar" ? "测试照片" : "测试录音"}
-              required
-            >
+          {testMode === "training" && (
+            <Form.Item label="测试录音" required>
               <Input
                 type="file"
-                accept={
-                  service === "avatar" ? ".jpg,.jpeg,.png" : ".wav,.mp3,.m4a"
-                }
+                accept=".wav,.mp3,.m4a"
                 onChange={(event) => setFile(event.target.files?.[0])}
               />
             </Form.Item>
           )}
-          {(service === "avatar" ||
+          {service === "opening" && (
+            <>
+              <Form.Item
+                label="测试地点图"
+                htmlFor="opening-test-location"
+                required
+              >
+                <input
+                  id="opening-test-location"
+                  type="file"
+                  accept=".jpg,.jpeg,.png"
+                  onChange={(event) =>
+                    setOpeningLocation(event.target.files?.[0])
+                  }
+                />
+              </Form.Item>
+              <Form.Item
+                label="测试人物照片"
+                htmlFor="opening-test-photo"
+                required
+              >
+                <input
+                  id="opening-test-photo"
+                  type="file"
+                  accept=".jpg,.jpeg,.png"
+                  onChange={(event) => setFile(event.target.files?.[0])}
+                />
+              </Form.Item>
+            </>
+          )}
+          {(service === "opening" ||
             service === "beike" ||
             testMode === "training") && (
             <Form.Item

@@ -39,7 +39,6 @@ import {
 } from "@keagent/api-client";
 import { useQuery } from "@tanstack/react-query";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
-import { AvatarLibraryPanel } from "../components/AvatarLibrary";
 import { FactoryPreferences } from "../components/FactoryPreferences";
 import { ThemeSettings } from "@keagent/theme";
 import type {
@@ -77,13 +76,12 @@ export default function SettingsPage() {
   });
   const [profileForm] = Form.useForm<AgentProfile>();
   const [defaultsForm] = Form.useForm();
-  const [creator, setCreator] = useState<"voice" | "avatar" | null>(null);
+  const [creator, setCreator] = useState(false);
   const [assetName, setAssetName] = useState("");
   const [fileName, setFileName] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<{
-    type: "voice" | "avatar";
     id: string;
     name: string;
   } | null>(null);
@@ -113,8 +111,8 @@ export default function SettingsPage() {
       );
     }
   }
-  function openCreator(type: "voice" | "avatar") {
-    setCreator(type);
+  function openCreator() {
+    setCreator(true);
     setAssetName("");
     setFileName("");
     setAuthorized(false);
@@ -126,13 +124,11 @@ export default function SettingsPage() {
     }
     setBusy(true);
     try {
-      if (creator === "voice") {
-        const voice = await demoApi.addVoice(assetName.trim());
-        await demoApi.updateVoice(voice.id, {
-          description: `模拟样本：${fileName}`,
-        });
-      } else await demoApi.addAvatar(assetName.trim());
-      setCreator(null);
+      const voice = await demoApi.addVoice(assetName.trim());
+      await demoApi.updateVoice(voice.id, {
+        description: `模拟样本：${fileName}`,
+      });
+      setCreator(false);
       message.success("已创建模拟处理任务；素材不会上传");
     } catch (error) {
       message.error(error instanceof Error ? error.message : "创建失败");
@@ -160,7 +156,7 @@ export default function SettingsPage() {
         <Button
           type="primary"
           icon={<Plus size={15} />}
-          onClick={() => openCreator("voice")}
+          onClick={() => openCreator()}
         >
           创建音色
         </Button>
@@ -212,9 +208,7 @@ export default function SettingsPage() {
             </Button>
             <Button
               size="small"
-              onClick={() =>
-                setRenaming({ type: "voice", id: voice.id, name: voice.name })
-              }
+              onClick={() => setRenaming({ id: voice.id, name: voice.name })}
             >
               重命名
             </Button>
@@ -251,112 +245,6 @@ export default function SettingsPage() {
           </Space>
         </div>
       ))}
-    </>
-  );
-  const avatarList = (
-    <>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 20,
-        }}
-      >
-        <div>
-          <h2 style={{ fontSize: 18, margin: "0 0 6px" }}>人物形象</h2>
-          <span style={{ color: "#667085" }}>
-            使用本人照片或参考视频创建数字人开场。
-          </span>
-        </div>
-        <Button
-          type="primary"
-          icon={<Plus size={15} />}
-          onClick={() => openCreator("avatar")}
-        >
-          创建形象
-        </Button>
-      </div>
-      <Alert
-        type="info"
-        title="当前仅演示资料选择与处理状态，文件不会上传，也不会生成真实数字人。"
-        style={{ marginBottom: 20 }}
-      />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: 16,
-        }}
-      >
-        {data.avatars.map((avatar) => (
-          <div
-            key={avatar.id}
-            style={{
-              border: "1px solid #e5e7eb",
-              borderRadius: 10,
-              padding: 20,
-            }}
-          >
-            <Avatar
-              shape="square"
-              size={76}
-              src={avatar.image}
-              icon={<UserRound size={35} />}
-            />
-            <h3 style={{ margin: "15px 0 8px" }}>
-              {avatar.name} {avatar.isDefault && <Tag color="blue">默认</Tag>}
-            </h3>
-            <p style={{ color: "#667085" }}>
-              {avatar.status === "processing"
-                ? "模拟处理中…"
-                : "可用于经纪人露脸模式"}
-            </p>
-            <Space wrap>
-              <Button
-                size="small"
-                onClick={() =>
-                  setRenaming({
-                    type: "avatar",
-                    id: avatar.id,
-                    name: avatar.name,
-                  })
-                }
-              >
-                重命名
-              </Button>
-              {!avatar.isDefault && (
-                <Button
-                  size="small"
-                  disabled={avatar.status !== "ready"}
-                  onClick={() =>
-                    void act(
-                      () =>
-                        demoApi.updateAvatar(avatar.id, { isDefault: true }),
-                      "已设为默认形象",
-                    )
-                  }
-                >
-                  设为默认
-                </Button>
-              )}
-              <Popconfirm
-                title="删除这个形象？"
-                onConfirm={() =>
-                  act(() => demoApi.removeAvatar(avatar.id), "形象已删除")
-                }
-                okText="删除"
-                cancelText="取消"
-              >
-                <Button size="small" danger>
-                  删除
-                </Button>
-              </Popconfirm>
-            </Space>
-          </div>
-        ))}
-      </div>
     </>
   );
   const accountSettings = (
@@ -566,14 +454,6 @@ export default function SettingsPage() {
                 .map((item) => ({ value: item.id, label: item.name }))}
             />
           </Form.Item>
-          <Form.Item name="avatarId" label="默认形象">
-            <Select
-              allowClear
-              options={data.avatars
-                .filter((item) => item.status === "ready")
-                .map((item) => ({ value: item.id, label: item.name }))}
-            />
-          </Form.Item>
         </div>
         <Form.Item
           name="requireScriptReview"
@@ -720,8 +600,8 @@ export default function SettingsPage() {
           <strong>使用本人素材，保留明确授权</strong>
           <p style={{ lineHeight: 1.8, color: "#667085", maxWidth: 640 }}>
             {isLive
-              ? "本人声音须确认授权后才提交复刻；移除本应用音色不会自动释放供应商槽位。本人照片保存在私有存储，并在制作时提供给数字人服务；移除形象会阻止新任务使用。平台账号由本人在客户端连接，发布前确认目标账号和成片。"
-              : "声音和形象需要分别确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
+              ? "本人声音须确认授权后才提交复刻；移除本应用音色不会自动释放供应商槽位。选择 MiniMax 开场时，已授权的参考素材和开场解说会发送给 MiniMax。平台账号由本人在客户端连接，发布前确认目标账号和成片。"
+              : "使用本人声音素材需要确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
           </p>
         </div>
       </Space>
@@ -746,7 +626,7 @@ export default function SettingsPage() {
             key: "ai",
             label: "AI 请求",
             children: isLive
-              ? "按管理员配置调用文案、扩图、配音或数字人服务。原全景素材无需 AI 扩图；服务调用可能产生供应商费用。"
+              ? "按管理员配置调用文案、扩图、配音或 MiniMax 开场服务。原全景素材无需 AI 扩图；服务调用可能产生供应商费用。"
               : "未调用外部供应商；话术和生产结果均为演示",
           },
         ]}
@@ -788,11 +668,6 @@ export default function SettingsPage() {
       children: isLive ? <VoiceLibraryPanel /> : voiceList,
     },
     {
-      key: "avatars",
-      label: "人物形象",
-      children: isLive ? <AvatarLibraryPanel /> : avatarList,
-    },
-    {
       key: "platforms",
       label: "平台账号",
       children: isLive ? <DouyinAccounts /> : demoConnections,
@@ -824,9 +699,9 @@ export default function SettingsPage() {
         />
       </section>
       <Modal
-        title={creator === "voice" ? "创建我的音色" : "创建我的人物形象"}
+        title="创建我的音色"
         open={!!creator}
-        onCancel={() => setCreator(null)}
+        onCancel={() => setCreator(false)}
         onOk={() => void createAsset()}
         confirmLoading={busy}
         okText="开始模拟处理"
@@ -843,27 +718,18 @@ export default function SettingsPage() {
               value={assetName}
               maxLength={40}
               onChange={(event) => setAssetName(event.target.value)}
-              placeholder={
-                creator === "voice"
-                  ? "例如：我的日常口播音色"
-                  : "例如：我的职业形象"
-              }
+              placeholder="例如：我的日常口播音色"
             />
           </Form.Item>
-          <Form.Item
-            label={creator === "voice" ? "本人声音样本" : "本人照片或参考视频"}
-            required
-          >
+          <Form.Item label="本人声音样本" required>
             <Upload
-              accept={creator === "voice" ? "audio/*" : "image/*,video/*"}
+              accept="audio/*"
               showUploadList={false}
               beforeUpload={(file) => {
-                const valid =
-                  creator === "voice"
-                    ? file.type.startsWith("audio/")
-                    : file.type.startsWith("image/") ||
-                      file.type.startsWith("video/");
-                if (!valid || file.size > 20 * 1024 * 1024) {
+                if (
+                  !file.type.startsWith("audio/") ||
+                  file.size > 20 * 1024 * 1024
+                ) {
                   message.error("请选择正确类型且不超过 20 MB 的素材");
                   return false;
                 }
@@ -894,14 +760,9 @@ export default function SettingsPage() {
             return;
           }
           void act(async () => {
-            if (renaming.type === "voice")
-              await demoApi.updateVoice(renaming.id, {
-                name: renaming.name.trim(),
-              });
-            else
-              await demoApi.updateAvatar(renaming.id, {
-                name: renaming.name.trim(),
-              });
+            await demoApi.updateVoice(renaming.id, {
+              name: renaming.name.trim(),
+            });
             setRenaming(null);
           }, "名称已更新");
         }}

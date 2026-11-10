@@ -8,6 +8,7 @@ import {
   Alert,
   App,
   Button,
+  Checkbox,
   Drawer,
   Empty,
   Input,
@@ -34,7 +35,6 @@ import {
 } from "react-router-dom";
 import type { PanoramaDraft, PanoramaSegment } from "@keagent/shared-types";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
-import { useAvatarLibrary } from "../lib/avatarLibrary";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryPhaseTag, FactoryTaskDetail } from "./FactoryResult";
@@ -49,6 +49,8 @@ import {
   type FactoryDetail,
   type FactoryIssue,
   type FactoryList,
+  type FactoryOpeningClip,
+  type FactoryOpeningPhoto,
   type FactoryPair,
   type FactoryProperties,
   type FactoryProperty,
@@ -106,7 +108,6 @@ export function PanoramaStudio() {
   const client = useQueryClient();
   const desktop = !!window.desktop;
   const voices = useVoiceLibrary();
-  const avatars = useAvatarLibrary();
   const [propertyIds, setPropertyIds] = useState<string[]>(() =>
     initialProperty ? [initialProperty] : [],
   );
@@ -115,7 +116,7 @@ export function PanoramaStudio() {
     Record<string, string>
   >({});
   const [voiceId, setVoiceId] = useState<string>();
-  const [avatarId, setAvatarId] = useState<string>();
+  const [openingAuthorized, setOpeningAuthorized] = useState(false);
   const [excluded, setExcluded] = useState(new Set<string>());
   const [expanded, setExpanded] = useState(false);
   const [pairPage, setPairPage] = useState(1);
@@ -216,6 +217,36 @@ export function PanoramaStudio() {
       ),
     [propertyIds, templateIds, excluded],
   );
+  const faceTemplates = new Set(
+    templates
+      .filter(
+        (template) =>
+          template.config.videoMode === "avatar" && !template.opening,
+      )
+      .map(templateKey),
+  );
+  const miniMaxTemplates = new Set(
+    templates
+      .filter((template) => template.opening === "minimax")
+      .map(templateKey),
+  );
+  const useMiniMax = pairs.some((pair) =>
+    miniMaxTemplates.has(
+      templateKey({ id: pair.templateId, version: pair.version }),
+    ),
+  );
+  const needsOpeningForBatch = pairs.some((pair) =>
+    faceTemplates.has(
+      templateKey({ id: pair.templateId, version: pair.version }),
+    ),
+  );
+  const openingClip = catalog.data?.openingClip;
+  const openingPhoto = catalog.data?.openingPhoto;
+  const miniMaxReady =
+    catalog.data?.minimaxOpening &&
+    catalog.data.managedVoices &&
+    openingPhoto &&
+    openingAuthorized;
   const filters = {
     search,
     batchId,
@@ -332,7 +363,14 @@ export function PanoramaStudio() {
     setIssues([]);
   }
   async function create() {
-    const signature = JSON.stringify([pairs, voiceId, avatarId]);
+    const openingClipId = needsOpeningForBatch ? openingClip?.id : undefined;
+    const openingPhotoId = useMiniMax ? openingPhoto?.id : undefined;
+    const signature = JSON.stringify([
+      pairs,
+      voiceId,
+      openingClipId,
+      openingPhotoId,
+    ]);
     if (submission.current?.signature !== signature)
       submission.current = { signature, id: crypto.randomUUID() };
     const result = await factoryRequest<{
@@ -342,13 +380,17 @@ export function PanoramaStudio() {
       requestId: submission.current.id,
       pairs,
       voiceId,
-      avatarId,
+      openingClip: openingClipId,
+      openingPhoto: openingPhotoId,
+      openingAuthorized: useMiniMax && openingAuthorized,
+      openingRecipe: true,
     });
     setIssues(result.issues);
     if (!result.batchId) return;
     void message.success("已创建 " + pairs.length + " 条视频任务");
     submission.current = undefined;
     setPropertyIds([]);
+    setOpeningAuthorized(false);
     setExcluded(new Set());
     setPairPage(1);
     setBatchId(result.batchId);
@@ -357,6 +399,29 @@ export function PanoramaStudio() {
     setPage(1);
     setSelection([]);
     await refresh();
+  }
+  async function importOpening() {
+    const selected = await request<FactoryOpeningClip | null>(
+      "opening-clip-import",
+    );
+    if (!selected) return;
+    client.setQueryData<FactoryCatalog>(
+      ["factory-catalog"],
+      (current) => current && { ...current, openingClip: selected },
+    );
+    setIssues([]);
+  }
+  async function importOpeningPhoto() {
+    const selected = await request<FactoryOpeningPhoto | null>(
+      "opening-photo-import",
+    );
+    if (!selected) return;
+    client.setQueryData<FactoryCatalog>(
+      ["factory-catalog"],
+      (current) => current && { ...current, openingPhoto: selected },
+    );
+    setOpeningAuthorized(false);
+    setIssues([]);
   }
   async function save() {
     const draft = edits?.draft || row?.draft;
@@ -498,11 +563,28 @@ export function PanoramaStudio() {
         })
       }
       onConfirm={() => void run(confirmNext)}
+      onOpeningLocation={(asset) =>
+        void run(async () => {
+          const draft = await save();
+          if (!draft) return;
+          await factoryRequest("opening-location", {
+            id: row.id,
+            revision: draft.revision,
+            asset,
+          });
+          await refresh();
+        })
+      }
       onAct={(action) =>
         bulk(
           action,
           [row],
-          actions.find((item) => item.action === action)?.label || action,
+          actions.find((item) => item.action === action)?.label ||
+            (action === "edit-opening"
+              ? "调整开场文案"
+              : action === "room-opening"
+                ? "改用房源开场"
+                : action),
         )
       }
       onExport={(action) =>
@@ -648,6 +730,8 @@ export function PanoramaStudio() {
                     busy ||
                     !pairs.length ||
                     pairs.length > 200 ||
+                    (needsOpeningForBatch && !openingClip) ||
+                    (useMiniMax && !miniMaxReady) ||
                     !!catalog.error ||
                     !catalog.data
                   }
@@ -657,6 +741,61 @@ export function PanoramaStudio() {
                 </Button>
               </div>
             </div>
+            {useMiniMax && (
+              <div className="factory-compose-note">
+                <strong>MiniMax H3 开场</strong>
+                <Space wrap>
+                  <Button
+                    size="small"
+                    disabled={busy}
+                    onClick={() => void run(importOpeningPhoto)}
+                  >
+                    选择经纪人照片
+                  </Button>
+                  <span>{openingPhoto?.name || "JPEG / PNG，最多 3 MB"}</span>
+                </Space>
+                <Checkbox
+                  checked={openingAuthorized}
+                  disabled={busy}
+                  onChange={(event) => {
+                    setOpeningAuthorized(event.target.checked);
+                    setIssues([]);
+                  }}
+                >
+                  我确认已获得经纪人照片和开场素材的使用授权
+                </Checkbox>
+                <div>
+                  审核通过后，照片、地点图和豆包开场配音将发送给
+                  MiniMax，生成视频会计费。
+                </div>
+                {!catalog.data?.minimaxOpening && (
+                  <div>
+                    请在管理后台的「AI 服务」启用 MiniMax 开场，再刷新配置。
+                  </div>
+                )}
+              </div>
+            )}
+            {needsOpeningForBatch && (
+              <div className="factory-compose-note">
+                <Space wrap size={8}>
+                  <Button
+                    size="small"
+                    disabled={busy}
+                    onClick={() => void run(importOpening)}
+                  >
+                    {openingClip ? "更换真人开场视频" : "导入真人开场视频"}
+                  </Button>
+                  <span>
+                    {openingClip
+                      ? `${openingClip.name} · ${openingClip.duration.toFixed(1)} 秒`
+                      : "请选择 2–30 秒的 MP4"}
+                  </span>
+                </Space>
+                <div>
+                  本机保存，可在露脸批次复用。建议选无对白镜头，开场使用房源文案的配音。
+                </div>
+              </div>
+            )}
             {!templates.length && catalog.isSuccess && (
               <div className="factory-compose-note">
                 暂无已上架的视频模板。
@@ -736,26 +875,6 @@ export function PanoramaStudio() {
                               label: v.name + " · " + v.language,
                             }))
                       }
-                    />
-                  </label>
-                  <label>
-                    形象{" "}
-                    <Select
-                      aria-label="批次形象"
-                      className="factory-config-select"
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder="使用默认配置"
-                      value={avatarId}
-                      disabled={busy}
-                      onChange={(value) => {
-                        setAvatarId(value);
-                        setIssues([]);
-                      }}
-                      options={(avatars.data?.avatars || [])
-                        .filter((a) => a.status === "ready")
-                        .map((a) => ({ value: a.id, label: a.name }))}
                     />
                   </label>
                   <Link to="/properties">管理房源素材</Link>

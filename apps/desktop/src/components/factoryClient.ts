@@ -12,14 +12,25 @@ export interface FactoryTemplate {
   version: string;
   name: string;
   description?: string;
+  opening?: "minimax";
   config: Pick<
     PanoramaConfig,
     "language" | "videoMode" | "aspectRatio" | "resolution"
   >;
 }
 
+export type FactoryOpeningClip = {
+  id: string;
+  name: string;
+  duration: number;
+  bytes?: number;
+};
+export type FactoryOpeningPhoto = Pick<FactoryOpeningClip, "id" | "name">;
+
 export type FactoryCatalog = Omit<PanoramaCapabilities, "templates"> & {
   templates: FactoryTemplate[];
+  openingClip?: FactoryOpeningClip;
+  openingPhoto?: FactoryOpeningPhoto;
 };
 export type FactoryProperty = Pick<
   Property,
@@ -42,7 +53,6 @@ export type FactoryProperties = {
   defaults?: {
     videoTemplate?: { id: string; version: string };
     voiceId?: string;
-    avatarId?: string;
   };
 };
 export type FactoryPhase = keyof typeof phaseLabel;
@@ -81,6 +91,8 @@ export type FactoryDetail = FactoryRow & {
   draft?: PanoramaDraft;
   job?: PanoramaJob;
   legacy?: boolean;
+  openingLocationUrl?: string;
+  openingLocations?: { asset: string; label: string; url: string }[];
 };
 export type FactoryList = {
   rows: FactoryRow[];
@@ -95,7 +107,14 @@ export type FactoryList = {
   focused?: FactoryRow;
 };
 export type FactoryAction =
-  "confirm" | "withdraw" | "cancel" | "retry" | "copy" | "archive";
+  | "confirm"
+  | "withdraw"
+  | "cancel"
+  | "retry"
+  | "copy"
+  | "archive"
+  | "edit-opening"
+  | "room-opening";
 export type FactoryActionResult = {
   id: string;
   ok: boolean;

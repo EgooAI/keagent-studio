@@ -80,11 +80,20 @@ async function scriptImage(file, cwd, signal) {
   );
   return jpeg.toString("base64");
 }
-async function probe(file, cwd, signal) {
+async function probe(file, cwd, signal, format) {
   return JSON.parse(
     await run(
       ffprobe(),
-      ["-v", "error", "-show_streams", "-show_format", "-of", "json", file],
+      [
+        "-v",
+        "error",
+        ...(format ? ["-f", format] : []),
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        file,
+      ],
       cwd,
       signal,
     ),
@@ -292,7 +301,7 @@ async function render(
   jobDir,
   signal,
   onProgress,
-  avatarFile,
+  openingFile,
 ) {
   const c = job.config;
   const [width, height] =
@@ -337,7 +346,13 @@ async function render(
     yaw.set(scene.id, camera.end);
     // Wrap the start angle for FFmpeg while preserving continuous turns across segments.
     const start = ((((camera.start + 180) % 360) + 360) % 360) - 180;
-    const avatar = segment.kind === "opening" && c.videoMode === "avatar";
+    const localOpening =
+      segment.kind === "opening" && !c.openingPhoto && c.openingClip;
+    const openingVideo =
+      segment.kind === "opening" &&
+      (localOpening
+        ? path.join(ownerDir, "opening", `${localOpening}.mp4`)
+        : openingFile);
     const label = `${scene.room}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
     const key = hash([
       expanded ? "render-v6-expanded" : "render-v4-panorama",
@@ -352,7 +367,11 @@ async function render(
       height,
       c.subtitles,
       label,
-      avatar ? job.avatar?.taskId : null,
+      openingVideo
+        ? c.openingPhoto
+          ? path.basename(openingVideo)
+          : c.openingClip
+        : null,
       expanded ? [panOffset, panDuration] : null,
       presentation.card(job, segment.kind),
     ]);
@@ -384,8 +403,9 @@ async function render(
           presentation.card(job, segment.kind),
         ),
       );
-      const base = avatar
-        ? `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:stop_duration=5`
+      // shortcut: hold the last frame of a short clip, until templates support a timed cut to the room.
+      const base = openingVideo
+        ? `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:${c.openingClip ? "stop=-1" : "stop_duration=5"}`
         : expanded
           ? `scale=${Math.ceil(width * 1.06) * 2}:${Math.ceil(height * 1.06) * 2}:force_original_aspect_ratio=increase,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),crop=${width * 2}:${height * 2}:x='(iw-ow)*${direction === 1 ? `min(1,(${panOffset}+n/25)/${panDuration})` : `(1-min(1,(${panOffset}+n/25)/${panDuration}))`}':y='(ih-oh)/2',scale=${width}:${height},setsar=1`
           : `scale=4096:2048,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${start}:reset_rot=1,setsar=1`;
@@ -396,8 +416,10 @@ async function render(
           "-v",
           "error",
           "-y",
+          ...(localOpening ? ["-f", "mov"] : []),
           "-i",
-          avatar ? avatarFile : path.join(ownerDir, "assets", scene.asset),
+          openingVideo || path.join(ownerDir, "assets", scene.asset),
+          ...(localOpening ? ["-map", "0:V:0"] : []),
           "-vf",
           base +
             (c.subtitles || job.sample || c.design === "standard"
@@ -434,7 +456,7 @@ async function render(
       start: elapsed,
       duration: segment.duration,
       audio: segment.audio,
-      camera: avatar || expanded ? null : camera,
+      camera: openingVideo || expanded ? null : camera,
       captions: segment.captions.map(({ text, start, end }) => ({
         text,
         start: elapsed + start,

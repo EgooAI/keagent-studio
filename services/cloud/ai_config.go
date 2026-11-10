@@ -46,10 +46,6 @@ func aiServicesFor(ctx context.Context) []aiService {
 			service.Purpose = "公共音色语音合成"
 			service.Model = "由公共音色指定"
 			service.Endpoint = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
-		case "avatar":
-			service.Purpose = "本人照片与开场音频生成数字人"
-			service.Model = photoAvatarProvider
-			service.Endpoint = "https://visual.volcengineapi.com"
 		case "voice-clone":
 			service.Purpose = "本人音色训练和查询"
 			service.Model = values["VOLC_VOICE_CLONE_RESOURCE_ID"]
@@ -64,13 +60,16 @@ func aiServicesFor(ctx context.Context) []aiService {
 		case "beike":
 			service.Purpose = "查询房屋档案与室内照片"
 			service.Endpoint = "https://gw-open.ke.com"
+		case "opening":
+			service.Purpose = "用人物照片、地点图和解说音频生成开场"
+			service.Model = minimaxModel
+			service.Endpoint = minimaxBase
 		}
 		if len(service.Missing)+len(service.Issues) > 0 {
 			service.State = "incomplete"
 		}
 		if spec.Fields[len(spec.Fields)-1].Kind == "secret" && values[spec.Fields[len(spec.Fields)-1].Key] == "" ||
-			spec.Group == "speech" && values["VOLC_TTS_API_KEY"] == "" ||
-			spec.ID == "avatar" && values["VOLC_ACCESS_KEY_ID"] == "" && values["VOLC_SECRET_ACCESS_KEY"] == "" {
+			spec.Group == "speech" && values["VOLC_TTS_API_KEY"] == "" {
 			service.State = "missing"
 		}
 		if snapshot.locked[spec.Group] {

@@ -10,16 +10,17 @@ func builtinTestProperty() object {
 }
 
 func (s *server) factoryPreferences(ctx context.Context, a actor, input object) (object, error) {
-	if len(input) != 4 {
-		return nil, fail(422, "请提供默认模板、版本、音色和形象")
+	delete(input, "avatarId")
+	if len(input) != 3 {
+		return nil, fail(422, "请提供默认模板、版本和音色")
 	}
-	for _, key := range []string{"templateId", "templateVersion", "voiceId", "avatarId"} {
+	for _, key := range []string{"templateId", "templateVersion", "voiceId"} {
 		value, ok := input[key].(string)
 		if !ok || len(value) > 150 || strings.TrimSpace(value) != value {
 			return nil, fail(422, "默认制作配置字段无效："+key)
 		}
 	}
-	result := object{"videoTemplate": object{"id": "", "version": ""}, "voiceId": input["voiceId"], "avatarId": input["avatarId"], "propertyIds": []any{}, "requireScriptReview": true}
+	result := object{"videoTemplate": object{"id": "", "version": ""}, "voiceId": input["voiceId"], "propertyIds": []any{}, "requireScriptReview": true}
 	var template object
 	if str(input["templateId"]) != "" {
 		if str(input["templateVersion"]) == "" {
@@ -56,11 +57,6 @@ func (s *server) factoryPreferences(ctx context.Context, a actor, input object) 
 		}
 		if template != nil && language != str(obj(obj(template["production"])["config"])["language"]) {
 			return nil, fail(422, "默认音色的语言与默认模板不一致")
-		}
-	}
-	if avatarID := str(input["avatarId"]); avatarID != "" {
-		if _, err := s.activeAvatar(ctx, a.UserID, avatarID); err != nil {
-			return nil, fail(422, "默认形象已移除或不属于本人，请重新选择")
 		}
 	}
 	return result, nil

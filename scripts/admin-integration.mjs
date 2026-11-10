@@ -288,9 +288,12 @@ try {
   assert.ok(overview.devices >= 123);
   const ai = await ok("/v1/admin/ai-config");
   assert.deepEqual(ai.services.map((service) => service.id).sort(), [
-    "avatar",
+    "beike",
+    "expansion",
+    "opening",
     "script",
     "tts",
+    "voice-clone",
   ]);
   const publicData = JSON.stringify({
     users,
@@ -306,7 +309,7 @@ try {
   for (const key of [
     "AI_API_KEY",
     "VOLC_TTS_API_KEY",
-    "VOLC_SECRET_ACCESS_KEY",
+    "MINIMAX_API_KEY",
     "BETTER_AUTH_SECRET",
   ])
     if (process.env[key])

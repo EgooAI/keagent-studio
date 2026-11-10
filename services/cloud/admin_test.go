@@ -37,10 +37,10 @@ func TestAdminPageValidation(t *testing.T) {
 }
 
 func TestAdminAISafeConfiguration(t *testing.T) {
-	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "VOLC_TTS_API_KEY", "VOLC_ACCESS_KEY_ID", "VOLC_SECRET_ACCESS_KEY", "VOLC_TOS_BUCKET", "VOLC_TOS_REGION"} {
+	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "VOLC_TTS_API_KEY", "MINIMAX_API_KEY"} {
 		t.Setenv(key, "")
 	}
-	if services := aiServices(); services[0].State != "missing" || services[1].State != "missing" || services[2].State != "missing" {
+	if services := aiServices(); services[0].State != "missing" || services[1].State != "missing" || services[len(services)-1].State != "missing" {
 		t.Fatal("missing providers reported configured")
 	}
 	t.Setenv("AI_API_KEY", "secret-key-do-not-expose")
@@ -66,19 +66,11 @@ func TestAdminAISafeConfiguration(t *testing.T) {
 	if aiServices()[1].State != "configured" {
 		t.Fatal("valid TTS configuration rejected")
 	}
-	t.Setenv("VOLC_ACCESS_KEY_ID", "private-ak")
-	t.Setenv("VOLC_SECRET_ACCESS_KEY", "private-sk")
-	t.Setenv("VOLC_TOS_BUCKET", "valid-bucket")
-	t.Setenv("VOLC_TOS_REGION", "bad.region")
-	if aiServices()[2].State != "incomplete" {
-		t.Fatal("invalid TOS region accepted")
-	}
-	t.Setenv("VOLC_TOS_REGION", "cn-beijing")
-	if aiServices()[2].State != "configured" {
-		t.Fatal("valid avatar config rejected")
+	if _, exists := specFor("avatar"); exists {
+		t.Fatal("retired avatar service is still exposed")
 	}
 	value, err := (&server{}).panorama(t.Context(), actor{}, "capabilities", []byte(`{}`))
-	if err != nil || value.(object)["ai"] != false || value.(object)["volcTts"] != true || value.(object)["volcAvatar"] != true {
+	if err != nil || value.(object)["ai"] != false || value.(object)["volcTts"] != true {
 		t.Fatal("capability rules diverged from admin checks", value, err)
 	}
 }

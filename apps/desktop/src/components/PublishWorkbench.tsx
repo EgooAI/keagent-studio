@@ -264,9 +264,6 @@ export function PublishWorkbench({
               {queue.paused ? "恢复发布队列" : "暂停发布队列"}
             </Button>
           )}
-          <Link className="muted" to="/publish/demo">
-            演示
-          </Link>
         </Space>
       </section>
       {queue.rows.some((row) => row.state === "unknown") && (

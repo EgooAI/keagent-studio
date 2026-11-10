@@ -24,6 +24,24 @@ function registerAuth() {
         });
         return result.canceled ? [] : result.filePaths;
       },
+      openIntro: async () => {
+        const result = await dialog.showOpenDialog({
+          title: "导入真人开场视频",
+          properties: ["openFile"],
+          filters: [{ name: "MP4 视频", extensions: ["mp4"] }],
+        });
+        return result.canceled ? undefined : result.filePaths[0];
+      },
+      openIntroPhoto: async () => {
+        const result = await dialog.showOpenDialog({
+          title: "导入经纪人照片",
+          properties: ["openFile"],
+          filters: [
+            { name: "JPEG / PNG 图片", extensions: ["jpg", "jpeg", "png"] },
+          ],
+        });
+        return result.canceled ? undefined : result.filePaths[0];
+      },
       save: async (defaultPath) => {
         const result = await dialog.showSaveDialog({
           defaultPath,
@@ -35,11 +53,9 @@ function registerAuth() {
     async (operation, payload, signal) => {
       signal?.throwIfAborted();
       const result = await request(
-        operation === "avatar-list"
-          ? "/v1/avatars/list"
-          : operation === "voice-list"
-            ? "/v1/voices/list"
-            : `/v1/panorama/${operation}`,
+        operation === "voice-list"
+          ? "/v1/voices/list"
+          : `/v1/panorama/${operation}`,
         payload,
         true,
         signal,
@@ -219,11 +235,8 @@ function registerAuth() {
     "updateProfile",
     "updateFactoryPreferences",
     "addVoice",
-    "addAvatar",
     "updateVoice",
-    "updateAvatar",
     "removeVoice",
-    "removeAvatar",
     "connectAccount",
     "disconnectAccount",
   ]);
@@ -238,11 +251,7 @@ function registerAuth() {
       event.senderFrame !== event.sender.mainFrame ||
       !Array.isArray(args) ||
       JSON.stringify(args).length >
-        (method === "voice.create"
-          ? 14 * 1024 * 1024
-          : method === "avatar.create"
-            ? 8 * 1024 * 1024
-            : 1048576)
+        (method === "voice.create" ? 14 * 1024 * 1024 : 1048576)
     )
       throw new Error("非法桌面请求");
     if (method === "login") {
@@ -294,18 +303,6 @@ function registerAuth() {
       ].includes(method)
     ) {
       return (await request(`/v1/voices/${method.slice(6)}`, args[0] || {}))
-        .data;
-    }
-    if (
-      [
-        "avatar.list",
-        "avatar.create",
-        "avatar.preview",
-        "avatar.refresh",
-        "avatar.remove",
-      ].includes(method)
-    ) {
-      return (await request(`/v1/avatars/${method.slice(7)}`, args[0] || {}))
         .data;
     }
     if (method === "douyin.cloud") {

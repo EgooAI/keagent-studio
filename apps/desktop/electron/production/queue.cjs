@@ -169,7 +169,12 @@ class ProductionQueue {
     const data = this.data(owner);
     const state = this.workflow.store(owner);
     const scope = { userId, owner, assertCurrent };
-    if (method === "catalog") return this.workflow.capabilities(true);
+    if (method === "catalog")
+      return {
+        ...(await this.workflow.capabilities(true)),
+        openingClip: state.openingClip,
+        openingPhoto: state.openingPhoto,
+      };
     if (method === "properties") {
       const readyIds = Object.entries(state.imports)
         .filter(([, value]) => value.scenes?.length)
@@ -257,13 +262,52 @@ class ProductionQueue {
       ensure(item, "视频任务不存在");
       const draft = state.drafts.find((value) => value.id === item.draftId);
       const job = state.jobs.find((value) => value.id === item.jobId);
+      const location = draft?.config.openingLocation;
       return {
         ...this.summary(item, job, draft),
         config: item.config,
         legacy: item.legacy,
         draft: draft && this.workflow.draftView(owner, draft),
         job: job && this.workflow.jobView(owner, job),
+        openingLocationUrl:
+          location?.asset &&
+          this.workflow.url(owner, `assets/${location.asset}`),
+        openingLocations:
+          location?.source === "property"
+            ? this.workflow.openingLocations(owner, draft.scenes)
+            : undefined,
       };
+    }
+    if (method === "opening-location") {
+      const item = data.items.find((row) => row.id === input.id);
+      ensure(item?.phase === "review", "请先返回待审核，再更换地点图");
+      const draft = this.workflow.draft(owner, item.draftId, input.revision);
+      const location = draft.config.openingLocation;
+      ensure(
+        location?.source === "property" &&
+          this.workflow
+            .openingLocations(owner, draft.scenes)
+            .some(({ asset }) => asset === input.asset),
+        "请选择当前房源的原始实拍图",
+      );
+      if (location.asset === input.asset) return;
+      const previous = draft.config;
+      draft.config = {
+        ...previous,
+        openingLocation: { ...location, asset: input.asset },
+      };
+      draft.revision++;
+      try {
+        this.update(owner, item, {
+          config: draft.config,
+          approvedRevision: undefined,
+        });
+      } catch (error) {
+        draft.config = previous;
+        draft.revision--;
+        throw error;
+      }
+      return null;
     }
     if (method === "pause" || method === "resume") {
       this.update(owner, data, {
@@ -325,10 +369,20 @@ class ProductionQueue {
       "每批可提交 1 至 200 条视频",
     );
     ensure(
-      [input.voiceId, input.avatarId].every(
-        (id) => id === undefined || id === "" || validID(id),
-      ),
-      "音色或形象引用无效",
+      (input.voiceId === undefined ||
+        input.voiceId === "" ||
+        validID(input.voiceId)) &&
+        (input.openingClip === undefined ||
+          (typeof input.openingClip === "string" &&
+            /^[a-f0-9]{64}$/.test(input.openingClip))) &&
+        (input.openingPhoto === undefined ||
+          (typeof input.openingPhoto === "string" &&
+            /^[a-f0-9]{64}$/.test(input.openingPhoto))),
+      "音色或开场视频引用无效",
+    );
+    ensure(
+      !input.openingPhoto || input.openingAuthorized === true,
+      "请确认经纪人照片和开场素材的使用授权",
     );
     for (const pair of input.pairs)
       ensure(
@@ -338,7 +392,13 @@ class ProductionQueue {
           validID(pair.version),
         "房源或模板引用无效",
       );
-    const fingerprint = hash([input.pairs, input.voiceId, input.avatarId]);
+    const fingerprint = hash([
+      input.pairs,
+      input.voiceId,
+      input.openingClip ?? input.avatarId,
+      ...(input.openingPhoto ? [input.openingPhoto] : []),
+      ...(input.openingRecipe === true ? ["opening-recipe"] : []),
+    ]);
     const existing = () => {
       const previous = data.batches.find(
         (batch) => batch.id === input.requestId,
@@ -353,7 +413,7 @@ class ProductionQueue {
     const previous = existing();
     if (previous) return previous;
     ensure(this.workflow.factoryProperties, "房源服务未连接");
-    const [propertyData, caps, voices, avatars] = await Promise.all([
+    const [propertyData, caps, voices] = await Promise.all([
       this.workflow.factoryProperties({
         ids: [...new Set(input.pairs.map((pair) => pair.propertyId))],
       }),
@@ -361,7 +421,6 @@ class ProductionQueue {
         templateIds: [...new Set(input.pairs.map((pair) => pair.templateId))],
       }),
       this.workflow.remote("voice-list", {}),
-      this.workflow.remote("avatar-list", {}),
     ]);
     assertCurrent();
     const raced = existing();
@@ -372,6 +431,8 @@ class ProductionQueue {
     );
     const defaults = propertyData.defaults || {};
     const state = this.workflow.store(owner);
+    const openingClip = state.openingClip?.id;
+    const fixedOpenings = new Map();
     const items = [];
     const issues = [];
     const seen = new Set();
@@ -418,8 +479,12 @@ class ProductionQueue {
         continue;
       }
       const recipe = template.production.config;
+      const templateOpening = template.production.opening;
+      const openingPhoto =
+        templateOpening || input.openingRecipe !== true
+          ? input.openingPhoto
+          : undefined;
       const voiceId = input.voiceId || defaults.voiceId;
-      const avatarId = input.avatarId || defaults.avatarId;
       const own = (voices.voices || []).filter(
         (v) =>
           v.status === "ready" &&
@@ -437,17 +502,15 @@ class ProductionQueue {
       const publicVoice =
         pub.find((v) => v.id === voiceId) ||
         (!input.voiceId ? pub[0] : undefined);
-      const avatar = (avatars.avatars || []).filter(
-        (a) => a.status === "ready",
-      );
-      const chosenAvatar =
-        avatar.find((a) => a.id === avatarId) ||
-        (!input.avatarId ? avatar[0] : undefined);
       const system = caps.voices.find(
         (v) =>
           v.language === recipe.language &&
           (!input.voiceId || sample || v.name === input.voiceId),
       );
+      if (sample && (templateOpening || openingPhoto)) {
+        issue("MiniMax 开场请选择真实房源");
+        continue;
+      }
       if (sample && recipe.videoMode === "avatar") {
         issue("测试房源仅支持配音模板");
         continue;
@@ -466,20 +529,76 @@ class ProductionQueue {
         continue;
       }
       if (
+        (templateOpening || openingPhoto) &&
+        (!caps.minimaxOpening || !caps.managedVoices)
+      ) {
+        issue("请在管理后台启用 MiniMax 开场和豆包语音");
+        continue;
+      }
+      if (
+        templateOpening &&
+        (!openingPhoto || openingPhoto !== state.openingPhoto?.id)
+      ) {
+        issue("请选择经纪人照片并确认素材使用授权");
+        continue;
+      }
+      if (
+        !templateOpening &&
+        openingPhoto &&
+        (openingPhoto !== state.openingPhoto?.id ||
+          input.openingClip !== openingClip ||
+          !openingClip ||
+          state.openingClip.duration > 5 ||
+          state.openingClip.bytes > 8 * 1024 * 1024)
+      ) {
+        issue("请选择 2–5 秒的参考视频和经纪人照片，素材更新后请刷新");
+        continue;
+      }
+      if (
         !sample &&
         recipe.videoMode === "avatar" &&
-        (!chosenAvatar || !caps.volcAvatar)
+        !templateOpening &&
+        (!openingClip || input.openingClip !== openingClip)
       ) {
         issue(
-          chosenAvatar
-            ? "数字人制作服务未配置"
-            : "露脸模板需要已就绪的本人形象",
+          openingClip
+            ? "真人开场视频已更新，请刷新后重新创建"
+            : "请先导入真人开场视频",
         );
         continue;
       }
       if (!sample && !caps.ai) {
         issue("AI 文案服务未配置");
         continue;
+      }
+      let openingLocation;
+      let templateSnapshot = template;
+      if (templateOpening) {
+        const { location } = templateOpening;
+        openingLocation = { source: location.source };
+        if (location.source === "fixed") {
+          if (!fixedOpenings.has(template.id)) {
+            ensure(
+              typeof location.image === "string",
+              "模板固定地点图缺失，请联系管理员",
+            );
+            const image = await this.workflow.importBytes(
+              owner,
+              Buffer.from(location.image, "base64"),
+              "模板固定地点图",
+              "reference",
+            );
+            fixedOpenings.set(template.id, image.asset);
+          }
+          openingLocation.asset = fixedOpenings.get(template.id);
+          templateSnapshot = {
+            ...template,
+            production: {
+              ...template.production,
+              opening: { ...templateOpening, location: { source: "fixed" } },
+            },
+          };
+        }
       }
       const resolved = config(
         {
@@ -497,7 +616,12 @@ class ProductionQueue {
             sample || !caps.managedVoices
               ? system.name
               : (personal || publicVoice).id,
-          avatarId: recipe.videoMode === "avatar" ? chosenAvatar.id : "",
+          openingClip:
+            !templateOpening && (recipe.videoMode === "avatar" || openingPhoto)
+              ? openingClip
+              : undefined,
+          openingPhoto,
+          openingLocation,
         },
         [template],
       );
@@ -508,12 +632,15 @@ class ProductionQueue {
         config: resolved,
         templateVersion: template.version,
         templateName: template.name,
-        templateSnapshot: template,
+        templateSnapshot,
         phase: "pending",
         createdAt,
       });
     }
     if (issues.length) return { issues };
+    assertCurrent();
+    const completed = existing();
+    if (completed) return completed;
     data.batches.unshift({
       id: input.requestId,
       createdAt,
@@ -603,14 +730,49 @@ class ProductionQueue {
       if (item.phase === "archiveFailed")
         patch({ phase: "archiving", error: undefined });
       else if (item.approvedRevision) {
-        const job = state.jobs.find((value) => value.id === item.jobId);
-        ensure(
-          !job?.avatar?.submitting || job.avatar.taskId,
-          "数字人提交结果未知，请先核对火山控制台",
-        );
         enqueue({});
       } else
         patch({ phase: item.draftId ? "review" : "pending", error: undefined });
+    } else if (action === "room-opening" || action === "edit-opening") {
+      ensure(
+        (item.phase === "failed" ||
+          (action === "room-opening" && item.phase === "review")) &&
+          !this.workflow.active.has(item.jobId),
+        "请等待任务停止后再调整开场",
+      );
+      ensure(
+        Number.isSafeInteger(revision) && revision > 0,
+        "文案版本无效，请刷新后重试",
+      );
+      const draft = this.workflow.draft(owner, item.draftId, revision);
+      ensure(
+        draft.config.openingPhoto ||
+          (action === "room-opening" &&
+            draft.config.videoMode === "avatar" &&
+            !draft.config.roomOpening),
+        "当前任务无法调整开场",
+      );
+      const previousConfig = draft.config;
+      if (action === "room-opening") {
+        draft.config = { ...draft.config, roomOpening: true };
+        delete draft.config.openingClip;
+        delete draft.config.openingPhoto;
+        delete draft.config.openingLocation;
+      }
+      draft.revision++;
+      try {
+        patch({
+          config: draft.config,
+          phase: "review",
+          approvedRevision: undefined,
+          jobId: undefined,
+          error: undefined,
+        });
+      } catch (error) {
+        draft.config = previousConfig;
+        draft.revision--;
+        throw error;
+      }
     } else if (action === "copy") {
       ensure(item.templateSnapshot, "原模板快照不可用，请重新选择模板");
       const original = state.drafts.find((value) => value.id === item.draftId);
@@ -776,6 +938,26 @@ class ProductionQueue {
             );
         await this.workflow.active.get(job.id)?.promise;
         assertCurrent();
+        if (job.status === "failed" && job.reviewOpening) {
+          const draft = this.workflow.draft(
+            owner,
+            item.draftId,
+            item.approvedRevision,
+          );
+          draft.revision++;
+          try {
+            patch({
+              phase: "review",
+              jobId: undefined,
+              approvedRevision: undefined,
+              error: job.error,
+            });
+          } catch (error) {
+            draft.revision--;
+            throw error;
+          }
+          return;
+        }
         if (job.status !== "succeeded")
           throw new Error(job.error || "视频制作未完成");
         patch({ phase: job.sample ? "done" : "archiving" });

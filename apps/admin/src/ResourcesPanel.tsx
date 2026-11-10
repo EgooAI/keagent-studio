@@ -550,7 +550,7 @@ function ResourceForm({
   onSave: (values: Values) => void;
 }) {
   let production = source?.production || defaultProduction;
-  if (newVersion && production.schemaVersion === 1) {
+  if (!readOnly && production.schemaVersion === 1) {
     const { openingTemplate, sceneTemplate, closingTemplate, ...config } =
       production.config;
     production = {
@@ -648,7 +648,7 @@ function ResourceForm({
       >
         <Input.TextArea rows={4} maxLength={4000} showCount />
       </Form.Item>
-      <ProductionTemplateEditor />
+      <ProductionTemplateEditor disabled={busy || readOnly} />
       {!formId && !readOnly && (
         <Button type="primary" htmlType="submit" loading={busy}>
           保存草稿

@@ -7,7 +7,6 @@ export {
 } from "./artifacts";
 import type {
   AgentProfile,
-  Avatar,
   ImportResult,
   Lead,
   Platform,
@@ -400,13 +399,6 @@ function validateConfig(state: Workspace, config: ProductionConfig) {
     )
   )
     throw new Error("请选择可用音色。");
-  if (
-    config.videoMode === "avatar" &&
-    !state.avatars.some(
-      (avatar) => avatar.id === config.avatarId && avatar.status === "ready",
-    )
-  )
-    throw new Error("经纪人露脸模式需要选择可用形象。");
 }
 
 function fingerprint(value: unknown): string {
@@ -512,10 +504,7 @@ export function advanceWorkspace(source: Workspace): Workspace {
     }
     task.progress = Math.min(100, task.progress + 40);
     if (task.progress < 100) return;
-    const stages: Stage[] =
-      task.configSnapshot.videoMode === "avatar"
-        ? ["prepare", "script", "tts", "avatar", "render", "cover"]
-        : ["prepare", "script", "tts", "render", "cover"];
+    const stages: Stage[] = ["prepare", "script", "tts", "render", "cover"];
     if (task.stage === "script") {
       if (!task.script) task.script = scriptFor(task.propertySnapshot);
       if (
@@ -526,7 +515,7 @@ export function advanceWorkspace(source: Workspace): Workspace {
         return;
       }
     }
-    const index = stages.indexOf(task.stage);
+    const index = stages.indexOf(task.stage === "avatar" ? "tts" : task.stage);
     if (index === stages.length - 1) {
       task.status = "succeeded";
       task.completedAt = now();
@@ -564,12 +553,6 @@ export function advanceWorkspace(source: Workspace): Workspace {
   state.voices.forEach((voice) => {
     if (voice.status === "processing") {
       voice.status = "ready";
-      changed = true;
-    }
-  });
-  state.avatars.forEach((avatar) => {
-    if (avatar.status === "processing") {
-      avatar.status = "ready";
       changed = true;
     }
   });
@@ -722,7 +705,7 @@ const mockApi = {
         );
       validateConfig(state, config);
       const snapshot = clone(config);
-      if (snapshot.videoMode === "voiceover") delete snapshot.avatarId;
+      delete snapshot.avatarId;
       const batch: ProductionBatch = {
         id: id("batch"),
         configSnapshot: snapshot,
@@ -964,13 +947,11 @@ const mockApi = {
     templateId: string;
     templateVersion: string;
     voiceId: string;
-    avatarId: string;
   }) {
     return change((state) => {
       Object.assign(state.profile.defaults, {
         videoTemplate: { id: input.templateId, version: input.templateVersion },
         voiceId: input.voiceId,
-        avatarId: input.avatarId,
         requireScriptReview: true,
       });
       return state.profile.defaults;
@@ -989,19 +970,6 @@ const mockApi = {
       return voice;
     });
   },
-  async addAvatar(name: string) {
-    return change((state) => {
-      const avatar: Avatar = {
-        id: id("avatar"),
-        name: nonempty(name, "形象名称"),
-        image: "/media/agent.svg",
-        status: "processing",
-        isDefault: false,
-      };
-      state.avatars.push(avatar);
-      return avatar;
-    });
-  },
   async updateVoice(voiceId: string, patch: Partial<Voice>) {
     return change((state) => {
       const voice = required(
@@ -1018,22 +986,6 @@ const mockApi = {
       return voice;
     });
   },
-  async updateAvatar(avatarId: string, patch: Partial<Avatar>) {
-    return change((state) => {
-      const avatar = required(
-        state.avatars.find((item) => item.id === avatarId),
-        "形象不存在。",
-      );
-      if (patch.isDefault) {
-        state.avatars.forEach((item) => {
-          item.isDefault = item.id === avatarId;
-        });
-        state.profile.defaults.avatarId = avatarId;
-      }
-      Object.assign(avatar, patch, { id: avatarId });
-      return avatar;
-    });
-  },
   async removeVoice(voiceId: string) {
     return change((state) => {
       if (
@@ -1043,17 +995,6 @@ const mockApi = {
       )
         throw new Error("此音色仍被默认配置、草稿或任务引用，暂不能删除。");
       state.voices = state.voices.filter((voice) => voice.id !== voiceId);
-    });
-  },
-  async removeAvatar(avatarId: string) {
-    return change((state) => {
-      if (
-        state.profile.defaults.avatarId === avatarId ||
-        state.draft.avatarId === avatarId ||
-        state.tasks.some((task) => task.configSnapshot.avatarId === avatarId)
-      )
-        throw new Error("此形象仍被默认配置、草稿或任务引用，暂不能删除。");
-      state.avatars = state.avatars.filter((avatar) => avatar.id !== avatarId);
     });
   },
   async connectAccount(platform: Platform) {

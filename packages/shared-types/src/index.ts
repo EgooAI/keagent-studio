@@ -220,7 +220,7 @@ export const stageLabels: Record<Stage, string> = {
   prepare: "准备素材",
   script: "生成文案",
   tts: "合成配音",
-  avatar: "数字人开场",
+  avatar: "旧版开场",
   render: "视频与字幕合成",
   cover: "生成封面",
 };
@@ -239,4 +239,3 @@ export const publishLabels: Record<PublishStatus, string> = {
 };
 export type * from "./admin";
 export type * from "./voice";
-export type * from "./avatar";

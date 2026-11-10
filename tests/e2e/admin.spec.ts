@@ -116,18 +116,18 @@ async function fixture(page: Page) {
       },
     },
   ];
-  const services: AdminAIService[] = ["script", "tts", "avatar"].map(
+  const services: AdminAIService[] = ["script", "tts", "opening"].map(
     (id, i) => ({
       id: id as AdminAIService["id"],
-      label: ["文案生成", "语音配音", "数字人开场"][i],
+      label: ["文案生成", "语音配音", "MiniMax 开场"][i],
       purpose: ["生成房源讲解文案", "将文案转换为配音", "生成经纪人露脸开场"][
         i
       ],
-      provider: i ? "火山引擎" : "DeepSeek",
+      provider: ["DeepSeek", "火山引擎", "MiniMax"][i],
       model: i ? "" : "deepseek-flash",
       endpoint: i ? "" : "https://api.deepseek.com",
       state: "incomplete",
-      missing: [i ? "VOLC_TTS_API_KEY" : "AI_API_KEY"],
+      missing: [["AI_API_KEY", "VOLC_TTS_API_KEY", "MINIMAX_API_KEY"][i]],
       issues: [],
       note: "配置检查不验证供应商连接或付费调用",
     }),
@@ -368,8 +368,8 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   const labels = {
     script: "多模态文案",
     tts: "火山配音",
+    opening: "MiniMax 开场",
     "voice-clone": "声音复刻",
-    avatar: "火山数字人",
     expansion: "百炼扩图",
     beike: "贝壳取材",
   } satisfies Record<AdminAIService["id"], string>;
@@ -844,6 +844,68 @@ test("模板目录只显示当前版本，编辑页可更新、启用和切回�
   await page.getByRole("button", { name: "确认启用", exact: true }).click();
   await expect(
     page.getByText("已启用版本 1.0.0", { exact: true }),
+  ).toBeVisible();
+});
+
+test("公共模板可上传 MiniMax 固定地点图并在预览中核对", async ({ page }) => {
+  const data = await fixture(page);
+  await page.goto(adminBase + "/#/admin/resources");
+  await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "新建模板草稿",
+    exact: true,
+  });
+  const choose = async (label: string, value: string) => {
+    await dialog
+      .getByRole("combobox", { name: new RegExp(label + "$") })
+      .click();
+    await page
+      .locator(".ant-select-dropdown:visible")
+      .getByText(value, { exact: true })
+      .click();
+  };
+  await dialog.getByLabel("模板名称", { exact: true }).fill("小区开场模板");
+  await choose("视频表现", "经纪人开场露脸");
+  await choose("开场方式", "MiniMax H3 生成");
+  await expect(dialog.getByText("随房源取图", { exact: true })).toBeVisible();
+  await choose("地点图片", "模板固定图片");
+  await dialog
+    .getByLabel("画面提示词", { exact: true })
+    .fill("经纪人站在入口，自然中景。");
+  await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect(
+    dialog.getByText("请上传模板固定地点图", { exact: true }),
+  ).toBeVisible();
+  await dialog
+    .getByLabel("上传固定地点图")
+    .setInputFiles("apps/desktop/public/media/interior-1.jpg");
+  await expect(
+    dialog.getByRole("img", { name: "模板固定地点图预览" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(
+    (
+      data.writes.find((write) => write.path.endsWith("/resources"))?.body
+        .production as typeof defaultProduction | undefined
+    )?.opening,
+  ).toEqual({
+    prompt: "经纪人站在入口，自然中景。",
+    location: { source: "fixed", image: expect.stringMatching(/^\/9j\//) },
+  });
+  const row = page.getByRole("row").filter({
+    has: page.getByRole("button", { name: "小区开场模板", exact: true }),
+  });
+  await row.getByRole("button", { name: "预览校验", exact: true }).click();
+  const preview = page.getByRole("dialog", {
+    name: "制作模板预览校验",
+    exact: true,
+  });
+  await expect(
+    preview.getByRole("img", { name: "模板固定地点图", exact: true }),
+  ).toBeVisible();
+  await expect(
+    preview.getByText("经纪人站在入口，自然中景。", { exact: true }),
   ).toBeVisible();
 });
 

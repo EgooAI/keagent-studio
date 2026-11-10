@@ -107,21 +107,6 @@ try {
   }
   assert.ok(Array.isArray(catalog.publicVoices));
   assert.equal(catalog.cloudVoice, undefined);
-  await page.getByRole("tab", { name: "人物形象", exact: true }).click();
-  await page
-    .getByRole("heading", { name: "我的人物形象", exact: true })
-    .waitFor();
-  const avatars = await page.evaluate(() =>
-    window.desktop.request("avatar.list"),
-  );
-  if (!avatars.uploadEnabled)
-    assert.equal(
-      await page
-        .getByRole("button", { name: "上传本人照片", exact: true })
-        .isDisabled(),
-      true,
-    );
-  await page.screenshot({ path: resolve(output, "own-photo-required.png") });
   await electron.evaluate(() => {
     const original = globalThis.fetch;
     globalThis.fetch = (...args) =>
@@ -156,7 +141,7 @@ try {
   });
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   console.log(
-    "PASS: real Electron login, admin-managed voice catalog, >1MB upload envelope, missing-config and required-photo UI; factory personal-voice selection uses a catalog fixture",
+    "PASS: real Electron login, admin-managed voice catalog, >1MB upload envelope and missing-config UI; factory personal-voice selection uses a catalog fixture",
   );
 } catch (error) {
   if (activePage) {
@@ -187,44 +172,8 @@ try {
     viewport: { width: 1440, height: 900 },
   });
   const voices = [];
-  const avatars = [];
   let creates = 0;
   const preview = sampleWAV(1).toString("base64");
-  const photo = Buffer.from(
-    await page.evaluate(() => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 32;
-      canvas.height = 32;
-      const context = canvas.getContext("2d");
-      context.fillStyle = "#722ed1";
-      context.fillRect(0, 0, 32, 32);
-      return canvas.toDataURL("image/png").split(",")[1];
-    }),
-    "base64",
-  );
-  await page.route("**/v1/avatars/*", async (route) => {
-    const operation = new URL(route.request().url()).pathname.split("/").at(-1);
-    const input = route.request().postDataJSON();
-    if (operation === "list")
-      return route.fulfill({ json: { avatars, uploadEnabled: true } });
-    if (operation === "create") {
-      assert.equal(input.authorized, true);
-      assert.equal(input.photo, photo.toString("base64"));
-      const avatar = {
-        id: "fixture-own-photo",
-        name: input.name,
-        status: "ready",
-        createdAt: new Date().toISOString(),
-      };
-      avatars.push(avatar);
-      return route.fulfill({ json: avatar });
-    }
-    if (operation === "preview")
-      return route.fulfill({
-        json: { photo: photo.toString("base64"), mime: "image/png" },
-      });
-    throw new Error("Unexpected avatar fixture operation " + operation);
-  });
   await page.route("**/v1/voices/*", async (route) => {
     const operation = new URL(route.request().url()).pathname.split("/").at(-1);
     const input = route.request().postDataJSON();
@@ -299,31 +248,9 @@ try {
   await page.screenshot({
     path: resolve(output, "personal-voice-fixture.png"),
   });
-  await page.getByRole("tab", { name: "人物形象", exact: true }).click();
-  await page.getByRole("button", { name: "上传本人照片", exact: true }).click();
-  const photoDialog = page.getByRole("dialog");
-  await photoDialog.locator("input.ant-input").fill("本人照片上传夹具");
-  await photoDialog.locator('input[type="file"]').setInputFiles({
-    name: "own-photo.png",
-    mimeType: "image/png",
-    buffer: photo,
-  });
-  await photoDialog.getByRole("checkbox").check();
-  await photoDialog
-    .getByRole("button", { name: "保存本人形象", exact: true })
-    .click();
-  await page.getByText("照片已保存", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "查看本人照片", exact: true }).click();
-  await page
-    .getByRole("img", { name: "本人上传的形象照片", exact: true })
-    .waitFor();
-  await page.screenshot({
-    path: resolve(output, "uploaded-own-photo-fixture.png"),
-  });
-  await page.getByRole("dialog").locator("button.ant-modal-close").click();
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   console.log(
-    "PASS: browser fixtures exercise public-voice playback, recording upload/status, and own-photo upload/preview (no paid calls)",
+    "PASS: browser fixtures exercise public-voice playback, recording upload/status (no paid calls)",
   );
   const admin = await browser.newPage({
     viewport: { width: 1440, height: 900 },

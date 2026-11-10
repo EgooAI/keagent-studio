@@ -2,12 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
 
-async function fixture(page: Page, large = false) {
+async function fixture(page: Page, large = false, miniMax = false) {
   const catalog = JSON.parse(
     readFileSync("services/cloud/video_templates.json", "utf8"),
   );
   await page.addInitScript(
-    ({ workspace, catalog, large }) => {
+    ({ workspace, catalog, large, miniMax }) => {
       const property = {
         id: "panorama-cc0-sample",
         propertyNumber: "TEST-PANORAMA-001",
@@ -39,6 +39,19 @@ async function fixture(page: Page, large = false) {
           sample: false,
         },
       ];
+      if (miniMax) {
+        const source = catalog[0];
+        catalog.push({
+          ...source,
+          id: "minimax-tour",
+          name: "MiniMax 地点带看",
+          production: {
+            ...source.production,
+            config: { ...source.production.config, videoMode: "avatar" },
+            opening: { prompt: "自然中景", location: { source: "property" } },
+          },
+        });
+      }
       if (large) {
         const first = workspace.properties[1];
         workspace.properties = Array.from({ length: 1000 }, (_, i) => ({
@@ -65,6 +78,9 @@ async function fixture(page: Page, large = false) {
         calls: [] as { method: string; input: any }[],
         rows: [] as any[],
         batches: [] as { id: string; createdAt: string; count: number }[],
+        openingClip: undefined as
+          { id: string; name: string; duration: number } | undefined,
+        openingPhoto: undefined as { id: string; name: string } | undefined,
       };
       Object.assign(window, {
         factorySettingsTest: state,
@@ -89,13 +105,6 @@ async function fixture(page: Page, large = false) {
                 cloneEnabled: false,
                 cloudEnabled: true,
               };
-            if (method === "avatar.list")
-              return {
-                avatars: [
-                  { id: "own-avatar", name: "本人测试形象", status: "ready" },
-                ],
-                uploadEnabled: true,
-              };
             if (method === "panorama.capabilities")
               return {
                 templates: state.catalog.map((t: any) => ({
@@ -108,7 +117,7 @@ async function fixture(page: Page, large = false) {
                   templateId: "standard-tour",
                   ttsProvider: "volcengine",
                   voice: "",
-                  avatarId: "",
+
                   scriptProvider: "template",
                   ...catalog[0].production.config,
                 },
@@ -117,7 +126,6 @@ async function fixture(page: Page, large = false) {
                 managedVoices: true,
                 volcTts: true,
                 ai: false,
-                volcAvatar: true,
                 imageExpansion: true,
                 beike: false,
                 voices: [],
@@ -140,20 +148,35 @@ async function fixture(page: Page, large = false) {
                   version: input.templateVersion,
                 },
                 voiceId: input.voiceId,
-                avatarId: input.avatarId,
               });
               return state.workspace.profile.defaults;
             }
             const input = args[0] || {};
+            if (method === "panorama.opening-clip-import") {
+              state.openingClip = {
+                id: "a".repeat(64),
+                name: "开门参考.mp4",
+                duration: 3,
+              };
+              return state.openingClip;
+            }
+            if (method === "panorama.opening-photo-import") {
+              state.openingPhoto = { id: "b".repeat(64), name: "经纪人.jpg" };
+              return state.openingPhoto;
+            }
             if (method === "panorama.factory-catalog")
               return {
                 templates: state.catalog.map((t: any) => ({
                   ...t,
                   config: t.production.config,
+                  opening: t.production.opening ? "minimax" : undefined,
                 })),
                 ffmpeg: true,
                 ffprobe: true,
                 managedVoices: true,
+                minimaxOpening: true,
+                openingClip: state.openingClip,
+                openingPhoto: state.openingPhoto,
                 voices: [],
               };
             if (method === "panorama.factory-properties") {
@@ -208,9 +231,28 @@ async function fixture(page: Page, large = false) {
                   (item: any) => item.id === pair.templateId,
                 );
                 const id = "review-" + i;
+                const openingLocations = t.production.opening && [
+                  {
+                    asset: "a".repeat(64) + ".jpg",
+                    label: "小区入口",
+                    url: "/media/panoramas/lebombo.jpg",
+                  },
+                  {
+                    asset: "c".repeat(64) + ".jpg",
+                    label: "花园",
+                    url: "/media/panoramas/hotel_room.jpg",
+                  },
+                ];
                 const config = {
                   ...t.production.config,
                   voice: state.workspace.profile.defaults.voiceId,
+                  openingPhoto: t.production.opening
+                    ? input.openingPhoto
+                    : undefined,
+                  openingLocation: openingLocations && {
+                    source: "property",
+                    asset: openingLocations[0].asset,
+                  },
                 };
                 const draft = {
                   id,
@@ -238,6 +280,8 @@ async function fixture(page: Page, large = false) {
                   progress: 0,
                   config,
                   draft,
+                  openingLocations,
+                  openingLocationUrl: openingLocations?.[0].url,
                 };
               });
               state.batches = [
@@ -248,6 +292,15 @@ async function fixture(page: Page, large = false) {
                 },
               ];
               return { batchId: input.requestId, issues: [] };
+            }
+            if (method === "panorama.factory-opening-location") {
+              const row = state.rows.find((item) => item.id === input.id);
+              row.draft.config.openingLocation.asset = input.asset;
+              row.openingLocationUrl = row.openingLocations.find(
+                (item: { asset: string }) => item.asset === input.asset,
+              ).url;
+              row.draft.revision = ++row.revision;
+              return null;
             }
             if (method === "panorama.factory-detail")
               return state.rows.find((row) => row.id === input.id);
@@ -271,7 +324,7 @@ async function fixture(page: Page, large = false) {
         },
       });
     },
-    { workspace: createInitialWorkspace(), catalog, large },
+    { workspace: createInitialWorkspace(), catalog, large, miniMax },
   );
 }
 
@@ -282,6 +335,71 @@ async function choose(page: Page, label: string, option: string) {
     .getByText(option, { exact: true })
     .click();
 }
+
+test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async ({ page }) => {
+  await fixture(page, false, true);
+  await page.goto("/#/studio");
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "选择MiniMax 地点带看 · 1.0.0",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await page.getByRole("button", { name: "选择房源", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  const create = page.getByRole("button", { name: "生成 1 条文案" });
+  await expect(create).toBeDisabled();
+  await expect(page.getByRole("button", { name: "选择参考视频" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "选择经纪人照片" }).click();
+  await expect(create).toBeDisabled();
+  await page
+    .getByRole("checkbox", {
+      name: "我确认已获得经纪人照片和开场素材的使用授权",
+    })
+    .check();
+  await expect(create).toBeEnabled();
+  await create.click();
+  await expect(
+    page.getByRole("button", { name: "审核", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "开场地点图", exact: true }),
+  ).toHaveAttribute("src", /lebombo/);
+  await choose(page, "更换开场地点图", "2 · 花园");
+  await expect(
+    page.getByRole("img", { name: "开场地点图", exact: true }),
+  ).toHaveAttribute("src", /hotel_room/);
+  const calls = await page.evaluate(
+    () => (window as any).factorySettingsTest.calls,
+  );
+  expect(
+    calls.find((call: any) => call.method === "panorama.factory-create").input,
+  ).toMatchObject({
+    openingPhoto: "b".repeat(64),
+    openingAuthorized: true,
+    openingRecipe: true,
+  });
+  expect(
+    calls.find((call: any) => call.method === "panorama.factory-create").input
+      .openingClip,
+  ).toBeUndefined();
+  expect(
+    calls.find(
+      (call: any) => call.method === "panorama.factory-opening-location",
+    ).input,
+  ).toMatchObject({
+    revision: 1,
+    asset: "c".repeat(64) + ".jpg",
+  });
+});
 
 test("内置房源没有核验日期时仍可查看素材", async ({ page }) => {
   await fixture(page);
@@ -306,7 +424,6 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
   ).toHaveCount(0);
   await choose(page, "默认视频模板", "标准房源带看 · 1.0.0");
   await choose(page, "默认音色", "公共讲解音色 · 公共音色");
-  await choose(page, "默认本人形象", "本人测试形象");
   await page.getByRole("button", { name: "保存默认配置", exact: true }).click();
   await expect(
     page.getByText("默认制作配置已保存，新视频将使用这些偏好", { exact: true }),
@@ -342,7 +459,6 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
     templateId: "standard-tour",
     templateVersion: "1.0.0",
     voiceId: "public-zh",
-    avatarId: "own-avatar",
   });
   expect(
     calls.find((c: any) => c.method === "panorama.factory-create").input,

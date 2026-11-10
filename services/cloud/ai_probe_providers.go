@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -53,8 +52,8 @@ func validateAIProbeInput(service, mode string, input object) error {
 		if !resourceID.MatchString(str(input["speaker"])) {
 			return fail(422, "请填写专用测试音色 ID")
 		}
-	case "avatar":
-		_, _, err := validateAvatarPhoto(object{"name": "管理员数字人测试", "requestKey": "admin-avatar-probe", "photo": input["photo"], "authorized": input["authorized"]})
+	case "opening":
+		_, err := minimaxProbePayload(input)
 		return err
 	case "beike":
 		if input["authorized"] != true {
@@ -134,11 +133,66 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 		return err
 	case "expansion":
 		return s.probeAIExpansion(ctx, p, input)
-	case "avatar":
-		return s.probeAIAvatar(ctx, p, input)
+	case "opening":
+		return s.probeMiniMaxOpening(ctx, p, input)
 	}
 	return fail(422, "测试服务无效")
 }
+func minimaxProbePayload(input object) ([]byte, error) {
+	args := object{"authorized": input["authorized"], "photo": input["photo"], "audio": base64.StdEncoding.EncodeToString(aiProbeSpeech), "ratio": "9:16"}
+	if input["video"] != nil && input["location"] == nil {
+		args["video"] = input["video"] // Resume samples saved by the previous admin UI.
+	} else {
+		if str(input["location"]) == "" {
+			return nil, fail(422, "请选择测试地点图")
+		}
+		args["location"] = input["location"]
+		args["prompt"] = "保留人物和地点特征。人物面向镜头自然口播，嘴部动作跟随参考音频。"
+	}
+	return minimaxPayload(args)
+}
+
+func (s *server) probeMiniMaxOpening(ctx context.Context, p *aiProbe, input object) error {
+	if p.Progress.Task == "" {
+		body, err := minimaxProbePayload(input)
+		if err != nil {
+			return err
+		}
+		if err = s.aiStep(ctx, p, "提交 4 秒 MiniMax 开场样例"); err != nil {
+			return err
+		}
+		p.Progress.Task, err = s.minimaxSubmit(ctx, body)
+		if err != nil {
+			return err
+		}
+	}
+	for {
+		if err := s.aiStep(ctx, p, "查询 MiniMax 并校验开场视频"); err != nil {
+			return err
+		}
+		result, err := s.minimaxQuery(ctx, p.Progress.Task)
+		if err != nil {
+			return err
+		}
+		switch str(result["status"]) {
+		case "succeeded":
+			data, err := s.productionBody(ctx, "GET", str(result["videoUrl"]), nil, nil, 32<<20)
+			if err != nil {
+				return err
+			}
+			if len(data) < 12 || string(data[4:8]) != "ftyp" {
+				return fail(502, "MiniMax 返回的视频不是 MP4")
+			}
+			return nil
+		case "failed", "cancelled":
+			return fail(502, str(result["message"]))
+		}
+		if err := waitAIProbe(ctx); err != nil {
+			return err
+		}
+	}
+}
+
 func (s *server) probeAIConnection(ctx context.Context, p *aiProbe) error {
 	if err := s.aiStep(ctx, p, "连接供应商（仅验证网络与 TLS）"); err != nil {
 		return err
@@ -153,13 +207,6 @@ func (s *server) probeAIConnection(ctx context.Context, p *aiProbe) error {
 		return fail(422, "服务地址不可用")
 	}
 	targets := []string{endpoint}
-	if p.Service == "avatar" {
-		bucket, _, err := tosEndpoint(ctx)
-		if err != nil {
-			return err
-		}
-		targets = append(targets, bucket.String())
-	}
 	client, transport := providerClient()
 	defer transport.CloseIdleConnections()
 	client.Timeout = 12 * time.Second
@@ -293,7 +340,7 @@ func (s *server) probeAIExpansion(ctx context.Context, p *aiProbe, input object)
 			if len(files) != 1 {
 				return fail(502, "扩图没有返回一张图片")
 			}
-			file, err := readAIProbeMedia(ctx, str(obj(files[0])["url"]), false)
+			file, err := readAIProbeImage(ctx, str(obj(files[0])["url"]))
 			if err != nil {
 				return err
 			}
@@ -316,129 +363,16 @@ func (s *server) probeAIExpansion(ctx context.Context, p *aiProbe, input object)
 //go:embed ai-probe-speech.wav
 var aiProbeSpeech []byte
 
-func aiProbePath(id string) string { return "/keagent/ai-probes/" + id + "/" }
-func (s *server) probeAIAvatar(ctx context.Context, p *aiProbe, input object) error {
-	tos, region, err := tosEndpoint(ctx)
-	if err != nil {
-		return err
-	}
-	prefix := aiProbePath(p.ID)
-	if p.Progress.Task == "" {
-		if err = s.aiStep(ctx, p, "校验私有桶写入与读取"); err != nil {
-			return err
-		}
-		photo, mime, err := validateAvatarPhoto(object{"name": "管理员数字人测试", "requestKey": "admin-avatar-probe", "photo": input["photo"], "authorized": input["authorized"]})
-		if err != nil {
-			return err
-		}
-		audio := aiProbeSpeech
-		p.Progress.Assets = true
-		if err = s.saveAIProgress(ctx, p); err != nil {
-			return err
-		}
-		for name, file := range map[string]struct {
-			data []byte
-			mime string
-		}{"photo": {photo, mime}, "audio.wav": {audio, "audio/wav"}} {
-			if _, err = s.privateObject(ctx, "PUT", prefix+name, file.data, file.mime); err != nil {
-				return err
-			}
-			value, err := s.privateObject(ctx, "GET", prefix+name, nil, "")
-			if err != nil {
-				return err
-			}
-			if !bytes.Equal(value, file.data) {
-				return fail(502, "私有桶返回的测试文件不一致")
-			}
-		}
-		if err = s.aiStep(ctx, p, "验证旧形象存储位置"); err != nil {
-			return err
-		}
-		if err = s.probeOldAvatarBuckets(ctx, p); err != nil {
-			return err
-		}
-		if err = s.aiStep(ctx, p, "提交测试数字人视频"); err != nil {
-			return err
-		}
-		photoURL, audioURL := *tos, *tos
-		photoURL.Path, audioURL.Path = prefix+"photo", prefix+"audio.wav"
-		ak, sk := aiValue(ctx, "VOLC_ACCESS_KEY_ID"), aiValue(ctx, "VOLC_SECRET_ACCESS_KEY")
-		data, err := s.avatarVision(ctx, "CVSubmitTask", object{"req_key": photoAvatarProvider,
-			"image_url": tosReadURL(&photoURL, ak, sk, region, time.Now()), "audio_url": tosReadURL(&audioURL, ak, sk, region, time.Now())})
-		if err != nil {
-			return err
-		}
-		p.Progress.Task = str(data["task_id"])
-		if !resourceID.MatchString(p.Progress.Task) {
-			p.Progress.Task = ""
-			return fail(502, "数字人提交结果未知，请核对火山控制台")
-		}
-		if err = s.saveAIProgress(ctx, p); err != nil {
-			return err
-		}
-	}
-	for {
-		if err = s.aiStep(ctx, p, "查询数字人并校验视频"); err != nil {
-			return err
-		}
-		data, err := s.avatarVision(ctx, "CVGetResult", object{"req_key": photoAvatarProvider, "task_id": p.Progress.Task})
-		if err != nil {
-			return err
-		}
-		detail := obj(data["resp_data"])
-		if raw := str(data["resp_data"]); raw != "" {
-			_ = json.Unmarshal([]byte(raw), &detail)
-		}
-		if number(detail["code"]) != 0 {
-			return fail(502, "供应商返回数字人处理失败")
-		}
-		result := str(data["video_url"])
-		if result == "" {
-			result = str(detail["url"])
-		}
-		if result == "" {
-			result = str(obj(detail["vid"])["url"])
-		}
-		switch str(data["status"]) {
-		case "failed", "not_found", "expired":
-			return fail(502, "数字人任务失败、过期或找不到")
-		}
-		if result != "" {
-			raw, err := readAIProbeMedia(ctx, result, true)
-			if err != nil {
-				return err
-			}
-			if len(raw) < 12 || string(raw[4:8]) != "ftyp" {
-				return fail(502, "数字人结果不是可读取的 MP4")
-			}
-			return nil
-		}
-		if str(data["status"]) == "done" {
-			return fail(502, "数字人结果缺少视频")
-		}
-		if err = waitAIProbe(ctx); err != nil {
-			return err
-		}
-	}
-}
-func readAIProbeMedia(ctx context.Context, raw string, video bool) ([]byte, error) {
+func readAIProbeImage(ctx context.Context, raw string) ([]byte, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.Port() != "" || u.User != nil || u.Fragment != "" {
 		return nil, fail(502, "供应商结果地址无效")
 	}
 	host := strings.ToLower(u.Hostname())
 	suffixes := []string{".aliyuncs.com", ".alicdn.com"}
-	if video {
-		suffixes = []string{".volces.com", ".volccdn.com", ".byteimg.com", ".yangyi08.com"}
-	}
 	allowed := false
 	for _, suffix := range suffixes {
 		allowed = allowed || strings.HasSuffix(host, suffix)
-	}
-	if video {
-		for _, configured := range strings.Split(os.Getenv("VOLC_VIDEO_ALLOWED_HOSTS"), ",") {
-			allowed = allowed || strings.EqualFold(host, strings.TrimSpace(configured))
-		}
 	}
 	if !allowed {
 		return nil, fail(502, "供应商结果域名未授权")
@@ -446,11 +380,6 @@ func readAIProbeMedia(ctx context.Context, raw string, video bool) ([]byte, erro
 	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, fail(502, "供应商结果地址无效")
-	}
-	limit := int64(12 << 20)
-	if video {
-		req.Header.Set("Range", "bytes=0-511")
-		limit = 512
 	}
 	client, transport := providerClient()
 	defer transport.CloseIdleConnections()
@@ -462,97 +391,5 @@ func readAIProbeMedia(ctx context.Context, raw string, video bool) ([]byte, erro
 	if response.StatusCode/100 != 2 {
 		return nil, fail(502, "供应商结果不可读取")
 	}
-	return io.ReadAll(io.LimitReader(response.Body, limit))
-}
-
-type aiProbeOldStorage struct {
-	Version int64       `json:"version"`
-	Origins [][2]string `json:"origins"`
-}
-
-func (s *server) probeOldAvatarBuckets(ctx context.Context, p *aiProbe) error {
-	active, err := s.activeAI(context.WithValue(ctx, aiContextKey{}, aiSnapshotFrom(context.Background())))
-	if err != nil {
-		return err
-	}
-	currentBucket, currentRegion := aiValue(ctx, "VOLC_TOS_BUCKET"), aiValue(ctx, "VOLC_TOS_REGION")
-	oldBucket, oldRegion := aiValue(active, "VOLC_TOS_BUCKET"), aiValue(active, "VOLC_TOS_REGION")
-	list, err := s.db.QueryContext(ctx, `SELECT $1::text,$2::text UNION SELECT COALESCE(NULLIF(payload->>'bucket',''),$1),COALESCE(NULLIF(payload->>'region',''),$2) FROM keagent_user_avatar WHERE NOT archived`, oldBucket, oldRegion)
-	if err != nil {
-		return err
-	}
-	var origins [][2]string
-	for list.Next() {
-		var origin [2]string
-		if err = list.Scan(&origin[0], &origin[1]); err != nil {
-			list.Close()
-			return err
-		}
-		if origin[0] != "" && (origin[0] != currentBucket || origin[1] != currentRegion) {
-			origins = append(origins, origin)
-		}
-	}
-	err = list.Err()
-	list.Close()
-	if err != nil {
-		return err
-	}
-	if len(origins) == 0 {
-		return nil
-	}
-	p.Progress.OldStorage = &aiProbeOldStorage{Version: aiSnapshotFrom(active).versions["avatar"], Origins: origins}
-	if err = s.saveAIProgress(ctx, p); err != nil {
-		return err
-	}
-	// The existing credential writes the isolated probe; the candidate must be able to read it.
-	active = context.WithValue(ctx, aiContextKey{}, aiSnapshotFrom(active))
-	for _, origin := range origins {
-		path := aiProbePath(p.ID) + "previous-bucket"
-		value := []byte("keagent-ai-probe")
-		if _, err = s.privateObjectAt(active, "PUT", path, value, "text/plain", origin[0], origin[1]); err != nil {
-			return fail(502, "无法在旧存储桶建立权限测试对象")
-		}
-		actual, readErr := s.privateObjectAt(ctx, "GET", path, nil, "", origin[0], origin[1])
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(active), 10*time.Second)
-		_, deleteErr := s.privateObjectAt(cleanup, "DELETE", path, nil, "", origin[0], origin[1])
-		cancel()
-		if deleteErr != nil {
-			return fail(502, "旧存储桶的测试对象清理失败")
-		}
-		if readErr != nil || !bytes.Equal(actual, value) {
-			return fail(502, "新凭证无法读取旧形象所在的存储桶")
-		}
-	}
-	p.Progress.OldStorage = nil
-	return s.saveAIProgress(ctx, p)
-}
-func (s *server) cleanAIProbeAssets(ctx context.Context) {
-	p, err := scanAIProbe(s.db.QueryRowContext(ctx, `UPDATE keagent_ai_probe SET lease_until=now()+interval '5 minutes' WHERE id=(
-	SELECT id FROM keagent_ai_probe WHERE result->>'assets'='true' AND (lease_until IS NULL OR lease_until<now()) AND
-	((status IN ('passed','failed') AND finished_at<now()-interval '5 seconds') OR (status='unknown' AND created_at<now()-interval '1 hour'))
-	ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING `+aiProbeReadColumns))
-	if err != nil {
-		return
-	}
-	candidate, err := s.pinnedAI(ctx, p.Group, p.Version)
-	if err != nil {
-		return
-	}
-	for _, file := range []string{"photo", "audio.wav"} {
-		if _, err = s.privateObject(candidate, "DELETE", aiProbePath(p.ID)+file, nil, ""); err != nil && !strings.Contains(err.Error(), "HTTP 404") {
-			return
-		}
-	}
-	if old := p.Progress.OldStorage; old != nil {
-		active, err := s.pinnedAI(ctx, p.Group, old.Version)
-		if err != nil {
-			return
-		}
-		for _, origin := range old.Origins {
-			if _, err = s.privateObjectAt(active, "DELETE", aiProbePath(p.ID)+"previous-bucket", nil, "", origin[0], origin[1]); err != nil && !strings.Contains(err.Error(), "HTTP 404") {
-				return
-			}
-		}
-	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE keagent_ai_probe SET result=result-'assets'-'oldStorage' WHERE id=$1`, p.ID)
+	return io.ReadAll(io.LimitReader(response.Body, 12<<20))
 }

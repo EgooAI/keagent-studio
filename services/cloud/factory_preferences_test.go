@@ -7,7 +7,7 @@ import (
 
 func TestFactoryPreferencesAndBuiltinProperty(t *testing.T) {
 	db := productionTestDB(t)
-	if _, err := db.ExecContext(t.Context(), voiceSchema+publicVoiceSchema+userAvatarSchema); err != nil {
+	if _, err := db.ExecContext(t.Context(), voiceSchema+publicVoiceSchema); err != nil {
 		t.Fatal(err)
 	}
 	if err := seedVideoTemplates(t.Context(), db); err != nil {
@@ -27,10 +27,7 @@ func TestFactoryPreferencesAndBuiltinProperty(t *testing.T) {
 	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload) VALUES('own','preference-owner','own','test','{"id":"own","language":"zh-CN","status":"ready"}'),('other','different-owner','other','test','{"id":"other","language":"zh-CN","status":"ready"}')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_user_avatar(id,owner_id,request_key,fingerprint,payload) VALUES('own-avatar','preference-owner','own','test','{"id":"own-avatar","status":"ready"}'),('other-avatar','different-owner','other','test','{"id":"other-avatar","status":"ready"}')`); err != nil {
-		t.Fatal(err)
-	}
-	input := object{"templateId": "standard-tour", "templateVersion": "1.0.0", "voiceId": "public-zh", "avatarId": "own-avatar"}
+	input := object{"templateId": "standard-tour", "templateVersion": "1.0.0", "voiceId": "public-zh"}
 	if _, err := s.command(t.Context(), a, "updateFactoryPreferences", []any{input}); err != nil {
 		t.Fatal(err)
 	}
@@ -39,10 +36,10 @@ func TestFactoryPreferencesAndBuiltinProperty(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := obj(obj(w["profile"])["defaults"])
-	if obj(d["videoTemplate"])["id"] != "standard-tour" || d["voiceId"] != "public-zh" || d["avatarId"] != "own-avatar" || d["requireScriptReview"] != true || obj(d["promptTemplate"])["id"] != "builtin-prompt" {
+	if obj(d["videoTemplate"])["id"] != "standard-tour" || d["voiceId"] != "public-zh" || d["requireScriptReview"] != true || obj(d["promptTemplate"])["id"] != "builtin-prompt" {
 		t.Fatal("default preferences lost or erased legacy fields", d)
 	}
-	for key, value := range map[string]any{"voiceId": "other", "avatarId": "other-avatar", "templateVersion": "2.0.0"} {
+	for key, value := range map[string]any{"voiceId": "other", "templateVersion": "2.0.0"} {
 		bad := jsonCopy(input).(object)
 		bad[key] = value
 		if _, err := s.command(t.Context(), a, "updateFactoryPreferences", []any{bad}); err == nil {
@@ -64,7 +61,7 @@ func TestFactoryPreferencesAndBuiltinProperty(t *testing.T) {
 	if _, err := s.factoryPreferences(t.Context(), a, input); err == nil {
 		t.Fatal("unlisted voice accepted")
 	}
-	if _, err := s.command(t.Context(), a, "updateFactoryPreferences", []any{object{"templateId": "", "templateVersion": "", "voiceId": "", "avatarId": ""}}); err != nil {
+	if _, err := s.command(t.Context(), a, "updateFactoryPreferences", []any{object{"templateId": "", "templateVersion": "", "voiceId": ""}}); err != nil {
 		t.Fatal("clearing defaults rejected", err)
 	}
 	if _, err := s.command(t.Context(), a, "updateProperty", []any{"panorama-cc0-sample", object{"title": "伪装真实房源"}}); err == nil {

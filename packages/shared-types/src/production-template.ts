@@ -1,6 +1,6 @@
 import type { PanoramaConfig } from "./panorama";
 
-/** Public templates contain recipes only; personal voices and property media are resolved per job. */
+/** Personal voices, agent photos and property media are resolved per job. */
 type ProductionRenderConfig = Required<
   Pick<
     PanoramaConfig,
@@ -19,6 +19,12 @@ type ProductionRenderConfig = Required<
   >
 >;
 
+export type ProductionOpening = {
+  prompt: string;
+  /** Desktop snapshots keep the fixed picture as a local asset reference. */
+  location: { source: "property" } | { source: "fixed"; image?: string };
+};
+
 export type ProductionTemplateRecipe =
   | {
       schemaVersion: 1;
@@ -31,6 +37,7 @@ export type ProductionTemplateRecipe =
   | {
       schemaVersion: 2;
       config: ProductionRenderConfig;
+      opening?: ProductionOpening;
       scriptRules: {
         overall: string;
         opening: string;

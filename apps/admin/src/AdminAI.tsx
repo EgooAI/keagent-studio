@@ -23,10 +23,6 @@ const configLabels: Record<string, string> = {
   VOLC_TTS_API_KEY: "火山语音服务密钥",
   VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
   VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻资源编号",
-  VOLC_ACCESS_KEY_ID: "火山访问密钥编号",
-  VOLC_SECRET_ACCESS_KEY: "火山访问密钥",
-  VOLC_TOS_BUCKET: "数字人私有存储桶",
-  VOLC_TOS_REGION: "私有存储桶地域",
   DASHSCOPE_API_KEY: "百炼 API Key",
   DASHSCOPE_BASE_URL: "百炼服务地址",
   BEIKE_ACCESS_TOKEN: "贝壳 Access Token",
@@ -59,8 +55,8 @@ export function AIState({ state }: { state: AdminAIService["state"] }) {
 const serviceOrder: AdminAIService["id"][] = [
   "script",
   "tts",
+  "opening",
   "voice-clone",
-  "avatar",
   "expansion",
   "beike",
 ];

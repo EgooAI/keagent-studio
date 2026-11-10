@@ -265,7 +265,7 @@ func queryAdminTask(ctx context.Context, db adminQuerier, taskID string) (object
 	clean["propertySnapshot"] = publicFields(obj(task["propertySnapshot"]), "id", "propertyNumber", "title", "city", "district", "community", "priceCents", "areaSqm", "layout", "description", "sellingPoints", "videoCount", "importStatus", "lastVerifiedAt")
 	obj(clean["propertySnapshot"])["image"] = ""
 	obj(clean["propertySnapshot"])["images"] = []any{}
-	config := publicFields(obj(task["configSnapshot"]), "propertyIds", "videoMode", "voiceId", "avatarId", "requireScriptReview", "aspectRatio", "outputResolution")
+	config := publicFields(obj(task["configSnapshot"]), "propertyIds", "videoMode", "voiceId", "requireScriptReview", "aspectRatio", "outputResolution")
 	for _, key := range []string{"promptTemplate", "videoTemplate", "styleTemplate", "coverTemplate", "subtitleTemplate"} {
 		if ref := obj(obj(task["configSnapshot"])[key]); ref != nil {
 			config[key] = publicFields(ref, "id", "version")

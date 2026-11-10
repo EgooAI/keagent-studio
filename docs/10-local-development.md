@@ -31,7 +31,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -Action stop-db
 
 管理员登录管理后台；普通用户登录客户端。统一使用 `127.0.0.1`，避免与 `localhost` 混用导致 Cookie 和 Origin 不一致。
 
-AI 和火山供应商密钥需要在 `.env.local` 中填入自己的有效凭证并重启后端。未配置时可以登录、管理账号、维护房源及配置公共音色目录；真实客户端配音和照片数字人需对应服务凭证。独立开发样片脚本仍可使用 Windows 系统声音验证 FFmpeg。
+AI、豆包语音和 MiniMax 供应商密钥需要在 `.env.local` 中填入自己的有效凭证并重启后端。未配置时可以登录、管理账号、维护房源及配置公共音色目录；真实客户端配音和 MiniMax 开场需对应服务凭证。独立开发样片脚本仍可使用 Windows 系统声音验证 FFmpeg。
 
 ## 依赖和检查
 

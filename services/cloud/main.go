@@ -41,8 +41,6 @@ type server struct {
 	jwt        *jwtVerifier
 	origins    []string
 	speech     func(context.Context, string, object, string) ([]byte, error)
-	storage    func(context.Context, string, string, []byte, string) ([]byte, error)
-	vision     func(context.Context, string, object) (object, error)
 	sourceHTTP func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
 }
 type fault struct {
@@ -94,7 +92,7 @@ func initial(name string) object {
 	return w
 }
 
-const schema = aiSettingsSchema + `
+const schema = aiSettingsSchema + minimaxOpeningSchema + `
 CREATE TABLE IF NOT EXISTS keagent_workspace (owner_id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_resource (id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_device (id text PRIMARY KEY, owner_id text NOT NULL, session_id text NOT NULL, name text NOT NULL, platform text NOT NULL, revoked boolean NOT NULL DEFAULT false, seen_at timestamptz NOT NULL DEFAULT now());
@@ -164,13 +162,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := int64(1 << 20)
-	if r.URL.Path == "/v1/panorama/audio" {
-		limit = 2 << 20
-	}
 	if r.URL.Path == "/v1/panorama/image-submit" {
 		limit = 15 << 20
 	}
-	if r.URL.Path == "/v1/panorama/script-vision" {
+	if r.URL.Path == "/v1/panorama/script-vision" || r.URL.Path == "/v1/panorama/opening-submit" {
 		limit = 16 << 20
 	}
 	if r.URL.Path == "/v1/admin/resources/preview" {
@@ -179,11 +174,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/voices/create" {
 		limit = 14 << 20
 	}
-	if r.URL.Path == "/v1/avatars/create" {
-		limit = 8 << 20
-	}
 	if r.URL.Path == "/v1/admin/ai-config/test" {
-		limit = 15 << 20
+		limit = 16 << 20
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
@@ -207,8 +199,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if strings.HasPrefix(r.URL.Path, "/v1/panorama/") || strings.HasPrefix(r.URL.Path, "/v1/voices/") ||
-		strings.HasPrefix(r.URL.Path, "/v1/avatars/") {
+	if strings.HasPrefix(r.URL.Path, "/v1/panorama/") || strings.HasPrefix(r.URL.Path, "/v1/voices/") {
 		ctx, err := s.activeAI(r.Context())
 		if err != nil {
 			respond(w, nil, err)
@@ -254,11 +245,6 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/voices/") {
 		v, e := s.voices(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/voices/"), body)
-		respond(w, v, e)
-		return
-	}
-	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/avatars/") {
-		v, e := s.avatars(r.Context(), a, strings.TrimPrefix(r.URL.Path, "/v1/avatars/"), body)
 		respond(w, v, e)
 		return
 	}
@@ -472,15 +458,7 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 		if str(config["videoMode"]) != "voiceover" && str(config["videoMode"]) != "avatar" {
 			return nil, fail(422, "视频模式无效")
 		}
-		if config["videoMode"] == "avatar" {
-			var allowed bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_user_avatar WHERE id=$1 AND owner_id=$2 AND NOT archived AND payload->>'status'='ready')`, str(config["avatarId"]), a.UserID).Scan(&allowed); err != nil {
-				return nil, err
-			}
-			if !allowed {
-				return nil, fail(422, "露脸模式必须先上传本人照片并选择形象")
-			}
-		}
+		delete(config, "avatarId")
 		for _, k := range []string{"promptTemplate", "videoTemplate", "styleTemplate", "coverTemplate"} {
 			ref := obj(config[k])
 			if ref == nil {
@@ -1036,9 +1014,6 @@ func main() {
 	if err = seedVideoTemplates(context.Background(), db); err != nil {
 		log.Fatal("video template migration failed")
 	}
-	if _, err = db.Exec(avatarSchema); err != nil {
-		log.Fatal("panorama migration failed")
-	}
 	if _, err = db.Exec(productionImageSchema); err != nil {
 		log.Fatal("production image migration failed")
 	}
@@ -1050,9 +1025,6 @@ func main() {
 	}
 	if err = seedDefaultPublicVoice(context.Background(), db); err != nil {
 		log.Fatal("public voice seed failed")
-	}
-	if _, err = db.Exec(userAvatarSchema); err != nil {
-		log.Fatal("user avatar migration failed")
 	}
 	if _, err = db.Exec(artifactExchangeSchema); err != nil {
 		log.Fatal("artifact exchange migration failed")

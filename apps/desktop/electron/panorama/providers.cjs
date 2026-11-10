@@ -23,16 +23,6 @@ function privateAddress(address) {
     (a === 100 && b >= 64 && b <= 127)
   );
 }
-function avatarResult(data) {
-  const detail =
-    typeof data?.resp_data === "string"
-      ? JSON.parse(data.resp_data)
-      : data?.resp_data;
-  if (detail?.code !== undefined)
-    ensure(detail.code === 0, `数字人处理失败，code=${detail.code}`);
-  const url = data?.video_url || detail?.url || detail?.vid?.url;
-  return { status: data?.status || (url ? "done" : "processing"), url };
-}
 async function publicURL(value) {
   const url = new URL(value);
   ensure(
@@ -63,23 +53,22 @@ async function limitedBody(response, limit = 2 * 1024 * 1024) {
   }
   return Buffer.concat(chunks);
 }
-async function downloadVideo(value, file, signal, env = process.env) {
-  // Only documented vendor CDNs or operator-approved hosts; never follow redirects with signed URLs.
+async function downloadMiniMaxVideo(value, file, signal) {
   const host = new URL(value).hostname;
-  const approved = (env.VOLC_VIDEO_ALLOWED_HOSTS || "")
-    .split(",")
-    .map((s) => s.trim());
   ensure(
-    /\.(volces\.com|volccdn\.com|byteimg\.com|yangyi08\.com)$/.test(host) ||
-      approved.includes(host),
-    "数字人视频域名未授权，请配置 VOLC_VIDEO_ALLOWED_HOSTS",
+    [
+      "cdn.hailuoai.com",
+      "video-product.cdn.minimax.io",
+      "video-product.cdn.minimax.cn",
+    ].includes(host),
+    "MiniMax 视频下载域名无效",
   );
   const url = await publicURL(value);
   const response = await fetch(url, {
     redirect: "error",
-    signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(90000)]),
   });
-  await fs.writeFile(file, await limitedBody(response, 256 * 1024 * 1024));
+  await fs.writeFile(file, await limitedBody(response, 32 * 1024 * 1024));
 }
 async function downloadImage(value, provider, signal) {
   const host = new URL(value).hostname.toLowerCase();
@@ -96,4 +85,8 @@ async function downloadImage(value, provider, signal) {
   });
   return limitedBody(response, 50 * 1024 * 1024);
 }
-module.exports = { avatarResult, privateAddress, downloadVideo, downloadImage };
+module.exports = {
+  privateAddress,
+  downloadMiniMaxVideo,
+  downloadImage,
+};

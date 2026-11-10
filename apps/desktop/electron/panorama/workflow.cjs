@@ -158,8 +158,10 @@ class PanoramaWorkflow {
           mode === "runtime"
             ? { runtimeOnly: true }
             : mode === true
-              ? { summary: true }
-              : mode || {},
+              ? { summary: true, openingRecipe: true }
+              : mode
+                ? { ...mode, openingRecipe: true }
+                : {},
         )
       : {};
     return {
@@ -176,7 +178,7 @@ class PanoramaWorkflow {
       defaultConfig: domain.defaultConfig,
       ai: !!cloud.ai,
       volcTts: !!cloud.volcTts,
-      volcAvatar: !!cloud.volcAvatar,
+      minimaxOpening: !!cloud.minimaxOpening,
       managedVoices: !!cloud.managedVoices,
       beike: !!cloud.beike,
       imageExpansion: !!cloud.imageExpansion,
@@ -189,6 +191,122 @@ class PanoramaWorkflow {
       "图片需小于 50 MB",
     );
     return this.importBytes(owner, await fsp.readFile(file), room, kind);
+  }
+  async importOpeningClip(owner, state, assertCurrent, referenceOnly) {
+    const file = await this.dialogs.openIntro();
+    assertCurrent();
+    if (!file) return state.openingClip ?? null;
+    const maxMB = referenceOnly ? 8 : 50;
+    const maxSeconds = referenceOnly ? 5 : 30;
+    const maxBytes = maxMB * 1024 * 1024;
+    const stat = await fsp.stat(file);
+    domain.ensure(
+      path.extname(file).toLowerCase() === ".mp4" &&
+        stat.isFile() &&
+        stat.size > 0 &&
+        stat.size <= maxBytes,
+      `请选择 ${maxMB} MB 以内的 MP4 视频`,
+    );
+    const bytes = await fsp.readFile(file);
+    domain.ensure(bytes.length <= maxBytes, `视频文件超过 ${maxMB} MB`);
+    const directory = path.join(this.directory(owner), "opening");
+    await fsp.mkdir(directory, { recursive: true });
+    const id = domain.hash(bytes);
+    const temp = path.join(directory, `${crypto.randomUUID()}.part.mp4`);
+    const target = path.join(directory, `${id}.mp4`);
+    try {
+      await fsp.writeFile(temp, bytes, { flag: "wx" });
+      const info = await media
+        .probe(temp, directory, AbortSignal.timeout(12000), "mov")
+        .catch(() => null);
+      const duration = Number(info?.format?.duration);
+      domain.ensure(
+        info?.format?.format_name?.split(",").includes("mp4") &&
+          info.streams.some(
+            (s) => s.codec_type === "video" && !s.disposition?.attached_pic,
+          ) &&
+          duration >= 2 &&
+          duration <= maxSeconds,
+        `请选择 2–${maxSeconds} 秒、含有效画面的 MP4 视频`,
+      );
+      assertCurrent();
+      if (!(await media.exists(target))) await fsp.rename(temp, target);
+      assertCurrent();
+      const previous = state.openingClip;
+      state.openingClip = {
+        id,
+        name: path.basename(file).slice(-120),
+        duration,
+        bytes: bytes.length,
+      };
+      try {
+        this.persist(owner);
+      } catch (error) {
+        state.openingClip = previous;
+        throw error;
+      }
+      return state.openingClip;
+    } finally {
+      await fsp.rm(temp, { force: true });
+    }
+  }
+  async importOpeningPhoto(owner, state, assertCurrent) {
+    const file = await this.dialogs.openIntroPhoto();
+    assertCurrent();
+    if (!file) return state.openingPhoto ?? null;
+    const maxBytes = 3 * 1024 * 1024;
+    const stat = await fsp.stat(file);
+    domain.ensure(
+      stat.isFile() && stat.size <= maxBytes,
+      "请选择 3 MB 以内的 JPEG 或 PNG 照片",
+    );
+    const bytes = await fsp.readFile(file);
+    const jpeg = bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]));
+    const png = bytes
+      .subarray(0, 8)
+      .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    domain.ensure(
+      bytes.length <= maxBytes && (jpeg || png),
+      "请选择 3 MB 以内的 JPEG 或 PNG 照片",
+    );
+    const directory = path.join(this.directory(owner), "opening");
+    await fsp.mkdir(directory, { recursive: true });
+    const id = domain.hash(bytes);
+    const temp = path.join(
+      directory,
+      `${crypto.randomUUID()}.part.${jpeg ? "jpg" : "png"}`,
+    );
+    try {
+      await fsp.writeFile(temp, bytes, { flag: "wx" });
+      const info = await media
+        .probe(temp, directory, AbortSignal.timeout(12000), "image2")
+        .catch(() => null);
+      const { width, height } = info?.streams?.[0] || {};
+      domain.ensure(
+        width >= 256 &&
+          height >= 256 &&
+          width <= 4096 &&
+          height <= 4096 &&
+          width * 5 >= height * 2 &&
+          height * 5 >= width * 2,
+        "请选择宽高 256–4096 像素且比例适中的经纪人照片",
+      );
+      assertCurrent();
+      const target = path.join(directory, `${id}.photo`);
+      if (!(await media.exists(target))) await fsp.rename(temp, target);
+      assertCurrent();
+      const previous = state.openingPhoto;
+      state.openingPhoto = { id, name: path.basename(file).slice(-120) };
+      try {
+        this.persist(owner);
+      } catch (error) {
+        state.openingPhoto = previous;
+        throw error;
+      }
+      return state.openingPhoto;
+    } finally {
+      await fsp.rm(temp, { force: true });
+    }
   }
   async importBytes(owner, data, room, kind = "panorama") {
     domain.ensure(
@@ -244,6 +362,24 @@ class PanoramaWorkflow {
       height: stream.height,
       url: this.url(owner, `assets/${asset}`),
     };
+  }
+  openingLocations(owner, scenes) {
+    const { assetMetadata } = this.store(owner);
+    const result = new Map();
+    for (const scene of scenes) {
+      const asset = scene.kind === "photo" ? scene.asset : scene.sourceAsset;
+      const metadata = assetMetadata[asset];
+      if (!assetName.test(asset || "") || !metadata?.kinds?.includes("photo"))
+        continue;
+      const ratio = metadata.width / metadata.height;
+      if (ratio >= 0.4 && ratio <= 2.5 && !result.has(asset))
+        result.set(asset, {
+          asset,
+          label: scene.room,
+          url: this.url(owner, `assets/${asset}`),
+        });
+    }
+    return [...result.values()];
   }
   scenes(owner, input, allowPhoto = false) {
     domain.ensure(
@@ -396,6 +532,15 @@ class PanoramaWorkflow {
       }
     }
     if (method === "state") return this.view(owner, state);
+    if (method === "opening-clip-import")
+      return this.importOpeningClip(
+        owner,
+        state,
+        assertCurrent,
+        input.referenceOnly === true,
+      );
+    if (method === "opening-photo-import")
+      return this.importOpeningPhoto(owner, state, assertCurrent);
     if (method === "capabilities") return this.capabilities();
     if (method === "preview-system") {
       const caps = await this.capabilities();
@@ -498,8 +643,7 @@ class PanoramaWorkflow {
       if (draft.sample && draft.property.id === "panorama-cc0-sample")
         domain.ensure(
           c.ttsProvider === draft.config.ttsProvider &&
-            c.voice === draft.config.voice &&
-            c.avatarId === draft.config.avatarId,
+            c.voice === draft.config.voice,
           "内置测试任务使用本机测试配音，请重新选择测试模板",
         );
       if (draft.templateSnapshot)
@@ -512,6 +656,14 @@ class PanoramaWorkflow {
       domain.ensure(
         c.leadSceneId === (draft.config.leadSceneId || ""),
         "开场镜头改变后，请重新生成文案",
+      );
+      domain.ensure(
+        c.openingClip === draft.config.openingClip &&
+          c.openingPhoto === draft.config.openingPhoto &&
+          domain.hash(c.openingLocation || null) ===
+            domain.hash(draft.config.openingLocation || null) &&
+          c.roomOpening === draft.config.roomOpening,
+        "开场视频已随任务保存，请创建新任务更换",
       );
       domain.ensure(
         !c.coverSceneId || draft.scenes.some((s) => s.id === c.coverSceneId),
@@ -554,7 +706,8 @@ class PanoramaWorkflow {
       );
       if (existing) return existing;
       domain.ensure(
-        draft.confirmation !== "whole" || input.confirmed === true,
+        (draft.confirmation !== "whole" && !draft.config.openingPhoto) ||
+          input.confirmed === true,
         "请先确认整条视频的文案",
       );
       await this.preflight(draft, owner, draft.confirmation === "whole");
@@ -562,19 +715,6 @@ class PanoramaWorkflow {
       assertCurrent();
       this.queue.assertExecution(owner, draft.id, productionItem);
       domain.ensure(!this.active.size, "本机正在生成视频，请稍后再试");
-      const avatarKey = domain.hash([
-        "photo-v1",
-        domain.audioKey(draft.segments[0], draft.config),
-        draft.config.avatarId,
-      ]);
-      const previousAvatar = state.jobs.find(
-        (j) => j.avatar?.key === avatarKey,
-      )?.avatar;
-      if (draft.config.videoMode === "avatar")
-        domain.ensure(
-          !previousAvatar?.submitting || previousAvatar.taskId,
-          "相同开场的数字人提交结果未知，请先核对火山控制台，避免重复扣费",
-        );
       const job = {
         id: crypto.randomUUID(),
         draftId: draft.id,
@@ -583,7 +723,9 @@ class PanoramaWorkflow {
         sample: draft.sample,
         confirmation: draft.confirmation,
         confirmedAt:
-          draft.confirmation === "whole" ? new Date().toISOString() : undefined,
+          draft.confirmation === "whole" || draft.config.openingPhoto
+            ? new Date().toISOString()
+            : undefined,
         config: structuredClone(draft.config),
         scenes: structuredClone(draft.scenes),
         segments: structuredClone(draft.segments),
@@ -599,10 +741,6 @@ class PanoramaWorkflow {
             : "tts",
         progress: 0,
         createdAt: new Date().toISOString(),
-        avatar:
-          draft.config.videoMode === "avatar"
-            ? { ...structuredClone(previousAvatar), key: avatarKey }
-            : undefined,
       };
       state.jobs.unshift(job);
       try {
@@ -643,10 +781,6 @@ class PanoramaWorkflow {
         "只有失败或已取消任务可以重试",
       );
       domain.ensure(!this.active.has(job.id), "正在停止上一次执行，请稍后重试");
-      domain.ensure(
-        !job.avatar?.submitting || job.avatar.taskId,
-        "数字人提交结果未知，已停止自动重提；请先在火山控制台核对，避免重复扣费",
-      );
       await this.preflight(
         job,
         owner,
@@ -711,6 +845,7 @@ class PanoramaWorkflow {
             {
               id: input.config?.templateId,
               version: input.templateVersion,
+              openingRecipe: true,
             },
             signal,
           ));
@@ -731,7 +866,7 @@ class PanoramaWorkflow {
       if (preparing && property.id === "panorama-cc0-sample") {
         domain.ensure(
           property.sample === true && c.videoMode === "voiceover",
-          "内置测试房源请选择配音模板；露脸制作请使用本人形象与真实房源",
+          "内置测试房源请选择配音模板",
         );
         const caps = await this.capabilities("runtime");
         assertCurrent();
@@ -743,10 +878,19 @@ class PanoramaWorkflow {
         c.ttsProvider = "system";
         c.voice = voice.name;
         c.scriptProvider = "template";
-        c.avatarId = "";
       }
       if (preparing && !property.sample) c.scriptProvider = "ai";
-      await this.requireAvatar(c);
+      domain.ensure(
+        !c.openingLocation || templateSnapshot?.production.opening,
+        "请选择已上架的 MiniMax 开场模板",
+      );
+      domain.ensure(
+        c.videoMode !== "avatar" ||
+          c.openingClip ||
+          c.openingLocation ||
+          c.roomOpening,
+        "请选择真人开场视频，或改用房源画面开场",
+      );
       assertCurrent();
       domain.ensure(
         c.scriptProvider !== "ai" || this.remote,
@@ -767,6 +911,12 @@ class PanoramaWorkflow {
         c.coverSceneId = "";
         c.coverTitle = "";
         for (const scene of scenes) scene.direction = c.direction;
+        if (c.openingLocation?.source === "property") {
+          const options = this.openingLocations(owner, scenes);
+          c.openingLocation.asset =
+            options.find(({ asset }) => asset === c.openingLocation.asset)
+              ?.asset || options[0]?.asset;
+        }
       }
       for (const key of ["leadSceneId", "coverSceneId"])
         domain.ensure(
@@ -807,6 +957,7 @@ class PanoramaWorkflow {
                   ),
                   templateId: templateSnapshot.id,
                   templateVersion: templateSnapshot.version,
+                  openingRecipe: !!templateSnapshot.production.opening,
                   images: await factory.scriptImages(
                     this,
                     owner,
@@ -864,6 +1015,7 @@ class PanoramaWorkflow {
         if (item)
           this.queue.update(owner, item, {
             draftId: draft.id,
+            config: c,
             phase: "review",
           });
         else this.persist(owner);
@@ -954,27 +1106,142 @@ class PanoramaWorkflow {
         "公共音色已下架或不存在，请重新选择",
       );
     }
-    if (draft.config.videoMode === "avatar") {
-      await this.requireAvatar(draft.config, checks);
+    if (draft.config.openingClip) {
       domain.ensure(
-        caps.volcAvatar,
-        "请配置火山数字人 AK、SK、TOS 私有桶以及形象 ID",
+        await media.exists(
+          path.join(
+            this.directory(owner),
+            "opening",
+            `${draft.config.openingClip}.mp4`,
+          ),
+        ),
+        "本机开场视频已丢失，请重新导入原视频后重试",
+      );
+    } else if (!draft.config.openingLocation) {
+      domain.ensure(
+        draft.config.videoMode !== "avatar" || draft.config.roomOpening,
+        "请选择真人开场视频，或改用房源画面开场",
       );
     }
+    if (draft.config.openingPhoto) {
+      domain.ensure(caps.minimaxOpening, "请在管理后台启用 MiniMax 开场服务");
+      const dir = this.directory(owner);
+      domain.ensure(
+        await media.exists(
+          path.join(dir, "opening", `${draft.config.openingPhoto}.photo`),
+        ),
+        "经纪人照片已丢失，请重新导入原照片",
+      );
+      const location = draft.config.openingLocation;
+      if (location)
+        domain.ensure(
+          assetName.test(location.asset || "") &&
+            (await media.exists(path.join(dir, "assets", location.asset))),
+          "没有可用的开场地点图，请补充房源原图或改用房源开场",
+        );
+    }
   }
-  async requireAvatar(config, checks = {}) {
-    if (config.videoMode !== "avatar") return;
-    domain.ensure(
-      config.avatarId && this.remote,
-      "露脸模式必须先上传本人照片并选择形象",
+  async miniMaxOpening(dir, config, opening, signal, templateSnapshot) {
+    const cache = path.join(dir, "cache");
+    const audio = await fsp.readFile(path.join(cache, opening.audio));
+    const location = config.openingLocation;
+    const key = domain.hash([
+      location ? "minimax-h3-768p-location-v1" : "minimax-h3-768p-v1",
+      location
+        ? [templateSnapshot.id, templateSnapshot.version, location.asset]
+        : config.openingClip,
+      config.openingPhoto,
+      domain.hash(audio),
+      config.aspectRatio,
+    ]);
+    const target = path.join(cache, `minimax-${key}.mp4`);
+    if (await media.exists(target)) return target;
+    const photo = await fsp.readFile(
+      path.join(dir, "opening", `${config.openingPhoto}.photo`),
     );
-    const library = await (checks.avatars ??= this.remote("avatar-list", {}));
     domain.ensure(
-      library.avatars.some(
-        (avatar) => avatar.id === config.avatarId && avatar.status === "ready",
-      ),
-      "请先上传本人照片，只能选择自己已保存的形象",
+      photo.length <= 3 * 1024 * 1024 &&
+        domain.hash(photo) === config.openingPhoto,
+      "经纪人照片内容已变更，请重新导入原照片",
     );
+    let reference;
+    if (location) {
+      reference = {
+        templateId: templateSnapshot.id,
+        templateVersion: templateSnapshot.version,
+      };
+      if (location.source === "property") {
+        const file = path.join(dir, "assets", location.asset);
+        domain.ensure(
+          domain.hash(await fsp.readFile(file)) ===
+            location.asset.split(".")[0],
+          "地点原图已变更，请重新导入原图",
+        );
+        reference.location = await media.scriptImage(file, dir, signal);
+      }
+    } else {
+      const video = await fsp.readFile(
+        path.join(dir, "opening", `${config.openingClip}.mp4`),
+      );
+      domain.ensure(
+        video.length <= 8 * 1024 * 1024 &&
+          domain.hash(video) === config.openingClip,
+        "参考视频内容已变更，请重新导入原文件",
+      );
+      reference = { video: video.toString("base64") };
+    }
+    const { requestKey } = await this.remote(
+      "opening-submit",
+      {
+        ...reference,
+        photo: photo.toString("base64"),
+        audio: audio.toString("base64"),
+        ratio: config.aspectRatio,
+        authorized: true,
+      },
+      signal,
+    );
+    domain.ensure(
+      typeof requestKey === "string" && /^[a-f0-9]{64}$/.test(requestKey),
+      "MiniMax 开场请求标识无效",
+    );
+    const polling = AbortSignal.any([
+      signal,
+      AbortSignal.timeout(12 * 60 * 1000),
+    ]);
+    let result;
+    try {
+      for (;;) {
+        polling.throwIfAborted();
+        result = await this.remote("opening-query", { requestKey }, polling);
+        if (result.status === "succeeded") break;
+        domain.ensure(
+          result.status === "queued" || result.status === "running",
+          result.message || "MiniMax 开场未完成",
+        );
+        await delay(5000, undefined, { signal: polling });
+      }
+    } catch (error) {
+      if (!signal.aborted && polling.aborted)
+        throw new Error("MiniMax 尚未返回结果，重试会继续查询原任务");
+      throw error;
+    }
+    const temp = target + ".part.mp4";
+    try {
+      await providers.downloadMiniMaxVideo(result.videoUrl, temp, signal);
+      const info = await media.probe(temp, cache, signal, "mov");
+      domain.ensure(
+        info.streams.some(
+          (s) => s.codec_type === "video" && !s.disposition?.attached_pic,
+        ) && Number(info.format.duration) >= opening.duration - 0.12,
+        "MiniMax 开场视频无法读取或短于解说音频",
+      );
+      signal.throwIfAborted();
+      await fsp.rename(temp, target);
+      return target;
+    } finally {
+      await fsp.rm(temp, { force: true });
+    }
   }
   execute(owner, job) {
     const controller = new AbortController();
@@ -1009,96 +1276,35 @@ class PanoramaWorkflow {
             ? 25 + (index / job.segments.length) * 15
             : (index / job.segments.length) * 30,
         );
-        audio.push(
-          await media.synthesize(
-            segment,
-            job.config,
-            cache,
-            signal,
-            this.remote,
-          ),
+        const narration = await media.synthesize(
+          segment,
+          job.config,
+          cache,
+          signal,
+          this.remote,
         );
-      }
-      let avatarFile;
-      if (job.config.videoMode === "avatar") {
-        update("avatar", 32);
-        avatarFile = path.join(cache, `avatar-${job.avatar.key}.mp4`);
-        if (!(await media.exists(avatarFile))) {
-          const opening = audio[0];
-          domain.ensure(
-            opening.duration <= 30,
-            "数字人开场配音超过30秒，请缩短开场文案后重新提交",
+        if (
+          index === 0 &&
+          job.config.openingPhoto &&
+          !(narration.duration >= 2 && narration.duration <= 6)
+        ) {
+          job.reviewOpening = !!job.config.openingLocation;
+          throw new Error(
+            `MiniMax 开场解说须为 2–6 秒，当前约 ${narration.duration.toFixed(1)} 秒，请调整开场文案后重新审核`,
           );
-          if (!job.avatar?.taskId) {
-            domain.ensure(
-              !job.avatar?.submitting,
-              "数字人提交结果未知，请先核对火山控制台",
-            );
-            const uploaded = await this.remote(
-              "audio",
-              {
-                audio: (
-                  await fsp.readFile(path.join(cache, opening.audio))
-                ).toString("base64"),
-              },
-              signal,
-            );
-            job.avatar = { ...job.avatar, submitting: true };
-            this.persist(owner);
-            const data = await this.remote(
-              "avatar-submit",
-              { avatarId: job.config.avatarId, audioUrl: uploaded.url },
-              signal,
-            );
-            domain.ensure(
-              data?.task_id,
-              "数字人未返回任务 ID，请核对火山控制台",
-            );
-            job.avatar = {
-              ...job.avatar,
-              taskId: data.task_id,
-              submitting: false,
-            };
-            this.persist(owner);
-          }
-          let result;
-          for (let attempt = 0; attempt < 360; attempt++) {
-            signal.throwIfAborted();
-            result = providers.avatarResult(
-              await this.remote(
-                "avatar-query",
-                { taskId: job.avatar.taskId },
-                signal,
-              ),
-            );
-            if (result?.status === "done") break;
-            domain.ensure(
-              !["not_found", "expired"].includes(result?.status),
-              "数字人任务已过期或不存在，请在火山控制台核对",
-            );
-            await delay(5000, undefined, { signal });
-          }
-          domain.ensure(
-            result?.status === "done" && result.url,
-            "数字人任务尚未完成，重试会继续查询原任务",
-          );
-          await providers.downloadVideo(
-            result.url,
-            avatarFile + ".part.mp4",
-            signal,
-          );
-          const info = await media.probe(
-            avatarFile + ".part.mp4",
-            jobDir,
-            signal,
-          );
-          domain.ensure(
-            info.streams.some((s) => s.codec_type === "video") &&
-              Math.abs(Number(info.format.duration) - opening.duration) <= 1,
-            "数字人视频时长与开场音频不符",
-          );
-          await fsp.rename(avatarFile + ".part.mp4", avatarFile);
         }
+        audio.push(narration);
+      }
+      let openingFile;
+      if (job.config.openingPhoto) {
+        update("opening", 32);
+        openingFile = await this.miniMaxOpening(
+          dir,
+          job.config,
+          audio[0],
+          signal,
+          job.templateSnapshot,
+        );
       }
       update("render", 40);
       let last = 0;
@@ -1114,7 +1320,7 @@ class PanoramaWorkflow {
             update("render", 40 + ((index + fraction) / audio.length) * 58);
           }
         },
-        avatarFile,
+        openingFile,
       );
       signal.throwIfAborted();
       Object.assign(job, result, {

@@ -350,7 +350,7 @@ export function ProductionTaskPage() {
       modal.confirm({
         title: "修改文案后需要重新生成",
         content:
-          "当前配音、数字人片段和视频将不再用于新修订。此前发布记录会保留，不会被覆盖。",
+          "当前配音、开场片段和视频将不再用于新修订。此前发布记录会保留，不会被覆盖。",
         okText: "保存并重新生成",
         cancelText: "继续编辑",
         onOk: () => run(save, "文案已保存，下游内容将使用新修订重新生成"),

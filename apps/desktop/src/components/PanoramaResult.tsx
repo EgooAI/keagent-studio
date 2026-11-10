@@ -167,13 +167,14 @@ export function PanoramaResult({
                   render: (camera: { sweep: number } | null, row) =>
                     camera
                       ? `${camera.sweep.toFixed(1)}°`
-                      : job.config.videoMode === "avatar" &&
-                          job.segments.find((s) => s.id === row.id)?.kind ===
-                            "opening"
-                        ? "数字人"
+                      : job.segments.find((s) => s.id === row.id)?.kind ===
+                          "opening"
+                        ? job.config.openingPhoto
+                          ? "MiniMax 开场"
+                          : "开场片段"
                         : job.config.materialMode === "expand"
                           ? "扩图平移"
-                          : "数字人",
+                          : "—",
                 },
               ]}
             />

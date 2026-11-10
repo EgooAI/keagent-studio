@@ -358,11 +358,6 @@ export default function AdminTasks() {
                   label: "声音编号",
                   children: task.configSnapshot.voiceId || "未记录",
                 },
-                {
-                  key: "avatar",
-                  label: "形象编号",
-                  children: task.configSnapshot.avatarId || "未使用",
-                },
               ]}
             />
             <h3 className="admin-detail-heading">

@@ -92,7 +92,7 @@ func voiceTestServer(t *testing.T) *server {
 		}
 		base.Close()
 	})
-	if _, err = db.Exec(schema + voiceSchema + publicVoiceSchema + userAvatarSchema + avatarSchema); err != nil {
+	if _, err = db.Exec(schema + voiceSchema + publicVoiceSchema); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "true")

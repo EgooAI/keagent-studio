@@ -80,7 +80,7 @@ describe("batch production", () => {
     expect(task.videoUrl).toBe("/media/demo-property.mp4");
   });
 
-  it("validates duplicates, unavailable resources, missing media and avatar selection", async () => {
+  it("validates duplicates, unavailable resources and missing media", async () => {
     await expect(
       demoApi.createBatch(
         config({ propertyIds: ["property-4", "property-4"] }),
@@ -91,9 +91,6 @@ describe("batch production", () => {
       demoApi.createBatch(config({ propertyIds: ["property-8"] }), "media"),
     ).rejects.toThrow("素材");
     await expect(
-      demoApi.createBatch(config({ videoMode: "avatar" }), "avatar"),
-    ).rejects.toThrow("形象");
-    await expect(
       demoApi.createBatch(
         config({ videoTemplate: { id: "video-3", version: "1.0.0" } }),
         "resource",
@@ -101,16 +98,16 @@ describe("batch production", () => {
     ).rejects.toThrow("安装");
     await demoApi.downloadResource("video-3");
     for (let i = 0; i < 3; i++) await demoApi.tick();
-    await expect(
-      demoApi.createBatch(
-        config({
-          videoMode: "avatar",
-          avatarId: "avatar-1",
-          videoTemplate: { id: "video-3", version: "1.0.0" },
-        }),
-        "installed",
-      ),
-    ).resolves.toHaveProperty("taskIds");
+    const batch = await demoApi.createBatch(
+      config({
+        videoMode: "avatar",
+        avatarId: "avatar-1",
+        videoTemplate: { id: "video-3", version: "1.0.0" },
+      }),
+      "installed",
+    );
+    expect(batch.taskIds).toHaveLength(3);
+    expect(batch.configSnapshot.avatarId).toBeUndefined();
   });
 
   it("invalidates current outputs after script edits while keeping the published revision", async () => {

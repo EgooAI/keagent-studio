@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Alert,
   Form,
@@ -11,7 +12,9 @@ import {
 import type {
   ProductionTemplateRecipe,
   ProductionTemplatePreview,
+  ProductionOpening,
 } from "@keagent/shared-types";
+import { encodeOpeningLocation, openingImageURL } from "./openingLocationImage";
 
 export const defaultProduction: Extract<
   ProductionTemplateRecipe,
@@ -44,8 +47,143 @@ const field = (key: string) => ["production", "config", key];
 const choices = (values: [string | number, string][]) =>
   values.map(([value, label]) => ({ value, label }));
 
-export function ProductionTemplateEditor() {
+const defaultOpening: ProductionOpening = {
+  prompt:
+    "保持经纪人照片中的人物特征，以地点图片为场景参考。人物面向镜头，以自然中景完成口播，嘴部动作跟随参考音频。保持地点的主要特征，避免添加招牌、字幕或背景音乐。",
+  location: { source: "property" },
+};
+
+function OpeningEditor({
+  value,
+  onChange,
+  disabled,
+  id,
+}: {
+  value?: ProductionOpening;
+  onChange?: (value?: ProductionOpening) => void;
+  disabled?: boolean;
+  id?: string;
+}) {
+  const [reading, setReading] = useState(false);
+  const [error, setError] = useState("");
+  const image =
+    value?.location.source === "fixed" ? value.location.image : undefined;
+  return (
+    <>
+      <Select
+        id={id}
+        disabled={disabled || reading}
+        value={value ? "minimax" : "clip"}
+        options={choices([
+          ["clip", "导入真人短片"],
+          ["minimax", "MiniMax H3 生成"],
+        ])}
+        onChange={(mode) => {
+          setError("");
+          onChange?.(mode === "minimax" ? defaultOpening : undefined);
+        }}
+      />
+      {value && (
+        <>
+          <Form.Item
+            label="地点图片"
+            htmlFor={id + "-location"}
+            extra={
+              value.location.source === "property"
+                ? "默认采用当前房源第一张可用实拍图，审核时可更换。"
+                : undefined
+            }
+          >
+            <Select
+              id={id + "-location"}
+              disabled={disabled || reading}
+              value={value.location.source}
+              options={choices([
+                ["property", "随房源取图"],
+                ["fixed", "模板固定图片"],
+              ])}
+              onChange={(source: "property" | "fixed") => {
+                setError("");
+                onChange?.({ ...value, location: { source } });
+              }}
+            />
+          </Form.Item>
+          {value.location.source === "fixed" && (
+            <Form.Item
+              label="上传固定地点图"
+              htmlFor={id + "-image"}
+              extra="请使用已获授权的 JPG 或 PNG，最多 15 MB。"
+            >
+              {image && (
+                <img
+                  width={160}
+                  height={90}
+                  style={{ objectFit: "contain" }}
+                  src={openingImageURL(image)}
+                  alt="模板固定地点图预览"
+                />
+              )}
+              <input
+                id={id + "-image"}
+                type="file"
+                accept=".jpg,.jpeg,.png"
+                disabled={disabled || reading}
+                onChange={async (event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (!file) return;
+                  setError("");
+                  setReading(true);
+                  onChange?.({ ...value, location: { source: "fixed" } });
+                  try {
+                    onChange?.({
+                      ...value,
+                      location: {
+                        source: "fixed",
+                        image: await encodeOpeningLocation(file),
+                      },
+                    });
+                  } catch (cause) {
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "无法读取地点图片",
+                    );
+                  } finally {
+                    setReading(false);
+                  }
+                }}
+              />
+              {reading && <span role="status">正在处理地点图…</span>}
+              {error && <Alert showIcon type="error" title={error} />}
+            </Form.Item>
+          )}
+          <Form.Item
+            label="画面提示词"
+            htmlFor={id + "-prompt"}
+            extra="描述人物站位、镜头和光线。开场台词由下方的开场文案规则控制。"
+          >
+            <Input.TextArea
+              id={id + "-prompt"}
+              rows={3}
+              value={value.prompt}
+              maxLength={1500}
+              showCount
+              disabled={disabled || reading}
+              onChange={(event) =>
+                onChange?.({ ...value, prompt: event.target.value })
+              }
+            />
+          </Form.Item>
+        </>
+      )}
+    </>
+  );
+}
+
+export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
   const legacy = Form.useWatch(["production", "schemaVersion"]) === 1;
+  const videoMode = Form.useWatch(field("videoMode"));
   return (
     <>
       <Alert
@@ -74,7 +212,6 @@ export function ProductionTemplateEditor() {
           name={field("videoMode")}
           label="视频表现"
           rules={[{ required: true }]}
-          extra="露脸模式需要用户已配置可用形象。"
         >
           <Select
             options={choices([
@@ -84,6 +221,25 @@ export function ProductionTemplateEditor() {
           />
         </Form.Item>
       </div>
+      {!legacy && videoMode === "avatar" && (
+        <Form.Item
+          name={["production", "opening"]}
+          label="开场方式"
+          preserve={false}
+          rules={[
+            {
+              validator: async (_, value?: ProductionOpening) => {
+                if (value && !value.prompt.trim())
+                  throw new Error("请填写画面提示词");
+                if (value?.location.source === "fixed" && !value.location.image)
+                  throw new Error("请上传模板固定地点图");
+              },
+            },
+          ]}
+        >
+          <OpeningEditor disabled={disabled} />
+        </Form.Item>
+      )}
       {legacy && (
         <p className="admin-secondary">
           支持变量：房源标题 {"{title}"}、已核实参数 {"{facts}"}、房源卖点{" "}
@@ -227,6 +383,10 @@ export function ProductionPreview({
   value: ProductionTemplatePreview;
 }) {
   const c = value.template.production.config;
+  const opening =
+    value.template.production.schemaVersion === 2
+      ? value.template.production.opening
+      : undefined;
   return (
     <>
       <Alert
@@ -322,6 +482,33 @@ export function ProductionPreview({
           },
         ]}
       />
+      {opening && (
+        <Descriptions
+          title="MiniMax H3 开场"
+          size="small"
+          column={1}
+          items={[
+            {
+              key: "location",
+              label: "地点图片",
+              children:
+                opening.location.source === "fixed" &&
+                opening.location.image ? (
+                  <img
+                    width={160}
+                    height={90}
+                    style={{ objectFit: "contain" }}
+                    src={openingImageURL(opening.location.image)}
+                    alt="模板固定地点图"
+                  />
+                ) : (
+                  <span>随房源取图，审核时可更换</span>
+                ),
+            },
+            { key: "prompt", label: "画面提示词", children: opening.prompt },
+          ]}
+        />
+      )}
       {value.segments.map((segment, index) => (
         <div
           key={segment.id}

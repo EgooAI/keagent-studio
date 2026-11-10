@@ -190,16 +190,6 @@ export async function authRequest<T>(
     ].includes(method)
   )
     return serviceRequest<T>(`/v1/voices/${method.slice(6)}`, args[0] ?? {});
-  if (
-    [
-      "avatar.list",
-      "avatar.create",
-      "avatar.preview",
-      "avatar.refresh",
-      "avatar.remove",
-    ].includes(method)
-  )
-    return serviceRequest<T>(`/v1/avatars/${method.slice(7)}`, args[0] ?? {});
   if (method === "session") return serviceRequest<T>("/v1/session");
   if (method === "login" || method === "logout") {
     clearAccessToken();
