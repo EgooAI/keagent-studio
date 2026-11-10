@@ -297,14 +297,17 @@ export function PublishDetailPage() {
             {task.propertySnapshot.layout} · {task.propertySnapshot.areaSqm}m²
           </p>
           <p className="muted">编号 {task.propertySnapshot.propertyNumber}</p>
-          <dl className="snapshot-list">
-            {snapshots.map(([label, value]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
+          <details className="task-config-details">
+            <summary>制作配置与版本</summary>
+            <dl className="snapshot-list">
+              {snapshots.map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
           <Link to={`/studio/tasks/${task.id}`} className="text-link">
             查看生产记录 <ArrowUpRight size={14} />
           </Link>

@@ -4,14 +4,14 @@
 
 :root {
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: #1b2b44;
-  background: #f6f8fb;
+  color: #26303d;
+  background: #f5f6f8;
   font-synthesis: none;
-  --ink: #1b2b44;
-  --muted: #65738a;
-  --line: #e3e8f0;
+  --ink: #26303d;
+  --muted: #5f6b7a;
+  --line: #e1e5eb;
   --surface: #ffffff;
-  --canvas: #f6f8fb;
+  --canvas: #f5f6f8;
 }
 * {
   box-sizing: border-box;
@@ -126,7 +126,7 @@ svg {
   position: fixed;
   inset: 0 auto 0 0;
   width: 220px;
-  background: #fff;
+  background: #f0f2f5;
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -158,10 +158,10 @@ svg {
 }
 .brand small {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 5px;
   color: var(--muted);
-  letter-spacing: 1.6px;
+  letter-spacing: 0;
 }
 .nav-item {
   display: flex;
@@ -171,7 +171,7 @@ svg {
   color: #58667b;
   margin-bottom: 6px;
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   transition:
     background 0.18s ease,
@@ -238,8 +238,9 @@ svg {
   width: calc(100% - 220px);
 }
 .app-main {
-  max-width: 1880px;
-  padding: 32px 34px 0;
+  max-width: 1680px;
+  margin-inline: auto;
+  padding: 32px 36px 0;
   outline: none;
 }
 .page-heading {
@@ -255,7 +256,7 @@ svg {
 .page-heading p {
   color: var(--muted);
   margin-bottom: 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
 }
 .page-actions,
@@ -313,18 +314,17 @@ svg {
   align-items: center;
   gap: 7px;
   border: 0;
-  padding: 8px 13px;
+  padding: 10px 13px;
   color: #64738a;
   background: transparent;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
 }
 .filter-pills button.active {
-  background: white;
+  background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
-  box-shadow: 0 1px 4px #1d334810;
 }
 .filter-pills button span {
   font-size: 10px;
@@ -1730,5 +1730,279 @@ svg {
   .douyin-account-row {
     align-items: start;
     flex-direction: column;
+  }
+}
+
+/* Task surfaces share a quiet canvas; spacing separates navigation from work. */
+[hidden] {
+  display: none !important;
+}
+.page-heading > div:first-child {
+  min-width: 0;
+}
+.page-heading h1 {
+  overflow-wrap: anywhere;
+}
+.workspace-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+.dashboard-workspace {
+  display: grid;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 32px;
+  margin-bottom: 28px;
+}
+.dashboard-todos {
+  overflow: hidden;
+}
+.dashboard-todos .section-heading {
+  border-bottom: 1px solid var(--line);
+}
+.dashboard-todo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.dashboard-todo:last-child {
+  border-bottom: 0;
+}
+.dashboard-todo:hover {
+  background: var(--canvas);
+}
+.dashboard-todo small {
+  display: block;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.dashboard-todo > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.dashboard-clear {
+  padding: 28px 24px;
+}
+.dashboard-overview {
+  padding: 18px 0;
+}
+.dashboard-overview dl {
+  margin: 16px 0 24px;
+}
+.dashboard-overview dl > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.dashboard-overview dt {
+  color: var(--muted);
+}
+.dashboard-overview dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.dashboard-overview > a {
+  display: block;
+  margin-top: 16px;
+  color: var(--muted);
+}
+.property-overview {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(0, 1.3fr);
+  gap: 24px;
+  align-items: start;
+}
+.property-overview .property-hero {
+  height: auto;
+  aspect-ratio: 4 / 3;
+}
+.property-overview .detail-info {
+  margin: 0;
+}
+.property-detail-tabs .asset-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+.leads-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.leads-workspace > section:first-child {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+.lead-list-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 12px;
+  color: var(--ink);
+}
+.lead-list-item:hover {
+  background: var(--canvas);
+}
+.lead-list-item[aria-pressed="true"] {
+  background: var(--accent-soft);
+}
+.lead-detail-tabs {
+  margin-top: 20px;
+}
+.lead-detail-tabs .ant-tabs-tabpane {
+  min-height: 320px;
+}
+.settings-workspace {
+  padding: 24px;
+}
+.settings-workspace .ant-tabs-content-holder {
+  min-width: 0;
+}
+.settings-workspace .ant-tabs-tabpane {
+  max-width: 940px;
+}
+.settings-workspace .ant-tabs-left > .ant-tabs-nav {
+  min-width: 180px;
+}
+.settings-workspace .ant-tabs-left > .ant-tabs-nav .ant-tabs-tab {
+  margin: 0;
+  padding: 12px 20px 12px 0;
+  text-align: left;
+}
+.settings-nav-label {
+  display: block;
+}
+.settings-nav-label small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 400;
+  margin: 20px 0 12px;
+}
+.settings-workspace .ant-tabs-tab:first-child small {
+  margin-top: 0;
+}
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--canvas);
+}
+.login-panel {
+  width: min(100%, 420px);
+}
+.login-panel h1 {
+  font-size: 22px;
+  margin: 8px 0;
+}
+@media (max-width: 1100px) {
+  .dashboard-workspace {
+    grid-template-columns: minmax(0, 1fr) 210px;
+    gap: 24px;
+  }
+  .leads-workspace {
+    grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.4fr);
+    gap: 16px;
+  }
+  .property-toolbar {
+    flex-wrap: wrap;
+  }
+  .settings-nav-label small {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .dashboard-workspace,
+  .leads-workspace,
+  .property-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dashboard-overview {
+    padding: 0;
+  }
+  .dashboard-overview dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-block: 12px;
+  }
+  .dashboard-overview dl > div {
+    gap: 12px;
+    border: 0;
+  }
+  .dashboard-todo {
+    padding: 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .dashboard-todos .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px;
+  }
+  .leads-workspace > section:first-child {
+    max-height: 340px;
+  }
+  .settings-workspace {
+    padding: 16px;
+  }
+  .settings-workspace .ant-tabs-content-holder {
+    border: 0;
+  }
+  .property-overview .property-hero {
+    max-height: 320px;
+  }
+  .property-detail-tabs .asset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .nav-item {
+    position: relative;
+  }
+  .skip-link {
+    left: 75px;
+  }
+}
+
+.task-config-details {
+  margin: 20px 0;
+  border-block: 1px solid var(--line);
+}
+.task-config-details > summary {
+  padding: 14px 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+.task-config-details[open] > summary {
+  margin-bottom: 12px;
+}
+.publish-detail-grid {
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr);
+}
+.publish-detail-grid > .provenance-panel {
+  grid-column: 1 / -1;
+}
+.provenance-panel .provenance-photo {
+  float: left;
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  margin-right: 20px;
+}
+.provenance-panel .task-config-details {
+  clear: both;
+}
+@media (max-width: 760px) {
+  .publish-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

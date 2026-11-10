@@ -7,6 +7,7 @@ import {
   Checkbox,
   Descriptions,
   Form,
+  Grid,
   Input,
   Modal,
   Popconfirm,
@@ -67,6 +68,7 @@ function systemPreview() {
 export default function SettingsPage() {
   const { section = "account" } = useParams();
   const navigate = useNavigate();
+  const screens = Grid.useBreakpoint();
   const { data } = useWorkspace();
   const account = useQuery({
     queryKey: ["settings-account"],
@@ -659,7 +661,6 @@ export default function SettingsPage() {
     </>
   );
   const items = [
-    { key: "theme", label: "主题设置", children: <ThemeSettings /> },
     { key: "account", label: "账号信息", children: accountSettings },
     { key: "profile", label: "经纪人资料", children: profileSettings },
     {
@@ -677,6 +678,7 @@ export default function SettingsPage() {
       label: "默认生成配置",
       children: isLive ? <FactoryPreferences /> : defaultsSettings,
     },
+    { key: "theme", label: "主题设置", children: <ThemeSettings /> },
     { key: "storage", label: "本地存储", children: storage },
     { key: "privacy", label: "隐私和授权", children: privacy },
     { key: "about", label: "软件更新与关于", children: about },
@@ -687,15 +689,24 @@ export default function SettingsPage() {
         title="设置"
         description="管理个人资料、创作偏好与工作环境。"
       />
-      <section className="panel" style={{ padding: 24 }}>
+      <section className="panel settings-workspace">
         <Tabs
-          tabPosition="left"
+          tabPosition={screens.lg ? "left" : "top"}
           activeKey={
             items.some((item) => item.key === section) ? section : "account"
           }
           onChange={(key) => navigate(`/settings/${key}`)}
-          items={items}
-          tabBarStyle={{ minWidth: 150 }}
+          items={items.map((item) => ({
+            ...item,
+            label: (
+              <span className="settings-nav-label">
+                {item.key === "account" && <small>个人账号</small>}
+                {item.key === "voices" && <small>视频创作</small>}
+                {item.key === "theme" && <small>应用设置</small>}
+                {item.label}
+              </span>
+            ),
+          }))}
         />
       </section>
       <Modal

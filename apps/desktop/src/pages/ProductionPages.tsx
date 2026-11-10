@@ -613,71 +613,74 @@ export function ProductionTaskPage() {
             {formatPrice(property.priceCents)}
           </div>
           <p>{property.description}</p>
-          <Descriptions
-            size="small"
-            column={1}
-            colon={false}
-            items={[
-              {
-                key: "number",
-                label: "房源号",
-                children: property.propertyNumber,
-              },
-              {
-                key: "mode",
-                label: "视频模式",
-                children:
-                  task.configSnapshot.videoMode === "avatar"
-                    ? "经纪人露脸"
-                    : "纯口播",
-              },
-              {
-                key: "prompt",
-                label: "提示词",
-                children: `${resourceName(task.configSnapshot.promptTemplate.id)} v${task.configSnapshot.promptTemplate.version}`,
-              },
-              {
-                key: "template",
-                label: "视频模板",
-                children: `${resourceName(task.configSnapshot.videoTemplate.id)} v${task.configSnapshot.videoTemplate.version}`,
-              },
-              {
-                key: "style",
-                label: "风格模板",
-                children: `${resourceName(task.configSnapshot.styleTemplate.id)} v${task.configSnapshot.styleTemplate.version}`,
-              },
-              {
-                key: "voice",
-                label: "声音",
-                children:
-                  data.voices.find(
-                    (item) => item.id === task.configSnapshot.voiceId,
-                  )?.name ?? task.configSnapshot.voiceId,
-              },
-              ...(task.configSnapshot.videoMode === "avatar"
-                ? [
-                    {
-                      key: "avatar",
-                      label: "人物形象",
-                      children:
-                        data.avatars.find(
-                          (item) => item.id === task.configSnapshot.avatarId,
-                        )?.name ?? "未选择",
-                    },
-                  ]
-                : []),
-              {
-                key: "review",
-                label: "审核方式",
-                children: task.configSnapshot.requireScriptReview
-                  ? "人工审核"
-                  : "自动继续",
-              },
-            ]}
-          />
-          <p className="form-hint">
-            以上为创建任务时的配置快照，不随默认设置变化。
-          </p>
+          <details className="task-config-details">
+            <summary>制作配置与来源</summary>
+            <Descriptions
+              size="small"
+              column={1}
+              colon={false}
+              items={[
+                {
+                  key: "number",
+                  label: "房源号",
+                  children: property.propertyNumber,
+                },
+                {
+                  key: "mode",
+                  label: "视频模式",
+                  children:
+                    task.configSnapshot.videoMode === "avatar"
+                      ? "经纪人露脸"
+                      : "纯口播",
+                },
+                {
+                  key: "prompt",
+                  label: "提示词",
+                  children: `${resourceName(task.configSnapshot.promptTemplate.id)} v${task.configSnapshot.promptTemplate.version}`,
+                },
+                {
+                  key: "template",
+                  label: "视频模板",
+                  children: `${resourceName(task.configSnapshot.videoTemplate.id)} v${task.configSnapshot.videoTemplate.version}`,
+                },
+                {
+                  key: "style",
+                  label: "风格模板",
+                  children: `${resourceName(task.configSnapshot.styleTemplate.id)} v${task.configSnapshot.styleTemplate.version}`,
+                },
+                {
+                  key: "voice",
+                  label: "声音",
+                  children:
+                    data.voices.find(
+                      (item) => item.id === task.configSnapshot.voiceId,
+                    )?.name ?? task.configSnapshot.voiceId,
+                },
+                ...(task.configSnapshot.videoMode === "avatar"
+                  ? [
+                      {
+                        key: "avatar",
+                        label: "人物形象",
+                        children:
+                          data.avatars.find(
+                            (item) => item.id === task.configSnapshot.avatarId,
+                          )?.name ?? "未选择",
+                      },
+                    ]
+                  : []),
+                {
+                  key: "review",
+                  label: "审核方式",
+                  children: task.configSnapshot.requireScriptReview
+                    ? "人工审核"
+                    : "自动继续",
+                },
+              ]}
+            />
+            <p className="form-hint">
+              以上为创建任务时的配置快照，不随默认设置变化。
+            </p>
+          </details>
           <Link to={`/properties/${property.id}`}>
             查看当前房源资料 <ArrowRight size={13} />
           </Link>

@@ -1,12 +1,5 @@
-import { Button, Empty, Space, Table, Tag } from "antd";
-import {
-  ArrowRight,
-  ArrowUpRight,
-  Building2,
-  Clapperboard,
-  FileCheck2,
-  Plus,
-} from "lucide-react";
+import { Button, Empty, Space, Table } from "antd";
+import { ArrowUpRight, Plus } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import type { ProductionTask } from "@keagent/shared-types";
 import { stageLabels } from "@keagent/shared-types";
@@ -41,100 +34,82 @@ export default function DashboardPage() {
           <Button
             type="primary"
             icon={<Plus size={16} />}
-            onClick={() => navigate("/studio")}
+            onClick={() => navigate("/studio/create")}
           >
             创建 AI 视频
           </Button>
         }
       />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.55fr) minmax(280px, 1fr)",
-          gap: 20,
-          marginBottom: 24,
-        }}
-      >
-        <section
-          className="panel"
-          style={{
-            padding: 26,
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            minHeight: 180,
-          }}
-        >
-          <div>
-            <Clapperboard size={26} color="var(--accent)" />
-            <h2 style={{ margin: "14px 0 7px", fontSize: 20 }}>
-              批量制作房源视频
-            </h2>
-            <p style={{ color: "#667085", margin: 0 }}>
-              一套配置支持多套房源，每套生成独立成片。
-            </p>
+      <div className="dashboard-workspace">
+        <section className="panel dashboard-todos">
+          <div className="section-heading">
+            <h2>需要你处理</h2>
+            <span className="muted">
+              {pending.length} 条待审核 · {unpublished.length} 条待发布
+            </span>
           </div>
-          <Space style={{ marginTop: 20 }}>
-            <Button
-              onClick={() => navigate("/studio")}
-              icon={<ArrowRight size={15} />}
-            >
-              进入视频工厂
-            </Button>
-            <Button type="text" onClick={() => navigate("/properties")}>
-              查看房源
-            </Button>
-          </Space>
+          {pending.length === 0 && unpublished.length === 0 ? (
+            <div className="dashboard-clear">
+              <h3>当前没有待办</h3>
+              <p className="muted">可以添加房源，或开始制作下一批视频。</p>
+            </div>
+          ) : (
+            <div className="dashboard-todo-list">
+              {[...pending, ...unpublished].slice(0, 4).map((task) => (
+                <Link
+                  key={task.id}
+                  className="dashboard-todo"
+                  to={
+                    task.status === "awaiting_review"
+                      ? `/studio/tasks/${task.id}/review`
+                      : `/publish/${task.id}`
+                  }
+                >
+                  <div>
+                    <strong>{task.propertySnapshot.community}</strong>
+                    <small>
+                      {task.status === "awaiting_review"
+                        ? "文案待确认，审核后继续制作"
+                        : "成片已完成，可以安排发布"}
+                    </small>
+                  </div>
+                  <span>
+                    {task.status === "awaiting_review"
+                      ? "审核文案"
+                      : "查看成片"}
+                    <ArrowUpRight size={15} />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
         </section>
-        <section className="panel" style={{ padding: 26 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <Building2 size={24} color="#64748b" />
-            <Tag variant="filled">房源库</Tag>
-          </div>
-          <h2 style={{ margin: "14px 0 7px", fontSize: 20 }}>先把素材准备好</h2>
-          <p style={{ color: "#667085", marginBottom: 20 }}>
-            当前有 {data.properties.length} 套示例房源，可继续批量导入。
-          </p>
+        <aside className="dashboard-overview">
+          <h2>工作区概况</h2>
+          <dl>
+            <div>
+              <dt>房源</dt>
+              <dd>{data.properties.length} 套</dd>
+            </div>
+            <div>
+              <dt>制作中</dt>
+              <dd>{active.length} 条</dd>
+            </div>
+            <div>
+              <dt>已完成</dt>
+              <dd>{finished.length} 条</dd>
+            </div>
+          </dl>
           <Button
             onClick={() => navigate("/properties?import=1")}
             icon={<Plus size={15} />}
           >
             导入房源
           </Button>
-        </section>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          gap: 32,
-          padding: "0 2px 24px",
-          flexWrap: "wrap",
-        }}
-      >
-        <Link to="/studio">
-          <strong style={{ fontSize: 22, marginRight: 8 }}>
-            {active.length}
-          </strong>
-          <span style={{ color: "#667085" }}>正在制作</span>
-        </Link>
-        <Link to="/studio">
-          <strong style={{ fontSize: 22, marginRight: 8 }}>
-            {pending.length}
-          </strong>
-          <span style={{ color: "#667085" }}>待审核文案</span>
-        </Link>
-        <Link to="/publish">
-          <strong style={{ fontSize: 22, marginRight: 8 }}>
-            {unpublished.length}
-          </strong>
-          <span style={{ color: "#667085" }}>待安排发布</span>
-        </Link>
+          <Link to="/properties">
+            查看房源库 <ArrowUpRight size={14} />
+          </Link>
+        </aside>
       </div>
       <section className="panel" style={{ overflow: "hidden" }}>
         <div
@@ -232,34 +207,6 @@ export default function DashboardPage() {
           scroll={{ x: 680 }}
         />
       </section>
-      {pending.length > 0 && (
-        <section
-          className="panel"
-          style={{
-            padding: "18px 24px",
-            marginTop: 20,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 16,
-          }}
-        >
-          <Space>
-            <FileCheck2 size={20} color="#b7791f" />
-            <div>
-              <strong>有 {pending.length} 条文案等你确认</strong>
-              <p style={{ margin: "4px 0 0", color: "#667085" }}>
-                审核通过后，将继续配音和视频合成。
-              </p>
-            </div>
-          </Space>
-          <Button
-            onClick={() => navigate(`/studio/tasks/${pending[0].id}/review`)}
-          >
-            去审核
-          </Button>
-        </section>
-      )}
     </>
   );
 }

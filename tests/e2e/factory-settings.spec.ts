@@ -344,7 +344,7 @@ async function choose(page: Page, label: string, option: string) {
 
 test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async ({ page }) => {
   await fixture(page, false, true);
-  await page.goto("/#/studio");
+  await page.goto("/#/studio/create");
   await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
   await page
     .getByRole("checkbox", {
@@ -410,8 +410,9 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
 test("内置房源没有核验日期时仍可查看素材", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/properties/panorama-cc0-sample");
-  await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
   await expect(page.getByText("资料核验 未提供")).toBeVisible();
+  await page.getByRole("tab", { name: "制作素材", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
 });
 
 test("正式房源导入显示贝壳联调状态并可切换到手动添加", async ({ page }) => {
@@ -451,6 +452,7 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
     page.getByText("默认制作配置已保存，新视频将使用这些偏好", { exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: /^AI 视频工厂/ }).click();
+  await page.getByRole("tab", { name: "新建视频", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "AI 视频工厂", exact: true }),
   ).toBeVisible();
@@ -540,7 +542,7 @@ test("后台下架模板和音色后可刷新看到失效偏好，正式设置�
 test("批量选择跨页保留，审核弹窗支持连续处理和调整窗口", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page, true);
-  await page.goto("/#/studio");
+  await page.goto("/#/studio/create");
   await expect(
     page.getByRole("button", { name: "选择房源", exact: true }),
   ).toBeVisible();
@@ -619,4 +621,53 @@ test("批量选择跨页保留，审核弹窗支持连续处理和调整窗口",
       })
       .getByRole("button", { name: "详情" }),
   ).toBeFocused();
+});
+
+test("任务和创建分开，切换保留批次选择，房源链接直接打开创建", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/#/studio");
+  await expect(
+    page.getByRole("tab", { name: "制作任务", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("button", { name: "选择房源", exact: true }),
+  ).toBeHidden();
+  await page.screenshot({
+    path: ".impeccable/review/studio-tasks-1440.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("tab", { name: "新建视频", exact: true }).click();
+  await page.getByRole("button", { name: "选择房源", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await page.getByRole("tab", { name: "制作任务", exact: true }).click();
+  await page.getByRole("tab", { name: "新建视频", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "房源 1 套", exact: true }),
+  ).toBeVisible();
+  for (const width of [1440, 1280, 600]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({
+      path: `.impeccable/review/studio-create-${width}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+  }
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await expect(
+    page.getByRole("tab", { name: "新建视频", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("button", { name: "房源 1 套", exact: true }),
+  ).toBeVisible();
 });

@@ -17,6 +17,7 @@ import {
   Select,
   Space,
   Table,
+  Tabs,
   Tooltip,
 } from "antd";
 import {
@@ -32,6 +33,7 @@ import {
   Link,
   useBlocker,
   useNavigate,
+  useLocation,
   useSearchParams,
 } from "react-router-dom";
 import type { PanoramaDraft, PanoramaSegment } from "@keagent/shared-types";
@@ -102,7 +104,17 @@ const actions: {
 ];
 
 export function PanoramaStudio() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const creating = params.has("view")
+    ? params.get("view") === "create"
+    : location.pathname.endsWith("/create") || params.has("propertyId");
+  function changeView(view: string) {
+    setParams((current) => {
+      current.set("view", view);
+      return current;
+    });
+  }
   const navigate = useNavigate();
   const initialProperty = params.get("propertyId");
   const { modal, message } = App.useApp();
@@ -414,6 +426,7 @@ export function PanoramaStudio() {
     setSearch("");
     setPage(1);
     setSelection([]);
+    changeView("tasks");
     await refresh();
   }
   async function importOpening() {
@@ -636,6 +649,7 @@ export function PanoramaStudio() {
     <div className="video-factory">
       <PageHeader
         title="AI 视频工厂"
+        description="选择房源和模板生成文案，审核后进入视频制作队列。"
         actions={
           <Space>
             {desktop && (
@@ -704,42 +718,73 @@ export function PanoramaStudio() {
               }
             />
           )}
-          <section className="panel factory-composer" aria-label="批量配置">
+          <Tabs
+            className="workspace-tabs"
+            activeKey={creating ? "create" : "tasks"}
+            onChange={changeView}
+            items={[
+              { key: "tasks", label: "制作任务" },
+              { key: "create", label: "新建视频" },
+            ]}
+          />
+          <section
+            className="panel factory-composer"
+            aria-label="批量配置"
+            hidden={!creating}
+          >
+            <div className="compose-intro">
+              <h2>新建一批视频</h2>
+              <p className="muted">
+                每套房源按所选模板生成独立任务。先生成文案，确认后再制作视频。
+              </p>
+            </div>
             <div className="factory-compose-main">
               <div className="factory-compose-picks">
-                <Button
-                  icon={<House size={16} />}
-                  disabled={busy}
-                  onClick={() => setPicker("property")}
-                >
-                  {propertyIds.length
-                    ? "房源 " + propertyIds.length + " 套"
-                    : "选择房源"}
-                </Button>
-                <Button
-                  icon={<Clapperboard size={16} />}
-                  disabled={busy || catalog.isPending}
-                  onClick={() => setPicker("template")}
-                >
-                  {templateIds.length
-                    ? "模板 " + templateIds.length + " 个"
-                    : "选择视频模板"}
-                </Button>
-                <Button
-                  type="text"
-                  aria-expanded={expanded}
-                  disabled={busy}
-                  icon={
-                    expanded ? (
-                      <ChevronUp size={15} />
-                    ) : (
-                      <ChevronDown size={15} />
-                    )
-                  }
-                  onClick={() => setExpanded(!expanded)}
-                >
-                  {expanded ? "收起配置" : "配置与组合"}
-                </Button>
+                <div className="compose-field">
+                  <h3>房源</h3>
+                  <p className="muted">选择本次要制作视频的房源。</p>
+                  <Button
+                    icon={<House size={16} />}
+                    disabled={busy}
+                    onClick={() => setPicker("property")}
+                  >
+                    {propertyIds.length
+                      ? "房源 " + propertyIds.length + " 套"
+                      : "选择房源"}
+                  </Button>
+                </div>
+                <div className="compose-field">
+                  <h3>视频模板</h3>
+                  <p className="muted">模板决定视频结构和画面风格。</p>
+                  <Button
+                    icon={<Clapperboard size={16} />}
+                    disabled={busy || catalog.isPending}
+                    onClick={() => setPicker("template")}
+                  >
+                    {templateIds.length
+                      ? "模板 " + templateIds.length + " 个"
+                      : "选择视频模板"}
+                  </Button>
+                </div>
+                <div className="compose-field">
+                  <h3>音色与组合</h3>
+                  <p className="muted">可沿用默认配置，或逐条检查组合。</p>
+                  <Button
+                    type="text"
+                    aria-expanded={expanded}
+                    disabled={busy}
+                    icon={
+                      expanded ? (
+                        <ChevronUp size={15} />
+                      ) : (
+                        <ChevronDown size={15} />
+                      )
+                    }
+                    onClick={() => setExpanded(!expanded)}
+                  >
+                    {expanded ? "收起配置" : "配置与组合"}
+                  </Button>
+                </div>
               </div>
               <div className="factory-compose-submit">
                 <span className="factory-equation">
@@ -958,6 +1003,7 @@ export function PanoramaStudio() {
             tabIndex={-1}
             className="panel factory-queue"
             aria-label="视频任务"
+            hidden={creating}
           >
             <div className="factory-queue-tabs" aria-label="按状态筛选">
               {tabs.map(([id, label]) => (
@@ -1041,7 +1087,7 @@ export function PanoramaStudio() {
                 rowKey="id"
                 dataSource={currentRows}
                 loading={list.isPending}
-                scroll={{ y: "max(240px, calc(100vh - 367px))" }}
+                scroll={{ x: 660, y: "max(240px, calc(100vh - 340px))" }}
                 rowClassName={(value) =>
                   value.id === detailId ? "factory-active-row" : ""
                 }

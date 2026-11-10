@@ -58,15 +58,8 @@ export default function LoginGate() {
       />
     );
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#f6f8fb",
-      }}
-    >
-      <Card title="登录 KeAgent Studio" style={{ width: 400 }}>
+    <main className="login-page">
+      <Card className="login-panel" title={<h1>登录 KeAgent Studio</h1>}>
         <p>使用管理员开通的账号登录。</p>
         {error && (
           <Alert type="error" title={error} style={{ marginBottom: 16 }} />

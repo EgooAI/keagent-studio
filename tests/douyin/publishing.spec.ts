@@ -491,6 +491,7 @@ test("an unknown result is resolved explicitly in the artifact detail", async ({
 }) => {
   await desktopFixture(page, true, true);
   await page.goto(`/#/publish/${fixture.artifact.id}`);
+  await page.getByText("发布记录", { exact: true }).click();
   await page.getByRole("button", { name: "记录核对结果" }).click();
   await page.getByRole("button", { name: "确认未发布", exact: true }).click();
   await page
@@ -702,6 +703,38 @@ test("发布工作台可在详情旁筛选成片，并在明确确认后批量�
   await expect(page.getByRole("dialog", { name: "成片详情" })).toBeVisible();
   await page.screenshot({
     path: "output/publish-workbench-1280.png",
+    animations: "disabled",
+  });
+});
+
+test("发布工作区按需显示批量操作，预览和记录独立切换", async ({ page }) => {
+  await desktopFixture(page);
+  await page.goto("/#/publish");
+  await expect(page.getByRole("button", { name: /配置批量发布/ })).toBeHidden();
+  await expect(page.getByRole("textbox", { name: "搜索成片" })).toBeVisible();
+  await page.screenshot({
+    path: ".impeccable/review/publish-live-1440.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.goto(`/#/publish/${fixture.artifact.id}`);
+  await expect(
+    page.getByRole("button", { name: "接收这份成片", exact: true }),
+  ).toBeVisible();
+  await page.getByText("发布记录", { exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "这份成片的发布记录" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "接收这份成片", exact: true }),
+  ).toBeHidden();
+  await page.getByText("预览验收", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "接收这份成片", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: ".impeccable/review/publish-detail-live-1440.png",
+    fullPage: true,
     animations: "disabled",
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Avatar,
@@ -10,6 +10,7 @@ import {
   Select,
   Space,
   Tag,
+  Tabs,
   Timeline,
   message,
 } from "antd";
@@ -47,8 +48,9 @@ export default function LeadsPage() {
   const [selectedId, setSelectedId] = useState("");
   const [search, setSearch] = useState("");
   const [intent, setIntent] = useState("all");
-  const [reply, setReply] = useState("");
-  const [note, setNote] = useState("");
+  const [drafts, setDrafts] = useState<
+    Record<string, { reply?: string; note?: string }>
+  >({});
   const [open, setOpen] = useState(false);
   const [matchesOpen, setMatchesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,18 +59,25 @@ export default function LeadsPage() {
     url: string;
     platform: Platform;
   }>();
-  const selected =
-    data?.leads.find((lead) => lead.id === selectedId) ?? data?.leads[0];
-  useEffect(() => {
-    setReply(selected?.reply ?? "");
-    setNote("");
-  }, [selected?.id, selected?.reply]);
-  if (!data) return null;
-  const filtered = data.leads.filter(
+  const filtered = (data?.leads ?? []).filter(
     (lead) =>
       (intent === "all" || lead.intentLevel === intent) &&
       `${lead.name}${lead.commentText}${lead.region}`.includes(search),
   );
+  const selected =
+    filtered.find((lead) => lead.id === selectedId) ?? filtered[0];
+  const reply = selected
+    ? (drafts[selected.id]?.reply ?? selected.reply ?? "")
+    : "";
+  const note = selected ? (drafts[selected.id]?.note ?? "") : "";
+  function updateDraft(patch: { reply?: string; note?: string }) {
+    if (!selected) return;
+    setDrafts((current) => ({
+      ...current,
+      [selected.id]: { ...current[selected.id], ...patch },
+    }));
+  }
+  if (!data) return null;
   async function act(action: () => Promise<unknown>, success?: string) {
     try {
       await action();
@@ -121,14 +130,7 @@ export default function LeadsPage() {
           style={{ marginBottom: 18 }}
         />
       )}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(280px, .8fr) minmax(0, 1.5fr)",
-          gap: 20,
-          alignItems: "start",
-        }}
-      >
+      <div className="leads-workspace">
         <section className="panel" style={{ padding: 18 }}>
           <Input
             prefix={<Search size={16} />}
@@ -162,22 +164,7 @@ export default function LeadsPage() {
                 key={lead.id}
                 onClick={() => setSelectedId(lead.id)}
                 aria-pressed={selected?.id === lead.id}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  background:
-                    selected?.id === lead.id
-                      ? "var(--accent-soft)"
-                      : "transparent",
-                  border: "1px solid",
-                  borderColor: selected?.id === lead.id ? "#bfdbfe" : "#edf0f4",
-                  borderRadius: 9,
-                  padding: 14,
-                  marginBottom: 10,
-                  cursor: "pointer",
-                  font: "inherit",
-                }}
+                className="lead-list-item"
               >
                 <div
                   style={{
@@ -275,147 +262,202 @@ export default function LeadsPage() {
                   style={{ width: 120 }}
                 />
               </div>
-              <div
-                style={{
-                  padding: 16,
-                  background: "#f7f8fa",
-                  borderRadius: 8,
-                  marginTop: 22,
-                }}
-              >
-                <Space style={{ color: "#667085", fontSize: 12 }}>
-                  <MessageSquareText size={14} />
-                  原始评论
-                </Space>
-                <p style={{ margin: "9px 0 0", lineHeight: 1.8 }}>
-                  {selected.commentText}
-                </p>
-                <p
-                  style={{ color: "#667085", fontSize: 12, margin: "10px 0 0" }}
-                >
-                  来源：{selected.sourceVideo}
-                </p>
-              </div>
-              <h3 style={{ fontSize: 15, marginTop: 24 }}>
-                需求分析 <Tag>模拟分析</Tag>
-              </h3>
-              <p style={{ color: "#475467", lineHeight: 1.8 }}>
-                {selected.aiSummary}
-              </p>
-              <dl
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 18,
-                  margin: "20px 0",
-                }}
-              >
-                {[
-                  ["购房预算", selected.budget],
-                  ["意向区域", selected.region],
-                  ["户型需求", selected.housingRequirements],
-                  ["联系权限", selected.contactPermission],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <dt
-                      style={{
-                        color: "#667085",
-                        fontSize: 12,
-                        marginBottom: 6,
-                      }}
-                    >
-                      {label}
-                    </dt>
-                    <dd style={{ margin: 0 }}>{value || "未识别"}</dd>
-                  </div>
-                ))}
-              </dl>
-              <Button
-                onClick={() => setMatchesOpen(true)}
-                icon={<ArrowUpRight size={15} />}
-              >
-                查看可匹配房源
-              </Button>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 10,
-                  marginTop: 28,
-                }}
-              >
-                <h3 style={{ fontSize: 15, margin: 0 }}>跟进话术</h3>
-                <Button
-                  size="small"
-                  icon={<Sparkles size={14} />}
-                  onClick={() =>
-                    void act(async () => {
-                      setReply(await demoApi.suggestReply(selected.id));
-                    }, "已生成示例话术，请确认后使用")
-                  }
-                >
-                  生成话术
-                </Button>
-              </div>
-              <Input.TextArea
-                aria-label="跟进话术"
-                rows={5}
-                value={reply}
-                onChange={(event) => setReply(event.target.value)}
-                placeholder="点击生成话术，或在这里填写你的跟进建议"
-                style={{ marginTop: 12 }}
-              />
-              <div style={{ textAlign: "right", marginTop: 10 }}>
-                <Button
-                  icon={<Copy size={14} />}
-                  disabled={!reply.trim()}
-                  onClick={() =>
-                    void act(async () => {
-                      await navigator.clipboard.writeText(reply);
-                      await demoApi.updateLead(selected.id, { reply });
-                    }, "话术已复制")
-                  }
-                >
-                  复制话术
-                </Button>
-              </div>
-              <h3 style={{ fontSize: 15, marginTop: 26 }}>跟进记录</h3>
-              <Input.TextArea
-                aria-label="跟进备注"
-                rows={2}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="记录本次沟通或下一步安排"
-              />
-              <Button
-                style={{ margin: "10px 0 22px" }}
-                disabled={!note.trim()}
-                onClick={() =>
-                  void act(async () => {
-                    await demoApi.addFollowup(selected.id, note.trim());
-                    setNote("");
-                  }, "跟进备注已添加")
-                }
-              >
-                添加记录
-              </Button>
-              {selected.followups.length ? (
-                <Timeline
-                  items={selected.followups.map((item) => ({
+              <Tabs
+                className="lead-detail-tabs"
+                items={[
+                  {
+                    key: "needs",
+                    label: "需求详情",
                     children: (
                       <>
-                        <p style={{ margin: 0 }}>{item.note}</p>
-                        <small style={{ color: "#667085" }}>
-                          {new Date(item.createdAt).toLocaleString("zh-CN")}
-                        </small>
+                        {" "}
+                        <div
+                          style={{
+                            padding: 16,
+                            background: "#f7f8fa",
+                            borderRadius: 8,
+                            marginTop: 22,
+                          }}
+                        >
+                          <Space style={{ color: "#667085", fontSize: 12 }}>
+                            <MessageSquareText size={14} />
+                            原始评论
+                          </Space>
+                          <p style={{ margin: "9px 0 0", lineHeight: 1.8 }}>
+                            {selected.commentText}
+                          </p>
+                          <p
+                            style={{
+                              color: "#667085",
+                              fontSize: 12,
+                              margin: "10px 0 0",
+                            }}
+                          >
+                            来源：{selected.sourceVideo}
+                          </p>
+                        </div>
+                        <h3 style={{ fontSize: 15, marginTop: 24 }}>
+                          需求分析 <Tag>模拟分析</Tag>
+                        </h3>
+                        <p style={{ color: "#475467", lineHeight: 1.8 }}>
+                          {selected.aiSummary}
+                        </p>
+                        <dl
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: 18,
+                            margin: "20px 0",
+                          }}
+                        >
+                          {[
+                            ["购房预算", selected.budget],
+                            ["意向区域", selected.region],
+                            ["户型需求", selected.housingRequirements],
+                            ["联系权限", selected.contactPermission],
+                          ].map(([label, value]) => (
+                            <div key={label}>
+                              <dt
+                                style={{
+                                  color: "#667085",
+                                  fontSize: 12,
+                                  marginBottom: 6,
+                                }}
+                              >
+                                {label}
+                              </dt>
+                              <dd style={{ margin: 0 }}>{value || "未识别"}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                        <Button
+                          onClick={() => setMatchesOpen(true)}
+                          icon={<ArrowUpRight size={15} />}
+                        >
+                          查看可匹配房源
+                        </Button>
                       </>
                     ),
-                  }))}
-                />
-              ) : (
-                <p style={{ color: "#667085" }}>还没有跟进记录</p>
-              )}
+                  },
+                  {
+                    key: "reply",
+                    label: "跟进话术",
+                    forceRender: true,
+                    children: (
+                      <>
+                        {" "}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 10,
+                            marginTop: 28,
+                          }}
+                        >
+                          <h3 style={{ fontSize: 15, margin: 0 }}>跟进话术</h3>
+                          <Button
+                            size="small"
+                            icon={<Sparkles size={14} />}
+                            onClick={() =>
+                              void act(async () => {
+                                updateDraft({
+                                  reply: await demoApi.suggestReply(
+                                    selected.id,
+                                  ),
+                                });
+                              }, "已生成示例话术，请确认后使用")
+                            }
+                          >
+                            生成话术
+                          </Button>
+                        </div>
+                        <Input.TextArea
+                          aria-label="跟进话术"
+                          rows={5}
+                          value={reply}
+                          onChange={(event) =>
+                            updateDraft({ reply: event.target.value })
+                          }
+                          placeholder="点击生成话术，或在这里填写你的跟进建议"
+                          style={{ marginTop: 12 }}
+                        />
+                        <div style={{ textAlign: "right", marginTop: 10 }}>
+                          <Button
+                            icon={<Copy size={14} />}
+                            disabled={!reply.trim()}
+                            onClick={() =>
+                              void act(async () => {
+                                await navigator.clipboard.writeText(reply);
+                                await demoApi.updateLead(selected.id, {
+                                  reply,
+                                });
+                              }, "话术已复制")
+                            }
+                          >
+                            复制话术
+                          </Button>
+                        </div>
+                      </>
+                    ),
+                  },
+                  {
+                    key: "history",
+                    label: `跟进记录（${selected.followups.length}）`,
+                    forceRender: true,
+                    children: (
+                      <>
+                        {" "}
+                        <h3 style={{ fontSize: 15, marginTop: 26 }}>
+                          跟进记录
+                        </h3>
+                        <Input.TextArea
+                          aria-label="跟进备注"
+                          rows={2}
+                          value={note}
+                          onChange={(event) =>
+                            updateDraft({ note: event.target.value })
+                          }
+                          placeholder="记录本次沟通或下一步安排"
+                        />
+                        <Button
+                          style={{ margin: "10px 0 22px" }}
+                          disabled={!note.trim()}
+                          onClick={() =>
+                            void act(async () => {
+                              await demoApi.addFollowup(
+                                selected.id,
+                                note.trim(),
+                              );
+                              updateDraft({ note: "" });
+                            }, "跟进备注已添加")
+                          }
+                        >
+                          添加记录
+                        </Button>
+                        {selected.followups.length ? (
+                          <Timeline
+                            items={selected.followups.map((item) => ({
+                              children: (
+                                <>
+                                  <p style={{ margin: 0 }}>{item.note}</p>
+                                  <small style={{ color: "#667085" }}>
+                                    {new Date(item.createdAt).toLocaleString(
+                                      "zh-CN",
+                                    )}
+                                  </small>
+                                </>
+                              ),
+                            }))}
+                          />
+                        ) : (
+                          <p style={{ color: "#667085" }}>还没有跟进记录</p>
+                        )}
+                      </>
+                    ),
+                  },
+                ]}
+              />
             </>
           )}
         </section>

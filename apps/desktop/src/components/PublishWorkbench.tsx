@@ -204,6 +204,7 @@ export function PublishWorkbench({
     <div className="publish-bench">
       <PageHeader
         title="发布中心"
+        description="先预览验收成片，再配置发布；发布进度在本机队列中查看。"
         actions={
           <Space>
             <Link to="/settings/platforms">管理抖音账号</Link>
@@ -219,7 +220,7 @@ export function PublishWorkbench({
           </Space>
         }
       />
-      <section className="panel publish-bench-controls" aria-label="发布工作区">
+      <section className="publish-bench-controls" aria-label="发布工作区">
         <Segmented
           value={mode}
           options={[
@@ -328,7 +329,7 @@ export function PublishWorkbench({
                   )}
                 />
               </Space>
-              {batchAvailable && (
+              {batchAvailable && !!selected.length && (
                 <Space>
                   {!!selected.length && (
                     <Button
@@ -373,7 +374,7 @@ export function PublishWorkbench({
               rowKey="id"
               loading={query.isPending}
               dataSource={query.data?.items}
-              scroll={{ y: "max(260px, calc(100vh - 335px))" }}
+              scroll={{ x: 700, y: "max(260px, calc(100vh - 335px))" }}
               pagination={{
                 current: page,
                 pageSize: 50,
@@ -492,7 +493,7 @@ export function PublishWorkbench({
               size="small"
               rowKey="id"
               dataSource={queue.rows}
-              scroll={{ y: "max(260px, calc(100vh - 280px))" }}
+              scroll={{ x: 700, y: "max(260px, calc(100vh - 280px))" }}
               pagination={{ pageSize: 30, showSizeChanger: false }}
               rowClassName={(row) =>
                 row.artifactId === selectedId ? "publish-row-active" : ""

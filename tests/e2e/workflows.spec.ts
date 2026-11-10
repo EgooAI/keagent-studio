@@ -66,7 +66,9 @@ test("手动新增和编辑使用同一份完整房源资料", async ({ page }) 
   await expect(page.getByRole("heading", { name: "联调小区" })).toBeVisible();
   await expect(page.getByText("中层／共 18 层")).toBeVisible();
   await expect(page.getByText("双阳台", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "制作素材", exact: true }).click();
   await expect(page.getByText("0 张制作图片")).toBeVisible();
+  await page.getByRole("tab", { name: "房源资料", exact: true }).click();
   await page.getByRole("button", { name: "编辑房源" }).click();
   const edit = page.getByRole("dialog", { name: "编辑房源资料" });
   await expect(edit.getByLabel("总价（万元）")).toHaveValue("320.12");
@@ -153,4 +155,76 @@ test("演示成片在弹窗配置发布并保留平台记录", async ({ page }) 
   await expect(
     page.locator(".publish-records").getByText("演示弹窗标题"),
   ).toBeVisible();
+});
+
+test("线索筛选与详情一致，切换页签保留未提交的话术", async ({ page }) => {
+  await page.goto("/#/leads");
+  await page.getByRole("tab", { name: "跟进话术", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "跟进话术", exact: true })
+    .fill("保留这条待确认话术");
+  await page.getByRole("tab", { name: "需求详情", exact: true }).click();
+  await page.getByRole("tab", { name: "跟进话术", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "跟进话术", exact: true }),
+  ).toHaveValue("保留这条待确认话术");
+  await page.getByRole("textbox", { name: "搜索线索" }).fill("不存在的客户-ux");
+  await expect(page.getByText("没有符合条件的线索")).toBeVisible();
+  await expect(page.getByText("选择一条线索查看详情")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "跟进状态" })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "搜索线索" }).clear();
+  await page.getByRole("tab", { name: "跟进话术", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "跟进话术", exact: true }),
+  ).toHaveValue("保留这条待确认话术");
+  await page.getByRole("tab", { name: /^跟进记录/ }).click();
+  await page
+    .getByRole("textbox", { name: "跟进备注" })
+    .fill("下周再联系，尚未添加记录");
+  const firstName = await page
+    .locator(".leads-workspace > section:last-child h2")
+    .innerText();
+  await page.locator(".lead-list-item").nth(1).click();
+  await expect(page.getByRole("textbox", { name: "跟进备注" })).toHaveValue("");
+  await page.getByRole("textbox", { name: "搜索线索" }).fill(firstName);
+  await expect(page.getByRole("textbox", { name: "跟进备注" })).toHaveValue(
+    "下周再联系，尚未添加记录",
+  );
+});
+
+test("用户端各页面在桌面与窄窗口保留可见导航且不横向溢出", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  for (const width of [1440, 1280, 600]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const route of [
+      "dashboard",
+      "properties",
+      "properties/property-1",
+      "leads",
+      "settings/profile",
+      "settings/theme",
+      "publish",
+      "publish/task-1",
+      "studio/tasks/task-2",
+    ]) {
+      await page.goto("/#/" + route);
+      await expect(page.locator("h1")).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: "房源中心", exact: true }).first(),
+      ).toBeVisible();
+      await page.screenshot({
+        path: `.impeccable/review/${route.replaceAll("/", "-")}-${width}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+        ),
+        `${route} at ${width}px`,
+      ).toBe(true);
+    }
+  }
+  expect(errors).toEqual([]);
 });

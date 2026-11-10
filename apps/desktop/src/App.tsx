@@ -17,7 +17,6 @@ import {
   Empty,
   Popconfirm,
   Skeleton,
-  Tag,
 } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -123,6 +122,8 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             <NavLink
               to={path}
               key={path}
+              aria-label={label}
+              title={label}
               className={({ isActive }) =>
                 `nav-item${isActive ? " active" : ""}`
               }
@@ -138,6 +139,8 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
         <div className="sidebar-bottom">
           <NavLink
             to="/settings"
+            aria-label="设置"
+            title="设置"
             className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
           >
             <Settings size={19} />
@@ -186,7 +189,6 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                 <strong>{data?.profile.name ?? "演示经纪人"}</strong>
                 <small>{isLive ? "云端工作区" : "演示工作区"}</small>
               </span>
-              <Tag variant="filled">V1</Tag>
             </button>
           </Dropdown>
         </div>

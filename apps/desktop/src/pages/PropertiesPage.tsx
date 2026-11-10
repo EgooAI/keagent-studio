@@ -18,6 +18,7 @@ import {
   Segmented,
   Select,
   Table,
+  Tabs,
   Tag,
   Typography,
   Upload,
@@ -85,7 +86,7 @@ export default function PropertiesPage() {
     <>
       <PageHeader
         title="房源中心"
-        description="把房源资料准备好，让每一次创作都有据可依。"
+        description="查找房源、补充素材，再选择房源制作视频。"
         actions={
           <>
             <Button
@@ -113,6 +114,7 @@ export default function PropertiesPage() {
           ].map(([key, label]) => (
             <button
               className={filter === key ? "active" : ""}
+              aria-pressed={filter === key}
               key={key}
               onClick={() => setFilter(key)}
             >
@@ -562,199 +564,229 @@ export function PropertyDetailPage() {
           description="已附带两张原全景素材，使用模板文案和本机配音，无需贝壳接口、扩图或云端配音即可测试视频。两个场景来自不同地点；成片可预览、下载，不能作为正式房源视频发布。"
         />
       )}
-      <div className="property-detail-grid">
-        <div>
-          <div className="property-hero">
-            <PropertyPhoto property={property} />
-          </div>
-          <div className="panel detail-info">
-            <h2>{property.title}</h2>
-            <div className="property-facts">
-              <div>
-                <strong>
-                  {property.sample
-                    ? "未提供"
-                    : formatPrice(property.priceCents)}
-                </strong>
-                <span>总价</span>
-              </div>
-              <div>
-                <strong>{property.layout || "未提供"}</strong>
-                <span>户型</span>
-              </div>
-              <div>
-                <strong>
-                  {property.sample ? "未提供" : `${property.areaSqm} m²`}
-                </strong>
-                <span>建筑面积</span>
-              </div>
-            </div>
-            {property.priceCents > 0 && property.areaSqm > 0 && (
-              <p className="muted">
-                单价约{" "}
-                {Math.round(
-                  property.priceCents / 100 / property.areaSqm,
-                ).toLocaleString("zh-CN")}{" "}
-                元／平方米
-              </p>
-            )}
-            {extraFacts.length > 0 && (
-              <Descriptions
-                size="small"
-                column={2}
-                items={extraFacts.map(([label, value]) => ({
-                  key: label,
-                  label,
-                  children: value,
-                }))}
-              />
-            )}
-            <p>{property.description}</p>
-            {(
-              [
-                ["房源详情链接", details?.listingUrl],
-                ["VR 看房链接", details?.vrUrl],
-              ] as const
-            ).map(
-              ([label, url]) =>
-                url && (
-                  <p key={label}>
-                    <Typography.Text copyable={{ text: url }}>
-                      {label}
-                    </Typography.Text>
-                  </p>
-                ),
-            )}
-            <div className="property-tags">
-              {property.sellingPoints.map((p) => (
-                <span key={p}>{p}</span>
-              ))}
-            </div>
-            <p className="muted">
-              <MapPin size={14} /> {property.city} {property.district} ·
-              资料核验 {formatDate(property.lastVerifiedAt)}
-            </p>
-          </div>
-        </div>
-        <div>
-          <section className="panel detail-info">
-            <h2>房源素材</h2>
-            <p className="muted">
-              {material.data?.scenes.length || property.images.length}{" "}
-              张制作图片
-            </p>
-            <div className="asset-grid">
-              {(material.data?.scenes.length
-                ? material.data.scenes.map((s) => s.url)
-                : property.images
-              ).map((image, i) => (
-                <img
-                  key={`${image}-${i}`}
-                  src={image}
-                  alt={`房源图片 ${i + 1}`}
-                />
-              ))}
-            </div>
-            {!!material.data?.references?.length && (
-              <>
-                <p className="muted">仅供文案参考的图片</p>
-                <div className="asset-grid">
-                  {material.data.references.map((reference) => (
-                    <img
-                      key={reference.id}
-                      src={reference.url}
-                      alt={reference.room}
-                    />
-                  ))}
+      <Tabs
+        className="property-detail-tabs"
+        items={[
+          {
+            key: "info",
+            label: "房源资料",
+            children: (
+              <div className="property-overview">
+                {" "}
+                <div className="property-hero">
+                  <PropertyPhoto property={property} />
                 </div>
-              </>
-            )}
-            {property.sample ? (
-              <p className="muted">内置素材已就绪，可直接创建视频任务。</p>
-            ) : window.desktop ? (
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <Button
-                  icon={<Plus size={16} />}
-                  loading={importing}
-                  onClick={() => void addMaterial("photo")}
-                >
-                  添加房源照片
-                </Button>
-                <Button
-                  loading={importing}
-                  onClick={() => void addMaterial("panorama")}
-                >
-                  添加已有全景图
-                </Button>
-                <Button
-                  loading={importing}
-                  onClick={() => void addMaterial("reference")}
-                >
-                  添加户型图／参考图
-                </Button>
-                <Button
-                  type="primary"
-                  onClick={() => navigate(`/studio?propertyId=${property.id}`)}
-                >
-                  制作视频
-                </Button>
+                <div className="panel detail-info">
+                  <h2>{property.title}</h2>
+                  <div className="property-facts">
+                    <div>
+                      <strong>
+                        {property.sample
+                          ? "未提供"
+                          : formatPrice(property.priceCents)}
+                      </strong>
+                      <span>总价</span>
+                    </div>
+                    <div>
+                      <strong>{property.layout || "未提供"}</strong>
+                      <span>户型</span>
+                    </div>
+                    <div>
+                      <strong>
+                        {property.sample ? "未提供" : `${property.areaSqm} m²`}
+                      </strong>
+                      <span>建筑面积</span>
+                    </div>
+                  </div>
+                  {property.priceCents > 0 && property.areaSqm > 0 && (
+                    <p className="muted">
+                      单价约{" "}
+                      {Math.round(
+                        property.priceCents / 100 / property.areaSqm,
+                      ).toLocaleString("zh-CN")}{" "}
+                      元／平方米
+                    </p>
+                  )}
+                  {extraFacts.length > 0 && (
+                    <Descriptions
+                      size="small"
+                      column={2}
+                      items={extraFacts.map(([label, value]) => ({
+                        key: label,
+                        label,
+                        children: value,
+                      }))}
+                    />
+                  )}
+                  <p>{property.description}</p>
+                  {(
+                    [
+                      ["房源详情链接", details?.listingUrl],
+                      ["VR 看房链接", details?.vrUrl],
+                    ] as const
+                  ).map(
+                    ([label, url]) =>
+                      url && (
+                        <p key={label}>
+                          <Typography.Text copyable={{ text: url }}>
+                            {label}
+                          </Typography.Text>
+                        </p>
+                      ),
+                  )}
+                  <div className="property-tags">
+                    {property.sellingPoints.map((p) => (
+                      <span key={p}>{p}</span>
+                    ))}
+                  </div>
+                  <p className="muted">
+                    <MapPin size={14} /> {property.city} {property.district} ·
+                    资料核验 {formatDate(property.lastVerifiedAt)}
+                  </p>
+                </div>
               </div>
-            ) : isLive ? (
-              <p className="muted">
-                请在桌面端添加房源照片、全景原图和户型图。
-              </p>
-            ) : (
-              <Upload
-                accept="image/*,video/*"
-                showUploadList={false}
-                beforeUpload={async (file) => {
-                  if (file.size > 100 * 1024 * 1024) {
-                    message.error("单个演示文件最大100 MB");
-                    return false;
-                  }
-                  await demoApi.updateProperty(property.id, {
-                    videoCount:
-                      property.videoCount +
-                      (file.type.startsWith("video/") ? 1 : 0),
-                    importStatus: "ready",
-                  });
-                  message.info(
-                    `已登记 ${file.name} 的演示素材信息，文件未上传或保存`,
-                  );
-                  return false;
-                }}
-              >
-                <Button icon={<Plus size={16} />}>添加演示素材</Button>
-              </Upload>
-            )}
-          </section>
-          <section className="panel detail-info">
-            <h2>关联生成任务</h2>
-            {tasks.length ? (
-              tasks.map((task) => (
-                <Link
-                  to={`/studio/tasks/${task.id}`}
-                  className="related-task"
-                  key={task.id}
-                >
-                  <span>
-                    {task.configSnapshot.videoMode === "avatar"
-                      ? "经纪人露脸"
-                      : "纯口播"}
-                    <small>{formatDate(task.createdAt)}</small>
-                  </span>
-                  <StatusTag status={task.status} />
-                </Link>
-              ))
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="还没有生成任务"
-              />
-            )}
-          </section>
-        </div>
-      </div>
+            ),
+          },
+          {
+            key: "materials",
+            label: "制作素材",
+            children: (
+              <>
+                {" "}
+                <section className="panel detail-info">
+                  <h2>房源素材</h2>
+                  <p className="muted">
+                    {material.data?.scenes.length || property.images.length}{" "}
+                    张制作图片
+                  </p>
+                  <div className="asset-grid">
+                    {(material.data?.scenes.length
+                      ? material.data.scenes.map((s) => s.url)
+                      : property.images
+                    ).map((image, i) => (
+                      <img
+                        key={`${image}-${i}`}
+                        src={image}
+                        alt={`房源图片 ${i + 1}`}
+                      />
+                    ))}
+                  </div>
+                  {!!material.data?.references?.length && (
+                    <>
+                      <p className="muted">仅供文案参考的图片</p>
+                      <div className="asset-grid">
+                        {material.data.references.map((reference) => (
+                          <img
+                            key={reference.id}
+                            src={reference.url}
+                            alt={reference.room}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {property.sample ? (
+                    <p className="muted">
+                      内置素材已就绪，可直接创建视频任务。
+                    </p>
+                  ) : window.desktop ? (
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      <Button
+                        icon={<Plus size={16} />}
+                        loading={importing}
+                        onClick={() => void addMaterial("photo")}
+                      >
+                        添加房源照片
+                      </Button>
+                      <Button
+                        loading={importing}
+                        onClick={() => void addMaterial("panorama")}
+                      >
+                        添加已有全景图
+                      </Button>
+                      <Button
+                        loading={importing}
+                        onClick={() => void addMaterial("reference")}
+                      >
+                        添加户型图／参考图
+                      </Button>
+                      <Button
+                        type="primary"
+                        onClick={() =>
+                          navigate(`/studio?propertyId=${property.id}`)
+                        }
+                      >
+                        制作视频
+                      </Button>
+                    </div>
+                  ) : isLive ? (
+                    <p className="muted">
+                      请在桌面端添加房源照片、全景原图和户型图。
+                    </p>
+                  ) : (
+                    <Upload
+                      accept="image/*,video/*"
+                      showUploadList={false}
+                      beforeUpload={async (file) => {
+                        if (file.size > 100 * 1024 * 1024) {
+                          message.error("单个演示文件最大100 MB");
+                          return false;
+                        }
+                        await demoApi.updateProperty(property.id, {
+                          videoCount:
+                            property.videoCount +
+                            (file.type.startsWith("video/") ? 1 : 0),
+                          importStatus: "ready",
+                        });
+                        message.info(
+                          `已登记 ${file.name} 的演示素材信息，文件未上传或保存`,
+                        );
+                        return false;
+                      }}
+                    >
+                      <Button icon={<Plus size={16} />}>添加演示素材</Button>
+                    </Upload>
+                  )}
+                </section>
+              </>
+            ),
+          },
+          {
+            key: "tasks",
+            label: "关联任务",
+            children: (
+              <>
+                {" "}
+                <section className="panel detail-info">
+                  <h2>关联生成任务</h2>
+                  {tasks.length ? (
+                    tasks.map((task) => (
+                      <Link
+                        to={`/studio/tasks/${task.id}`}
+                        className="related-task"
+                        key={task.id}
+                      >
+                        <span>
+                          {task.configSnapshot.videoMode === "avatar"
+                            ? "经纪人露脸"
+                            : "纯口播"}
+                          <small>{formatDate(task.createdAt)}</small>
+                        </span>
+                        <StatusTag status={task.status} />
+                      </Link>
+                    ))
+                  ) : (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description="还没有生成任务"
+                    />
+                  )}
+                </section>
+              </>
+            ),
+          },
+        ]}
+      />
       {editing && (
         <PropertyForm
           property={property}

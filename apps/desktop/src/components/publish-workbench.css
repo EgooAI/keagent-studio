@@ -1,6 +1,6 @@
 .publish-bench {
   display: grid;
-  gap: 14px;
+  gap: 20px;
   --publish-line: var(--line, #e3e8f0);
   --publish-muted: var(--muted, #65738a);
 }
@@ -17,13 +17,14 @@
   gap: 10px;
 }
 .publish-bench-controls {
-  padding: 10px 14px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--publish-line);
 }
 .publish-bench-table {
   overflow: hidden;
 }
 .publish-bench-toolbar {
-  padding: 8px 12px;
+  padding: 16px 18px;
 }
 .publish-bench-toolbar .ant-input-affix-wrapper {
   width: 230px;
@@ -81,7 +82,7 @@
   padding-inline: 12px;
 }
 .publish-bench-table .ant-table-tbody > tr > td {
-  padding-block: 5px;
+  padding-block: 12px;
 }
 .publish-row-active > td {
   background: var(--selected-bg, #f4eefb);
@@ -196,4 +197,17 @@
   .publish-config-fields > .ant-alert {
     grid-column: 1 / -1;
   }
+}
+
+.publish-title-cell small {
+  margin-top: 5px;
+}
+.publish-bench-detail {
+  padding: 20px;
+}
+.publish-bench-detail .douyin-publish-layout > .panel,
+.ant-drawer-body:has(.publish-detail-heading) .douyin-publish-layout > .panel {
+  border: 0;
+  border-radius: 0;
+  padding: 12px 0;
 }

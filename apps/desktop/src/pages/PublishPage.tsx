@@ -322,22 +322,17 @@ function ArtifactPublishDetail({
       {assets.error && (
         <Alert type="error" title={publishingMessage(assets.error)} />
       )}
-      {embedded && (
-        <Segmented
-          className="publish-detail-tabs"
-          value={detailTab}
-          onChange={setDetailTab}
-          options={[
-            { value: "preview", label: "预览验收" },
-            { value: "records", label: "发布记录" },
-          ]}
-        />
-      )}
-      <div
-        className="douyin-publish-layout"
-        hidden={embedded && detailTab === "records"}
-      >
-        <section className="panel" hidden={embedded && detailTab !== "preview"}>
+      <Segmented
+        className="publish-detail-tabs"
+        value={detailTab}
+        onChange={setDetailTab}
+        options={[
+          { value: "preview", label: "预览验收" },
+          { value: "records", label: "发布记录" },
+        ]}
+      />
+      <div className="douyin-publish-layout" hidden={detailTab === "records"}>
+        <section className="panel" hidden={detailTab !== "preview"}>
           <div className="douyin-video-preview">
             {preview ? (
               <video src={preview.video} poster={preview.cover} controls />
@@ -456,7 +451,7 @@ function ArtifactPublishDetail({
       {active?.artifactId === artifactId && (
         <section
           className="panel douyin-result"
-          hidden={embedded && detailTab !== "records"}
+          hidden={detailTab !== "records"}
         >
           <h3>{douyinStateLabels[active.state]}</h3>
           <Progress
@@ -482,7 +477,7 @@ function ArtifactPublishDetail({
         ref={resultFocus}
         tabIndex={-1}
         className="panel douyin-result"
-        hidden={embedded && detailTab !== "records"}
+        hidden={detailTab !== "records"}
       >
         <h2>这份成片的发布记录</h2>
         {records.error && (
