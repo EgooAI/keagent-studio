@@ -58,6 +58,103 @@ function fixture() {
   return { workflow, owner, scenes, config };
 }
 describe("panorama domain", () => {
+  it("downloads the MiniMax OSS result and rejects unrelated hosts", async () => {
+    const { workflow, owner } = fixture();
+    const dns = require("node:dns/promises");
+    vi.spyOn(dns, "lookup").mockResolvedValue([
+      { address: "8.8.8.8", family: 4 },
+    ]);
+    const fetch = vi.fn().mockResolvedValue(new Response("video fixture"));
+    vi.stubGlobal("fetch", fetch);
+    const file = path.join(workflow.directory(owner), "result.mp4");
+    const url =
+      "https://algeng-video-infer.oss-cn-shanghai.aliyuncs.com/output.mp4?signature=test";
+    const signal = new AbortController().signal;
+    await providers.downloadMiniMaxVideo(url, file, signal);
+    expect(fs.readFileSync(file, "utf8")).toBe("video fixture");
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(url),
+      expect.objectContaining({ redirect: "error" }),
+    );
+    for (const host of [
+      "other-bucket.oss-cn-shanghai.aliyuncs.com",
+      "algeng-video-infer.oss-cn-shanghai.aliyuncs.com.evil.example",
+    ])
+      await expect(
+        providers.downloadMiniMaxVideo(
+          `https://${host}/result.mp4`,
+          file,
+          signal,
+        ),
+      ).rejects.toThrow("域名无效");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("persists personal opening images per owner and preserves them after canceled or invalid uploads", async () => {
+    const { workflow, owner } = fixture();
+    const file = path.join(workflow.directory(owner), "portrait.jpg");
+    fs.writeFileSync(
+      file,
+      Buffer.concat([Buffer.from([255, 216, 255]), Buffer.alloc(100)]),
+    );
+    workflow.dialogs.openIntroPhoto = vi.fn().mockResolvedValue(file);
+    vi.spyOn(media, "probe").mockResolvedValue({
+      streams: [{ codec_name: "mjpeg", width: 640, height: 480 }],
+    });
+    const photo = await workflow.handle("user-a", "opening-photo-import");
+    const background = await workflow.handle(
+      "user-a",
+      "opening-background-import",
+    );
+    const directory = workflow.directory(owner);
+    fs.mkdirSync(path.join(directory, "cache"), { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, "cache", "opening.wav"),
+      "test audio",
+    );
+    vi.spyOn(media, "scriptImage").mockResolvedValue("background-reference");
+    workflow.remote = vi
+      .fn()
+      .mockRejectedValue(new Error("stop before provider"));
+    await expect(
+      workflow.miniMaxOpening(
+        directory,
+        {
+          openingPhoto: photo.id,
+          openingLocation: { source: "personal", asset: background.asset },
+          aspectRatio: "9:16",
+        },
+        { audio: "opening.wav" },
+        new AbortController().signal,
+        { id: "template", version: "1.0.0" },
+      ),
+    ).rejects.toThrow("stop before provider");
+    expect(workflow.remote).toHaveBeenCalledWith(
+      "opening-submit",
+      expect.objectContaining({
+        location: "background-reference",
+        photo: fs.readFileSync(file).toString("base64"),
+        audio: Buffer.from("test audio").toString("base64"),
+      }),
+      expect.any(AbortSignal),
+    );
+    workflow.stores.clear();
+    const saved = await workflow.handle("user-a", "opening-materials");
+    expect(saved.photo.url).toMatch(/^data:image\/jpeg;base64,/);
+    expect(saved.background.asset).toBe(background.asset);
+    expect(await workflow.handle("user-b", "opening-materials")).toEqual({});
+    workflow.dialogs.openIntroPhoto.mockResolvedValue(undefined);
+    expect(
+      await workflow.handle("user-a", "opening-background-import"),
+    ).toBeNull();
+    expect(workflow.store(owner).openingBackground.id).toBe(background.id);
+    workflow.dialogs.openIntroPhoto.mockResolvedValue(file);
+    fs.writeFileSync(file, "invalid image");
+    await expect(
+      workflow.handle("user-a", "opening-photo-import"),
+    ).rejects.toThrow("JPEG");
+    expect(workflow.store(owner).openingPhoto.id).toBe(photo.id);
+  });
+
   it("saves reusable templates without property-specific or identity fields and freezes draft versions", async () => {
     const { workflow, scenes, config } = fixture();
     const template = await workflow.handle("user-a", "template-save", {
@@ -826,6 +923,43 @@ describe("production queue", () => {
         ([method]: [string]) => method === "opening-submit",
       ),
     ).toBe(false);
+
+    await call("pause");
+    state.openingBackground = {
+      id: domain.hash("personal"),
+      asset: replacement,
+    };
+    const personalBatch = {
+      requestId: "personal-background",
+      pairs: [selected[0]],
+      openingPhoto: photo,
+      openingBackground: state.openingBackground.id,
+      openingAuthorized: true,
+      openingRecipe: true,
+    };
+    await call("create", personalBatch);
+    const personalItem = state.production.items.find(
+      (item: any) => item.batchId === personalBatch.requestId,
+    );
+    expect(personalItem.config.openingLocation).toEqual({
+      source: "personal",
+      asset: replacement,
+    });
+    state.openingBackground = { id: domain.hash("replacement"), asset: first };
+    await call("resume");
+    await vi.waitFor(() => expect(personalItem.phase).toBe("review"));
+    expect(
+      (await call("detail", { id: personalItem.id })).draft.config
+        .openingLocation,
+    ).toEqual({ source: "personal", asset: replacement });
+    expect(
+      (
+        await call("create", {
+          ...personalBatch,
+          requestId: "stale-background",
+        })
+      ).issues[0].error,
+    ).toContain("背景图已更新");
   });
 
   it("uses the template location with panorama-only properties and returns overlong narration to review", async () => {
@@ -876,7 +1010,7 @@ describe("production queue", () => {
       defaultConfig: config,
       voices: [],
     });
-    vi.spyOn(media, "synthesize").mockResolvedValue({ duration: 7 });
+    vi.spyOn(media, "synthesize").mockResolvedValue({ duration: 16 });
     await call("create", {
       requestId: "fixed-location-opening",
       pairs: [pairs[0], pairs[3]],
@@ -898,7 +1032,7 @@ describe("production queue", () => {
     expect((await act("confirm", { id: first.id, revision: 1 }))[0].ok).toBe(
       true,
     );
-    await vi.waitFor(() => expect(first.error).toContain("7.0 秒"));
+    await vi.waitFor(() => expect(first.error).toContain("16.0 秒"));
     expect(first.phase).toBe("review");
     expect((await call("detail", { id: first.id })).revision).toBe(2);
     expect(first.approvedRevision).toBeUndefined();

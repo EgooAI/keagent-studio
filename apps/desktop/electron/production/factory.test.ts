@@ -382,6 +382,9 @@ describe("simple video factory", () => {
         another,
       ),
     ).toEqual({ count: 1 });
+    expect(workflow.withPropertyCovers("a", [another])[0].image).toBe(
+      workflow.store(workflow.owner("a")).imports[another.id].scenes[0].url,
+    );
     const draft = await workflow.handle(
       "a",
       "prepare",
@@ -393,6 +396,30 @@ describe("simple video factory", () => {
     await expect(
       workflow.handle("b", "source-restore", { propertyId: another.id }),
     ).rejects.toThrow("没有");
+  });
+  it("uses the first saved photo as the cover only for its owner", async () => {
+    const { workflow, owner, property, bytes } = await fixture();
+    const listing = {
+      ...property,
+      image: "/cover.jpg",
+      images: ["/photo.jpg"],
+    };
+    const saved = workflow.store(owner).imports[property.id];
+    saved.scenes.unshift(
+      await workflow.importBytes(owner, bytes(5), "客厅", "panorama"),
+    );
+    saved.references = [
+      await workflow.importBytes(owner, bytes(6), "户型图", "reference"),
+    ];
+    expect(workflow.withPropertyCovers("a", [listing])[0].image).toBe(
+      saved.scenes[1].url,
+    );
+    expect(workflow.withPropertyCovers("b", [listing])[0].image).toBe(
+      "/photo.jpg",
+    );
+    expect(
+      workflow.withPropertyCovers("b", [{ ...listing, images: [] }])[0].image,
+    ).toBe("/cover.jpg");
   });
   it("resolves published rules instead of renderer overrides and retains a locked snapshot after unlisting", async () => {
     const { workflow, owner, property, config } = await fixture();

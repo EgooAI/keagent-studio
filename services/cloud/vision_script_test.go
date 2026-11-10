@@ -78,6 +78,22 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 			t.Fatal("accepted incomplete or misaligned image script")
 		}
 	}
+	recipe := obj(template["production"])
+	recipe["opening"] = object{"prompt": "边走边介绍"}
+	originalRule := str(obj(recipe["scriptRules"])["opening"])
+	openingParts, _, err := visionContent(template, object{"title": "测试房源"}, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var openingInput object
+	if json.Unmarshal([]byte(str(openingParts[0]["text"])), &openingInput) != nil {
+		t.Fatal("invalid opening instructions")
+	}
+	openingRule := str(obj(openingInput["rules"])["opening"])
+	if !strings.Contains(openingRule, "6–10 秒") || !strings.Contains(openingRule, "不描述第一张室内图片") || str(obj(recipe["scriptRules"])["opening"]) != originalRule {
+		t.Fatal("opening guidance missing or persisted template mutated")
+	}
+	delete(recipe, "opening")
 	obj(images[0])["jpeg"] = "not-an-image"
 	if _, _, err := visionContent(template, object{"title": "测试房源"}, images); err == nil {
 		t.Fatal("accepted invalid image data")

@@ -60,6 +60,7 @@ async function downloadMiniMaxVideo(value, file, signal) {
       "cdn.hailuoai.com",
       "video-product.cdn.minimax.io",
       "video-product.cdn.minimax.cn",
+      "algeng-video-infer.oss-cn-shanghai.aliyuncs.com",
     ].includes(host),
     "MiniMax 视频下载域名无效",
   );

@@ -881,7 +881,7 @@ test("模板目录只显示当前版本，编辑页可更新、启用和切回�
   ).toBeVisible();
 });
 
-test("公共模板可上传 MiniMax 固定地点图并在预览中核对", async ({ page }) => {
+test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async ({ page }) => {
   const data = await fixture(page);
   await page.goto(adminBase + "/#/admin/resources");
   await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
@@ -902,20 +902,31 @@ test("公共模板可上传 MiniMax 固定地点图并在预览中核对", async
   await choose("视频表现", "经纪人开场露脸");
   await choose("开场方式", "MiniMax H3 生成");
   await expect(dialog.getByText("随房源取图", { exact: true })).toBeVisible();
-  await choose("地点图片", "模板固定图片");
+  await expect(dialog.getByLabel("画面提示词", { exact: true })).toHaveValue(
+    /边走边介绍房源/,
+  );
+  await choose("开场背景图", "上传固定背景图");
   await dialog
     .getByLabel("画面提示词", { exact: true })
     .fill("经纪人站在入口，自然中景。");
   await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
   await expect(
-    dialog.getByText("请上传模板固定地点图", { exact: true }),
+    dialog.getByText("请上传模板固定背景图", { exact: true }),
   ).toBeVisible();
   await dialog
-    .getByLabel("上传固定地点图")
+    .getByLabel("上传固定背景图")
     .setInputFiles("apps/desktop/public/media/interior-1.jpg");
   await expect(
-    dialog.getByRole("img", { name: "模板固定地点图预览" }),
+    dialog.getByRole("img", { name: "模板固定背景图预览" }),
   ).toBeVisible();
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await dialog.getByLabel("上传固定背景图").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: test.info().outputPath("minimax-background-" + width + ".png"),
+      animations: "disabled",
+    });
+  }
   await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(
@@ -936,7 +947,7 @@ test("公共模板可上传 MiniMax 固定地点图并在预览中核对", async
     exact: true,
   });
   await expect(
-    preview.getByRole("img", { name: "模板固定地点图", exact: true }),
+    preview.getByRole("img", { name: "模板固定背景图", exact: true }),
   ).toBeVisible();
   await expect(
     preview.getByText("经纪人站在入口，自然中景。", { exact: true }),

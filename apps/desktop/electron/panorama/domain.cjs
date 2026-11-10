@@ -130,9 +130,9 @@ function config(input, personalTemplates = []) {
     ensure(
       c.openingPhoto &&
         !c.openingClip &&
-        ["property", "fixed"].includes(source) &&
+        ["property", "fixed", "personal"].includes(source) &&
         (asset === undefined || /^[a-f0-9]{64}\.(jpg|png)$/.test(asset)) &&
-        (source !== "fixed" || asset),
+        (source === "property" || asset),
       "MiniMax 开场地点图无效",
     );
     c.openingLocation = { source, asset };

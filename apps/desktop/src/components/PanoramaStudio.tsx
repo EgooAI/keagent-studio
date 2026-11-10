@@ -51,7 +51,6 @@ import {
   type FactoryIssue,
   type FactoryList,
   type FactoryOpeningClip,
-  type FactoryOpeningPhoto,
   type FactoryPair,
   type FactoryProperties,
   type FactoryProperty,
@@ -381,11 +380,15 @@ export function PanoramaStudio() {
   async function create() {
     const openingClipId = needsOpeningForBatch ? openingClip?.id : undefined;
     const openingPhotoId = useMiniMax ? openingPhoto?.id : undefined;
+    const openingBackgroundId = useMiniMax
+      ? catalog.data?.openingBackground?.id
+      : undefined;
     const signature = JSON.stringify([
       pairs,
       voiceId,
       openingClipId,
       openingPhotoId,
+      openingBackgroundId,
     ]);
     if (submission.current?.signature !== signature)
       submission.current = { signature, id: crypto.randomUUID() };
@@ -398,6 +401,7 @@ export function PanoramaStudio() {
       voiceId,
       openingClip: openingClipId,
       openingPhoto: openingPhotoId,
+      openingBackground: openingBackgroundId,
       openingAuthorized: useMiniMax && openingAuthorized,
       openingRecipe: true,
     });
@@ -425,18 +429,6 @@ export function PanoramaStudio() {
       ["factory-catalog"],
       (current) => current && { ...current, openingClip: selected },
     );
-    setIssues([]);
-  }
-  async function importOpeningPhoto() {
-    const selected = await request<FactoryOpeningPhoto | null>(
-      "opening-photo-import",
-    );
-    if (!selected) return;
-    client.setQueryData<FactoryCatalog>(
-      ["factory-catalog"],
-      (current) => current && { ...current, openingPhoto: selected },
-    );
-    setOpeningAuthorized(false);
     setIssues([]);
   }
   async function save() {
@@ -771,14 +763,12 @@ export function PanoramaStudio() {
               <div className="factory-compose-note">
                 <strong>MiniMax H3 开场</strong>
                 <Space wrap>
-                  <Button
-                    size="small"
-                    disabled={busy}
-                    onClick={() => void run(importOpeningPhoto)}
-                  >
-                    选择经纪人照片
-                  </Button>
-                  <span>{openingPhoto?.name || "JPEG / PNG，最多 3 MB"}</span>
+                  <Link to="/settings/appearance">设置经纪人照片与背景</Link>
+                  <span>{openingPhoto?.name || "尚未上传经纪人照片"}</span>
+                  <span>
+                    {catalog.data?.openingBackground?.name ||
+                      "尚未上传个人背景图"}
+                  </span>
                 </Space>
                 <Checkbox
                   checked={openingAuthorized}

@@ -81,6 +81,8 @@ async function fixture(page: Page, large = false, miniMax = false) {
         openingClip: undefined as
           { id: string; name: string; duration: number } | undefined,
         openingPhoto: undefined as { id: string; name: string } | undefined,
+        openingBackground: undefined as
+          { id: string; name: string; asset: string } | undefined,
       };
       Object.assign(window, {
         factorySettingsTest: state,
@@ -170,6 +172,25 @@ async function fixture(page: Page, large = false, miniMax = false) {
               state.openingPhoto = { id: "b".repeat(64), name: "经纪人.jpg" };
               return state.openingPhoto;
             }
+            if (method === "panorama.opening-background-import") {
+              state.openingBackground = {
+                id: "d".repeat(64),
+                name: "小区入口.jpg",
+                asset: "d".repeat(64) + ".jpg",
+              };
+              return state.openingBackground;
+            }
+            if (method === "panorama.opening-materials")
+              return {
+                photo: state.openingPhoto && {
+                  ...state.openingPhoto,
+                  url: "/media/interior-1.jpg",
+                },
+                background: state.openingBackground && {
+                  ...state.openingBackground,
+                  url: "/media/interior-2.jpg",
+                },
+              };
             if (method === "panorama.factory-catalog")
               return {
                 templates: state.catalog.map((t: any) => ({
@@ -183,6 +204,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 minimaxOpening: true,
                 openingClip: state.openingClip,
                 openingPhoto: state.openingPhoto,
+                openingBackground: state.openingBackground,
                 voices: [],
               };
             if (method === "panorama.factory-properties") {
@@ -265,13 +287,32 @@ async function fixture(page: Page, large = false, miniMax = false) {
                   property: p,
                   revision: 1,
                   config,
-                  scenes: [],
+                  scenes: miniMax
+                    ? [
+                        {
+                          id: "room-1",
+                          room: "客厅",
+                          url: "/media/interior-1.jpg",
+                        },
+                      ]
+                    : [],
                   segments: [
                     {
                       id: "opening",
                       kind: "opening",
+                      sceneId: miniMax ? "room-1" : undefined,
                       text: "请确认这条房源文案。",
                     },
+                    ...(miniMax
+                      ? [
+                          {
+                            id: "room-1",
+                            kind: "scene",
+                            sceneId: "room-1",
+                            text: "这里是客厅。",
+                          },
+                        ]
+                      : []),
                   ],
                 };
                 return {
@@ -344,6 +385,26 @@ async function choose(page: Page, label: string, option: string) {
 
 test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async ({ page }) => {
   await fixture(page, false, true);
+  await page.goto("/#/settings/appearance");
+  await expect(page.getByRole("heading", { name: "形象与背景" })).toBeVisible();
+  await page
+    .getByRole("button", { name: "上传经纪人照片", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "经纪人照片", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "上传开场背景图", exact: true })
+    .click();
+  await expect(
+    page.getByRole("img", { name: "开场背景图", exact: true }),
+  ).toBeVisible();
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({
+      path: test.info().outputPath("opening-materials-" + width + ".png"),
+    });
+  }
   await page.goto("/#/studio");
   await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
   await page
@@ -363,7 +424,9 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
   await expect(page.getByRole("button", { name: "选择参考视频" })).toHaveCount(
     0,
   );
-  await page.getByRole("button", { name: "选择经纪人照片" }).click();
+  await expect(
+    page.getByRole("link", { name: "设置经纪人照片与背景" }),
+  ).toHaveAttribute("href", "#/settings/appearance");
   await expect(create).toBeDisabled();
   await page
     .getByRole("checkbox", {
@@ -379,6 +442,26 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
   await expect(
     page.getByRole("img", { name: "开场地点图", exact: true }),
   ).toHaveAttribute("src", /lebombo/);
+  const openingRow = page.locator(".factory-review-segment").filter({
+    has: page.getByRole("textbox", { name: "开场介绍", exact: true }),
+  });
+  await expect(
+    openingRow.getByRole("img", { name: "开场地点图", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "1 · 客厅", exact: true }),
+  ).toHaveCount(1);
+  await page
+    .getByRole("textbox", { name: "开场介绍", exact: true })
+    .fill(
+      "今天我们来到了测试小区，带大家看看这套两居室，跟我一起进去了解一下。",
+    );
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({
+      path: test.info().outputPath("opening-review-" + width + ".png"),
+    });
+  }
   await choose(page, "更换开场地点图", "2 · 花园");
   await expect(
     page.getByRole("img", { name: "开场地点图", exact: true }),
@@ -390,6 +473,7 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
     calls.find((call: any) => call.method === "panorama.factory-create").input,
   ).toMatchObject({
     openingPhoto: "b".repeat(64),
+    openingBackground: "d".repeat(64),
     openingAuthorized: true,
     openingRecipe: true,
   });
@@ -402,7 +486,7 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
       (call: any) => call.method === "panorama.factory-opening-location",
     ).input,
   ).toMatchObject({
-    revision: 1,
+    revision: 2,
     asset: "c".repeat(64) + ".jpg",
   });
 });

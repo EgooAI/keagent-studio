@@ -12,7 +12,10 @@ export interface PanoramaConfig {
   rate: number;
   openingClip?: string;
   openingPhoto?: string;
-  openingLocation?: { source: "property" | "fixed"; asset?: string };
+  openingLocation?: {
+    source: "property" | "fixed" | "personal";
+    asset?: string;
+  };
   roomOpening?: boolean;
   speed: number;
   direction: 1 | -1;

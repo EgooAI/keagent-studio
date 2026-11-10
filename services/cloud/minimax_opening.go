@@ -114,8 +114,8 @@ func minimaxPayload(input object) ([]byte, error) {
 	audio := str(input["audio"])
 	raw, err := base64.StdEncoding.Strict().DecodeString(audio)
 	size := openingWAVBytes(raw)
-	if err != nil || size < 2*48000 || size > 6*48000 {
-		return nil, fail(422, "开场解说须为 2–6 秒的 24 kHz 单声道 WAV，请调整开场文案")
+	if err != nil || size < 2*48000 || size > 15*48000 {
+		return nil, fail(422, "开场解说须为 2–15 秒的 24 kHz 单声道 WAV，请调整开场文案")
 	}
 	audio = base64.StdEncoding.EncodeToString(raw)
 	seconds := max(4, (size+47999)/48000)
@@ -172,7 +172,7 @@ func minimaxVideoURL(value string) bool {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
-	return host == "cdn.hailuoai.com" || host == "video-product.cdn.minimax.io" || host == "video-product.cdn.minimax.cn"
+	return host == "cdn.hailuoai.com" || host == "video-product.cdn.minimax.io" || host == "video-product.cdn.minimax.cn" || host == "algeng-video-infer.oss-cn-shanghai.aliyuncs.com"
 }
 
 func (s *server) minimaxQuery(ctx context.Context, id string) (object, error) {
