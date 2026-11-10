@@ -263,3 +263,22 @@
     font-size: 12px;
   }
 }
+
+.factory-read-segment {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.factory-read-segment p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+.factory-review-body {
+  --factory-muted: var(--muted);
+  --factory-line: var(--line);
+}
+@media (min-width: 700px) {
+  .factory-review-body .factory-review-segment img {
+    width: 124px;
+    height: 88px;
+  }
+}

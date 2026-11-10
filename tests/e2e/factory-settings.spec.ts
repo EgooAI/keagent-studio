@@ -537,7 +537,7 @@ test("后台下架模板和音色后可刷新看到失效偏好，正式设置�
   ).toBeVisible();
 });
 
-test("批量选择跨页保留，并在紧凑窗口抽屉中连续审核", async ({ page }) => {
+test("批量选择跨页保留，审核弹窗支持连续处理和调整窗口", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page, true);
   await page.goto("/#/studio");
@@ -580,10 +580,15 @@ test("批量选择跨页保留，并在紧凑窗口抽屉中连续审核", async
   });
   expect(visibleRows).toBeGreaterThanOrEqual(8);
   await page.getByRole("button", { name: "审核", exact: true }).first().click();
-  const detail = page.getByRole("dialog", { name: "任务详情" });
+  const detail = page.getByRole("dialog", { name: "审核文案" });
   await detail
     .getByRole("textbox", { name: "开场介绍" })
     .fill("已审核的第一条文案。");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "返回编辑", exact: true }).click();
+  await expect(detail.getByRole("textbox", { name: "开场介绍" })).toHaveValue(
+    "已审核的第一条文案。",
+  );
   await detail.getByRole("button", { name: "确认并下一条" }).click();
   await expect(
     detail.getByRole("heading", { name: "测试房源 2", exact: true }),
@@ -596,9 +601,22 @@ test("批量选择跨页保留，并在紧凑窗口抽屉中连续审核", async
     animations: "disabled",
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(page.locator(".factory-detail-pane")).toBeVisible();
+  await expect(
+    detail.getByRole("heading", { name: "测试房源 2", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".factory-detail-pane")).toHaveCount(0);
   await page.screenshot({
     path: "output/template-verification/factory-1440.png",
     animations: "disabled",
   });
+  await page.keyboard.press("Escape");
+  await expect(detail).toBeHidden();
+  await expect(
+    page
+      .getByRole("row")
+      .filter({
+        has: page.getByRole("button", { name: "测试房源 1", exact: true }),
+      })
+      .getByRole("button", { name: "详情" }),
+  ).toBeFocused();
 });

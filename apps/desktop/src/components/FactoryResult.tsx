@@ -27,6 +27,7 @@ export function FactoryPhaseTag({ phase }: { phase: FactoryPhase }) {
 
 export function FactoryTaskDetail({
   row,
+  reviewing,
   segments,
   dirty,
   busy,
@@ -39,6 +40,7 @@ export function FactoryTaskDetail({
   onExport,
 }: {
   row: FactoryDetail;
+  reviewing: boolean;
   segments: PanoramaSegment[];
   dirty: boolean;
   busy: boolean;
@@ -51,7 +53,7 @@ export function FactoryTaskDetail({
   onExport: (action: () => Promise<unknown>) => void;
 }) {
   const { draft, job, config } = row;
-  const editable = row.phase === "review";
+  const editable = reviewing && row.phase === "review";
   const reviewable =
     !!draft && editable && segments.every((s) => s.text.trim());
   const finished = job?.status === "succeeded";
@@ -104,7 +106,7 @@ export function FactoryTaskDetail({
             <strong>开场地点图</strong>
             {location.source === "fixed" ? (
               <p className="muted">模板固定图片</p>
-            ) : row.openingLocations?.length ? (
+            ) : !editable ? null : row.openingLocations?.length ? (
               <Select
                 aria-label="更换开场地点图"
                 value={location.asset}
@@ -171,18 +173,24 @@ export function FactoryTaskDetail({
                     src={scene.originalUrl || scene.url}
                   />
                 )}
-                <label>
-                  <span>{label}</span>
-                  <Input.TextArea
-                    aria-label={label}
-                    autoSize={{ minRows: 2, maxRows: 6 }}
-                    maxLength={2000}
-                    readOnly={!editable}
-                    disabled={busy}
-                    value={segment.text}
-                    onChange={(e) => onEdit(segment.id, e.target.value)}
-                  />
-                </label>
+                {editable ? (
+                  <label>
+                    <span>{label}</span>
+                    <Input.TextArea
+                      aria-label={label}
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                      maxLength={2000}
+                      disabled={busy}
+                      value={segment.text}
+                      onChange={(e) => onEdit(segment.id, e.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <div className="factory-read-segment">
+                    <strong>{label}</strong>
+                    <p>{segment.text}</p>
+                  </div>
+                )}
               </div>
             );
           })}

@@ -9,11 +9,11 @@ import type {
 } from "@keagent/shared-types";
 import { dateTime, useAdminParams } from "./admin-api";
 import AdminPublicVoices from "./AdminPublicVoices";
-import AIConfigDrawer, {
+import AIConfigDialog, {
   AIProbeState,
   probeModeLabel,
   probeRunning,
-} from "./AIConfigDrawer";
+} from "./AIConfigDialog";
 
 const configLabels: Record<string, string> = {
   AI_API_KEY: "文案服务密钥",
@@ -85,7 +85,7 @@ export default function AdminAI() {
   const { params, setParams } = useAdminParams();
   const { modal } = App.useApp();
   const [dirty, setDirty] = useState(false);
-  const [drawerId, setDrawerId] = useState(params.get("service"));
+  const [dialogId, setDialogId] = useState(params.get("service"));
   const serviceButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastService = useRef<string | null>(null);
   const prompted = useRef(false);
@@ -108,18 +108,18 @@ export default function AdminAI() {
       (a, b) =>
         serviceOrder.indexOf(a.summary.id) - serviceOrder.indexOf(b.summary.id),
     );
-  const selected = rows.find((row) => row.summary.id === drawerId);
+  const selected = rows.find((row) => row.summary.id === dialogId);
 
   useEffect(() => {
-    if (drawerId) lastService.current = drawerId;
+    if (dialogId) lastService.current = dialogId;
     else if (lastService.current)
       serviceButtons.current.get(lastService.current)?.focus();
-  }, [drawerId]);
+  }, [dialogId]);
 
   useEffect(() => {
-    if (requested === drawerId || prompted.current) return;
+    if (requested === dialogId || prompted.current) return;
     if (!dirty) {
-      setDrawerId(requested);
+      setDialogId(requested);
       return;
     }
     prompted.current = true;
@@ -129,15 +129,15 @@ export default function AdminAI() {
       cancelText: "继续编辑",
       onOk: () => {
         setDirty(false);
-        setDrawerId(requested);
+        setDialogId(requested);
         prompted.current = false;
       },
       onCancel: () => {
-        setParams({ service: drawerId || undefined }, false);
+        setParams({ service: dialogId || undefined }, false);
         prompted.current = false;
       },
     });
-  }, [requested, drawerId, dirty, modal, setParams]);
+  }, [requested, dialogId, dirty, modal, setParams]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -151,7 +151,7 @@ export default function AdminAI() {
   function changeTab(tab: string) {
     const apply = () => {
       setDirty(false);
-      setDrawerId(null);
+      setDialogId(null);
       setParams({ tab, service: undefined }, false);
     };
     if (dirty)
@@ -286,7 +286,7 @@ export default function AdminAI() {
                 )}
               </section>
               {selected && query.data && (
-                <AIConfigDrawer
+                <AIConfigDialog
                   key={selected.summary.id}
                   row={selected}
                   voices={query.data.voices}

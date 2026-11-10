@@ -502,40 +502,70 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     });
   }
   await manage.click();
-  const drawer = page.getByRole("dialog", { name: "多模态文案", exact: true });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.getByLabel("API Key", { exact: true })).toHaveValue("");
+  const configDialog = page.getByRole("dialog", {
+    name: "多模态文案",
+    exact: true,
+  });
+  await expect(configDialog).toBeVisible();
+  await expect(configDialog.getByLabel("API Key", { exact: true })).toHaveValue(
+    "",
+  );
   await page.screenshot({
-    path: "output/ai-config-ui/drawer-390.png",
+    path: "output/ai-config-ui/dialog-390.png",
     animations: "disabled",
   });
-  await drawer.getByLabel("模型名", { exact: true }).fill("vision-candidate");
+  await configDialog
+    .getByLabel("模型名", { exact: true })
+    .fill("vision-candidate");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "放弃未保存的修改？" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "继续编辑", exact: true }).click();
-  await expect(drawer.getByLabel("模型名", { exact: true })).toHaveValue(
+  await expect(configDialog.getByLabel("模型名", { exact: true })).toHaveValue(
     "vision-candidate",
   );
   await page.setViewportSize({ width: 1440, height: 900 });
-  const save = drawer.getByRole("button", { name: "保存配置", exact: true });
-  const enable = drawer.getByRole("button", { name: "启用配置", exact: true });
-  const runSample = drawer.getByRole("button", {
+  const save = configDialog.getByRole("button", {
+    name: "保存配置",
+    exact: true,
+  });
+  const enable = configDialog.getByRole("button", {
+    name: "启用配置",
+    exact: true,
+  });
+  const runSample = configDialog.getByRole("button", {
     name: "运行真实样例",
     exact: true,
   });
   const scriptRow = table.getByRole("row", { name: /多模态文案/ });
   await save.click();
   await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
-  await expect(drawer.getByText("未测试", { exact: true })).toBeVisible();
+  await expect(configDialog.getByText("未测试", { exact: true })).toBeVisible();
   expect(script.active.fields.AI_MODEL).toBe("vision-active");
-  await drawer.getByRole("button", { name: "检查连通性", exact: true }).click();
-  await expect(drawer.getByText("连通性通过", { exact: true })).toBeVisible();
+  await configDialog
+    .getByRole("button", { name: "检查连通性", exact: true })
+    .click();
+  await expect(
+    configDialog.getByText("连通性通过", { exact: true }),
+  ).toBeVisible();
   await expect(enable).toBeDisabled();
   await runSample.click();
-  await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
-  await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
+  const sampleDialog = page.getByRole("dialog", {
+    name: "测试多模态文案",
+    exact: true,
+  });
+  await expect(sampleDialog).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await sampleDialog
+    .getByRole("button", { name: "返回配置", exact: true })
+    .click();
+  await expect(configDialog).toBeVisible();
+  await runSample.click();
+  await sampleDialog
+    .getByRole("button", { name: "确认运行测试", exact: true })
+    .click();
+  await expect(configDialog.getByText("测试中", { exact: true })).toBeVisible();
   expect(writes.at(-1)?.input).toMatchObject({
     mode: "sample",
     version: 4,
@@ -544,10 +574,10 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   const probe = script.candidate?.test as AdminAIProbe;
   expect(probe.status).toBe("running");
   await page.reload();
-  await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
+  await expect(configDialog.getByText("测试中", { exact: true })).toBeVisible();
   probe.status = "failed";
   probe.message = "供应商鉴权失败，请检查凭证";
-  await expect(drawer.getByText(probe.message)).toBeVisible();
+  await expect(configDialog.getByText(probe.message)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(manage).toBeFocused();
   await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
@@ -555,7 +585,7 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   await manage.click();
   await runSample.click();
   await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
-  await expect(drawer.getByText("测试中", { exact: true })).toBeVisible();
+  await expect(configDialog.getByText("测试中", { exact: true })).toBeVisible();
   const retry = script.candidate?.test as AdminAIProbe;
   retry.status = "passed";
   retry.finishedAt = stamp;
@@ -564,16 +594,20 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   await save.click();
   await expect(page.getByText("配置未改动", { exact: true })).toBeVisible();
   await expect(enable).toBeEnabled();
-  await expect(drawer.getByText("样例通过", { exact: true })).toBeVisible();
+  await expect(
+    configDialog.getByText("样例通过", { exact: true }),
+  ).toBeVisible();
   await page.screenshot({
-    path: "output/ai-config-ui/drawer-1440.png",
+    path: "output/ai-config-ui/dialog-1440.png",
     animations: "disabled",
   });
   await enable.click();
   await page.getByRole("button", { name: "确认启用", exact: true }).click();
   await expect(scriptRow.getByText("已启用", { exact: true })).toBeVisible();
   await expect(enable).toHaveCount(0);
-  await expect(drawer.getByText("版本记录", { exact: true })).toHaveCount(0);
+  await expect(configDialog.getByText("版本记录", { exact: true })).toHaveCount(
+    0,
+  );
   expect(script.active.fields.AI_MODEL).toBe("vision-candidate");
 });
 

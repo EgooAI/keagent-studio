@@ -243,12 +243,12 @@ a {
   margin-top: 2px;
   font-weight: 400;
 }
-.ai-drawer-section + .ai-drawer-section {
+.ai-config-section + .ai-config-section {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--admin-line, #e7ebf0);
 }
-.ai-drawer-section h3 {
+.ai-config-section h3 {
   margin: 0 0 8px;
   font-size: 15px;
 }
@@ -260,7 +260,7 @@ a {
 .ai-probe-steps li > span:first-child {
   margin-inline-end: 8px;
 }
-.ai-drawer-actions {
+.ai-config-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;

@@ -128,9 +128,29 @@ test("修改已完成文案后仍能查看历史成片与原发布记录", async
     page.getByText("正在查看历史成果，仅可查看并核对对应修订的发布记录。"),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "模拟提交到抖音草稿", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "配置发布", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.locator(".publish-records").getByText("已发布", { exact: true }),
+  ).toBeVisible();
+});
+
+test("演示成片在弹窗配置发布并保留平台记录", async ({ page }) => {
+  await page.goto("/#/publish/task-1");
+  await expect(page.getByRole("textbox", { name: "发布标题" })).toHaveCount(0);
+  await page.getByRole("button", { name: "配置发布", exact: true }).click();
+  const config = page.getByRole("dialog", { name: /配置模拟发布/ });
+  await config.getByRole("textbox", { name: "发布标题" }).fill("演示弹窗标题");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "继续编辑", exact: true }).click();
+  await expect(config.getByRole("textbox", { name: "发布标题" })).toHaveValue(
+    "演示弹窗标题",
+  );
+  await config
+    .getByRole("button", { name: "模拟提交到抖音草稿", exact: true })
+    .click();
+  await expect(config).toBeHidden();
+  await expect(
+    page.locator(".publish-records").getByText("演示弹窗标题"),
   ).toBeVisible();
 });

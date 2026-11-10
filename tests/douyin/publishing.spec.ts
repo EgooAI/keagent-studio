@@ -247,6 +247,20 @@ async function desktopFixture(
                 return okay(queue);
               }
               if (method === "publish.start") {
+                const requests = window as unknown as {
+                  __failPublish?: boolean;
+                  __publishKeys?: unknown[];
+                };
+                (requests.__publishKeys ??= []).push(input.requestKey);
+                if (requests.__failPublish)
+                  return {
+                    ok: false,
+                    error: {
+                      code: "TEST_SUBMIT_FAILURE",
+                      status: 503,
+                      message: "测试提交失败，请重试",
+                    },
+                  };
                 if (records.some((record) => record.state === "unknown"))
                   return {
                     ok: false,
@@ -299,21 +313,64 @@ test("fixture UI receives an approved artifact, edits consumer fields and shows 
   page,
 }) => {
   await desktopFixture(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/#/publish");
   await page
     .getByRole("button", { name: fixture.artifact.content.title, exact: true })
     .click();
   await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
-  await expect(
-    page.getByText("已接收该版本", { exact: true }).filter({ visible: true }),
-  ).toBeVisible();
-  await page.getByLabel("发布账号").click();
+  const detail = page.getByRole("dialog", { name: "成片详情" });
+  const config = page.getByRole("dialog", { name: "配置发布" });
+  await expect(detail).toBeVisible();
+  await expect(config).toBeHidden();
+  const configure = detail.getByRole("button", { name: "配置发布" });
+  await configure.click();
+  await expect(detail).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(configure).toBeFocused();
+  await configure.click();
+  await expect(detail).toBeHidden();
+  await config.getByLabel("发布账号").click();
   await page.getByText(account.name, { exact: true }).click();
-  await page.getByLabel("标题", { exact: true }).fill("抖音独立标题");
-  await page.getByLabel("正文", { exact: true }).fill("只修改发布文案");
-  await page.getByRole("button", { name: "选择本地 JPG / PNG" }).click();
-  await expect(page.getByAltText("本次发布封面")).toBeVisible();
-  await page.getByRole("button", { name: /立即发布到抖音$/ }).click();
+  const title = config.getByLabel("标题", { exact: true });
+  await title.fill("抖音独立标题");
+  await config.getByLabel("正文", { exact: true }).fill("只修改发布文案");
+  await config.getByRole("button", { name: "选择本地 JPG / PNG" }).click();
+  await expect(config.getByAltText("本次发布封面")).toBeVisible();
+  await page.setViewportSize({ width: 1080, height: 720 });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "继续编辑", exact: true }).click();
+  await expect(title).toHaveValue("抖音独立标题");
+  await page.screenshot({
+    path: "output/ui-dialogs/publish-1080.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(title).toHaveValue("抖音独立标题");
+  await page.screenshot({
+    path: "output/ui-dialogs/publish-1440.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const submit = config.getByRole("button", {
+    name: "立即发布到抖音",
+    exact: true,
+  });
+  await page.evaluate(() => Object.assign(window, { __failPublish: true }));
+  await submit.click();
+  await expect(
+    config.getByText("测试提交失败，请重试", { exact: true }),
+  ).toBeVisible();
+  await expect(title).toHaveValue("抖音独立标题");
+  await page.evaluate(() => Object.assign(window, { __failPublish: false }));
+  await submit.click();
+  await expect(config).toBeHidden();
+  await expect(detail).toBeVisible();
+  const keys = await page.evaluate(
+    () => (window as unknown as { __publishKeys: string[] }).__publishKeys,
+  );
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(keys[1]);
   await expect(
     page.getByText("已提交抖音", { exact: true }).first(),
   ).toBeVisible();
@@ -338,9 +395,8 @@ test("missing production resolver clearly blocks actual publishing", async ({
   await expect(
     page.getByText("等待制作侧文件解析器", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /立即发布到抖音$/ }),
-  ).toBeDisabled();
+  await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
+  await expect(page.getByRole("button", { name: "配置发布" })).toBeDisabled();
 });
 
 test("a registered pending output requires preview and explicit review before receiving", async ({
@@ -412,11 +468,18 @@ test("a new acceptance revision clears the old handoff and permits a fresh expli
   await expect(
     page.getByRole("button", { name: "已接收该版本" }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "配置发布" }).click();
+  await expect(page.getByRole("dialog", { name: "配置发布" })).toBeVisible();
   await page.evaluate(() => {
     (window as unknown as { __source: ArtifactHandoff }).__source.artifact
       .review.revision++;
   });
   await page.getByRole("button", { name: "选择本地 JPG / PNG" }).click();
+  await expect(
+    page.getByText("发布条件已变化，请返回详情检查验收和本机文件。"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "放弃修改", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "接收这份成片", exact: true }),
   ).toBeEnabled();

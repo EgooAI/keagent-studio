@@ -1,12 +1,14 @@
-import { useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useBlocker, useParams, useSearchParams } from "react-router-dom";
 import {
+  Alert,
   App,
   Button,
   Checkbox,
   Empty,
   Form,
   Input,
+  Modal,
   Select,
   Tabs,
   Tag,
@@ -185,6 +187,26 @@ export default function PublishPage() {
 export function PublishDetailPage() {
   const { productionTaskId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { modal } = App.useApp();
+  const [dirty, setDirty] = useState(false);
+  const blocker = useBlocker(dirty);
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    const dialog = modal.confirm({
+      title: "放弃未提交的模拟发布配置？",
+      okText: "放弃并离开",
+      cancelText: "继续编辑",
+      onOk: () => blocker.proceed(),
+      onCancel: () => blocker.reset(),
+    });
+    return () => dialog.destroy();
+  }, [blocker, modal]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const { data } = useWorkspace();
   if (!data) return null;
   const original = data.tasks.find((t) => t.id === productionTaskId);
@@ -320,7 +342,7 @@ export function PublishDetailPage() {
           </div>
         </section>
         <aside className="panel platform-config-panel">
-          <h2>发布配置</h2>
+          <h2>发布记录</h2>
           <p className="muted">不同平台的标题、账号和状态各自独立。</p>
           {!canPublish && (
             <p className="muted">
@@ -339,6 +361,8 @@ export function PublishDetailPage() {
                     platform={platform}
                     data={data}
                     canPublish={canPublish}
+                    dirty={dirty}
+                    onDirty={setDirty}
                   />
                 ),
               }),
@@ -355,15 +379,22 @@ function PlatformPublishForm({
   platform,
   data,
   canPublish,
+  dirty,
+  onDirty,
 }: {
   task: ProductionTask;
   platform: Platform;
   data: Workspace;
   canPublish: boolean;
+  dirty: boolean;
+  onDirty: (dirty: boolean) => void;
 }) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [form] = Form.useForm<PublishInput>();
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState("");
+  const inFlight = useRef(false);
   const request = useRef({ fingerprint: "", key: "" });
   const accounts = data.accounts.filter(
     (account) => account.platform === platform && account.connected,
@@ -374,10 +405,28 @@ function PlatformPublishForm({
       p.platform === platform &&
       p.productionRevision === task.productionRevision,
   );
-  async function submit() {
+  function reset() {
+    onDirty(false);
+    setError("");
+    setOpen(false);
+  }
+  function cancel() {
+    if (inFlight.current) return;
+    if (dirty)
+      modal.confirm({
+        title: "放弃未提交的模拟发布配置？",
+        okText: "放弃修改",
+        cancelText: "继续编辑",
+        onOk: reset,
+      });
+    else reset();
+  }
+  async function submit(values: PublishInput) {
+    if (inFlight.current || !canPublish || !accounts.length) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError("");
     try {
-      const values = await form.validateFields();
-      setBusy(true);
       const payload = { ...values, hashtags: values.hashtags ?? [] };
       const fingerprint = JSON.stringify(payload);
       if (request.current.fingerprint !== fingerprint)
@@ -388,71 +437,98 @@ function PlatformPublishForm({
         payload,
         request.current.key,
       );
+      reset();
       message.success("已创建模拟上传任务，可在下方查看进度");
-    } catch (error) {
-      if (error instanceof Error) message.error(error.message);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "模拟提交失败，请重试");
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
   return (
     <>
-      <Form
-        name={`publish-${task.id}-${task.productionRevision}-${platform}`}
-        form={form}
-        layout="vertical"
-        disabled={!canPublish}
-        initialValues={{
-          accountId: accounts[0]?.id,
-          title: `${task.propertySnapshot.community}｜${task.propertySnapshot.title}`,
-          description: "房源与价格为示例内容，信息以实际核验为准。",
-          hashtags: ["上海房产", "房源介绍"],
-        }}
-      >
-        <Form.Item
-          label="平台账号"
-          name="accountId"
-          rules={[{ required: true, message: "请选择已连接账号" }]}
-        >
-          <Select
-            placeholder="选择已连接账号"
-            options={accounts.map((a) => ({ value: a.id, label: a.name }))}
-          />
-        </Form.Item>
-        {!accounts.length && (
-          <Link to="/settings/platforms">前往设置连接演示账号</Link>
-        )}
-        <Form.Item
-          label="发布标题"
-          name="title"
-          rules={[
-            { required: true, message: "请填写发布标题" },
-            { max: 100, message: "标题不能超过100字" },
-          ]}
-        >
-          <Input.TextArea rows={2} maxLength={100} showCount />
-        </Form.Item>
-        <Form.Item label="发布描述" name="description">
-          <Input.TextArea rows={4} />
-        </Form.Item>
-        <Form.Item label="话题标签" name="hashtags">
-          <Select mode="tags" tokenSeparators={[",", "，"]} />
-        </Form.Item>
-        <Form.Item name="simulateFailure" valuePropName="checked">
-          <Checkbox>模拟提交结果未知</Checkbox>
-        </Form.Item>
+      {canPublish && (
         <Button
           type="primary"
-          icon={<Send size={15} />}
-          block
-          loading={busy}
-          disabled={!accounts.length || !canPublish}
-          onClick={submit}
+          onClick={() => {
+            form.resetFields();
+            setOpen(true);
+          }}
         >
-          模拟提交到{platformLabels[platform]}草稿
+          配置发布
         </Button>
-      </Form>
-      <p className="preview-disclaimer">不会登录或向真实平台发送内容。</p>
+      )}
+      <Modal
+        centered
+        width={640}
+        classNames={{ body: "workbench-form-body" }}
+        title={`配置模拟发布 · ${platformLabels[platform]}`}
+        open={open}
+        forceRender
+        closable={!busy}
+        keyboard={!busy}
+        mask={{ closable: false }}
+        onCancel={cancel}
+        cancelText="取消"
+        okText={`模拟提交到${platformLabels[platform]}草稿`}
+        okButtonProps={{
+          disabled: busy || !accounts.length || !canPublish,
+          icon: <Send size={15} />,
+        }}
+        confirmLoading={busy}
+        onOk={() => form.submit()}
+      >
+        <Form
+          name={`publish-${task.id}-${task.productionRevision}-${platform}`}
+          form={form}
+          layout="vertical"
+          disabled={!canPublish || busy}
+          onValuesChange={() => onDirty(true)}
+          onFinish={(values) => void submit(values)}
+          initialValues={{
+            accountId: accounts[0]?.id,
+            title: `${task.propertySnapshot.community}｜${task.propertySnapshot.title}`,
+            description: "房源与价格为示例内容，信息以实际核验为准。",
+            hashtags: ["上海房产", "房源介绍"],
+          }}
+        >
+          <Form.Item
+            label="平台账号"
+            name="accountId"
+            rules={[{ required: true, message: "请选择已连接账号" }]}
+          >
+            <Select
+              placeholder="选择已连接账号"
+              options={accounts.map((a) => ({ value: a.id, label: a.name }))}
+            />
+          </Form.Item>
+          {!accounts.length && (
+            <Link to="/settings/platforms">前往设置连接演示账号</Link>
+          )}
+          <Form.Item
+            label="发布标题"
+            name="title"
+            rules={[
+              { required: true, message: "请填写发布标题" },
+              { max: 100, message: "标题不能超过100字" },
+            ]}
+          >
+            <Input.TextArea rows={2} maxLength={100} showCount />
+          </Form.Item>
+          <Form.Item label="发布描述" name="description">
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item label="话题标签" name="hashtags">
+            <Select mode="tags" tokenSeparators={[",", "，"]} />
+          </Form.Item>
+          <Form.Item name="simulateFailure" valuePropName="checked">
+            <Checkbox>模拟提交结果未知</Checkbox>
+          </Form.Item>
+        </Form>
+        {open && error && <Alert type="error" showIcon title={error} />}
+        <p className="preview-disclaimer">模拟发布仅在演示工作区生成记录。</p>
+      </Modal>
       <div className="publish-records">
         <h3>该平台记录</h3>
         {records.length ? (

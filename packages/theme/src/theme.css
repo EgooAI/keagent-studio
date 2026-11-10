@@ -55,3 +55,9 @@
 .theme-settings .theme-settings-note {
   font-size: 13px;
 }
+
+.workbench-form-body {
+  max-height: calc(100dvh - 156px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

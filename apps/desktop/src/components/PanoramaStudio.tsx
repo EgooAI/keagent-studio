@@ -12,6 +12,7 @@ import {
   Drawer,
   Empty,
   Input,
+  Modal,
   Pagination,
   Select,
   Space,
@@ -131,6 +132,9 @@ export function PanoramaStudio() {
   const [page, setPage] = useState(1);
   const [selection, setSelection] = useState<FactoryRow[]>([]);
   const [detailId, setDetailId] = useState<string>();
+  const [reviewing, setReviewing] = useState(false);
+  const detailTrigger = useRef<HTMLElement>(null);
+  const taskList = useRef<HTMLElement>(null);
   const [edits, setEdits] = useState<{
     draft: PanoramaDraft;
     segments: PanoramaSegment[];
@@ -302,8 +306,9 @@ export function PanoramaStudio() {
       : loaded);
   const detailPane = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (wide && loaded?.id) detailPane.current?.focus({ preventScroll: true });
-  }, [wide, loaded?.id]);
+    if (wide && !reviewing && loaded?.id)
+      detailPane.current?.focus({ preventScroll: true });
+  }, [wide, reviewing, loaded?.id]);
   const segments = edits?.segments || row?.draft?.segments || [];
   const refresh = () =>
     Promise.all([
@@ -325,11 +330,14 @@ export function PanoramaStudio() {
       setBusy(false);
     }
   }
-  function switchDetail(id?: string) {
-    if (id === detailId) return;
+  function switchDetail(id?: string, review = false, trigger?: HTMLElement) {
+    if (inFlight.current || (id === detailId && review === reviewing)) return;
     const change = () => {
+      if (trigger) detailTrigger.current = trigger;
       setEdits(undefined);
       setDetailId(id);
+      setReviewing(review);
+      if (!id) restoreDetailFocus();
     };
     if (!dirty) {
       change();
@@ -341,6 +349,14 @@ export function PanoramaStudio() {
       okText: "放弃修改",
       cancelText: "返回编辑",
       onOk: change,
+    });
+  }
+  function restoreDetailFocus() {
+    requestAnimationFrame(() => {
+      const trigger = detailTrigger.current;
+      (trigger?.isConnected ? trigger : taskList.current)?.focus({
+        preventScroll: true,
+      });
     });
   }
   function remember(rows: Pick<FactoryProperty, "id" | "title">[]) {
@@ -449,7 +465,10 @@ export function PanoramaStudio() {
       rows,
     });
     const copied = results.find((result) => result.createdId);
-    if (copied) setDetailId(copied.createdId);
+    if (copied) {
+      setReviewing(false);
+      setDetailId(copied.createdId);
+    }
     const failed = results.filter((result) => !result.ok);
     setSelection((selected) =>
       selected.filter(
@@ -526,6 +545,10 @@ export function PanoramaStudio() {
     });
     setEdits(undefined);
     setDetailId(result.nextReviewId);
+    if (!result.nextReviewId) {
+      setReviewing(false);
+      restoreDetailFocus();
+    }
   }
   function filter(next: () => void) {
     next();
@@ -541,10 +564,11 @@ export function PanoramaStudio() {
   const detailPanel = row ? (
     <FactoryTaskDetail
       row={row}
+      reviewing={reviewing}
       segments={segments}
       dirty={dirty}
       busy={busy}
-      onClose={wide ? () => switchDetail() : undefined}
+      onClose={wide && !reviewing ? () => switchDetail() : undefined}
       onEdit={(id, text) => {
         if (!row.draft) return;
         const draft = row.draft;
@@ -575,18 +599,20 @@ export function PanoramaStudio() {
           await refresh();
         })
       }
-      onAct={(action) =>
+      onAct={(action) => {
+        if (action === "edit-opening" || action === "withdraw") {
+          void run(async () => {
+            if (await act(action, [row])) setReviewing(true);
+          });
+          return;
+        }
         bulk(
           action,
           [row],
           actions.find((item) => item.action === action)?.label ||
-            (action === "edit-opening"
-              ? "调整开场文案"
-              : action === "room-opening"
-                ? "改用房源开场"
-                : action),
-        )
-      }
+            (action === "room-opening" ? "改用房源开场" : action),
+        );
+      }}
       onExport={(action) =>
         void run(async () => {
           if (await action()) void message.success("视频已下载");
@@ -927,7 +953,12 @@ export function PanoramaStudio() {
               </div>
             )}
           </section>
-          <section className="panel factory-queue" aria-label="视频任务">
+          <section
+            ref={taskList}
+            tabIndex={-1}
+            className="panel factory-queue"
+            aria-label="视频任务"
+          >
             <div className="factory-queue-tabs" aria-label="按状态筛选">
               {tabs.map(([id, label]) => (
                 <button
@@ -999,7 +1030,7 @@ export function PanoramaStudio() {
             </div>
             <div
               className={
-                wide && detailId
+                wide && detailId && !reviewing
                   ? "factory-workbench has-detail"
                   : "factory-workbench"
               }
@@ -1060,7 +1091,13 @@ export function PanoramaStudio() {
                         <button
                           type="button"
                           className="factory-row-title"
-                          onClick={() => switchDetail(value.id)}
+                          onClick={(event) =>
+                            switchDetail(
+                              value.id,
+                              value.phase === "review",
+                              event.currentTarget,
+                            )
+                          }
                         >
                           {value.propertyTitle}
                         </button>
@@ -1070,7 +1107,7 @@ export function PanoramaStudio() {
                   {
                     title: "模板",
                     ellipsis: true,
-                    width: wide && detailId ? 130 : "22%",
+                    width: wide && detailId && !reviewing ? 130 : "22%",
                     render: (_, value) => (
                       <Tooltip
                         title={
@@ -1113,7 +1150,13 @@ export function PanoramaStudio() {
                       <Button
                         type="link"
                         size="small"
-                        onClick={() => switchDetail(value.id)}
+                        onClick={(event) =>
+                          switchDetail(
+                            value.id,
+                            value.phase === "review",
+                            event.currentTarget,
+                          )
+                        }
                       >
                         {value.phase === "review"
                           ? "审核"
@@ -1130,7 +1173,7 @@ export function PanoramaStudio() {
                   },
                 ]}
               />
-              {wide && detailId && (
+              {wide && detailId && !reviewing && (
                 <aside
                   ref={detailPane}
                   className="factory-detail-pane"
@@ -1142,7 +1185,7 @@ export function PanoramaStudio() {
               )}
             </div>
           </section>
-          {!wide && (
+          {!wide && !reviewing && (
             <Drawer
               title="任务详情"
               open={!!detailId}
@@ -1153,6 +1196,23 @@ export function PanoramaStudio() {
               {detailPanel}
             </Drawer>
           )}
+          <Modal
+            centered
+            width={880}
+            title="审核文案"
+            open={reviewing && !!detailId}
+            classNames={{ body: "workbench-form-body factory-review-body" }}
+            closable={!busy}
+            keyboard={!busy}
+            mask={{ closable: false }}
+            onCancel={() => switchDetail()}
+            footer={null}
+            afterOpenChange={(open) => {
+              if (!open && !detailId) restoreDetailFocus();
+            }}
+          >
+            {reviewing && detailPanel}
+          </Modal>
           {picker && (
             <FactoryPicker
               key={picker}

@@ -1692,9 +1692,6 @@ svg {
   padding: 24px;
 }
 .douyin-publish-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 24px;
   margin: 24px 0;
 }
 .douyin-publish-layout > .panel,
@@ -1730,9 +1727,6 @@ svg {
   overflow-wrap: anywhere;
 }
 @media (max-width: 1100px) {
-  .douyin-publish-layout {
-    grid-template-columns: 1fr;
-  }
   .douyin-account-row {
     align-items: start;
     flex-direction: column;

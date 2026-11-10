@@ -19,7 +19,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { ListChecks, Pause, Play, RefreshCw, Search, X } from "lucide-react";
-import { Link, useBlocker } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { artifactExchange } from "@keagent/api-client";
 import {
   douyinStateLabels,
@@ -75,10 +75,15 @@ const queueStatus = (row: DouyinQueueRow) =>
       ? "已中断"
       : douyinStateLabels[row.state];
 
+export type PublishDetailSurface = (
+  content: ReactNode,
+  suspended: boolean,
+) => ReactNode;
+
 export function PublishWorkbench({
   detail,
 }: {
-  detail: (artifactId: string, onDirty: (dirty: boolean) => void) => ReactNode;
+  detail: (artifactId: string, surface: PublishDetailSurface) => ReactNode;
 }) {
   const { message, modal } = App.useApp();
   const client = useQueryClient();
@@ -95,14 +100,13 @@ export function PublishWorkbench({
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<DouyinWorkspaceRow[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const blocker = useBlocker(dirty);
   const [batchRows, setBatchRows] = useState<DouyinWorkspaceRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [wide, setWide] = useState(
     () => window.matchMedia("(min-width: 1400px)").matches,
   );
   const focus = useRef<HTMLElement>(null);
+  const detailTrigger = useRef<HTMLElement>(null);
   const query = useQuery({
     queryKey: ["douyin", "workbench", search, review, status, page],
     queryFn: () =>
@@ -145,19 +149,6 @@ export function PublishWorkbench({
     .filter(canQueue);
   const batchAvailable =
     !!desktop.data?.queue && !!desktop.data.resolverAvailable;
-  useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    const dialog = modal.confirm({
-      title: "本次发布文案尚未提交",
-      content: "离开发布中心后会清除本次编辑。",
-      okText: "放弃并离开",
-      cancelText: "继续编辑",
-      onOk: () => blocker.proceed(),
-      onCancel: () => blocker.reset(),
-    });
-    return () => dialog.destroy();
-  }, [blocker, modal]);
-
   function resetPage() {
     setPage(1);
     setSelected([]);
@@ -179,23 +170,13 @@ export function PublishWorkbench({
     if (wide && selectedId) focus.current?.focus({ preventScroll: true });
   }, [wide, selectedId]);
 
-  function openDetail(id: string) {
-    if (id === selectedId) return;
-    const open = () => {
-      setDirty(false);
-      setSelectedId(id);
-    };
-    if (!dirty) {
-      open();
-      return;
-    }
-    modal.confirm({
-      title: "本次发布文案尚未提交",
-      content: "切换成片后会清除这里编辑的标题、正文、话题和封面。",
-      okText: "放弃修改",
-      cancelText: "继续编辑",
-      onOk: open,
-    });
+  function openDetail(id: string, trigger?: HTMLElement) {
+    if (trigger) detailTrigger.current = trigger;
+    setSelectedId(id);
+    if (!id)
+      requestAnimationFrame(() =>
+        detailTrigger.current?.focus({ preventScroll: true }),
+      );
   }
   async function queueAction(
     action: "pause" | "resume" | "cancel" | "clear-interrupted",
@@ -215,7 +196,6 @@ export function PublishWorkbench({
       setBusy(false);
     }
   }
-  const content = selectedId ? detail(selectedId, setDirty) : null;
   const layout =
     wide && selectedId
       ? "publish-bench-split with-detail"
@@ -433,7 +413,9 @@ export function PublishWorkbench({
                     <div className="publish-title-cell">
                       <button
                         className="publish-row-title"
-                        onClick={() => openDetail(row.id)}
+                        onClick={(event) =>
+                          openDetail(row.id, event.currentTarget)
+                        }
                         title={row.title}
                       >
                         {row.title}
@@ -495,7 +477,9 @@ export function PublishWorkbench({
                     <Button
                       size="small"
                       type="link"
-                      onClick={() => openDetail(row.id)}
+                      onClick={(event) =>
+                        openDetail(row.id, event.currentTarget)
+                      }
                     >
                       {row.review.state === "pending" ? "验收" : "详情"}
                     </Button>
@@ -528,7 +512,9 @@ export function PublishWorkbench({
                   render: (_, row) => (
                     <button
                       className="publish-row-title"
-                      onClick={() => openDetail(row.artifactId)}
+                      onClick={(event) =>
+                        openDetail(row.artifactId, event.currentTarget)
+                      }
                       title={row.title}
                     >
                       {row.title}
@@ -581,7 +567,9 @@ export function PublishWorkbench({
                       <Button
                         size="small"
                         type="link"
-                        onClick={() => openDetail(row.artifactId)}
+                        onClick={(event) =>
+                          openDetail(row.artifactId, event.currentTarget)
+                        }
                       >
                         详情
                       </Button>
@@ -620,37 +608,38 @@ export function PublishWorkbench({
               ]}
             />
           )}
-          {wide && selectedId && (
-            <aside
-              ref={focus}
-              tabIndex={-1}
-              className="publish-bench-detail"
-              aria-label="成片详情"
-            >
-              <Button
-                className="publish-close"
-                type="text"
-                size="small"
-                aria-label="关闭成片详情"
-                icon={<X size={16} />}
-                onClick={() => openDetail("")}
-              />
-              {content}
-            </aside>
-          )}
+          {selectedId &&
+            detail(selectedId, (content, suspended) =>
+              wide ? (
+                <aside
+                  ref={focus}
+                  tabIndex={-1}
+                  className="publish-bench-detail"
+                  aria-label="成片详情"
+                >
+                  <Button
+                    className="publish-close"
+                    type="text"
+                    size="small"
+                    aria-label="关闭成片详情"
+                    icon={<X size={16} />}
+                    onClick={() => openDetail("")}
+                  />
+                  {content}
+                </aside>
+              ) : (
+                <Drawer
+                  title="成片详情"
+                  size={520}
+                  open={!suspended}
+                  onClose={() => openDetail("")}
+                >
+                  {content}
+                </Drawer>
+              ),
+            )}
         </div>
       </section>
-      {!wide && (
-        <Drawer
-          title="成片详情"
-          size={520}
-          open={!!selectedId}
-          destroyOnHidden
-          onClose={() => openDetail("")}
-        >
-          {content}
-        </Drawer>
-      )}
       {!!batchRows.length && (
         <PublishBatch
           rows={batchRows}

@@ -142,8 +142,6 @@
 }
 .publish-bench-detail .douyin-publish-layout,
 .ant-drawer-body:has(.publish-detail-heading) .douyin-publish-layout {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
   margin: 8px 0;
 }
 .publish-bench-detail .douyin-video-preview,
@@ -159,10 +157,6 @@
 .publish-bench-detail .douyin-publish-layout > .panel,
 .ant-drawer-body:has(.publish-detail-heading) .douyin-publish-layout > .panel {
   padding: 12px;
-}
-.publish-bench-detail .ant-form-item,
-.ant-drawer-body:has(.publish-detail-heading) .ant-form-item {
-  margin-bottom: 12px;
 }
 .publish-batch-account {
   justify-content: flex-start;
@@ -182,4 +176,24 @@
   display: grid;
   gap: 4px;
   margin-top: 8px;
+}
+
+.publish-config-notice {
+  margin: 0 0 16px;
+}
+.publish-config-fields .ant-form-item {
+  margin-bottom: 16px;
+}
+.publish-config-account-link {
+  margin: -6px 0 16px;
+}
+@media (min-width: 1200px) {
+  .publish-config-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+    column-gap: 24px;
+  }
+  .publish-config-fields > .ant-alert {
+    grid-column: 1 / -1;
+  }
 }
