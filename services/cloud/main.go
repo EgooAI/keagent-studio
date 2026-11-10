@@ -258,6 +258,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, v, e)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/beike-cli/") {
+		v, e := beikeCLIEndpoint(r.Method, r.URL.Path)
+		respond(w, v, e)
+		return
+	}
 	if r.Method == "POST" && r.URL.Path == "/v1/devices/register" {
 		var input struct {
 			Name     string
@@ -422,6 +427,17 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 		for _, k := range []string{"title", "community", "propertyNumber", "city", "district", "layout", "priceCents", "areaSqm", "description", "sellingPoints", "image", "images"} {
 			if v, ok := input[k]; ok {
 				property[k] = v
+			}
+		}
+		if raw, ok := input["details"]; ok {
+			details, err := normalizePropertyDetails(raw)
+			if err != nil {
+				return nil, err
+			}
+			if len(details) > 0 {
+				property["details"] = details
+			} else {
+				delete(property, "details")
 			}
 		}
 		if strings.TrimSpace(str(property["title"])) == "" || strings.TrimSpace(str(property["community"])) == "" || strings.TrimSpace(str(property["propertyNumber"])) == "" || number(property["priceCents"]) < 0 || number(property["areaSqm"]) <= 0 {
@@ -992,6 +1008,12 @@ func completionWithContent(ctx context.Context, client *http.Client, endpoint, m
 	return output.Choices[0].Message.Content, nil
 }
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "beike-cli-probe" {
+		if err := beikeCLIProbe(context.Background(), os.Args[2:], os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	secret := os.Getenv("INTERNAL_API_SECRET")
 	if os.Getenv("ALLOW_LEGACY_GATEWAY") == "false" {
 		secret = ""

@@ -62,6 +62,9 @@ func visionContent(template, property object, images []any) ([]object, []string,
 	}
 	ids = append(ids, "closing")
 	facts := pickFields(property, "title", "propertyNumber", "city", "district", "community", "layout", "areaSqm", "priceCents", "description", "sellingPoints", "lastVerifiedAt", "source")
+	if details := pickFields(obj(property["details"]), propertyDetailFacts...); len(details) > 0 {
+		facts["details"] = details
+	}
 	inputJSON, err := json.Marshal(object{"property": facts, "language": config["language"], "rules": rules, "segmentIds": ids})
 	if err != nil || len(inputJSON) > 64<<10 {
 		return nil, nil, fail(422, "文案规则或房源资料过长")

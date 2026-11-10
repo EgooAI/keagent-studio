@@ -40,6 +40,46 @@ test("房源导入入口可操作，客户端不暴露后台入口", async ({ pa
   ).toHaveCount(0);
 });
 
+test("手动新增和编辑使用同一份完整房源资料", async ({ page }) => {
+  await page.goto("/#/properties");
+  await page.getByRole("button", { name: "手动添加", exact: true }).click();
+  const add = page.getByRole("dialog", { name: "手动添加房源" });
+  for (const [label, value] of Object.entries({
+    房源标题: "手动录入两居",
+    房源号: "MANUAL-01",
+    小区名称: "联调小区",
+    城市: "北京",
+    "区县／商圈": "朝阳区",
+    "总价（万元）": "320.12",
+    "建筑面积（平方米）": "80",
+    户型: "2 室 1 厅",
+    楼层: "中层／共 18 层",
+    朝向: "南北",
+    交易属性: "满五唯一",
+    房源说明: "有独立厨房",
+    房源卖点: "双阳台\n采光好",
+    "VR 看房链接": "https://example.com/vr",
+  })) {
+    await add.getByLabel(label, { exact: true }).fill(value);
+  }
+  await add.getByRole("button", { name: "保存房源" }).click();
+  await expect(page.getByRole("heading", { name: "联调小区" })).toBeVisible();
+  await expect(page.getByText("中层／共 18 层")).toBeVisible();
+  await expect(page.getByText("双阳台", { exact: true })).toBeVisible();
+  await expect(page.getByText("0 张制作图片")).toBeVisible();
+  await page.getByRole("button", { name: "编辑房源" }).click();
+  const edit = page.getByRole("dialog", { name: "编辑房源资料" });
+  await expect(edit.getByLabel("总价（万元）")).toHaveValue("320.12");
+  await expect(edit.getByLabel("VR 看房链接")).toHaveValue(
+    "https://example.com/vr",
+  );
+  await edit.getByLabel("朝向").fill("东南");
+  await edit.getByLabel("楼层").clear();
+  await edit.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByText("东南", { exact: true })).toBeVisible();
+  await expect(page.getByText("中层／共 18 层")).toHaveCount(0);
+});
+
 test("两个窗口并发导入不会相互覆盖", async ({ page, context }) => {
   const other = await context.newPage();
   await Promise.all([

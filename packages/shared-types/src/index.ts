@@ -26,6 +26,16 @@ export interface ResourceRef {
   id: string;
   version: string;
 }
+export interface PropertyDetails {
+  floor?: string;
+  orientation?: string;
+  elevator?: "有" | "无";
+  buildingAge?: string;
+  transactionAttributes?: string;
+  listingStatus?: "在售" | "已成交" | "已下架";
+  listingUrl?: string;
+  vrUrl?: string;
+}
 export interface Property {
   sample?: boolean;
   id: string;
@@ -39,6 +49,7 @@ export interface Property {
   layout: string;
   description: string;
   sellingPoints: string[];
+  details?: PropertyDetails;
   image: string;
   images: string[];
   videoCount: number;

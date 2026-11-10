@@ -292,6 +292,8 @@ function registerAuth() {
       return (await request("/v1/session")).data;
     }
     if (!token) throw new Error("请重新登录");
+    if (method === "beikeCli.status")
+      return (await request("/v1/beike-cli/status", {})).data;
     if (
       [
         "voice.list",

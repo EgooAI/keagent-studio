@@ -951,6 +951,7 @@ class PanoramaWorkflow {
                       "priceCents",
                       "description",
                       "sellingPoints",
+                      "details",
                       "lastVerifiedAt",
                       "source",
                     ].map((key) => [key, property[key]]),

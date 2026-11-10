@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
   useNavigate,
@@ -10,15 +10,16 @@ import {
   App,
   Alert,
   Button,
+  Descriptions,
   Empty,
   Form,
   Input,
-  InputNumber,
   Modal,
   Segmented,
   Select,
   Table,
   Tag,
+  Typography,
   Upload,
 } from "antd";
 import {
@@ -34,7 +35,7 @@ import {
   Search,
   Upload as UploadIcon,
 } from "lucide-react";
-import { demoApi } from "@keagent/api-client";
+import { demoApi, isLive, serviceRequest } from "@keagent/api-client";
 import type { ImportResult, Property } from "@keagent/shared-types";
 import { useWorkspace } from "../lib/workspace";
 import {
@@ -46,11 +47,14 @@ import {
 } from "../components/common";
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
 import { request as productionRequest } from "../components/panoramaClient";
+import { PropertyForm } from "../components/PropertyForm";
 import type { PanoramaScene } from "@keagent/shared-types";
 
 export default function PropertiesPage() {
   const { data } = useWorkspace();
   const { message } = App.useApp();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState("grid");
@@ -59,8 +63,6 @@ export default function PropertiesPage() {
     searchParams.get("import") === "1",
   );
   const [manualOpen, setManualOpen] = useState(false);
-  const [form] = Form.useForm();
-  const [saving, setSaving] = useState(false);
   if (!data) return null;
   const publishedIds = new Set(
     data.publishTasks
@@ -71,7 +73,7 @@ export default function PropertiesPage() {
   );
   const filtered = data.properties.filter(
     (p) =>
-      `${p.title}${p.community}${p.propertyNumber}${p.district}`.includes(
+      `${p.title} ${p.community} ${p.propertyNumber} ${p.city} ${p.district}`.includes(
         search,
       ) &&
       (filter === "all" ||
@@ -79,25 +81,6 @@ export default function PropertiesPage() {
           ? publishedIds.has(p.id)
           : !publishedIds.has(p.id))),
   );
-  async function addProperty() {
-    try {
-      const values = await form.validateFields();
-      setSaving(true);
-      await demoApi.createProperty({
-        ...values,
-        priceCents: Math.round(values.price * 1000000),
-        importStatus: "incomplete",
-        videoCount: 0,
-      });
-      setManualOpen(false);
-      form.resetFields();
-      message.success("房源已保存，请继续补充素材");
-    } catch (error) {
-      if (error instanceof Error) message.error(error.message);
-    } finally {
-      setSaving(false);
-    }
-  }
   return (
     <>
       <PageHeader
@@ -147,7 +130,7 @@ export default function PropertiesPage() {
         <div className="toolbar-right">
           <Input
             aria-label="搜索房源"
-            placeholder="搜索房源号、小区或区域"
+            placeholder="搜索房源号、小区、城市或区域"
             prefix={<Search size={16} />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -173,7 +156,7 @@ export default function PropertiesPage() {
       </div>
       <div className="list-caption">
         <span>共 {filtered.length} 套房源</span>
-        <span>房源资料为演示内容，不构成真实交易信息</span>
+        {!isLive && <span>房源资料为演示内容，不构成真实交易信息</span>}
       </div>
       {!filtered.length ? (
         <div className="panel empty-panel">
@@ -301,55 +284,82 @@ export default function PropertiesPage() {
           />
         </div>
       )}
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
-      <Modal
-        title="手动添加房源"
-        open={manualOpen}
-        onCancel={() => setManualOpen(false)}
-        onOk={addProperty}
-        confirmLoading={saving}
-        okText="保存房源"
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="propertyNumber"
-            label="房源号"
-            rules={[{ required: true }]}
-          >
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="community"
-            label="小区名称"
-            rules={[{ required: true }]}
-          >
-            <Input />
-          </Form.Item>
-          <Form.Item name="title" label="房源描述" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <div className="form-two">
-            <Form.Item
-              name="price"
-              label="总价（万元）"
-              rules={[{ required: true }]}
-            >
-              <InputNumber min={1} style={{ width: "100%" }} />
-            </Form.Item>
-            <Form.Item
-              name="areaSqm"
-              label="面积（平方米）"
-              rules={[{ required: true }]}
-            >
-              <InputNumber min={1} style={{ width: "100%" }} />
-            </Form.Item>
-          </div>
-          <p className="muted">
-            新房源会标记为待补充素材，详情页中可继续完善。
-          </p>
-        </Form>
-      </Modal>
+      {isLive ? (
+        <LiveImportModal
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          onManual={() => {
+            setImportOpen(false);
+            setManualOpen(true);
+          }}
+        />
+      ) : (
+        <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      )}
+      {manualOpen && (
+        <PropertyForm
+          onClose={() => setManualOpen(false)}
+          onSave={async (input) => {
+            const property = await demoApi.createProperty({
+              ...input,
+              image: "",
+              images: [],
+            });
+            await queryClient.invalidateQueries(
+              { queryKey: ["workspace"] },
+              { cancelRefetch: false },
+            );
+            message.success("房源已保存，可继续添加素材");
+            navigate(`/properties/${property.id}`);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+type BeikeCliStatus = {
+  available: false;
+  configured: boolean;
+  reason: "not_configured" | "contract_unverified";
+};
+
+function LiveImportModal({
+  open,
+  onClose,
+  onManual,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onManual: () => void;
+}) {
+  const status = useQuery({
+    queryKey: ["beike-cli-status"],
+    enabled: open,
+    retry: false,
+    queryFn: async () =>
+      window.desktop
+        ? ((await window.desktop.request("beikeCli.status")) as BeikeCliStatus)
+        : serviceRequest<BeikeCliStatus>("/v1/beike-cli/status", {}),
+  });
+  const reason = status.isError ? undefined : status.data?.reason;
+  let description = "暂时无法检查贝壳 CLI 状态。";
+  if (status.isFetching) description = "正在检查贝壳 CLI 状态…";
+  else if (reason === "not_configured") description = "云端尚未配置贝壳 CLI。";
+  else if (reason === "contract_unverified")
+    description = "贝壳 CLI 已配置，房源返回格式仍待联调验证。";
+  return (
+    <Modal
+      title="导入房源"
+      open={open}
+      onCancel={onClose}
+      onOk={onManual}
+      cancelText="关闭"
+      okText="手动添加房源"
+    >
+      <p role="status">{description}</p>
+      <p>自动导入暂未开放，可先手动添加房源。</p>
+    </Modal>
   );
 }
 
@@ -469,8 +479,8 @@ export function PropertyDetailPage() {
   const { data } = useWorkspace();
   const { message } = App.useApp();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [form] = Form.useForm();
   const [importing, setImporting] = useState(false);
   const material = useQuery({
     queryKey: ["property-production-material", propertyId],
@@ -510,16 +520,15 @@ export function PropertyDetailPage() {
       </Empty>
     );
   const tasks = data.tasks.filter((t) => t.propertyId === property.id);
-  async function save() {
-    try {
-      const values = await form.validateFields();
-      await demoApi.updateProperty(property!.id, values);
-      setEditing(false);
-      message.success("房源资料已更新，历史任务快照保持不变");
-    } catch (error) {
-      if (error instanceof Error) message.error(error.message);
-    }
-  }
+  const details = property.details;
+  const extraFacts = [
+    ["挂牌状态", details?.listingStatus],
+    ["楼层", details?.floor],
+    ["朝向", details?.orientation],
+    ["电梯", details?.elevator],
+    ["建成年份／楼龄", details?.buildingAge],
+    ["交易属性", details?.transactionAttributes],
+  ].filter(([, value]) => value);
   return (
     <>
       <Link className="back-link" to="/properties">
@@ -530,13 +539,7 @@ export function PropertyDetailPage() {
         description={`${property.city} · ${property.district} · 房源号 ${property.propertyNumber}`}
         actions={
           <>
-            <Button
-              disabled={property.sample}
-              onClick={() => {
-                form.setFieldsValue(property);
-                setEditing(true);
-              }}
-            >
+            <Button disabled={property.sample} onClick={() => setEditing(true)}>
               {property.sample ? "内置测试资料" : "编辑房源"}
             </Button>
             <Button
@@ -586,7 +589,42 @@ export function PropertyDetailPage() {
                 <span>建筑面积</span>
               </div>
             </div>
+            {property.priceCents > 0 && property.areaSqm > 0 && (
+              <p className="muted">
+                单价约{" "}
+                {Math.round(
+                  property.priceCents / 100 / property.areaSqm,
+                ).toLocaleString("zh-CN")}{" "}
+                元／平方米
+              </p>
+            )}
+            {extraFacts.length > 0 && (
+              <Descriptions
+                size="small"
+                column={2}
+                items={extraFacts.map(([label, value]) => ({
+                  key: label,
+                  label,
+                  children: value,
+                }))}
+              />
+            )}
             <p>{property.description}</p>
+            {(
+              [
+                ["房源详情链接", details?.listingUrl],
+                ["VR 看房链接", details?.vrUrl],
+              ] as const
+            ).map(
+              ([label, url]) =>
+                url && (
+                  <p key={label}>
+                    <Typography.Text copyable={{ text: url }}>
+                      {label}
+                    </Typography.Text>
+                  </p>
+                ),
+            )}
             <div className="property-tags">
               {property.sellingPoints.map((p) => (
                 <span key={p}>{p}</span>
@@ -652,7 +690,7 @@ export function PropertyDetailPage() {
                   loading={importing}
                   onClick={() => void addMaterial("reference")}
                 >
-                  添加参考图
+                  添加户型图／参考图
                 </Button>
                 <Button
                   type="primary"
@@ -661,6 +699,10 @@ export function PropertyDetailPage() {
                   制作视频
                 </Button>
               </div>
+            ) : isLive ? (
+              <p className="muted">
+                请在桌面端添加房源照片、全景原图和户型图。
+              </p>
             ) : (
               <Upload
                 accept="image/*,video/*"
@@ -713,25 +755,20 @@ export function PropertyDetailPage() {
           </section>
         </div>
       </div>
-      <Modal
-        title="编辑房源资料"
-        open={editing}
-        onCancel={() => setEditing(false)}
-        onOk={save}
-        okText="保存修改"
-      >
-        <Form layout="vertical" form={form}>
-          <Form.Item name="title" label="房源标题" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="description" label="房源说明">
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="community" label="小区" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {editing && (
+        <PropertyForm
+          property={property}
+          onClose={() => setEditing(false)}
+          onSave={async (input) => {
+            await demoApi.updateProperty(property.id, input);
+            await queryClient.invalidateQueries(
+              { queryKey: ["workspace"] },
+              { cancelRefetch: false },
+            );
+            message.success("房源资料已更新");
+          }}
+        />
+      )}
     </>
   );
 }

@@ -15,6 +15,7 @@ const files = [
   "apps/desktop/electron/auth.cjs",
   "apps/desktop/electron/preload.cjs",
   "apps/desktop/electron/panorama",
+  "apps/desktop/electron/production",
   "apps/desktop/electron/publishing/dist/runtime.cjs",
   "apps/desktop/electron/artifact-media/dist/runtime.cjs",
   "apps/desktop/electron/publishing/plugins/publish/OPENCLI_LICENSE",

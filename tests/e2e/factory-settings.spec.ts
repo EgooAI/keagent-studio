@@ -140,6 +140,12 @@ async function fixture(page: Page, large = false, miniMax = false) {
               };
             if (method === "panorama.source-restore") return { scenes: [] };
             state.calls.push({ method, input: args[0] });
+            if (method === "beikeCli.status")
+              return {
+                available: false,
+                configured: true,
+                reason: "contract_unverified",
+              };
             if (method === "updateFactoryPreferences") {
               const input = args[0];
               Object.assign(state.workspace.profile.defaults, {
@@ -406,6 +412,22 @@ test("内置房源没有核验日期时仍可查看素材", async ({ page }) => 
   await page.goto("/#/properties/panorama-cc0-sample");
   await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
   await expect(page.getByText("资料核验 未提供")).toBeVisible();
+});
+
+test("正式房源导入显示贝壳联调状态并可切换到手动添加", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/properties?import=1");
+  const dialog = page.getByRole("dialog", { name: "导入房源", exact: true });
+  await expect(
+    dialog.getByText("贝壳 CLI 已配置，房源返回格式仍待联调验证。"),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "开始模拟导入" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "手动添加房源" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "手动添加房源", exact: true }),
+  ).toBeVisible();
 });
 
 test("设置读取后台模板和公共音色，保存后新视频使用相同默认值", async ({

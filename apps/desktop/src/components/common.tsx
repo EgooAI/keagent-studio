@@ -78,8 +78,8 @@ export function PropertyPhoto({
   return (
     <img
       className={`property-photo ${className}`}
-      src={property.image}
-      alt={`${property.community} 房源示例`}
+      src={property.image || undefined}
+      alt={property.image ? `${property.community} 房源封面` : "未添加封面"}
       loading="lazy"
     />
   );

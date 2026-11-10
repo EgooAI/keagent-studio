@@ -32,7 +32,7 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 		object{"id": "floor-plan", "kind": "reference", "jpeg": imageData},
 		object{"id": "room-pano", "kind": "panorama", "jpeg": imageData},
 	}
-	parts, ids, err := visionContent(template, object{"title": "测试房源", "areaSqm": 80}, images)
+	parts, ids, err := visionContent(template, object{"title": "测试房源", "areaSqm": 80, "details": object{"orientation": "南北", "vrUrl": "https://example.com/vr"}}, images)
 	if err != nil || !slices.Equal(ids, []string{"opening", "room-photo", "room-pano", "closing"}) {
 		t.Fatalf("invalid segment plan: %v, %v", ids, err)
 	}
@@ -50,7 +50,7 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 			t.Error("provider did not receive three visual inputs")
 			return
 		}
-		if text := str(content[0]["text"]); !strings.Contains(text, "测试房源") || !strings.Contains(text, "overall") {
+		if text := str(content[0]["text"]); !strings.Contains(text, "测试房源") || !strings.Contains(text, "overall") || !strings.Contains(text, "南北") || strings.Contains(text, "vrUrl") {
 			t.Error("missing property facts or template rules")
 		}
 		for i := range images {
