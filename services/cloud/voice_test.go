@@ -101,6 +101,7 @@ func voiceTestServer(t *testing.T) *server {
 }
 func TestVoiceIsolationIdempotencyAndSynthesis(t *testing.T) {
 	s := voiceTestServer(t)
+	grantForTest(t, s, "a", creditKindPurchased, 500, 0)
 	var training atomic.Int32
 	s.speech = func(ctx context.Context, operation string, payload object, resource string) ([]byte, error) {
 		switch operation {
@@ -197,6 +198,7 @@ func TestVoiceIsolationIdempotencyAndSynthesis(t *testing.T) {
 }
 func TestVoiceUnknownSubmissionIsNotRepeated(t *testing.T) {
 	s := voiceTestServer(t)
+	grantForTest(t, s, "a", creditKindPurchased, 500, 0)
 	var calls int
 	s.speech = func(context.Context, string, object, string) ([]byte, error) {
 		calls++
@@ -216,6 +218,7 @@ func TestVoiceUnknownSubmissionIsNotRepeated(t *testing.T) {
 
 func TestVoiceConcurrentSubmitAndDisconnectedCheckpoint(t *testing.T) {
 	s := voiceTestServer(t)
+	grantForTest(t, s, "a", creditKindPurchased, 500, 0)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	s.speech = func(context.Context, string, object, string) ([]byte, error) {

@@ -8,6 +8,7 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
+import { insufficientCreditsEvent } from "@keagent/api-client";
 import {
   Alert,
   App as AntApp,
@@ -96,6 +97,17 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   useEffect(() => {
     document.querySelector(".app-main")?.scrollTo(0, 0);
   }, [location.pathname]);
+  useEffect(() => {
+    const onInsufficient = () => {
+      message.warning({
+        content: "积分不足，请先到“设置 → 积分与兑换”充值或兑换。",
+        onClick: () => navigate("/settings/credits"),
+      });
+    };
+    window.addEventListener(insufficientCreditsEvent, onInsufficient);
+    return () =>
+      window.removeEventListener(insufficientCreditsEvent, onInsufficient);
+  }, [message, navigate]);
   const activeTasks =
     data?.tasks.filter((t) =>
       ["queued", "running", "awaiting_review"].includes(t.status),
@@ -270,6 +282,14 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                 />
                 <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route
+                  path="/settings/profile"
+                  element={<Navigate to="/settings/account" replace />}
+                />
+                <Route
+                  path="/settings/defaults"
+                  element={<Navigate to="/settings/service-status" replace />}
+                />
                 <Route path="/settings/:section" element={<SettingsPage />} />
                 <Route
                   path="*"

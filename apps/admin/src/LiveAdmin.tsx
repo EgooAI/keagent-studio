@@ -24,6 +24,7 @@ import {
 import {
   Boxes,
   ClipboardList,
+  Coins,
   Cpu,
   LayoutDashboard,
   Layers,
@@ -44,6 +45,7 @@ import AdminDouyin from "./AdminDouyin";
 import AdminDashboard from "./AdminDashboard";
 import AdminAI from "./AdminAI";
 import AdminAudit from "./AdminAudit";
+import AdminCredits from "./AdminCredits";
 import AdminSettings from "./AdminSettings";
 import ResourcesPanel from "./ResourcesPanel";
 import { auth, unwrap, useAdminAction, userLabel } from "./admin-api";
@@ -87,6 +89,12 @@ const pages = [
     icon: <ShieldCheck size={18} />,
     description:
       "追溯谁在什么时间对哪个对象做了什么，区分业务操作与账号安全记录。",
+  },
+  {
+    key: "credits",
+    label: "积分管理",
+    icon: <Coins size={18} />,
+    description: "发放和调整积分、对账在途扣费、维护价目与兑换码。",
   },
   {
     key: "douyin",
@@ -358,6 +366,7 @@ export default function LiveAdmin() {
             <Route path="/admin/douyin" element={<AdminDouyin />} />
             <Route path="/admin/ai" element={<AdminAI />} />
             <Route path="/admin/audit" element={<AdminAudit />} />
+  <Route path="/admin/credits" element={<AdminCredits />} />
             <Route
               path="/admin/devices"
               element={<Navigate replace to="/admin/users?tab=devices" />}

@@ -164,7 +164,26 @@ func (s *server) refreshVoice(ctx context.Context, owner string, v storedVoice) 
 	if err = s.saveVoiceStatus(ctx, owner, v); err != nil {
 		return v, err
 	}
+	// 结算在途冻结单：成功扣款，明确失败退款；unknown 保持冻结，由下一次刷新或悬挂清扫收尾。
+	switch v.Status {
+	case "ready":
+		if err = s.settleVoiceClone(ctx, owner, v.ID, true); err != nil {
+			return storedVoice{}, err
+		}
+	case "failed":
+		if err = s.settleVoiceClone(ctx, owner, v.ID, false); err != nil {
+			return storedVoice{}, err
+		}
+	}
 	return s.ownedVoice(ctx, owner, v.ID)
+}
+
+func (s *server) settleVoiceClone(ctx context.Context, owner, voiceID string, capture bool) error {
+	var requestKey string
+	if err := s.db.QueryRowContext(ctx, `SELECT request_key FROM keagent_voice WHERE id=$1 AND owner_id=$2`, voiceID, owner).Scan(&requestKey); err != nil {
+		return err
+	}
+	return s.settleHoldByKey(ctx, owner, "voice_clone", requestKey, capture)
 }
 
 func (s *server) voices(ctx context.Context, a actor, operation string, body []byte) (any, error) {
@@ -217,17 +236,43 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 		}
 		fingerprint := digestBytes(append([]byte(strings.TrimSpace(str(input["name"]))+"|"+str(input["language"])+"|"+str(input["format"])+"|"), data...))
 		voiceID := id()
+		requestKey := str(input["requestKey"])
 		v := storedVoice{userVoice: userVoice{ID: voiceID, Name: strings.TrimSpace(str(input["name"])), Language: str(input["language"]), Status: "submitting", CreatedAt: now()}, Speaker: "keagent" + voiceID, Resource: cloneResource(ctx), AuthorizedAt: now(), ConfigVersion: aiSnapshotFrom(ctx).versions["speech"]}
 		raw, _ := json.Marshal(v)
-		inserted, err := s.db.ExecContext(ctx, `INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_id,request_key) DO NOTHING`, voiceID, a.UserID, str(input["requestKey"]), fingerprint, raw)
+		// 先查重：重放请求不做任何扣费动作。
+		var savedFingerprint string
+		var archived bool
+		replayErr := s.db.QueryRowContext(ctx, `SELECT fingerprint,payload,archived FROM keagent_voice WHERE owner_id=$1 AND request_key=$2`, a.UserID, requestKey).Scan(&savedFingerprint, &raw, &archived)
+		if replayErr == nil {
+			if savedFingerprint != fingerprint || archived {
+				return nil, fail(409, "该请求已提交，请刷新音色列表后处理")
+			}
+			if err = json.Unmarshal(raw, &v); err != nil {
+				return nil, err
+			}
+			return v.userVoice, nil
+		}
+		if !errors.Is(replayErr, sql.ErrNoRows) {
+			return nil, replayErr
+		}
+		// 新提交：先冻结再落库，余额不足时干净地 402。
+		prices, priceVersion, err := readCreditPricing(ctx, s.db)
+		if err != nil {
+			return nil, err
+		}
+		if clonePrice := prices["voice_clone"]; clonePrice > 0 {
+			if _, err = s.holdCredits(ctx, a.UserID, "voice_clone", requestKey, clonePrice, requestKey, priceVersion, nil); err != nil {
+				return nil, err
+			}
+		}
+		inserted, err := s.db.ExecContext(ctx, `INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_id,request_key) DO NOTHING`, voiceID, a.UserID, requestKey, fingerprint, raw)
 		if err != nil {
 			return nil, err
 		}
 		count, _ := inserted.RowsAffected()
 		if count == 0 {
-			var savedFingerprint string
-			var archived bool
-			if err = s.db.QueryRowContext(ctx, `SELECT fingerprint,payload,archived FROM keagent_voice WHERE owner_id=$1 AND request_key=$2`, a.UserID, str(input["requestKey"])).Scan(&savedFingerprint, &raw, &archived); err != nil {
+			// 并发同 requestKey：读取先提交的音色；本次创建的冻结由后续 refresh 收尾。
+			if err = s.db.QueryRowContext(ctx, `SELECT fingerprint,payload,archived FROM keagent_voice WHERE owner_id=$1 AND request_key=$2`, a.UserID, requestKey).Scan(&savedFingerprint, &raw, &archived); err != nil {
 				return nil, err
 			}
 			if savedFingerprint != fingerprint || archived {
@@ -299,11 +344,18 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 	return nil, fail(404, "音色操作不存在")
 }
 
+func validateVoiceSynthesis(input object) error {
+	text, rate := str(input["text"]), number(input["rate"])
+	if len([]rune(text)) == 0 || len([]rune(text)) > 2000 || rate < .5 || rate > 2 {
+		return fail(422, "配音参数无效")
+	}
+	return nil
+}
+
 func (s *server) synthesizeVoice(ctx context.Context, a actor, input object) (any, error) {
 	text, voice, kind := str(input["text"]), str(input["voice"]), str(input["kind"])
-	rate := number(input["rate"])
-	if len([]rune(text)) == 0 || len([]rune(text)) > 2000 || rate < .5 || rate > 2 {
-		return nil, fail(422, "配音参数无效")
+	if err := validateVoiceSynthesis(input); err != nil {
+		return nil, err
 	}
 	var resource string
 	if kind == "personal" {
@@ -327,7 +379,7 @@ func (s *server) synthesizeVoice(ctx context.Context, a actor, input object) (an
 	} else {
 		return nil, fail(422, "音色类型无效")
 	}
-	return s.synthesizePCM(ctx, a.UserID, text, voice, resource, rate)
+	return s.synthesizePCM(ctx, a.UserID, text, voice, resource, number(input["rate"]))
 }
 
 func (s *server) synthesizePCM(ctx context.Context, userID, text, voice, resource string, rate float64) (any, error) {

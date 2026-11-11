@@ -120,6 +120,8 @@ func TestMiniMaxOpeningAudioDuration(t *testing.T) {
 func TestTemplateMiniMaxOpening(t *testing.T) {
 	t.Setenv("MINIMAX_API_KEY", "test-key")
 	s := &server{db: productionTestDB(t)}
+	grantForTest(t, s, "property", creditKindPurchased, 300, 0)
+	grantForTest(t, s, "fixed", creditKindPurchased, 300, 0)
 	template := seedTemplate(t)
 	recipe := obj(template["production"])
 	recipe["schemaVersion"] = float64(2)
@@ -203,6 +205,7 @@ func TestTemplateMiniMaxOpening(t *testing.T) {
 func TestMiniMaxOpeningReusesTaskAndIsolatesOwners(t *testing.T) {
 	t.Setenv("MINIMAX_API_KEY", "test-key")
 	s := &server{db: productionTestDB(t)}
+	grantForTest(t, s, "opening-owner", creditKindPurchased, 300, 0)
 	submits := 0
 	s.sourceHTTP = func(_ context.Context, method, endpoint string, headers http.Header, _ []byte, _ int64) ([]byte, error) {
 		if headers.Get("Authorization") != "Bearer test-key" {

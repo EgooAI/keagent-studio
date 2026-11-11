@@ -249,6 +249,19 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 			return nil, fail(503, "请在管理后台启用 MiniMax 开场服务")
 		}
 		key = digestBytes(body)
+		prices, priceVersion, err := readCreditPricing(ctx, s.db)
+		if err != nil {
+			return nil, err
+		}
+		// 先冻结再落库：余额不足时干净地 402，不留下未提交的检查点。
+		var holdID string
+		if openingPrice := prices["opening"]; openingPrice > 0 {
+			hold, holdErr := s.holdCredits(ctx, a.UserID, "opening", key, openingPrice, key, priceVersion, nil)
+			if holdErr != nil {
+				return nil, holdErr
+			}
+			holdID = hold.ID
+		}
 		version := aiSnapshotFrom(ctx).versions["opening"]
 		result, err := s.db.ExecContext(ctx, `INSERT INTO keagent_minimax_opening(owner_id,input_hash,config_version) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, a.UserID, key, version)
 		if err != nil {
@@ -265,6 +278,9 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 					switch rejection.httpStatus {
 					case http.StatusBadRequest, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusUnprocessableEntity, http.StatusTooManyRequests:
 						_, _ = s.db.ExecContext(finish, `DELETE FROM keagent_minimax_opening WHERE owner_id=$1 AND input_hash=$2 AND task_id=''`, a.UserID, key)
+						if holdID != "" {
+							_ = s.releaseHold(finish, holdID)
+						}
 					}
 				}
 				return nil, submitErr
@@ -297,5 +313,20 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 	if err != nil {
 		return nil, err
 	}
-	return s.minimaxQuery(ctx, id)
+	result, err := s.minimaxQuery(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	// 结算在途冻结单：成功扣款，明确失败退款；结果未知保持冻结。
+	switch str(result["status"]) {
+	case "succeeded":
+		if err = s.settleHoldByKey(ctx, a.UserID, "opening", key, true); err != nil {
+			return nil, err
+		}
+	case "failed", "cancelled":
+		if err = s.settleHoldByKey(ctx, a.UserID, "opening", key, false); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

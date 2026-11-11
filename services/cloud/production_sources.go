@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -218,6 +219,7 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		return nil, fail(422, "扩图请求标识无效")
 	}
 	var saved []byte
+	var hashKey string
 	if operation == "image-submit" {
 		base, headers, err := expansionConnection(ctx)
 		if err != nil {
@@ -229,6 +231,19 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		}
 		body, _ := json.Marshal(payload)
 		hash := digestBytes(body)
+		prices, priceVersion, err := readCreditPricing(ctx, s.db)
+		if err != nil {
+			return nil, err
+		}
+		// 先冻结再落库；单价为 0（当前默认）时跳过扣费。
+		var holdID string
+		if expandPrice := prices["image_expand"]; expandPrice > 0 {
+			hold, holdErr := s.holdCredits(ctx, a.UserID, "image_expand", key, expandPrice, hash, priceVersion, nil)
+			if holdErr != nil {
+				return nil, holdErr
+			}
+			holdID = hold.ID
+		}
 		// Reserve before submitting. Unknown results never cause an automatic paid resubmission.
 		version := aiSnapshotFrom(ctx).versions["expansion"]
 		pending, _ := json.Marshal(object{"status": "submitting", "configVersion": version})
@@ -252,6 +267,10 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		headers.Set("X-DashScope-Async", "enable")
 		data, err := s.productionBody(ctx, "POST", base+"/api/v1/services/aigc/image2image/image-synthesis", headers, body, 2<<20)
 		if err != nil {
+			var rejection providerHTTPError
+			if errors.As(err, &rejection) && rejection.httpStatus >= 400 && rejection.httpStatus < 500 && holdID != "" {
+				_ = s.releaseHold(context.WithoutCancel(ctx), holdID)
+			}
 			return nil, err
 		}
 		var vendor struct {
@@ -269,7 +288,7 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		}
 		return record, nil
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_production_image WHERE owner_id=$1 AND request_key=$2`, a.UserID, key).Scan(&saved)
+	err := s.db.QueryRowContext(ctx, `SELECT payload, input_hash FROM keagent_production_image WHERE owner_id=$1 AND request_key=$2`, a.UserID, key).Scan(&saved, &hashKey)
 	if err == sql.ErrNoRows {
 		return nil, fail(404, "扩图任务不存在")
 	}
@@ -285,6 +304,9 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 		return nil, fail(409, "扩图提交结果未知，请核对百炼控制台；不会自动重新提交")
 	}
 	if str(record["status"]) == "SUCCEEDED" {
+		if err = s.settleHoldByKey(ctx, a.UserID, "image_expand", hashKey, true); err != nil {
+			return nil, err
+		}
 		return record, nil
 	}
 	version := number(record["configVersion"])
@@ -326,6 +348,16 @@ func (s *server) productionImage(ctx context.Context, a actor, operation string,
 	saved, _ = json.Marshal(record)
 	if _, err = s.db.ExecContext(ctx, `UPDATE keagent_production_image SET payload=$3 WHERE owner_id=$1 AND request_key=$2`, a.UserID, key, saved); err != nil {
 		return nil, err
+	}
+	switch vendor.Output.Status {
+	case "SUCCEEDED":
+		if err = s.settleHoldByKey(ctx, a.UserID, "image_expand", hashKey, true); err != nil {
+			return nil, err
+		}
+	case "FAILED", "CANCELED":
+		if err = s.settleHoldByKey(ctx, a.UserID, "image_expand", hashKey, false); err != nil {
+			return nil, err
+		}
 	}
 	return record, nil
 }

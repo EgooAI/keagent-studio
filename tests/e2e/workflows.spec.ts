@@ -202,7 +202,7 @@ test("用户端各页面在桌面与窄窗口保留可见导航且不横向溢�
       "properties",
       "properties/property-1",
       "leads",
-      "settings/profile",
+      "settings/service-status",
       "settings/theme",
       "publish",
       "publish/task-1",
@@ -210,6 +210,9 @@ test("用户端各页面在桌面与窄窗口保留可见导航且不横向溢�
     ]) {
       await page.goto("/#/" + route);
       await expect(page.locator("h1")).toBeVisible();
+      if (route === "settings/service-status") {
+        await expect(page.getByText("演示模式未连接制作服务。")).toBeVisible();
+      }
       await expect(
         page.getByRole("link", { name: "房源中心", exact: true }).first(),
       ).toBeVisible();

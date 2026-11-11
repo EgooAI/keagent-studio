@@ -92,7 +92,7 @@ func initial(name string) object {
 	return w
 }
 
-const schema = aiSettingsSchema + minimaxOpeningSchema + `
+const schema = aiSettingsSchema + minimaxOpeningSchema + creditSchema + `
 CREATE TABLE IF NOT EXISTS keagent_workspace (owner_id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_resource (id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_device (id text PRIMARY KEY, owner_id text NOT NULL, session_id text NOT NULL, name text NOT NULL, platform text NOT NULL, revoked boolean NOT NULL DEFAULT false, seen_at timestamptz NOT NULL DEFAULT now());
@@ -220,6 +220,32 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, object{"userId": a.UserID, "sessionId": a.SessionID, "name": a.Name, "email": a.Email, "role": a.Role}, nil)
 		return
 	}
+	if r.Method == "GET" && r.URL.Path == "/v1/credits" {
+		v, e := s.creditSummary(r.Context(), a.UserID)
+		respond(w, v, e)
+		return
+	}
+	if r.Method == "GET" && r.URL.Path == "/v1/credits/pricing" {
+		prices, version, e := readCreditPricing(r.Context(), s.db)
+		if e != nil {
+			respond(w, nil, e)
+			return
+		}
+		respond(w, object{"prices": prices, "version": version}, nil)
+		return
+	}
+	if r.Method == "POST" && r.URL.Path == "/v1/credits/redeem" {
+		var input struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(body, &input) != nil {
+			respond(w, nil, fail(400, "请求格式错误"))
+			return
+		}
+		v, e := s.redeemCreditCode(r.Context(), a.UserID, input.Code)
+		respond(w, v, e)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/media-assets/") || strings.HasPrefix(r.URL.Path, "/v1/artifacts/") || strings.HasPrefix(r.URL.Path, "/v1/artifact-handoffs/") {
 		if r.Method != "POST" {
 			respond(w, nil, fail(405, "成片交接接口仅支持 POST"))
@@ -298,13 +324,25 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 func (s *server) workspacePayload(ctx context.Context, a actor) (object, error) {
 	seed, _ := json.Marshal(initial(a.Name))
-	_, err := s.db.ExecContext(ctx, `INSERT INTO keagent_workspace(owner_id,payload) VALUES($1,$2) ON CONFLICT DO NOTHING`, a.UserID, seed)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer tx.Rollback()
 	var b []byte
-	err = s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_workspace WHERE owner_id=$1`, a.UserID).Scan(&b)
-	if err != nil {
+	err = tx.QueryRowContext(ctx, `INSERT INTO keagent_workspace(owner_id,payload) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING payload`, a.UserID, seed).Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		// 已有工作区：正常读取。
+		if err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_workspace WHERE owner_id=$1`, a.UserID).Scan(&b); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	} else if err = maybeGrantWelcomeCredits(ctx, tx, a.UserID); err != nil {
+		// 仅在首次播种（新账号）时按后台配置发放欢迎积分。
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	var w object
@@ -584,6 +622,9 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	}
 	if kind == "voices" {
 		return s.adminVoices(r, a, body)
+	}
+	if kind == "credit-codes" || strings.HasPrefix(kind, "credit-codes/") || strings.HasPrefix(kind, "credits/") {
+		return s.adminCredits(r, a, kind, body)
 	}
 	if r.Method == "GET" {
 		if kind == "resources/versions" {
@@ -1066,6 +1107,7 @@ func main() {
 	go s.work(context.Background())
 	go s.douyinBackground(context.Background())
 	go s.runAIProbes(context.Background())
+	go s.creditExpireSweeper(context.Background())
 	log.Println("Go business API listening on 127.0.0.1:18081")
 	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
 }

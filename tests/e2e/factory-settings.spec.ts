@@ -72,6 +72,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
       const state = {
         workspace,
         catalog,
+        aiConfigured: false,
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
         ],
@@ -127,7 +128,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 ffprobe: true,
                 managedVoices: true,
                 volcTts: true,
-                ai: false,
+                ai: state.aiConfigured,
                 imageExpansion: true,
                 beike: false,
                 voices: [],
@@ -148,17 +149,6 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 configured: true,
                 reason: "contract_unverified",
               };
-            if (method === "updateFactoryPreferences") {
-              const input = args[0];
-              Object.assign(state.workspace.profile.defaults, {
-                videoTemplate: {
-                  id: input.templateId,
-                  version: input.templateVersion,
-                },
-                voiceId: input.voiceId,
-              });
-              return state.workspace.profile.defaults;
-            }
             const input = args[0] || {};
             if (method === "panorama.opening-clip-import") {
               state.openingClip = {
@@ -515,26 +505,18 @@ test("正式房源导入显示贝壳联调状态并可切换到手动添加", as
   ).toBeVisible();
 });
 
-test("设置读取后台模板和公共音色，保存后新视频使用相同默认值", async ({
-  page,
-}) => {
+test("新视频继续使用已保存的制作偏好", async ({ page }) => {
   await fixture(page);
-  await page.goto("/#/settings/defaults");
-  await expect(
-    page.getByRole("combobox", { name: "默认视频模板", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("combobox", { name: "提示词模板", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("生成文案后需要人工审核", { exact: true }),
-  ).toHaveCount(0);
-  await choose(page, "默认视频模板", "标准房源带看 · 1.0.0");
-  await choose(page, "默认音色", "公共讲解音色 · 公共音色");
-  await page.getByRole("button", { name: "保存默认配置", exact: true }).click();
-  await expect(
-    page.getByText("默认制作配置已保存，新视频将使用这些偏好", { exact: true }),
-  ).toBeVisible();
+  await page.goto("/#/settings");
+  await page.evaluate(() => {
+    Object.assign(
+      (window as any).factorySettingsTest.workspace.profile.defaults,
+      {
+        videoTemplate: { id: "standard-tour", version: "1.0.0" },
+        voiceId: "public-zh",
+      },
+    );
+  });
   await page.getByRole("link", { name: /^AI 视频工厂/ }).click();
   await page.getByRole("tab", { name: "新建视频", exact: true }).click();
   await expect(
@@ -562,13 +544,6 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
     () => (window as any).factorySettingsTest.calls,
   );
   expect(
-    calls.find((c: any) => c.method === "updateFactoryPreferences").input,
-  ).toEqual({
-    templateId: "standard-tour",
-    templateVersion: "1.0.0",
-    voiceId: "public-zh",
-  });
-  expect(
     calls.find((c: any) => c.method === "panorama.factory-create").input,
   ).toMatchObject({
     pairs: [
@@ -586,31 +561,49 @@ test("设置读取后台模板和公共音色，保存后新视频使用相同�
   });
 });
 
-test("后台下架模板和音色后可刷新看到失效偏好，正式设置不显示演示重置", async ({
-  page,
-}) => {
+test("设置只展示制作服务状态，支持刷新和旧链接", async ({ page }, testInfo) => {
   await fixture(page);
-  await page.goto("/#/settings/defaults");
-  await choose(page, "默认视频模板", "标准房源带看 · 1.0.0");
-  await choose(page, "默认音色", "公共讲解音色 · 公共音色");
-  await page.getByRole("button", { name: "保存默认配置", exact: true }).click();
+  await page.goto("/#/settings/profile");
+  await expect(page).toHaveURL(/#\/settings\/account$/);
+  await expect(page.getByRole("tab", { name: "经纪人资料" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "默认生成配置" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "制作服务状态", exact: true }).click();
+  await expect(page).toHaveURL(/#\/settings\/service-status$/);
   await expect(
-    page.getByText("默认制作配置已保存，新视频将使用这些偏好", { exact: true }),
+    page.getByRole("heading", { name: "制作服务状态", exact: true }),
   ).toBeVisible();
+  const panel = page.getByRole("tabpanel", { name: "制作服务状态" });
+  await expect(panel.getByRole("combobox")).toHaveCount(0);
+  await expect(
+    panel.getByRole("cell", { name: /AI 文案.*未配置/ }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("cell", { name: /云端配音.*已配置/ }),
+  ).toBeVisible();
+  await expect(panel.getByText("本机合成工具：已就绪")).toBeVisible();
+
   await page.evaluate(() => {
-    (window as any).factorySettingsTest.catalog = [];
-    (window as any).factorySettingsTest.publicVoices = [];
+    (window as any).factorySettingsTest.aiConfigured = true;
   });
-  await page
-    .getByRole("button", { name: "刷新管理员配置", exact: true })
-    .click();
+  await panel.getByRole("button", { name: "刷新状态" }).click();
   await expect(
-    page.getByText("部分旧偏好已失效", { exact: true }),
+    panel.getByRole("cell", { name: /AI 文案.*已配置/ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "保存默认配置", exact: true }).click();
-  await expect(
-    page.getByText("默认模板已下架，请重新选择或清空", { exact: true }),
-  ).toBeVisible();
+
+  await page.goto("/#/settings/defaults");
+  await expect(page).toHaveURL(/#\/settings\/service-status$/);
+  for (const width of [1440, 600]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(panel.getByText("贝壳房源接入")).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path: testInfo.outputPath(`service-status-${width}.png`),
+      animations: "disabled",
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("tab", { name: "本地存储", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "重置演示数据", exact: true }),

@@ -37,6 +37,13 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import type { PanoramaDraft, PanoramaSegment } from "@keagent/shared-types";
+import { authRequest, isLive } from "@keagent/api-client";
+import {
+  estimateBatchCost,
+  estimateSummaryText,
+  ESTIMATED_CHARS_PER_VIDEO,
+  type CreditPricing,
+} from "../lib/creditEstimate";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
@@ -191,6 +198,13 @@ export function PanoramaStudio() {
     retry: false,
     staleTime: 30_000,
   });
+  const pricing = useQuery({
+    queryKey: ["credit-pricing"],
+    queryFn: () => authRequest<CreditPricing>("credits.pricing"),
+    enabled: desktop && isLive,
+    retry: false,
+    staleTime: 60_000,
+  });
   const defaults = useQuery({
     queryKey: ["factory-preferences"],
     queryFn: () => factoryRequest<FactoryProperties>("properties", { page: 1 }),
@@ -254,6 +268,14 @@ export function PanoramaStudio() {
     faceTemplates.has(
       templateKey({ id: pair.templateId, version: pair.version }),
     ),
+  );
+  const costEstimate = useMemo(
+    () =>
+      estimateBatchCost(pricing.data, {
+        tasks: pairs.length,
+        withOpening: useMiniMax,
+      }),
+    [pricing.data, pairs.length, useMiniMax],
   );
   const openingClip = catalog.data?.openingClip;
   const openingPhoto = catalog.data?.openingPhoto;
@@ -786,6 +808,18 @@ export function PanoramaStudio() {
                     : " · 保留"}{" "}
                   <strong>{pairs.length}</strong> 条
                 </span>
+                {costEstimate && (
+                  <Tooltip
+                    title={`按每条约 ${ESTIMATED_CHARS_PER_VIDEO} 字估算；实际按生成文案的千字数计费，供应商失败会退回。`}
+                  >
+                    <span
+ className="factory-cost-estimate"
+                      style={{ color: "var(--muted, #667085)", fontSize: 13 }}
+                    >
+                      {estimateSummaryText(costEstimate)}
+                    </span>
+                  </Tooltip>
+                )}
                 <Button
                   type="primary"
                   loading={busy && !!submission.current}

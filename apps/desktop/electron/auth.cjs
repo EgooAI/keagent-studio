@@ -334,6 +334,33 @@ function registerAuth() {
         };
       }
     }
+    const creditRoutes = {
+      "credits.summary": "/v1/credits",
+      "credits.pricing": "/v1/credits/pricing",
+      "credits.redeem": "/v1/credits/redeem",
+    };
+    if (Object.hasOwn(creditRoutes, method)) {
+      try {
+        return {
+          ok: true,
+          data: (
+            await request(
+              creditRoutes[method],
+              method === "credits.redeem" ? args[0] || {} : undefined,
+            )
+          ).data,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            message: error.message,
+            status: error.status || 0,
+            code: error.code,
+          },
+        };
+      }
+    }
     const exchangeRoutes = {
       "asset.register": "/v1/media-assets/register",
       "asset.get": "/v1/media-assets/get",

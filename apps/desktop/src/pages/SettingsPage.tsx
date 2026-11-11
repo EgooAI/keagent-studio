@@ -11,10 +11,7 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Radio,
-  Select,
   Space,
-  Switch,
   Tabs,
   Tag,
   Upload,
@@ -40,15 +37,10 @@ import {
 } from "@keagent/api-client";
 import { useQuery } from "@tanstack/react-query";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
-import { FactoryPreferences } from "../components/FactoryPreferences";
+import { ProductionServiceStatus } from "../components/ProductionServiceStatus";
+import { CreditsPanel } from "../components/CreditsPanel";
 import { OpeningMaterials } from "../components/OpeningMaterials";
 import { ThemeSettings } from "@keagent/theme";
-import type {
-  AgentProfile,
-  ProductionConfig,
-  Resource,
-  ResourceRef,
-} from "@keagent/shared-types";
 import { platformLabels } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
 import { useWorkspace } from "../lib/workspace";
@@ -77,8 +69,6 @@ export default function SettingsPage() {
     enabled: isLive && section === "account",
     retry: false,
   });
-  const [profileForm] = Form.useForm<AgentProfile>();
-  const [defaultsForm] = Form.useForm();
   const [creator, setCreator] = useState(false);
   const [assetName, setAssetName] = useState("");
   const [fileName, setFileName] = useState("");
@@ -88,20 +78,6 @@ export default function SettingsPage() {
     id: string;
     name: string;
   } | null>(null);
-  const defaults = data?.profile.defaults;
-  useEffect(() => {
-    if (data && section === "profile") profileForm.setFieldsValue(data.profile);
-  }, [data?.profile, profileForm, section]);
-  useEffect(() => {
-    if (defaults && !isLive && section === "defaults")
-      defaultsForm.setFieldsValue({
-        ...defaults,
-        promptTemplate: defaults.promptTemplate.id,
-        videoTemplate: defaults.videoTemplate.id,
-        styleTemplate: defaults.styleTemplate.id,
-        coverTemplate: defaults.coverTemplate.id,
-      });
-  }, [defaults, defaultsForm, section]);
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
   if (!data) return null;
   async function act(action: () => Promise<unknown>, success?: string) {
@@ -322,155 +298,6 @@ export default function SettingsPage() {
       )}
     </>
   );
-  const profileSettings = (
-    <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>经纪人资料</h2>
-      <p style={{ color: "#667085", marginBottom: 24 }}>
-        这些信息可用于房源文案和视频署名。
-      </p>
-      <Form
-        form={profileForm}
-        layout="vertical"
-        style={{ maxWidth: 640 }}
-        onFinish={(values) =>
-          void act(() => demoApi.updateProfile(values), "经纪人资料已保存")
-        }
-      >
-        <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}
-        >
-          <Form.Item
-            name="name"
-            label="经纪人姓名"
-            rules={[{ required: true, message: "请输入姓名" }, { max: 30 }]}
-          >
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="brokerage"
-            label="所属门店"
-            rules={[{ required: true, message: "请输入门店" }, { max: 80 }]}
-          >
-            <Input />
-          </Form.Item>
-        </div>
-        <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}
-        >
-          <Form.Item
-            name="city"
-            label="所在城市"
-            rules={[{ required: true, message: "请输入城市" }]}
-          >
-            <Input />
-          </Form.Item>
-          <Form.Item name="phone" label="联系方式" rules={[{ max: 40 }]}>
-            <Input placeholder="演示信息，请勿填写敏感资料" />
-          </Form.Item>
-        </div>
-        <Form.Item name="regions" label="擅长区域">
-          <Input placeholder="例如：浦东、徐汇" />
-        </Form.Item>
-        <Form.Item name="introduction" label="个人介绍" rules={[{ max: 500 }]}>
-          <Input.TextArea rows={4} showCount maxLength={500} />
-        </Form.Item>
-        <Button type="primary" htmlType="submit">
-          保存资料
-        </Button>
-      </Form>
-    </>
-  );
-  const resourceOptions = (type: Resource["type"]) =>
-    data.resources
-      .filter((item) => item.type === type && item.published && item.installed)
-      .map((item) => ({ value: item.id, label: item.name }));
-  function reference(id: string): ResourceRef {
-    const item = data!.resources.find((resource) => resource.id === id);
-    if (!item) throw new Error("模板已失效，请重新选择");
-    return { id, version: item.version };
-  }
-  const defaultsSettings = (
-    <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>默认生成配置</h2>
-      <p style={{ color: "#667085", marginBottom: 24 }}>
-        初始化新任务时使用，已有工厂草稿和历史任务不受影响。
-      </p>
-      <Form
-        form={defaultsForm}
-        layout="vertical"
-        style={{ maxWidth: 640 }}
-        onFinish={(values) =>
-          void act(() => {
-            const config: ProductionConfig = {
-              ...data.profile.defaults,
-              ...values,
-              propertyIds: [],
-              promptTemplate: reference(values.promptTemplate),
-              videoTemplate: reference(values.videoTemplate),
-              styleTemplate: reference(values.styleTemplate),
-              coverTemplate: reference(values.coverTemplate),
-            };
-            return demoApi.updateProfile({ defaults: config });
-          }, "默认配置已保存，已有草稿保持不变")
-        }
-      >
-        <Form.Item name="videoMode" label="默认视频模式">
-          <Radio.Group
-            options={[
-              { value: "voiceover", label: "纯口播" },
-              { value: "avatar", label: "经纪人露脸" },
-            ]}
-          />
-        </Form.Item>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "0 18px",
-          }}
-        >
-          {(
-            [
-              ["promptTemplate", "提示词模板", "prompt"],
-              ["videoTemplate", "视频模板", "video"],
-              ["styleTemplate", "风格模板", "style"],
-              ["coverTemplate", "封面模板", "cover"],
-            ] as const
-          ).map(([name, label, type]) => (
-            <Form.Item
-              key={name}
-              name={name}
-              label={label}
-              rules={[{ required: true, message: `请选择${label}` }]}
-            >
-              <Select options={resourceOptions(type)} />
-            </Form.Item>
-          ))}
-          <Form.Item
-            name="voiceId"
-            label="默认音色"
-            rules={[{ required: true }]}
-          >
-            <Select
-              options={data.voices
-                .filter((item) => item.status === "ready")
-                .map((item) => ({ value: item.id, label: item.name }))}
-            />
-          </Form.Item>
-        </div>
-        <Form.Item
-          name="requireScriptReview"
-          label="生成文案后需要人工审核"
-          valuePropName="checked"
-        >
-          <Switch />
-        </Form.Item>
-        <Button type="primary" htmlType="submit">
-          保存默认配置
-        </Button>
-      </Form>
-    </>
-  );
   const demoConnections = (
     <>
       <h2 style={{ fontSize: 18, marginTop: 0 }}>平台账号</h2>
@@ -650,7 +477,7 @@ export default function SettingsPage() {
       </Space>
       <p style={{ color: "#667085", maxWidth: 640, lineHeight: 1.8 }}>
         {isLive
-          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原全景或 AI 扩图素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在默认生成配置中查看。"
+          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原全景或 AI 扩图素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在“制作服务状态”中查看。"
           : "面向房产经纪人的内容生产工作台。当前提供前端演示操作与模拟任务流程。"}
       </p>
       <Button
@@ -663,7 +490,6 @@ export default function SettingsPage() {
   );
   const items = [
     { key: "account", label: "账号信息", children: accountSettings },
-    { key: "profile", label: "经纪人资料", children: profileSettings },
     { key: "appearance", label: "形象与背景", children: <OpeningMaterials /> },
     {
       key: "voices",
@@ -676,9 +502,30 @@ export default function SettingsPage() {
       children: isLive ? <DouyinAccounts /> : demoConnections,
     },
     {
-      key: "defaults",
-      label: "默认生成配置",
-      children: isLive ? <FactoryPreferences /> : defaultsSettings,
+      key: "service-status",
+      label: "制作服务状态",
+      children: (
+        <>
+          <h2 style={{ fontSize: 18, marginTop: 0 }}>制作服务状态</h2>
+          {isLive ? (
+            <ProductionServiceStatus />
+          ) : (
+            <p className="muted">演示模式未连接制作服务。</p>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "credits",
+      label: "积分与兑换",
+      children: isLive ? (
+        <CreditsPanel />
+      ) : (
+        <>
+          <h2 style={{ fontSize: 18, marginTop: 0 }}>我的积分</h2>
+          <p className="muted">演示模式未接入积分；正式版按 AI 服务调用消耗积分。</p>
+        </>
+      ),
     },
     { key: "theme", label: "主题设置", children: <ThemeSettings /> },
     { key: "storage", label: "本地存储", children: storage },
@@ -689,7 +536,7 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="设置"
-        description="管理个人资料、创作偏好与工作环境。"
+        description="管理账号和工作环境，查看制作服务状态。"
       />
       <section className="panel settings-workspace">
         <Tabs

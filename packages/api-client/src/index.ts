@@ -1084,6 +1084,7 @@ export {
   authBaseURL,
   authRequest,
   clearAccessToken,
+  insufficientCreditsEvent,
   serviceRequest,
   ServiceRequestError,
   type SessionUser,

@@ -90,6 +90,20 @@ async function getAccessToken(): Promise<string> {
   }
 }
 
+export const insufficientCreditsEvent = "keagent:insufficient-credits";
+
+function notifyInsufficientCredits(code?: string) {
+  if (code === "CREDITS_INSUFFICIENT")
+    window.dispatchEvent(new Event(insufficientCreditsEvent));
+}
+
+function notifyInsufficientCreditsFromResponse(status: number, data: unknown) {
+  if (status === 402)
+    notifyInsufficientCredits(
+      (data as { error?: { code?: string } })?.error?.code,
+    );
+}
+
 export async function serviceRequest<T>(
   path: string,
   body?: unknown,
@@ -140,12 +154,18 @@ export async function serviceRequest<T>(
       data.error?.code,
     );
   }
+  notifyInsufficientCreditsFromResponse(response.status, data);
   return data as T;
 }
 export async function authRequest<T>(
   method: string,
   args: unknown[] = [],
 ): Promise<T> {
+  const creditRoutes: Record<string, string> = {
+    "credits.summary": "/v1/credits",
+    "credits.pricing": "/v1/credits/pricing",
+    "credits.redeem": "/v1/credits/redeem",
+  };
   const exchangeRoutes: Record<string, string> = {
     "asset.register": "/v1/media-assets/register",
     "asset.get": "/v1/media-assets/get",
@@ -159,6 +179,24 @@ export async function authRequest<T>(
   };
   if (window.desktop?.request) {
     const reply = await window.desktop.request(method, args);
+    if (Object.hasOwn(creditRoutes, method)) {
+      // Credits IPC uses the same envelope as the exchange routes to keep the
+      // business error code alive across the IPC boundary.
+      const envelope = reply as {
+        ok: boolean;
+        data?: T;
+        error?: { message: string; status: number; code?: string };
+      };
+      if (!envelope.ok) {
+        notifyInsufficientCredits(envelope.error?.code);
+        throw new ServiceRequestError(
+          envelope.error?.message || "积分服务请求失败",
+          envelope.error?.status || 0,
+          envelope.error?.code,
+        );
+      }
+      return envelope.data as T;
+    }
     if (Object.hasOwn(exchangeRoutes, method)) {
       // New exchange IPC preserves HTTP status/code explicitly; Electron strips
       // custom properties from exceptions crossing the IPC boundary.
@@ -177,6 +215,11 @@ export async function authRequest<T>(
     }
     return reply as T;
   }
+  if (Object.hasOwn(creditRoutes, method))
+    return serviceRequest<T>(
+      creditRoutes[method],
+      method === "credits.redeem" ? args[0] ?? {} : undefined,
+    );
   if (Object.hasOwn(exchangeRoutes, method))
     return serviceRequest<T>(exchangeRoutes[method], args[0] ?? {});
   if (

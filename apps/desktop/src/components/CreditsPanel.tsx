@@ -1,0 +1,170 @@
+import { Alert, Button, Input, Space, Table, Tag, message } from "antd";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { Coins } from "lucide-react";
+import { authRequest, ServiceRequestError } from "@keagent/api-client";
+
+interface CreditSummary {
+  purchased?: { available?: number; held?: number };
+  granted?: { available?: number; held?: number; nextExpiry?: string };
+  ledger?: {
+    kind: string;
+    amount: number;
+    op: string;
+    refId: string;
+    metadata?: { note?: string; spent?: number };
+    createdAt: string;
+  }[];
+}
+
+const ledgerLabels: Record<string, string> = {
+  grant: "发放",
+  redeem: "兑换",
+  hold: "冻结",
+  capture: "消耗",
+  release: "退回",
+  adjust: "调整",
+  expire: "过期",
+};
+
+export function CreditsPanel() {
+  const queryClient = useQueryClient();
+  const [code, setCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+  const summary = useQuery({
+    queryKey: ["credits-summary"],
+    queryFn: () => authRequest<CreditSummary>("credits.summary"),
+    retry: false,
+  });
+  async function redeem() {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      message.warning("请输入兑换码");
+      return;
+    }
+    setRedeeming(true);
+    try {
+      const result = await authRequest<{ amount: number }>("credits.redeem", [
+        { code: trimmed },
+      ]);
+      message.success(`兑换成功，到账 ${result.amount} 积分`);
+      setCode("");
+      await queryClient.invalidateQueries({ queryKey: ["credits-summary"] });
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "兑换失败，请重试",
+      );
+    } finally {
+      setRedeeming(false);
+    }
+  }
+  const purchased = summary.data?.purchased;
+  const granted = summary.data?.granted;
+  return (
+    <>
+      <h2 style={{ fontSize: 18, marginTop: 0 }}>我的积分</h2>
+      <p style={{ color: "#667085" }}>
+        AI 文案、配音、声音复刻和 MiniMax 开场按实际调用消耗积分；本机视频合成与平台发布不消耗。
+      </p>
+      {summary.error && (
+        <Alert
+          type="error"
+          showIcon
+          title="无法读取积分余额"
+          description={summary.error.message}
+          style={{ marginBottom: 20 }}
+        />
+      )}
+      <Space size={16} style={{ marginBottom: 24 }} wrap>
+        <Tag
+          icon={<Coins size={13} />}
+          color="gold"
+          style={{ fontSize: 14, padding: "4px 12px" }}
+        >
+          充值积分 {purchased?.available ?? 0}
+        </Tag>
+        <Tag color="blue" style={{ fontSize: 14, padding: "4px 12px" }}>
+          赠送积分 {granted?.available ?? 0}
+          {granted?.nextExpiry
+            ? ` · ${new Date(granted.nextExpiry).toLocaleDateString("zh-CN")} 过期`
+            : ""}
+        </Tag>
+        {(purchased?.held ?? 0) + (granted?.held ?? 0) > 0 && (
+          <Tag style={{ fontSize: 14, padding: "4px 12px" }}>
+            处理中 {(purchased?.held ?? 0) + (granted?.held ?? 0)}
+          </Tag>
+        )}
+        <Button onClick={() => void summary.refetch()} loading={summary.isFetching}>
+          刷新
+        </Button>
+      </Space>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          marginBottom: 28,
+          maxWidth: 460,
+        }}
+      >
+        <Input
+          placeholder="输入兑换码"
+          value={code}
+          maxLength={64}
+          onChange={(event) => setCode(event.target.value)}
+          onPressEnter={() => void redeem()}
+          allowClear
+        />
+        <Button type="primary" loading={redeeming} onClick={() => void redeem()}>
+          兑换
+        </Button>
+      </div>
+      <h3 style={{ fontSize: 16, margin: "0 0 10px" }}>最近流水</h3>
+      <Table
+        size="small"
+        rowKey={(record) => `${record.kind}-${record.createdAt}-${record.amount}`}
+        dataSource={summary.data?.ledger ?? []}
+        pagination={{ pageSize: 8, hideOnSinglePage: true }}
+        columns={[
+          {
+            title: "类型",
+            dataIndex: "kind",
+            width: 90,
+            render: (kind: string) => ledgerLabels[kind] ?? kind,
+          },
+          {
+            title: "变动",
+            dataIndex: "amount",
+            width: 90,
+            render: (amount: number) => (
+              <span style={{ color: amount >= 0 ? "#12b76a" : "#f04438" }}>
+                {amount >= 0 ? `+${amount}` : amount}
+              </span>
+            ),
+          },
+          {
+            title: "说明",
+            render: (record: NonNullable<CreditSummary["ledger"]>[number]) =>
+              record.metadata?.note ||
+              (record.kind === "capture"
+                ? `${record.op} 消耗 ${record.metadata?.spent ?? 0}`
+                : record.op),
+          },
+          {
+            title: "时间",
+            dataIndex: "createdAt",
+            render: (createdAt: string) =>
+              new Date(createdAt).toLocaleString("zh-CN"),
+          },
+        ]}
+      />
+      {summary.data && (summary.data.ledger?.length ?? 0) === 0 && (
+        <p className="muted">暂无流水。积分不足时可在管理后台充值或使用兑换码。</p>
+      )}
+    </>
+  );
+}
+
+export function isInsufficientCredits(error: unknown): boolean {
+  return error instanceof ServiceRequestError && error.code === "CREDITS_INSUFFICIENT";
+}

@@ -204,33 +204,48 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if err != nil {
 			return nil, err
 		}
-		return generateVisionScript(ctx, template, obj(input["property"]), rows(input["images"]))
+		return s.chargedScript(ctx, a, input, func(chargeCtx context.Context) (any, error) {
+			return generateVisionScript(chargeCtx, template, obj(input["property"]), rows(input["images"]))
+		})
 	case "script":
 		expected := rows(input["segments"])
 		language := str(input["language"])
 		if len(expected) < 3 || len(expected) > 22 || (language != "zh-CN" && language != "en-US") {
 			return nil, fail(422, "文案段落或语言无效")
 		}
-		content, err := generateWithInstruction(ctx, input, "你是房产视频编导。仅使用输入房源事实和人工标注的空间说明，不编造学区、产权、朝向、收益。按输入模板改写。输出语言 "+language+"。只输出 JSON 数组，每项包含 id 和 text，id和顺序与输入segments一致。开场宜在15秒内读完。")
-		if err != nil {
-			return nil, fail(502, err.Error())
-		}
-		content = strings.TrimSpace(content)
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(strings.TrimSpace(content), "```")
-		var segments []object
-		if json.Unmarshal([]byte(content), &segments) != nil || len(segments) != len(expected) {
-			return nil, fail(502, "AI 返回无效的分段文案")
-		}
-		for i, segment := range segments {
-			if str(segment["id"]) != str(obj(expected[i])["id"]) || len([]rune(str(segment["text"]))) == 0 || len([]rune(str(segment["text"]))) > 2000 {
-				return nil, fail(502, "AI 文案与空间不匹配")
+		return s.chargedScript(ctx, a, input, func(chargeCtx context.Context) (any, error) {
+			content, err := generateWithInstruction(chargeCtx, input, "你是房产视频编导。仅使用输入房源事实和人工标注的空间说明，不编造学区、产权、朝向、收益。按输入模板改写。输出语言 "+language+"。只输出 JSON 数组，每项包含 id 和 text，id和顺序与输入segments一致。开场宜在15秒内读完。")
+			if err != nil {
+				return nil, fail(502, err.Error())
 			}
-		}
-		return segments, nil
+			content = strings.TrimSpace(content)
+			content = strings.TrimPrefix(content, "```json")
+			content = strings.TrimPrefix(content, "```")
+			content = strings.TrimSuffix(strings.TrimSpace(content), "```")
+			var segments []object
+			if json.Unmarshal([]byte(content), &segments) != nil || len(segments) != len(expected) {
+				return nil, fail(502, "AI 返回无效的分段文案")
+			}
+			for i, segment := range segments {
+				if str(segment["id"]) != str(obj(expected[i])["id"]) || len([]rune(str(segment["text"]))) == 0 || len([]rune(str(segment["text"]))) > 2000 {
+					return nil, fail(502, "AI 文案与空间不匹配")
+				}
+			}
+			return segments, nil
+		})
 	case "tts":
-		return s.synthesizeVoice(ctx, a, input)
+		if err := validateVoiceSynthesis(input); err != nil {
+			return nil, err
+		}
+		prices, priceVersion, err := readCreditPricing(ctx, s.db)
+		if err != nil {
+			return nil, err
+		}
+		perKilo := prices["tts_per_kilo_char"]
+		amount := perKilo * int64((len([]rune(str(input["text"])))+999)/1000)
+		return s.chargeSync(ctx, a.UserID, "tts", "", amount, digestBytes(mustJSON(input)), priceVersion, nil, func(chargeCtx context.Context) (any, error) {
+			return s.synthesizeVoice(chargeCtx, a, input)
+		})
 	}
 	return nil, fail(404, "全景供应商能力不存在")
 }
