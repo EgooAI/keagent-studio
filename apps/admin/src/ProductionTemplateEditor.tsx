@@ -184,13 +184,15 @@ function OpeningEditor({
 export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
   const legacy = Form.useWatch(["production", "schemaVersion"]) === 1;
   const videoMode = Form.useWatch(field("videoMode"));
+  const shortTour = Form.useWatch(field("design")) === "short-tour";
+  const spatial = Form.useWatch(field("cameraMode")) === "spatial";
   return (
     <>
       <Alert
         type="info"
         showIcon
         title="一套模板包含整条视频的制作规则"
-        description="模型参考整套房源资料和图片，按原图顺序撰写开场、逐图讲解和结尾。全景图和普通照片可在同一成片中使用。"
+        description="模型参考房源资料和原图撰写讲解。全景旋转使用原始 VR 全景图；空间走动需要含三维模型与拍摄点的 Realsee VR 素材。"
       />
       <Form.Item name={["production", "schemaVersion"]} hidden>
         <InputNumber />
@@ -221,6 +223,21 @@ export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
           />
         </Form.Item>
       </div>
+      {!legacy && (
+        <Form.Item
+          name={field("cameraMode")}
+          label="室内镜头"
+          extra="空间走动沿真实三维空间中的拍摄点移动，不生成或补画房屋结构。"
+        >
+          <Select
+            placeholder="全景旋转（默认）"
+            options={choices([
+              ["panorama", "全景旋转"],
+              ["spatial", "真实空间走动"],
+            ])}
+          />
+        </Form.Item>
+      )}
       {!legacy && videoMode === "avatar" && (
         <Form.Item
           name={["production", "opening"]}
@@ -303,6 +320,7 @@ export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
             options={choices([
               ["standard", "标准 · 房源标题与品牌装饰"],
               ["classic", "简洁 · 传统带看"],
+              ["short-tour", "短视频带看 · 醒目开场与短字幕"],
             ])}
           />
         </Form.Item>
@@ -347,13 +365,20 @@ export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
         </Form.Item>
         <Form.Item
           name={field("speed")}
-          label="镜头速度（度/秒）"
+          hidden={spatial}
+          label={shortTour ? "镜头基准速度（度/秒）" : "镜头速度（度/秒）"}
           rules={[{ required: true }]}
+          extra={
+            shortTour
+              ? "同图连续镜头受最大转角限制，较长镜头会降低实际速度。"
+              : undefined
+          }
         >
-          <InputNumber min={0.5} max={12} step={0.5} />
+          <InputNumber min={0.5} max={45} step={0.5} />
         </Form.Item>
         <Form.Item
           name={field("direction")}
+          hidden={spatial}
           label="镜头方向"
           rules={[{ required: true }]}
         >
@@ -366,6 +391,7 @@ export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
         </Form.Item>
         <Form.Item
           name={field("maxSweep")}
+          hidden={spatial}
           label="单镜头最大幅度（度）"
           rules={[{ required: true }]}
           extra="VR 全景使用旋转运镜，时长跟随配音，不强制拉伸。"
@@ -383,6 +409,7 @@ export function ProductionPreview({
   value: ProductionTemplatePreview;
 }) {
   const c = value.template.production.config;
+  const shortTour = c.design === "short-tour";
   const opening =
     value.template.production.schemaVersion === 2
       ? value.template.production.opening
@@ -412,20 +439,54 @@ export function ProductionPreview({
           position: "relative",
           overflow: "hidden",
           borderRadius: 12,
-          borderBottom: `6px solid ${c.brandColor}`,
+          borderBottom: shortTour ? undefined : `6px solid ${c.brandColor}`,
           color: "#17333a",
           padding: 18,
         }}
       >
-        <strong
-          style={{
-            background: c.design === "standard" ? c.brandColor : "#222",
-            color: "white",
-            padding: 6,
-          }}
+        <div
+          style={
+            shortTour
+              ? {
+                  position: "absolute",
+                  top: c.videoMode === "avatar" ? "4%" : "13%",
+                  left: 18,
+                  right: 18,
+                }
+              : undefined
+          }
         >
-          示例小区两居室
-        </strong>
+          <strong
+            style={{
+              display: "block",
+              background: shortTour
+                ? undefined
+                : c.design === "standard"
+                  ? c.brandColor
+                  : "#222",
+              color: shortTour ? c.brandColor : "white",
+              padding: 6,
+              textAlign: shortTour ? "center" : undefined,
+              textShadow: shortTour
+                ? "-1px -1px #111, 1px 1px #111, 1px -1px #111, -1px 1px #111"
+                : undefined,
+            }}
+          >
+            示例小区两居室
+          </strong>
+          {shortTour && (
+            <p
+              style={{
+                textAlign: "center",
+                color: "white",
+                textShadow: "1px 1px 2px black",
+                fontSize: 11,
+              }}
+            >
+              房源已核实参数
+            </p>
+          )}
+        </div>
         <div
           style={{
             position: "absolute",
@@ -441,17 +502,21 @@ export function ProductionPreview({
           <div
             style={{
               position: "absolute",
-              bottom: 24,
+              bottom: shortTour ? "26%" : 24,
               left: 12,
               right: 12,
               textAlign: "center",
               color: "white",
-              background: "#0009",
+              background: shortTour ? undefined : "#0009",
               fontSize: c.subtitleSize === "large" ? 18 : 14,
+              fontWeight: shortTour ? 700 : undefined,
+              textShadow: shortTour
+                ? "-1px -1px #111, 1px 1px #111, 1px -1px #111, -1px 1px #111"
+                : undefined,
               padding: 8,
             }}
           >
-            {value.segments[1]?.text.slice(0, 40)}
+            {value.segments[1]?.text.slice(0, shortTour ? 12 : 40)}
           </div>
         )}
       </div>
@@ -462,7 +527,7 @@ export function ProductionPreview({
           {
             key: "format",
             label: "成片",
-            children: `${c.aspectRatio} · ${c.resolution}`,
+            children: `${c.aspectRatio} · ${c.resolution} · ${shortTour ? 30 : 25} fps`,
           },
           {
             key: "mode",
@@ -473,7 +538,12 @@ export function ProductionPreview({
           {
             key: "motion",
             label: "镜头",
-            children: `${c.direction === 1 ? "向右" : "向左"} ${c.speed}°/秒，上限 ${c.maxSweep}°`,
+            children:
+              c.cameraMode === "spatial"
+                ? "真实三维空间中从起点走向目标拍摄点，时长跟随配音"
+                : shortTour
+                  ? `${c.direction === 1 ? "向右" : "向左"}，基准 ${c.speed}°/秒，最大转角 ${c.maxSweep}°；长镜头会适当减速`
+                  : `${c.direction === 1 ? "向右" : "向左"} ${c.speed}°/秒，上限 ${c.maxSweep}°`,
           },
           {
             key: "voice",

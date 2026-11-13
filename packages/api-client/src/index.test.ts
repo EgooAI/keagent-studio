@@ -27,6 +27,21 @@ beforeEach(async () => {
   await demoApi.resetDemo();
 });
 
+it("deletes listings and draft selections while preserving task history", async () => {
+  await demoApi.createBatch(config(), "delete-property-history");
+  const before = await demoApi.getWorkspace();
+  await demoApi.deleteProperty("property-4");
+  const after = await demoApi.getWorkspace();
+  expect(after.properties.some((p) => p.id === "property-4")).toBe(false);
+  expect(after.draft.propertyIds).toEqual(["property-5", "property-6"]);
+  expect(after.profile.defaults.propertyIds).not.toContain("property-4");
+  expect(after.tasks).toEqual(before.tasks);
+  expect(after.batches).toEqual(before.batches);
+  expect(after.publishTasks).toEqual(before.publishTasks);
+  await expect(demoApi.deleteProperty("missing")).rejects.toThrow("房源");
+  expect(await demoApi.getWorkspace()).toEqual(after);
+});
+
 describe("batch production", () => {
   it("creates one independent snapshot per selected property and reuses an idempotent request", async () => {
     const selection = config();

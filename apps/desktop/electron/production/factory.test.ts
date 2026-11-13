@@ -215,6 +215,54 @@ describe("simple video factory", () => {
     );
     expect(providers.downloadImage).toHaveBeenCalledTimes(2);
   });
+  it("keeps a completed spatial gallery authoritative over stale cloud panoramas for its owner and property", async () => {
+    const { workflow, owner, property, scenes, bytes } = await fixture();
+    for (let index = 3; index <= 14; index++)
+      scenes.push(
+        await workflow.importBytes(
+          owner,
+          bytes(index),
+          `点位 ${index}`,
+          "panorama",
+        ),
+      );
+    const saved = workflow.store(owner).imports[property.id];
+    saved.spatial = {
+      workId: "a".repeat(64),
+      source: "https://open.realsee.com/ke/example/",
+    };
+    providers.downloadImage.mockRejectedValue(new Error("expired source"));
+    const load = require("./factory.cjs").load;
+    for (const count of [1, 8, 21]) {
+      const current = {
+        ...property,
+        panoramas: Array.from(
+          { length: count },
+          (_, i) => `https://p.ljcdn.com/expired-${i}.jpg`,
+        ),
+      };
+      const loaded = await load(workflow, owner, current, () => {});
+      expect(loaded).toEqual(scenes);
+      expect(loaded).toHaveLength(14);
+      expect(workflow.store(owner).imports[property.id]).toBe(saved);
+    }
+    expect(providers.downloadImage).not.toHaveBeenCalled();
+    const remote = {
+      ...property,
+      panoramas: ["https://p.ljcdn.com/expired.jpg"],
+    };
+    await expect(
+      load(workflow, workflow.owner("another-owner"), remote, () => {}),
+    ).rejects.toThrow("无法读取");
+    await expect(
+      load(workflow, owner, { ...remote, id: "another-property" }, () => {}),
+    ).rejects.toThrow("无法读取");
+    // An explicit replacement removes the spatial marker and resumes normal cloud loading.
+    workflow.store(owner).imports[property.id] = { property, scenes: [] };
+    await expect(load(workflow, owner, remote, () => {})).rejects.toThrow(
+      "无法读取",
+    );
+  });
   it("allows replacing a full legacy photo collection with VR materials without deleting history", async () => {
     const { workflow, owner, property, bytes } = await fixture();
     const photo = await workflow.importBytes(
@@ -643,7 +691,7 @@ describe("simple video factory", () => {
       workflow.handle("a", "save", {
         id: draft.id,
         revision: 1,
-        config: { ...draft.config, speed: 8 },
+        config: { ...draft.config, brandColor: "#FFFFFF" },
         segments: draft.segments,
       }),
     ).rejects.toThrow("制作规则不可修改");
@@ -681,6 +729,76 @@ describe("simple video factory", () => {
       ),
     ).rejects.toThrow("模板已下架");
     expect(workflow.store(owner).drafts).toHaveLength(count);
+  });
+  it("applies explicit task pacing through prepare, review, confirmation and retry without changing its template", async () => {
+    const { workflow, property, config, render } = await fixture();
+    const input = {
+      propertyId: property.id,
+      sceneIds: selectedIds(workflow, property.id),
+      config: { ...config, templateId: "short-tour-vision-v1-1" },
+      templateVersion: "1.1.0",
+    };
+    const [draft, second] = await Promise.all([
+      workflow.handle(
+        "a",
+        "prepare",
+        { ...input, renderOverrides: { speed: 24, rate: 1.1, maxSweep: 150 } },
+        property,
+      ),
+      workflow.handle(
+        "a",
+        "prepare",
+        { ...input, renderOverrides: { speed: 30 } },
+        property,
+      ),
+    ]);
+    expect(second.id).not.toBe(draft.id);
+    expect(second.config.speed).toBe(30);
+    expect(draft.config).toMatchObject({ speed: 24, rate: 1.1, maxSweep: 150 });
+    const snapshot = structuredClone(draft.templateSnapshot);
+    expect(snapshot.production.config.speed).toBe(36);
+    expect(snapshot.version).toBe("1.1.0");
+    const pacing = { speed: 36, rate: 1.25, maxSweep: 180 };
+    for (const invalid of [
+      { speed: 46 },
+      { rate: NaN },
+      { maxSweep: 181 },
+      { speed: null },
+    ])
+      await expect(
+        workflow.handle("a", "save", {
+          id: draft.id,
+          revision: draft.revision,
+          config: { ...draft.config, ...invalid },
+          segments: draft.segments,
+        }),
+      ).rejects.toThrow("超出范围");
+    const saved = await workflow.handle("a", "save", {
+      id: draft.id,
+      revision: draft.revision,
+      config: { ...draft.config, ...pacing },
+      segments: draft.segments,
+    });
+    expect(saved.config).toMatchObject(pacing);
+    expect(saved.templateSnapshot).toEqual(snapshot);
+    render.mockRejectedValueOnce(new Error("temporary renderer failure"));
+    const job = await workflow.handle("a", "start", {
+      id: saved.id,
+      revision: saved.revision,
+      confirmed: true,
+    });
+    await workflow.active.get(job.id)?.promise;
+    expect(job.status).toBe("failed");
+    expect(job.config).toMatchObject(pacing);
+    expect(job.templateSnapshot).toEqual(snapshot);
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    restarted.capabilities = workflow.capabilities;
+    restarted.remote = workflow.remote;
+    const retried = await restarted.handle("a", "retry", { id: job.id });
+    await restarted.active.get(retried.id)?.promise;
+    expect(retried.status).toBe("succeeded");
+    expect(retried.config).toMatchObject(pacing);
+    expect(retried.templateSnapshot).toEqual(snapshot);
   });
   it("rejects a stale selected version before scripts or images are requested", async () => {
     const { workflow, owner, property, config, synthesize } = await fixture();

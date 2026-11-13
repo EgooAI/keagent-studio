@@ -63,6 +63,40 @@ function fixture() {
   return { workflow, owner, scenes, config };
 }
 describe("panorama domain", () => {
+  it("normalizes only finite allowlisted task pacing values using config bounds", () => {
+    expect(domain.renderOverrides(undefined)).toBeUndefined();
+    expect(domain.renderOverrides({})).toBeUndefined();
+    for (const pacing of [
+      { speed: 0.5, rate: 0.5, maxSweep: 1 },
+      { speed: 45, rate: 2, maxSweep: 180 },
+    ]) {
+      expect(domain.renderOverrides(pacing)).toEqual(pacing);
+      expect(
+        domain.config({ ...domain.defaultConfig, ...pacing }),
+      ).toMatchObject(pacing);
+    }
+    for (const value of [
+      null,
+      [],
+      "fast",
+      new Date(),
+      { cameraMode: "spatial" },
+      { direction: -1 },
+      { design: "short-tour" },
+      { speed: 46 },
+      { speed: 0.49 },
+      { speed: NaN },
+      { rate: Infinity },
+      { rate: 2.1 },
+      { rate: 0.4 },
+      { maxSweep: 0 },
+      { maxSweep: 181 },
+      { speed: null },
+      { rate: "1" },
+      { speed: undefined },
+    ])
+      expect(() => domain.renderOverrides(value)).toThrow();
+  });
   it("downloads the MiniMax OSS result and rejects unrelated hosts", async () => {
     const { workflow, owner } = fixture();
     const dns = require("node:dns/promises");
@@ -395,6 +429,20 @@ describe("panorama domain", () => {
     );
     expect(media.escapeASS("{\\pos(1,1)}\n字")).toBe("｛＼pos(1,1)｝\\N字");
   });
+  it("accepts legacy and faster camera speeds while rejecting unsafe bounds", () => {
+    for (const speed of [0.5, 4, 8, 12, 36, 45])
+      expect(domain.config({ ...domain.defaultConfig, speed }).speed).toBe(
+        speed,
+      );
+    for (const speed of [
+      0,
+      46,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ])
+      expect(() => domain.config({ ...domain.defaultConfig, speed })).toThrow();
+  });
   it("keeps binary hashes stable and rejects private CDN addresses", () => {
     expect(domain.hash(Buffer.from("abc"))).toBe(domain.hash("abc"));
     for (const address of [
@@ -409,6 +457,252 @@ describe("panorama domain", () => {
   });
 });
 describe("persistent local workflow", () => {
+  it.each([1, 2])(
+    "keeps omitted camera mode locked to panorama for schema %s snapshots",
+    async (schemaVersion) => {
+      const { workflow, owner, scenes, config } = fixture();
+      const template = JSON.parse(
+        fs.readFileSync("services/cloud/video_templates.json", "utf8"),
+      ).find(
+        (resource: any) =>
+          resource.production.schemaVersion === schemaVersion &&
+          resource.production.config.videoMode === "voiceover",
+      );
+      workflow.store(owner).imports[property.id] = { property, scenes };
+      vi.spyOn(
+        require("../production/factory.cjs"),
+        "scriptImages",
+      ).mockResolvedValue([]);
+      workflow.remote = vi.fn(async (method: string) => {
+        if (method === "template") return template;
+        if (method === "script-vision")
+          return domain.segments(property, scenes, {
+            ...config,
+            ...template.production.config,
+          });
+        throw new Error("unexpected provider " + method);
+      });
+      const draft = await workflow.handle(
+        "user-a",
+        "prepare",
+        {
+          propertyId: property.id,
+          sceneIds: scenes.map((scene) => scene.id),
+          templateVersion: template.version,
+          config: { ...config, templateId: template.id, cameraMode: "spatial" },
+        },
+        property,
+      );
+      expect(draft.config).not.toHaveProperty("cameraMode");
+      expect(draft.templateSnapshot.production.config).toEqual(
+        template.production.config,
+      );
+      const input = {
+        id: draft.id,
+        revision: draft.revision,
+        segments: draft.segments,
+      };
+      await expect(
+        workflow.handle("user-a", "save", {
+          ...input,
+          config: { ...draft.config, cameraMode: "spatial" },
+        }),
+      ).rejects.toThrow("制作规则不可修改");
+      const saved = await workflow.handle("user-a", "save", {
+        ...input,
+        config: { ...draft.config, cameraMode: "panorama" },
+      });
+      expect(saved.config).not.toHaveProperty("cameraMode");
+      expect(saved.revision).toBe(2);
+    },
+  );
+
+  it("saves a spatial destination without allowing its source work or route list to change", async () => {
+    const { workflow, scenes, config } = fixture();
+    const spatialSource = require("../production/spatial-source.cjs");
+    const spatial = {
+      workId: "a".repeat(64),
+      panoIndex: 0,
+      targetPanoIndex: 1,
+      targets: [
+        { index: 1, label: "点位 2" },
+        { index: 2, label: "点位 3" },
+      ],
+    };
+    vi.spyOn(spatialSource, "validateSpatialScene").mockImplementation(
+      (_, value) => {
+        const scene = value as { spatial: typeof spatial };
+        if (
+          !scene.spatial.targets.some(
+            (target) => target.index === scene.spatial.targetPanoIndex,
+          )
+        )
+          throw new Error("目标拍摄点无效");
+        return structuredClone(scene.spatial);
+      },
+    );
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      {
+        scenes: scenes.map((scene) => ({ ...scene, spatial })),
+        config: { ...config, cameraMode: "spatial" },
+      },
+      property,
+    );
+    const input = {
+      id: draft.id,
+      revision: 1,
+      config: draft.config,
+      segments: draft.segments,
+      scenes: draft.scenes.map((scene: object) => ({
+        ...scene,
+        spatial: { ...spatial, targetPanoIndex: 2 },
+      })),
+    };
+    const saved = await workflow.handle("user-a", "save", input);
+    expect(saved.scenes[0].spatial).toEqual({ ...spatial, targetPanoIndex: 2 });
+    for (const change of [
+      { workId: "b".repeat(64) },
+      { panoIndex: 1 },
+      { targets: [] },
+      { targetPanoIndex: 99 },
+    ]) {
+      await expect(
+        workflow.handle("user-a", "save", {
+          ...input,
+          revision: saved.revision,
+          scenes: saved.scenes.map((scene: { spatial: typeof spatial }) => ({
+            ...scene,
+            spatial: { ...scene.spatial, ...change },
+          })),
+        }),
+      ).rejects.toThrow();
+    }
+    expect(workflow.store(workflow.owner("user-a")).drafts[0].revision).toBe(2);
+  });
+  it("rejects spatial production from panorama-only materials before generating narration", async () => {
+    const { workflow, scenes, config } = fixture();
+    await expect(
+      workflow.handle(
+        "user-a",
+        "generate",
+        {
+          scenes,
+          config: { ...config, cameraMode: "spatial" },
+        },
+        property,
+      ),
+    ).rejects.toThrow("完整 VR 空间");
+  });
+  it("persists reviewed camera angles while freezing existing job scenes", async () => {
+    const { workflow, owner, scenes, config } = fixture();
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      { scenes, config },
+      property,
+    );
+    vi.spyOn(workflow, "execute").mockImplementation(() => {});
+    const job = await workflow.handle("user-a", "start", {
+      id: draft.id,
+      revision: 1,
+    });
+    const updated = await workflow.handle("user-a", "save", {
+      id: draft.id,
+      revision: 1,
+      config,
+      segments: draft.segments,
+      scenes: draft.scenes.map((scene: { id: string }) => ({
+        id: scene.id,
+        yaw: 150,
+        direction: -1,
+      })),
+    });
+    expect(updated.scenes[0]).toMatchObject({
+      asset: scenes[0].asset,
+      room: "客厅",
+      yaw: 150,
+      direction: -1,
+    });
+    expect(job.scenes[0].yaw).toBe(-30);
+    const saved = JSON.parse(
+      fs.readFileSync(
+        path.join(workflow.directory(owner), "workspace.json"),
+        "utf8",
+      ),
+    );
+    expect(saved.drafts[0].scenes[0].yaw).toBe(150);
+    const textOnly = await workflow.handle("user-a", "save", {
+      id: draft.id,
+      revision: updated.revision,
+      config,
+      segments: updated.segments,
+    });
+    expect(textOnly.scenes).toEqual(updated.scenes);
+  });
+  it("rejects replacing, reordering or corrupting reviewed camera media", async () => {
+    const { workflow, scenes, config } = fixture();
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      { scenes, config },
+      property,
+    );
+    const invalid = [
+      draft.scenes.slice(0, 1),
+      [...draft.scenes].reverse(),
+      draft.scenes.map((scene: object) => ({
+        ...scene,
+        asset: "a".repeat(64) + ".jpg",
+      })),
+      draft.scenes.map((scene: object) => ({ ...scene, kind: "photo" })),
+      draft.scenes.map((scene: object) => ({ ...scene, room: "另一套房" })),
+      draft.scenes.map((scene: object) => ({ ...scene, yaw: 181 })),
+      draft.scenes.map((scene: object) => ({ ...scene, yaw: Number.NaN })),
+      draft.scenes.map((scene: object) => ({ ...scene, direction: null })),
+    ];
+    for (const cameraScenes of invalid) {
+      await expect(
+        workflow.handle("user-a", "save", {
+          id: draft.id,
+          revision: 1,
+          config,
+          segments: draft.segments,
+          scenes: cameraScenes,
+        }),
+      ).rejects.toThrow();
+    }
+    expect(workflow.store(workflow.owner("user-a")).drafts[0].revision).toBe(1);
+  });
+  it("restores camera edits when saving the checkpoint fails", async () => {
+    const { workflow, owner, scenes, config } = fixture();
+    const draft = await workflow.handle(
+      "user-a",
+      "generate",
+      { scenes, config },
+      property,
+    );
+    vi.spyOn(workflow, "persist").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    await expect(
+      workflow.handle("user-a", "save", {
+        id: draft.id,
+        revision: 1,
+        config,
+        segments: draft.segments,
+        scenes: draft.scenes.map((scene: object) => ({ ...scene, yaw: 150 })),
+      }),
+    ).rejects.toThrow("disk full");
+    expect(workflow.store(owner).drafts[0]).toMatchObject({
+      revision: 1,
+      scenes: [
+        expect.objectContaining({ yaw: -30 }),
+        expect.objectContaining({ yaw: -30 }),
+      ],
+    });
+  });
   it("rejects an approval superseded while preflight is awaiting runtime checks", async () => {
     const { workflow, scenes, config } = fixture();
     const draft = await workflow.handle(
@@ -662,6 +956,133 @@ describe("production queue", () => {
       scriptCalls: () => scriptCalls,
     };
   }
+
+  it("freezes task pacing separately from templates and preserves it across pending retry, copy and review", async () => {
+    const { workflow, owner, call, act, pairs, templates, releaseScripts } =
+      batchFixture();
+    Object.assign(templates[0].production.config, {
+      speed: 8,
+      rate: 1,
+      maxSweep: 100,
+    });
+    await call("pause");
+    const base = { requestId: "pacing-default", pairs: [pairs[0]] };
+    await call("create", base);
+    expect(
+      (await call("create", { ...base, renderOverrides: {} })).batchId,
+    ).toBe(base.requestId);
+    const input = {
+      ...base,
+      requestId: "pacing-custom",
+      renderOverrides: { speed: 24, rate: 1.2, maxSweep: 160 },
+    };
+    await call("create", input);
+    expect(
+      (
+        await call("create", {
+          ...input,
+          renderOverrides: { maxSweep: 160, rate: 1.2, speed: 24 },
+        })
+      ).batchId,
+    ).toBe(input.requestId);
+    await expect(
+      call("create", { ...input, renderOverrides: { speed: 25 } }),
+    ).rejects.toThrow("提交标识");
+    for (const renderOverrides of [
+      { speed: 46 },
+      { cameraMode: "spatial" },
+      null,
+    ])
+      await expect(
+        call("create", { ...base, requestId: "invalid", renderOverrides }),
+      ).rejects.toThrow();
+    const state = workflow.store(owner);
+    const item = state.production.items.find(
+      (row: any) => row.batchId === input.requestId,
+    );
+    const snapshot = structuredClone(item.templateSnapshot);
+    expect(item.config).toMatchObject(input.renderOverrides);
+    expect(snapshot.production.config).toMatchObject({
+      speed: 8,
+      rate: 1,
+      maxSweep: 100,
+    });
+    const copied = (await act("copy", item))[0];
+    expect(copied.ok).toBe(true);
+    const pendingCopy = state.production.items.find(
+      (row: any) => row.id === copied.createdId,
+    );
+    expect(pendingCopy.config).toMatchObject(input.renderOverrides);
+    await act("cancel", item);
+    expect((await act("retry", item))[0].ok).toBe(true);
+    releaseScripts();
+    await call("resume");
+    await vi.waitFor(() =>
+      expect(
+        state.production.items.every((row: any) => row.phase === "review"),
+      ).toBe(true),
+    );
+    await call("pause");
+    for (const row of [item, pendingCopy]) {
+      const draft = state.drafts.find((entry: any) => entry.id === row.draftId);
+      expect(draft.config).toMatchObject(input.renderOverrides);
+      expect(draft.templateSnapshot).toEqual(snapshot);
+    }
+    const draft = state.drafts.find((entry: any) => entry.id === item.draftId);
+    const beforeInvalidSave = structuredClone({
+      revision: draft.revision,
+      config: draft.config,
+      itemConfig: item.config,
+    });
+    for (const rate of [null, undefined, "1", NaN, Infinity]) {
+      await expect(
+        workflow.handle("user-a", "save", {
+          id: draft.id,
+          revision: draft.revision,
+          config: { ...draft.config, rate },
+          segments: draft.segments,
+        }),
+      ).rejects.toThrow("rate 超出范围");
+      expect({
+        revision: draft.revision,
+        config: draft.config,
+        itemConfig: item.config,
+      }).toEqual(beforeInvalidSave);
+    }
+    const pacing = { speed: 32, rate: 1.4, maxSweep: 120 };
+    const saved = await workflow.handle("user-a", "save", {
+      id: draft.id,
+      revision: draft.revision,
+      config: { ...draft.config, ...pacing },
+      segments: draft.segments,
+    });
+    expect(item.config).toMatchObject(pacing);
+    expect(saved.templateSnapshot).toEqual(snapshot);
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    restarted.capabilities = workflow.capabilities;
+    restarted.remote = workflow.remote;
+    const restored = restarted
+      .store(owner)
+      .production.items.find((row: any) => row.id === item.id);
+    expect(restored.config).toMatchObject(pacing);
+    expect(restored.templateSnapshot).toEqual(snapshot);
+    const resumedCall = (method: string, input: unknown) =>
+      restarted.handle("user-a", "factory-" + method, input);
+    const resumedAct = (action: string, revision?: number) =>
+      resumedCall("act", { action, rows: [{ id: item.id, revision }] });
+    const reviewCopy = (await resumedAct("copy"))[0];
+    const copiedDraft = (
+      await resumedCall("detail", { id: reviewCopy.createdId })
+    ).draft;
+    expect(copiedDraft.config).toMatchObject(pacing);
+    expect(copiedDraft.templateSnapshot).toEqual(snapshot);
+    expect((await resumedAct("cancel"))[0].ok).toBe(true);
+    expect((await resumedAct("retry"))[0].ok).toBe(true);
+    expect((await resumedAct("confirm", saved.revision))[0].ok).toBe(true);
+    expect(restored.phase).toBe("queued");
+    expect(restored.config).toMatchObject(pacing);
+    expect(templates[0].production.config).toEqual(snapshot.production.config);
+  });
 
   it("validates selections per property and freezes them for every selected template", async () => {
     const { workflow, owner, scenes, call, pairs } = batchFixture();

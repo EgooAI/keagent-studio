@@ -57,6 +57,7 @@ type codedFault struct {
 }
 
 func (f codedFault) ErrorCode() string { return f.code }
+func (f codedFault) Unwrap() error     { return f.fault }
 func creditFail(status int, code, message string) error {
 	return codedFault{fault{status: status, message: message}, code}
 }

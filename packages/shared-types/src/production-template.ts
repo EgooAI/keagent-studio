@@ -17,7 +17,8 @@ type ProductionRenderConfig = Required<
     | "brandColor"
     | "subtitleSize"
   >
->;
+> &
+  Pick<PanoramaConfig, "cameraMode">;
 
 export type ProductionOpening = {
   prompt: string;
@@ -28,8 +29,7 @@ export type ProductionOpening = {
 export type ProductionTemplateRecipe =
   | {
       schemaVersion: 1;
-      config: ProductionRenderConfig &
-        Pick<
+      config: ProductionRenderConfig & { cameraMode?: "panorama" } & Pick<
           PanoramaConfig,
           "openingTemplate" | "sceneTemplate" | "closingTemplate"
         >;

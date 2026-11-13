@@ -359,7 +359,7 @@ func (s *server) workspace(ctx context.Context, a actor) (object, error) {
 	if err != nil {
 		return nil, err
 	}
-	properties := []any{builtinTestProperty()}
+	properties := []any{}
 	for _, property := range rows(w["properties"]) {
 		if obj(property)["id"] != "panorama-cc0-sample" {
 			properties = append(properties, property)
@@ -493,6 +493,15 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 			w["properties"] = append([]any{property}, rows(w["properties"])...)
 		}
 		result = property
+	case "deleteProperty":
+		propertyID := str(arg(0))
+		if len(args) != 1 || strings.TrimSpace(propertyID) == "" {
+			return nil, fail(422, "请选择要删除的房源")
+		}
+		if err := deleteProperty(w, propertyID); err != nil {
+			return nil, err
+		}
+		result = object{"id": propertyID}
 	case "importProperties":
 		return nil, fail(501, "房源号自动获取尚未接入，请使用人工房源资料录入")
 	case "createBatch":

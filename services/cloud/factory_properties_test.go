@@ -46,3 +46,14 @@ func TestFactoryRejectsPhotoOnlyMaterials(t *testing.T) {
 		t.Fatal("local VR materials were ignored")
 	}
 }
+
+func TestFactoryExcludesRemovedSample(t *testing.T) {
+	for _, properties := range [][]any{{}, {object{"id": "panorama-cc0-sample", "sample": true}}} {
+		w := object{"properties": properties}
+		for _, query := range []factoryPropertyQuery{{}, {IDs: []string{"panorama-cc0-sample"}}, {All: true}} {
+			if page := factoryPropertyPage(w, query); len(rows(page["rows"])) != 0 {
+				t.Fatal("removed test property returned", page)
+			}
+		}
+	}
+}

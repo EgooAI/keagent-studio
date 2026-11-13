@@ -1,17 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"image"
-	"image/png"
 	"net/http"
 	"strings"
 	"testing"
 )
+
+// Keep a PNG fixture without importing image/png: the service must register its own decoder.
+const minimaxTestPhoto = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEAAQAAAAB0CZXLAAAAH0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAAB8Wch7gAAAABJRU5ErkJggg=="
 
 func minimaxTestInput(t *testing.T, millis uint32) object {
 	t.Helper()
@@ -23,11 +23,7 @@ func minimaxTestInput(t *testing.T, millis uint32) object {
 	binary.BigEndian.PutUint32(mvhd[12:], 1000)
 	binary.BigEndian.PutUint32(mvhd[16:], millis)
 	video := append(box("ftyp", []byte("isom")), box("moov", box("mvhd", mvhd))...)
-	var photo bytes.Buffer
-	if err := png.Encode(&photo, image.NewRGBA(image.Rect(0, 0, 256, 256))); err != nil {
-		t.Fatal(err)
-	}
-	return object{"authorized": true, "ratio": "9:16", "video": base64.StdEncoding.EncodeToString(video), "photo": base64.StdEncoding.EncodeToString(photo.Bytes()), "audio": base64.StdEncoding.EncodeToString(aiProbeSpeech)}
+	return object{"authorized": true, "ratio": "9:16", "video": base64.StdEncoding.EncodeToString(video), "photo": minimaxTestPhoto, "audio": base64.StdEncoding.EncodeToString(aiProbeSpeech)}
 }
 
 func TestMiniMaxOpeningPayload(t *testing.T) {

@@ -692,6 +692,18 @@ const mockApi = {
       return property;
     });
   },
+  async deleteProperty(propertyId: string) {
+    return change((state) => {
+      propertyFor(state, propertyId);
+      state.properties = state.properties.filter((p) => p.id !== propertyId);
+      for (const config of [state.draft, state.profile.defaults]) {
+        config.propertyIds = config.propertyIds.filter(
+          (id) => id !== propertyId,
+        );
+      }
+      return { id: propertyId };
+    });
+  },
   async createBatch(
     config: ProductionConfig,
     requestKey: string,

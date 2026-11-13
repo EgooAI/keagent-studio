@@ -18,7 +18,7 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 	if err := json.Unmarshal(videoTemplateSeeds, &catalog); err != nil {
 		t.Fatal(err)
 	}
-	template := catalog[len(catalog)-1]
+	template := catalog[slices.IndexFunc(catalog, func(item object) bool { return item["id"] == "concise-vision" })]
 	if err := validateProduction(template); err != nil {
 		t.Fatal(err)
 	}
@@ -101,5 +101,49 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 	delete(obj(obj(template["production"])["scriptRules"]), "overall")
 	if err := validateProduction(template); err == nil {
 		t.Fatal("accepted a v2 template without overall instructions")
+	}
+}
+
+func TestShortTourScriptPacing(t *testing.T) {
+	var catalog []object
+	if err := json.Unmarshal(videoTemplateSeeds, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 16, 16)), nil); err != nil {
+		t.Fatal(err)
+	}
+	images := []any{object{"id": "room", "kind": "panorama", "jpeg": base64.StdEncoding.EncodeToString(jpg.Bytes())}}
+	for _, id := range []string{"short-tour-vision", "short-tour-avatar"} {
+		t.Run(id, func(t *testing.T) {
+			index := slices.IndexFunc(catalog, func(item object) bool { return item["id"] == id })
+			if index < 0 {
+				t.Fatal("short-tour template missing")
+			}
+			template := catalog[index]
+			if err := validateProduction(template); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := json.Marshal(template)
+			parts, _, err := visionContent(template, object{"title": "测试房源"}, images)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var input object
+			if err = json.Unmarshal([]byte(str(parts[0]["text"])), &input); err != nil {
+				t.Fatal(err)
+			}
+			rules := obj(input["rules"])
+			if !strings.Contains(str(rules["overall"]), "24–30 秒") ||
+				!strings.Contains(str(rules["opening"]), "2–3 秒") ||
+				strings.Contains(str(rules["opening"]), "6–10 秒") ||
+				!strings.Contains(str(rules["closing"]), "最后一个房间画面") {
+				t.Fatal("short-tour pacing was lost or overridden")
+			}
+			after, _ := json.Marshal(template)
+			if !bytes.Equal(before, after) {
+				t.Fatal("request guidance changed the saved template")
+			}
+		})
 	}
 }

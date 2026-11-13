@@ -109,6 +109,7 @@ async function fixture(page: Page) {
         schemaVersion: 1,
         config: {
           ...defaultProduction.config,
+          cameraMode: undefined,
           openingTemplate: "一起看看{title}。",
           sceneTemplate: "这里是{room}。",
           closingTemplate: "欢迎预约实地看房。",
@@ -953,6 +954,45 @@ test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async
   ).toBeVisible();
 });
 
+test("空间镜头模板隐藏旋转参数并保留配置完整性", async ({ page }) => {
+  const data = await fixture(page);
+  await page.goto(adminBase + "/#/admin/resources");
+  await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "新建模板草稿",
+    exact: true,
+  });
+  await dialog.getByLabel("模板名称", { exact: true }).fill("空间走动带看配置");
+  await dialog
+    .getByLabel("适用说明", { exact: true })
+    .fill("使用已导入的真实三维空间。");
+  await dialog.getByLabel("室内镜头", { exact: true }).click();
+  await page
+    .locator(".ant-select-dropdown")
+    .getByText("真实空间走动", { exact: true })
+    .click();
+  await expect(
+    dialog.getByLabel("镜头速度（度/秒）", { exact: true }),
+  ).toBeHidden();
+  await expect(dialog.getByLabel("镜头方向", { exact: true })).toBeHidden();
+  await expect(
+    dialog.getByLabel("单镜头最大幅度（度）", { exact: true }),
+  ).toBeHidden();
+  await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(
+    data.writes.find((write) => write.path.endsWith("/resources"))?.body
+      .production,
+  ).toMatchObject({
+    config: {
+      cameraMode: "spatial",
+      speed: 4,
+      direction: 1,
+      maxSweep: 100,
+    },
+  });
+});
+
 test("完整视频模板通过参数表单保存，预览后才允许上架", async ({ page }) => {
   const data = await fixture(page);
   await page.goto(adminBase + "/#/admin/resources?type=prompt");
@@ -1006,6 +1046,7 @@ test("完整视频模板通过参数表单保存，预览后才允许上架", as
       scriptRules: { overall: "围绕已核实卖点自然讲解。" },
     },
   });
+  expect(saved?.body).not.toHaveProperty("production.config.cameraMode");
   const row = page.locator('tr[data-row-key="new-resource"]');
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "门店房源带看" }).click();

@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-func builtinTestProperty() object {
-	return object{"id": "panorama-cc0-sample", "propertyNumber": "TEST-PANORAMA-001", "title": "内置测试房源 · 全景素材", "community": "内置全景测试样例", "city": "测试素材", "district": "独立场景", "priceCents": float64(0), "areaSqm": float64(0), "layout": "", "description": "仅用于视频制作测试。客厅与酒店客房来自两个独立 CC0 场景，不代表同一套或真实在售房源；不提供面积、价格等虚构信息。", "sellingPoints": []any{}, "image": "/media/panoramas/lebombo.jpg", "images": []any{"/media/panoramas/lebombo.jpg", "/media/panoramas/hotel_room.jpg"}, "videoCount": float64(0), "importStatus": "ready", "lastVerifiedAt": "", "sample": true}
-}
-
 func (s *server) factoryPreferences(ctx context.Context, a actor, input object) (object, error) {
 	delete(input, "avatarId")
 	if len(input) != 3 {

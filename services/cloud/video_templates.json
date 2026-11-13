@@ -7,7 +7,9 @@
     "category": "房源带看",
     "version": "1.0.0",
     "thumbnail": "",
-    "compatibleModes": ["voiceover"],
+    "compatibleModes": [
+      "voiceover"
+    ],
     "installed": false,
     "downloadStatus": "idle",
     "downloadProgress": 0,
@@ -43,7 +45,9 @@
     "category": "房源带看",
     "version": "1.0.0",
     "thumbnail": "",
-    "compatibleModes": ["voiceover"],
+    "compatibleModes": [
+      "voiceover"
+    ],
     "installed": false,
     "downloadStatus": "idle",
     "downloadProgress": 0,
@@ -79,7 +83,9 @@
     "category": "房源带看",
     "version": "1.0.0",
     "thumbnail": "",
-    "compatibleModes": ["voiceover"],
+    "compatibleModes": [
+      "voiceover"
+    ],
     "installed": false,
     "downloadStatus": "idle",
     "downloadProgress": 0,
@@ -115,7 +121,9 @@
     "category": "房源带看",
     "version": "2.0.0",
     "thumbnail": "",
-    "compatibleModes": ["voiceover"],
+    "compatibleModes": [
+      "voiceover"
+    ],
     "installed": false,
     "downloadStatus": "idle",
     "downloadProgress": 0,
@@ -154,7 +162,9 @@
     "category": "房源带看",
     "version": "2.0.0",
     "thumbnail": "",
-    "compatibleModes": ["voiceover"],
+    "compatibleModes": [
+      "voiceover"
+    ],
     "installed": false,
     "downloadStatus": "idle",
     "downloadProgress": 0,
@@ -193,7 +203,9 @@
     "category": "房源带看",
     "version": "2.0.0",
     "thumbnail": "",
-    "compatibleModes": ["voiceover"],
+    "compatibleModes": [
+      "voiceover"
+    ],
     "installed": false,
     "downloadStatus": "idle",
     "downloadProgress": 0,
@@ -221,6 +233,230 @@
         "opening": "一句话引入房源。",
         "scene": "围绕当前图片实际可见的内容写一两句，可参考其他图理解和衔接；避免逐图重复房源事实。",
         "closing": "简短收束，邀请有意向的买家预约实地看房。"
+      }
+    }
+  },
+  {
+    "id": "short-tour-vision",
+    "name": "短视频带看",
+    "description": "约25秒竖屏带看，醒目卖点开场、原始VR运镜、短字幕，结尾保留房源画面。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.0.0",
+    "thumbnail": "",
+    "compatibleModes": [
+      "voiceover"
+    ],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "voiceover",
+        "rate": 1.1,
+        "speed": 8,
+        "direction": 1,
+        "maxSweep": 60,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "short-tour",
+        "brandColor": "#FFD447",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "面向有真实看房意向的买家，用经纪人口吻自然带看。整片约24–30秒，中文口播合计100–130字，按素材数量分配。只引用房源资料和画面有证据的信息，不编造急售、降价、业主动机、采光或距离。",
+        "opening": "用一句简短的话点出地点或一个已核实卖点，约10–14个汉字，朗读约2–3秒。",
+        "scene": "保持素材顺序，每张图一句，只介绍当前画面一个可见要点；不重复面积、价格或开场，避免空泛形容词。",
+        "closing": "在最后一个房间画面上用一句短邀请收尾，例如约实地看房，约6–10个汉字，不另起长篇总结。"
+      }
+    }
+  },
+  {
+    "id": "short-tour-avatar",
+    "name": "短视频带看 · 经纪人开场",
+    "description": "经纪人短开场接原始VR带看，约25秒竖屏，醒目卖点与短字幕。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.0.0",
+    "thumbnail": "",
+    "compatibleModes": [
+      "avatar"
+    ],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "avatar",
+        "rate": 1.1,
+        "speed": 8,
+        "direction": 1,
+        "maxSweep": 60,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "short-tour",
+        "brandColor": "#FFD447",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "面向有真实看房意向的买家，用经纪人口吻自然带看。整片约24–30秒，中文口播合计100–130字，按素材数量分配。只引用房源资料和画面有证据的信息，不编造急售、降价、业主动机、采光或距离。",
+        "opening": "用一句简短的话点出地点或一个已核实卖点，约10–14个汉字，朗读约2–3秒。",
+        "scene": "保持素材顺序，每张图一句，只介绍当前画面一个可见要点；不重复面积、价格或开场，避免空泛形容词。",
+        "closing": "在最后一个房间画面上用一句短邀请收尾，例如约实地看房，约6–10个汉字，不另起长篇总结。"
+      },
+      "opening": {
+        "location": {
+          "source": "property"
+        },
+        "prompt": "经纪人使用参考照片中的本人形象，在给定背景中面对镜头自然口播带看开场。竖屏中近景，人物清晰，轻微自然手势，镜头稳定，嘴形与音频同步。严格保持背景空间布局，不添加文字、字幕、标识或背景音乐。"
+      }
+    }
+  },
+  {
+    "id": "short-tour-vision-v1-1",
+    "name": "短视频带看",
+    "description": "约25秒竖屏带看，醒目卖点开场、原始VR运镜、短字幕，结尾保留房源画面。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.1.0",
+    "thumbnail": "",
+    "compatibleModes": [
+      "voiceover"
+    ],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "voiceover",
+        "rate": 1.1,
+        "speed": 36,
+        "direction": 1,
+        "maxSweep": 180,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "short-tour",
+        "brandColor": "#FFD447",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "面向有真实看房意向的买家，用经纪人口吻自然带看。整片约24–30秒，中文口播合计100–130字，按素材数量分配。只引用房源资料和画面有证据的信息，不编造急售、降价、业主动机、采光或距离。",
+        "opening": "用一句简短的话点出地点或一个已核实卖点，约10–14个汉字，朗读约2–3秒。",
+        "scene": "保持素材顺序，每张图一句，只介绍当前画面一个可见要点；不重复面积、价格或开场，避免空泛形容词。",
+        "closing": "在最后一个房间画面上用一句短邀请收尾，例如约实地看房，约6–10个汉字，不另起长篇总结。"
+      }
+    }
+  },
+  {
+    "id": "short-tour-avatar-v1-1",
+    "name": "短视频带看 · 经纪人开场",
+    "description": "经纪人短开场接原始VR带看，约25秒竖屏，醒目卖点与短字幕。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.1.0",
+    "thumbnail": "",
+    "compatibleModes": [
+      "avatar"
+    ],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "avatar",
+        "rate": 1.1,
+        "speed": 36,
+        "direction": 1,
+        "maxSweep": 180,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "short-tour",
+        "brandColor": "#FFD447",
+        "subtitleSize": "standard"
+      },
+      "scriptRules": {
+        "overall": "面向有真实看房意向的买家，用经纪人口吻自然带看。整片约24–30秒，中文口播合计100–130字，按素材数量分配。只引用房源资料和画面有证据的信息，不编造急售、降价、业主动机、采光或距离。",
+        "opening": "用一句简短的话点出地点或一个已核实卖点，约10–14个汉字，朗读约2–3秒。",
+        "scene": "保持素材顺序，每张图一句，只介绍当前画面一个可见要点；不重复面积、价格或开场，避免空泛形容词。",
+        "closing": "在最后一个房间画面上用一句短邀请收尾，例如约实地看房，约6–10个汉字，不另起长篇总结。"
+      },
+      "opening": {
+        "location": {
+          "source": "property"
+        },
+        "prompt": "经纪人使用参考照片中的本人形象，在给定背景中面对镜头自然口播带看开场。竖屏中近景，人物清晰，轻微自然手势，镜头稳定，嘴形与音频同步。严格保持背景空间布局，不添加文字、字幕、标识或背景音乐。"
+      }
+    }
+  },
+  {
+    "id": "spatial-tour-avatar",
+    "name": "空间走动带看 · 经纪人开场",
+    "description": "经纪人开场接真实 VR 三维空间走动，按拍摄点前进，约25秒竖屏带看。需先导入支持三维模型的 Realsee VR 链接。",
+    "type": "video",
+    "category": "房源带看",
+    "version": "1.0.0",
+    "thumbnail": "",
+    "compatibleModes": [
+      "avatar"
+    ],
+    "installed": false,
+    "downloadStatus": "idle",
+    "downloadProgress": 0,
+    "published": true,
+    "publishedOnce": true,
+    "sizeMb": 0,
+    "production": {
+      "schemaVersion": 2,
+      "config": {
+        "language": "zh-CN",
+        "videoMode": "avatar",
+        "rate": 1.1,
+        "speed": 36,
+        "direction": 1,
+        "maxSweep": 180,
+        "aspectRatio": "9:16",
+        "resolution": "720p",
+        "subtitles": true,
+        "design": "short-tour",
+        "brandColor": "#FFD447",
+        "subtitleSize": "standard",
+        "cameraMode": "spatial"
+      },
+      "scriptRules": {
+        "overall": "面向有真实看房意向的买家，用经纪人口吻自然带看。整片约24–30秒，中文口播合计100–130字，按素材数量分配。只引用房源资料和画面有证据的信息，不编造急售、降价、业主动机、采光或距离。",
+        "opening": "用一句简短的话点出地点或一个已核实卖点，约10–14个汉字，朗读约2–3秒。",
+        "scene": "保持素材顺序，每张图一句，只介绍当前画面一个可见要点；不重复面积、价格或开场，避免空泛形容词。",
+        "closing": "在最后一个房间画面上用一句短邀请收尾，例如约实地看房，约6–10个汉字，不另起长篇总结。"
+      },
+      "opening": {
+        "location": {
+          "source": "property"
+        },
+        "prompt": "经纪人使用参考照片中的本人形象，在给定背景中面对镜头自然口播带看开场。竖屏中近景，人物清晰，轻微自然手势，镜头稳定，嘴形与音频同步。严格保持背景空间布局，不添加文字、字幕、标识或背景音乐。"
       }
     }
   }

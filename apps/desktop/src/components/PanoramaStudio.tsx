@@ -36,7 +36,11 @@ import {
   useLocation,
   useSearchParams,
 } from "react-router-dom";
-import type { PanoramaDraft, PanoramaSegment } from "@keagent/shared-types";
+import type {
+  PanoramaDraft,
+  PanoramaScene,
+  PanoramaSegment,
+} from "@keagent/shared-types";
 import { authRequest, isLive } from "@keagent/api-client";
 import {
   estimateBatchCost,
@@ -48,6 +52,14 @@ import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryImagePicker } from "./FactoryImagePicker";
+import {
+  FactoryRenderSettings,
+  renderKeys,
+  renderOverrides,
+  renderSettingsError,
+  type RenderEdits,
+  type RenderSettings,
+} from "./FactoryRenderSettings";
 import { FactoryPhaseTag, FactoryTaskDetail } from "./FactoryResult";
 import {
   factoryRequest,
@@ -136,6 +148,7 @@ export function PanoramaStudio() {
     Record<string, string>
   >({});
   const [voiceId, setVoiceId] = useState<string>();
+  const [batchRenderEdits, setBatchRenderEdits] = useState<RenderEdits>({});
   const [openingAuthorized, setOpeningAuthorized] = useState(false);
   const [excluded, setExcluded] = useState(new Set<string>());
   const [expanded, setExpanded] = useState(false);
@@ -161,6 +174,9 @@ export function PanoramaStudio() {
   const [edits, setEdits] = useState<{
     draft: PanoramaDraft;
     segments: PanoramaSegment[];
+    scenes: PanoramaScene[];
+    coverTitle: string;
+    renderSettings: RenderEdits;
   }>();
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
@@ -169,7 +185,21 @@ export function PanoramaStudio() {
   );
   const dirty =
     !!edits &&
-    edits.segments.some((s, i) => s.text !== edits.draft.segments[i].text);
+    (edits.segments.some((s, i) => s.text !== edits.draft.segments[i].text) ||
+      edits.scenes.some(
+        (scene, i) =>
+          scene.yaw !== edits.draft.scenes[i].yaw ||
+          scene.direction !== edits.draft.scenes[i].direction ||
+          scene.spatial?.targetPanoIndex !==
+            edits.draft.scenes[i].spatial?.targetPanoIndex,
+      ) ||
+      edits.coverTitle !== (edits.draft.config.coverTitle || "") ||
+      renderKeys.some(
+        (key) =>
+          edits.renderSettings[key] !== undefined &&
+          (edits.renderSettings[key]?.trim() === "" ||
+            Number(edits.renderSettings[key]) !== edits.draft.config[key]),
+      ));
   const blocker = useBlocker(dirty);
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1400px)");
@@ -180,7 +210,7 @@ export function PanoramaStudio() {
   useEffect(() => {
     if (blocker.state !== "blocked") return;
     const dialog = modal.confirm({
-      title: "文案尚未保存",
+      title: "任务修改尚未保存",
       content: "离开页面会丢弃本次修改。",
       okText: "放弃并离开",
       cancelText: "继续编辑",
@@ -250,6 +280,30 @@ export function PanoramaStudio() {
           .filter((pair) => !excluded.has(pairKey(pair))),
       ),
     [propertyIds, templateIds, excluded],
+  );
+  const activeTemplateKeys = new Set(
+    pairs.map((pair) =>
+      templateKey({ id: pair.templateId, version: pair.version }),
+    ),
+  );
+  const selectedTemplates = templates.filter(
+    (template) =>
+      templateIds.includes(templateKey(template)) &&
+      (!propertyIds.length || activeTemplateKeys.has(templateKey(template))),
+  );
+  const spatialBatch =
+    selectedTemplates.length > 0 &&
+    selectedTemplates.every(
+      (template) => template.config.cameraMode === "spatial",
+    );
+  const batchRenderDefaults: Partial<RenderSettings> = Object.fromEntries(
+    renderKeys.flatMap((key) => {
+      const value = selectedTemplates[0]?.config[key];
+      return value !== undefined &&
+        selectedTemplates.every((template) => template.config[key] === value)
+        ? [[key, value]]
+        : [];
+    }),
   );
   const faceTemplates = new Set(
     templates
@@ -355,6 +409,9 @@ export function PanoramaStudio() {
       detailPane.current?.focus({ preventScroll: true });
   }, [wide, reviewing, loaded?.id]);
   const segments = edits?.segments || row?.draft?.segments || [];
+  const scenes = edits?.scenes || row?.draft?.scenes || [];
+  const coverTitle = edits?.coverTitle ?? row?.draft?.config.coverTitle ?? "";
+  const taskRenderEdits = edits?.renderSettings || {};
   const refresh = () =>
     Promise.all([
       client.invalidateQueries({ queryKey: ["factory-list"] }),
@@ -389,7 +446,7 @@ export function PanoramaStudio() {
       return;
     }
     modal.confirm({
-      title: "文案尚未保存",
+      title: "任务修改尚未保存",
       content: "可返回保存修改，或放弃修改后切换任务。",
       okText: "放弃修改",
       cancelText: "返回编辑",
@@ -424,6 +481,7 @@ export function PanoramaStudio() {
     setIssues([]);
   }
   async function create() {
+    const overrides = renderOverrides(batchRenderEdits, spatialBatch);
     const selectedImages = Object.fromEntries(
       imageProperties.map(({ id }) => [id, sceneIdsByProperty[id]]),
     );
@@ -439,6 +497,7 @@ export function PanoramaStudio() {
       openingClipId,
       openingPhotoId,
       openingBackgroundId,
+      overrides,
     ]);
     if (submission.current?.signature !== signature)
       submission.current = { signature, id: crypto.randomUUID() };
@@ -455,6 +514,7 @@ export function PanoramaStudio() {
       openingBackground: openingBackgroundId,
       openingAuthorized: useMiniMax && openingAuthorized,
       openingRecipe: true,
+      ...(Object.keys(overrides).length ? { renderOverrides: overrides } : {}),
     });
     setIssues(result.issues);
     if (!result.batchId) return;
@@ -462,6 +522,7 @@ export function PanoramaStudio() {
     submission.current = undefined;
     setPropertyIds([]);
     setSceneIdsByProperty({});
+    setBatchRenderEdits({});
     setOpeningAuthorized(false);
     setExcluded(new Set());
     setPairPage(1);
@@ -490,13 +551,26 @@ export function PanoramaStudio() {
     const saved = await request<PanoramaDraft>("save", {
       id: draft.id,
       revision: draft.revision,
-      config: draft.config,
+      config: {
+        ...draft.config,
+        ...renderOverrides(
+          taskRenderEdits,
+          draft.config.cameraMode === "spatial",
+        ),
+        ...(draft.config.design === "short-tour" ? { coverTitle } : {}),
+      },
       segments,
+      scenes,
     });
     client.setQueryData<FactoryDetail>(
       ["factory-detail", detailId],
       (current) =>
-        current && { ...current, draft: saved, revision: saved.revision },
+        current && {
+          ...current,
+          config: saved.config,
+          draft: saved,
+          revision: saved.revision,
+        },
     );
     setEdits(undefined);
     return saved;
@@ -554,7 +628,7 @@ export function PanoramaStudio() {
   }
   function bulk(action: FactoryAction, selected: FactoryRow[], label: string) {
     if (dirty && selected.some((value) => value.id === detailId)) {
-      void message.warning("请先保存当前文案，再对这条任务执行操作");
+      void message.warning("请先保存当前任务修改，再对这条任务执行操作");
       return;
     }
     const submit = () =>
@@ -611,6 +685,9 @@ export function PanoramaStudio() {
       row={row}
       reviewing={reviewing}
       segments={segments}
+      scenes={scenes}
+      coverTitle={coverTitle}
+      renderSettings={taskRenderEdits}
       dirty={dirty}
       busy={busy}
       onClose={wide && !reviewing ? () => switchDetail() : undefined}
@@ -622,13 +699,51 @@ export function PanoramaStudio() {
           segments: (current?.segments || draft.segments).map((s) =>
             s.id === id ? { ...s, text } : s,
           ),
+          scenes: current?.scenes || draft.scenes,
+          coverTitle: current?.coverTitle ?? draft.config.coverTitle ?? "",
+          renderSettings: current?.renderSettings || {},
+        }));
+      }}
+      onCamera={(id, camera) => {
+        if (!row.draft) return;
+        const draft = row.draft;
+        setEdits((current) => ({
+          draft: current?.draft || draft,
+          segments: current?.segments || draft.segments,
+          scenes: (current?.scenes || draft.scenes).map((scene) =>
+            scene.id === id ? { ...scene, ...camera } : scene,
+          ),
+          coverTitle: current?.coverTitle ?? draft.config.coverTitle ?? "",
+          renderSettings: current?.renderSettings || {},
+        }));
+      }}
+      onCoverTitle={(title) => {
+        if (!row.draft) return;
+        const draft = row.draft;
+        setEdits((current) => ({
+          draft: current?.draft || draft,
+          segments: current?.segments || draft.segments,
+          scenes: current?.scenes || draft.scenes,
+          coverTitle: title,
+          renderSettings: current?.renderSettings || {},
+        }));
+      }}
+      onRenderSettings={(renderSettings) => {
+        if (!row.draft) return;
+        const draft = row.draft;
+        setEdits((current) => ({
+          draft: current?.draft || draft,
+          segments: current?.segments || draft.segments,
+          scenes: current?.scenes || draft.scenes,
+          coverTitle: current?.coverTitle ?? draft.config.coverTitle ?? "",
+          renderSettings,
         }));
       }}
       onSave={() =>
         void run(async () => {
           await save();
           await refresh();
-          void message.success("文案已保存");
+          void message.success("文案和镜头设置已保存");
         })
       }
       onConfirm={() => void run(confirmNext)}
@@ -767,7 +882,8 @@ export function PanoramaStudio() {
             <div className="compose-intro">
               <h2>新建一批视频</h2>
               <p className="muted">
-                每套房源按所选模板生成独立任务。先选 2–7 张图片生成文案，确认后再制作视频。
+                每套房源按所选模板生成独立任务。先选 2–7
+                张图片生成文案，确认后再制作视频。
               </p>
             </div>
             <div className="factory-compose-main">
@@ -844,6 +960,7 @@ export function PanoramaStudio() {
                   disabled={
                     busy ||
                     !pairs.length ||
+                    !!renderSettingsError(batchRenderEdits, spatialBatch) ||
                     pairs.length > 200 ||
                     selectedPropertyCount !== imageProperties.length ||
                     (needsOpeningForBatch && !openingClip) ||
@@ -857,6 +974,35 @@ export function PanoramaStudio() {
                 </Button>
               </div>
             </div>
+            {selectedTemplates.length > 0 && (
+              <div className="factory-compose-note">
+                <strong>本批制作参数</strong>
+                <p className="muted">
+                  {selectedTemplates.length === 1
+                    ? `未修改项沿用「${selectedTemplates[0].name} · ${selectedTemplates[0].version}」，调整仅用于本批任务。`
+                    : "自定义值用于本批所有模板；未修改的项分别沿用各模板默认值。"}
+                  {selectedTemplates.some(
+                    (template) => template.config.cameraMode === "spatial",
+                  ) && "空间走动只使用配音语速，旋转参数不影响空间镜头。"}
+                </p>
+                <FactoryRenderSettings
+                  scope="批次"
+                  defaults={batchRenderDefaults}
+                  edits={batchRenderEdits}
+                  spatial={spatialBatch}
+                  disabled={busy}
+                  resetDisabled={!Object.keys(batchRenderEdits).length}
+                  onChange={(value) => {
+                    setBatchRenderEdits(value);
+                    setIssues([]);
+                  }}
+                  onReset={() => {
+                    setBatchRenderEdits({});
+                    setIssues([]);
+                  }}
+                />
+              </div>
+            )}
             {imageProperties.length > 0 && (
               <div className="factory-compose-note">
                 <Space wrap>

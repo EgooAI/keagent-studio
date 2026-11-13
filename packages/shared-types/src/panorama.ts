@@ -1,4 +1,5 @@
 export interface PanoramaConfig {
+  cameraMode?: "panorama" | "spatial";
   materialMode?: "panorama" | "expand";
   templateId: string;
   language: "zh-CN" | "en-US";
@@ -23,7 +24,7 @@ export interface PanoramaConfig {
   aspectRatio: "9:16" | "16:9";
   resolution: "720p" | "1080p";
   subtitles: boolean;
-  design?: "standard" | "classic";
+  design?: "standard" | "classic" | "short-tour";
   brandColor?: string;
   subtitleSize?: "standard" | "large";
   leadSceneId?: string;
@@ -40,6 +41,12 @@ export interface PanoramaTemplate {
   updatedAt: string;
 }
 export interface PanoramaScene {
+  spatial?: {
+    workId: string;
+    panoIndex: number;
+    targetPanoIndex: number;
+    targets: { index: number; label: string }[];
+  };
   kind?: "panorama" | "photo" | "expanded";
   approved?: boolean;
   sourceAsset?: string;
@@ -61,6 +68,7 @@ export interface PanoramaSegment {
 export interface PanoramaProperty {
   id: string;
   title: string;
+  community?: string;
   description: string;
   areaSqm: number;
   priceCents: number;

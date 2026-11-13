@@ -25,9 +25,20 @@ func visionContent(template, property object, images []any) ([]object, []string,
 	if rules == nil {
 		rules = object{"opening": config["openingTemplate"], "scene": config["sceneTemplate"], "closing": config["closingTemplate"]}
 	}
+	rules = pickFields(rules, "overall", "opening", "scene", "closing")
+	shortTour := config["design"] == "short-tour"
+	if shortTour {
+		rules["overall"] = str(rules["overall"]) + " 整片目标 24–30 秒，中文全部段落合计约 100–130 个汉字，英文约 55–70 个单词，按出镜图数量分配篇幅。像经纪人自然带看，使用简短口语，只选有证据的卖点，不编造急售、降价、业主动机、采光或距离。"
+		rules["opening"] = str(rules["opening"]) + " 开场只说一句，约 2–3 秒；中文 10–14 字，英文 6–10 词。"
+		rules["scene"] = str(rules["scene"]) + " 每图一句，只讲当前画面一个要点，句内可用逗号自然停顿，避免逐图重复面积、价格或开场。"
+		rules["closing"] = str(rules["closing"]) + " 最后一个房间画面上用一句短邀请收尾，约 2 秒，不另起长篇总结。"
+	}
 	if recipe["opening"] != nil {
-		rules = pickFields(rules, "overall", "opening", "scene", "closing")
-		rules["opening"] = str(rules["opening"]) + " 开场单独介绍到访地点与本次带看的房源，按模板组织完整口播，朗读建议 6–10 秒且不超过 15 秒。只引用已提供的地点和房源事实，不把参考背景当作已核实的小区实景，不描述第一张室内图片；逐图讲解从下一段开始。"
+		timing := "朗读建议 6–10 秒且不超过 15 秒。"
+		if shortTour {
+			timing = "朗读保持 2–3 秒，直接点明地点或一个已核实卖点。"
+		}
+		rules["opening"] = str(rules["opening"]) + " 开场单独介绍到访地点与本次带看的房源，" + timing + "只引用已提供的地点和房源事实，不把参考背景当作已核实的小区实景，不描述第一张室内图片；逐图讲解从下一段开始。"
 	}
 	seen := map[string]bool{"opening": true, "closing": true}
 	ids := []string{"opening"}

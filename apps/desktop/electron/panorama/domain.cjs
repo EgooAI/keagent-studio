@@ -83,6 +83,39 @@ function text(value, label, max = 1000) {
   );
   return value.trim();
 }
+const renderLimits = { speed: [0.5, 45], rate: [0.5, 2], maxSweep: [1, 180] };
+const renderOverrideKeys = Object.keys(renderLimits);
+function validateRenderValue(key, value) {
+  const [min, max] = renderLimits[key];
+  ensure(
+    typeof value === "number" &&
+      Number.isFinite(value) &&
+      value >= min &&
+      value <= max,
+    `${key} 超出范围`,
+  );
+}
+function renderOverrides(input) {
+  if (input === undefined) return undefined;
+  ensure(
+    input &&
+      typeof input === "object" &&
+      !Array.isArray(input) &&
+      [Object.prototype, null].includes(Object.getPrototypeOf(input)),
+    "制作节奏参数无效",
+  );
+  ensure(
+    Object.keys(input).every((key) => renderOverrideKeys.includes(key)),
+    "只允许调整镜头速度、配音语速和最大转角",
+  );
+  const entries = renderOverrideKeys
+    .filter((key) => Object.hasOwn(input, key))
+    .map((key) => {
+      validateRenderValue(key, input[key]);
+      return [key, input[key]];
+    });
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
 function config(input, personalTemplates = []) {
   ensure(input && typeof input === "object", "缺少制作配置");
   const c = Object.fromEntries(
@@ -91,6 +124,10 @@ function config(input, personalTemplates = []) {
       input[key] ?? defaultConfig[key],
     ]),
   );
+  if (input.cameraMode !== undefined) {
+    ensure(["panorama", "spatial"].includes(input.cameraMode), "镜头模式无效");
+    c.cameraMode = input.cameraMode;
+  }
   ensure(
     [...templates, ...personalTemplates].some((t) => t.id === c.templateId),
     "文案模板不存在",
@@ -144,18 +181,8 @@ function config(input, personalTemplates = []) {
     ensure(!c.openingClip && !c.openingPhoto, "房源开场不能使用其他开场素材");
     c.roomOpening = true;
   }
-  for (const [key, min, max] of [
-    ["rate", 0.5, 2],
-    ["speed", 0.5, 12],
-    ["maxSweep", 1, 180],
-  ])
-    ensure(
-      typeof c[key] === "number" &&
-        Number.isFinite(c[key]) &&
-        c[key] >= min &&
-        c[key] <= max,
-      `${key} 超出范围`,
-    );
+  for (const key of renderOverrideKeys)
+    validateRenderValue(key, Object.hasOwn(input, key) ? input[key] : c[key]);
   ensure([1, -1].includes(c.direction), "旋转方向无效");
   ensure(
     ["9:16", "16:9"].includes(c.aspectRatio) &&
@@ -163,7 +190,10 @@ function config(input, personalTemplates = []) {
     "输出规格无效",
   );
   ensure(typeof c.subtitles === "boolean", "字幕开关无效");
-  ensure(["standard", "classic"].includes(c.design), "画面样式无效");
+  ensure(
+    ["standard", "classic", "short-tour"].includes(c.design),
+    "画面样式无效",
+  );
   ensure(/^#[a-fA-F0-9]{6}$/.test(c.brandColor), "品牌色需为六位十六进制颜色");
   ensure(["standard", "large"].includes(c.subtitleSize), "字幕大小无效");
   for (const key of ["leadSceneId", "coverSceneId"])
@@ -295,6 +325,8 @@ module.exports = {
   templates,
   defaultConfig,
   config,
+  renderOverrides,
+  renderOverrideKeys,
   ensure,
   text,
   optionalText,

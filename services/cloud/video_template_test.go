@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -26,7 +28,9 @@ func seedTemplate(t *testing.T) object {
 func TestProductionTemplateValidation(t *testing.T) {
 	for _, mutate := range []func(object){
 		func(r object) { obj(obj(r["production"])["config"])["voice"] = "private-voice" },
-		func(r object) { obj(obj(r["production"])["config"])["speed"] = float64(13) },
+		func(r object) { obj(obj(r["production"])["config"])["speed"] = float64(46) },
+		func(r object) { obj(obj(r["production"])["config"])["speed"] = math.NaN() },
+		func(r object) { obj(obj(r["production"])["config"])["speed"] = math.Inf(1) },
 		func(r object) { obj(obj(r["production"])["config"])["direction"] = float64(0) },
 		func(r object) { obj(obj(r["production"])["config"])["openingTemplate"] = "{room}" },
 		func(r object) { obj(obj(r["production"])["config"])["sceneTemplate"] = "{unknown}" },
@@ -34,6 +38,7 @@ func TestProductionTemplateValidation(t *testing.T) {
 		func(r object) { obj(obj(r["production"])["config"])["sceneTemplate"] = "{room} {broken" },
 		func(r object) { obj(obj(r["production"])["config"])["brandColor"] = "red" },
 		func(r object) { obj(obj(r["production"])["config"])["subtitles"] = "true" },
+		func(r object) { obj(obj(r["production"])["config"])["design"] = "unknown" },
 		func(r object) { delete(obj(obj(r["production"])["config"]), "rate") },
 		func(r object) { r["version"] = "next" },
 		func(r object) { r["compatibleModes"] = []any{"avatar"} },
@@ -49,6 +54,12 @@ func TestProductionTemplateValidation(t *testing.T) {
 	if err := validateResource(r); err != nil {
 		t.Fatal(err)
 	}
+	for _, speed := range []float64{0.5, 4, 8, 12, 36, 45} {
+		obj(obj(r["production"])["config"])["speed"] = speed
+		if err := validateResource(r); err != nil {
+			t.Fatalf("valid camera speed %v rejected: %v", speed, err)
+		}
+	}
 	if publicResource(r)["previewed"] != false {
 		t.Fatal("unverified preview reported passed")
 	}
@@ -59,6 +70,82 @@ func TestProductionTemplateValidation(t *testing.T) {
 	obj(obj(r["production"])["config"])["brandColor"] = "#111111"
 	if publicResource(r)["previewed"] != false {
 		t.Fatal("changed recipe retained preview")
+	}
+}
+
+func TestShortTourMotionVersions(t *testing.T) {
+	var templates []object
+	if err := json.Unmarshal(videoTemplateSeeds, &templates); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]object{}
+	for _, resource := range templates {
+		if err := validateResource(resource); err != nil {
+			t.Fatalf("invalid seed %v: %v", resource["id"], err)
+		}
+		byID[str(resource["id"])] = resource
+		if obj(obj(resource["production"])["config"])["design"] == "standard" && obj(obj(resource["production"])["config"])["speed"] != float64(4) {
+			t.Fatal("standard template speed changed")
+		}
+	}
+	for _, id := range []string{"short-tour-vision", "short-tour-avatar"} {
+		old, next := byID[id], byID[id+"-v1-1"]
+		if old == nil || next == nil || old["version"] != "1.0.0" || next["version"] != "1.1.0" || next["name"] != old["name"] || next["published"] != true {
+			t.Fatalf("short-tour version or family changed: %s", id)
+		}
+		oldRecipe, nextRecipe := obj(old["production"]), obj(next["production"])
+		oldConfig, nextConfig := obj(oldRecipe["config"]), obj(nextRecipe["config"])
+		if oldConfig["speed"] != float64(8) || oldConfig["maxSweep"] != float64(60) || nextConfig["speed"] != float64(36) || nextConfig["maxSweep"] != float64(180) {
+			t.Fatalf("unexpected motion versions: %s", id)
+		}
+		if !reflect.DeepEqual(oldRecipe["opening"], nextRecipe["opening"]) || !reflect.DeepEqual(oldRecipe["scriptRules"], nextRecipe["scriptRules"]) {
+			t.Fatalf("motion-only release changed scripts or opening prompt: %s", id)
+		}
+	}
+}
+
+func TestSpatialTemplateCompatibility(t *testing.T) {
+	legacy := seedTemplate(t)
+	config := obj(obj(legacy["production"])["config"])
+	for _, mode := range []any{"spatial", "unknown", nil} {
+		config["cameraMode"] = mode
+		if validateProduction(legacy) == nil {
+			t.Fatalf("invalid legacy camera mode accepted: %v", mode)
+		}
+	}
+	config["cameraMode"] = "panorama"
+	if err := validateProduction(legacy); err != nil {
+		t.Fatal(err)
+	}
+	delete(config, "cameraMode")
+	if err := validateProduction(legacy); err != nil {
+		t.Fatal(err)
+	}
+	var templates []object
+	if err := json.Unmarshal(videoTemplateSeeds, &templates); err != nil {
+		t.Fatal(err)
+	}
+	var spatial, opening object
+	for _, resource := range templates {
+		if resource["id"] == "spatial-tour-avatar" {
+			spatial = resource
+		}
+		if resource["id"] == "short-tour-avatar-v1-1" {
+			opening = obj(obj(resource["production"])["opening"])
+		}
+	}
+	if spatial == nil || obj(obj(spatial["production"])["config"])["cameraMode"] != "spatial" {
+		t.Fatal("missing spatial tour seed")
+	}
+	if err := validateProduction(spatial); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(obj(spatial["production"])["opening"], opening) {
+		t.Fatal("spatial template changed reusable opening recipe")
+	}
+	obj(obj(spatial["production"])["config"])["cameraMode"] = "unknown"
+	if validateProduction(spatial) == nil {
+		t.Fatal("unknown camera mode accepted")
 	}
 }
 
@@ -95,6 +182,36 @@ func productionTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func TestFactoryCatalogIncludesTemplatePacingDefaults(t *testing.T) {
+	db := productionTestDB(t)
+	if err := seedVideoTemplates(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{db: db}
+	result, err := s.panorama(t.Context(), actor{UserID: "catalog-user"}, "capabilities", []byte(`{"summary":true,"openingRecipe":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range rows(obj(result)["templates"]) {
+		summary := obj(item)
+		if summary["id"] != "short-tour-avatar-v1-1" {
+			continue
+		}
+		found = true
+		c := obj(summary["config"])
+		if c["rate"] != float64(1.1) || c["speed"] != float64(36) || c["maxSweep"] != float64(180) || c["design"] != "short-tour" || summary["opening"] != "minimax" {
+			t.Fatalf("incorrect template pacing defaults: %v", summary)
+		}
+		if summary["production"] != nil || c["openingTemplate"] != nil {
+			t.Fatal("catalog summary exposed full production recipe")
+		}
+	}
+	if !found {
+		t.Fatal("short-tour 1.1.0 missing from factory catalog")
+	}
+}
+
 func TestProductionTemplateLifecycle(t *testing.T) {
 	db := productionTestDB(t)
 	s := &server{db: db}
@@ -113,7 +230,7 @@ func TestProductionTemplateLifecycle(t *testing.T) {
 		for _, template := range rows(obj(capabilities)["templates"]) {
 			ids = append(ids, str(obj(template)["id"]))
 		}
-		want := []string{"concise-vision", "highlights-vision", standard}
+		want := []string{"concise-vision", "highlights-vision", "short-tour-vision-v1-1", standard}
 		slices.Sort(ids)
 		slices.Sort(want)
 		if err != nil || !slices.Equal(ids, want) {

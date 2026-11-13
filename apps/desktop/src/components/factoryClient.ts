@@ -15,7 +15,15 @@ export interface FactoryTemplate {
   opening?: "minimax";
   config: Pick<
     PanoramaConfig,
-    "language" | "videoMode" | "aspectRatio" | "resolution"
+    | "language"
+    | "videoMode"
+    | "aspectRatio"
+    | "resolution"
+    | "speed"
+    | "rate"
+    | "maxSweep"
+    | "design"
+    | "cameraMode"
   >;
 }
 

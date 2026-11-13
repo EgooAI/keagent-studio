@@ -30,7 +30,7 @@ func (s *server) factoryProperties(ctx context.Context, a actor, body []byte) (o
 }
 
 func factoryPropertyPage(w object, input factoryPropertyQuery) object {
-	properties := append([]any{builtinTestProperty()}, rows(w["properties"])...)
+	properties := rows(w["properties"])
 	ids := make(map[string]bool, len(input.IDs))
 	for _, id := range input.IDs {
 		ids[id] = true
@@ -50,7 +50,7 @@ func factoryPropertyPage(w object, input factoryPropertyQuery) object {
 	for _, value := range properties {
 		p := obj(value)
 		id := str(p["id"])
-		if seen[id] {
+		if seen[id] || id == "panorama-cc0-sample" {
 			continue
 		}
 		seen[id] = true
@@ -71,7 +71,7 @@ func factoryPropertyPage(w object, input factoryPropertyQuery) object {
 			continue
 		}
 		status := "incomplete"
-		hasMedia := len(rows(p["panoramas"])) > 0 || id == "panorama-cc0-sample"
+		hasMedia := len(rows(p["panoramas"])) > 0
 		if (p["importStatus"] == "ready" && hasMedia) || ready[id] {
 			status = "ready"
 		}

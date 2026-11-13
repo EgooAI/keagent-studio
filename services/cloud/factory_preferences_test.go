@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestFactoryPreferencesAndBuiltinProperty(t *testing.T) {
+func TestFactoryPreferencesWithoutBuiltinProperty(t *testing.T) {
 	db := productionTestDB(t)
 	if _, err := db.ExecContext(t.Context(), voiceSchema+publicVoiceSchema); err != nil {
 		t.Fatal(err)
@@ -17,8 +17,8 @@ func TestFactoryPreferencesAndBuiltinProperty(t *testing.T) {
 	a := actor{UserID: "preference-owner", Name: "测试用户"}
 	for range 2 {
 		w, err := s.workspace(t.Context(), a)
-		if err != nil || len(rows(w["properties"])) != 1 || obj(rows(w["properties"])[0])["sample"] != true {
-			t.Fatal("builtin sample missing or duplicated", w, err)
+		if err != nil || len(rows(w["properties"])) != 0 {
+			t.Fatal("builtin sample must not reappear", w, err)
 		}
 	}
 	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_public_voice(id,payload) VALUES('public-zh','{"id":"public-zh","name":"中文公共音色","language":"zh-CN","enabled":true}'),('public-en','{"id":"public-en","language":"en-US","enabled":true}')`); err != nil {

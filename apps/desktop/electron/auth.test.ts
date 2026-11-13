@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
 
-it("forwards credit usage through Electron with the date range and error envelope", async () => {
+it("forwards authenticated credit usage and property deletion through Electron", async () => {
   const require = createRequire(import.meta.url);
   const handle = vi.fn();
   const usage = { items: [{ op: "script", spent: 5 }], total: 5 };
@@ -77,4 +77,15 @@ it("forwards credit usage through Electron with the date range and error envelop
     ok: false,
     error: { message: "日期无效", status: 422 },
   });
+  fetch.mockResolvedValueOnce(Response.json({ id: "property-1" }));
+  await expect(
+    handler(event, "deleteProperty", ["property-1"]),
+  ).resolves.toEqual({ id: "property-1" });
+  expect(fetch.mock.calls[3]).toEqual([
+    "http://127.0.0.1:18081/v1/commands/deleteProperty",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(["property-1"]),
+    }),
+  ]);
 });

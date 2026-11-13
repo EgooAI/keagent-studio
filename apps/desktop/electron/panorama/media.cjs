@@ -294,6 +294,86 @@ function subtitles(segment, width, height, label, offset) {
   const size = Math.round(width / (width < height ? 22 : 38));
   return `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Caption,Microsoft YaHei,${size},&H00FFFFFF,&H00FFFFFF,&H00202020,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${Math.round(height * 0.08)},1\nStyle: Label,Microsoft YaHei,${Math.round(size * 0.8)},&H00FFFFFF,&H00FFFFFF,&H00202020,&H80000000,0,0,0,0,100,100,0,0,1,2,1,8,35,35,45,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,${assTime(segment.duration)},Label,,0,0,0,,${escapeASS(label)}\n${segment.captions.map((s) => `Dialogue: 0,${assTime(s.start + offset)},${assTime(s.end + offset)},Caption,,0,0,0,,${escapeASS(s.text)}`).join("\n")}\n`;
 }
+function shortTourCameras(scenes, audio, config, hasOpeningVideo) {
+  const cameras = [];
+  const yaw = new Map();
+  const isVideo = (segment) => hasOpeningVideo && segment.kind === "opening";
+  for (let index = 0; index < audio.length;) {
+    if (isVideo(audio[index])) {
+      cameras.push(null);
+      index++;
+      continue;
+    }
+    const scene = scenes.find((s) => s.id === audio[index].sceneId);
+    ensure(scene, "素材与文案关联丢失");
+    let end = index + 1;
+    let duration = audio[index].duration;
+    while (
+      end < audio.length &&
+      audio[end].sceneId === scene.id &&
+      !isVideo(audio[end])
+    ) {
+      duration += audio[end].duration;
+      end++;
+    }
+    // A room and its closing narration share one continuous, evenly paced turn.
+    const speed = Math.min(config.speed, config.maxSweep / duration);
+    for (; index < end; index++) {
+      const camera = motion(
+        yaw.get(scene.id) ?? scene.yaw,
+        audio[index].duration,
+        {
+          ...config,
+          speed,
+          direction: scene.direction || config.direction,
+        },
+      );
+      cameras.push(camera);
+      yaw.set(scene.id, camera.end);
+    }
+  }
+  return cameras;
+}
+const wrapYaw = (angle) => ((((angle + 180) % 360) + 360) % 360) - 180;
+function cameraCommands(camera, frames, fps, speed) {
+  return (
+    Array.from({ length: Math.max(1, frames - 1) }, (_, i) => {
+      const t = (i + 1) / fps;
+      // FFmpeg rejects out-of-range yaw commands, even during a continuous turn.
+      const angle = wrapYaw(
+        camera.start +
+          Math.min(t * speed, Math.abs(camera.sweep)) * Math.sign(camera.sweep),
+      );
+      return `${t.toFixed(6)} v360@camera yaw ${angle.toFixed(6)};`;
+    }).join("\n") + "\n"
+  );
+}
+function spatialRuns(job, audio, hasOpeningVideo) {
+  const fps = job.config.design === "short-tour" ? 30 : 25;
+  const runs = [];
+  let elapsed = 0;
+  let frame = 0;
+  let current;
+  for (const [index, segment] of audio.entries()) {
+    const nextFrame = Math.round((elapsed + segment.duration) * fps);
+    const frames = Math.max(1, nextFrame - frame);
+    if (hasOpeningVideo && segment.kind === "opening") current = undefined;
+    else {
+      const scene = job.scenes.find((s) => s.id === segment.sceneId);
+      ensure(scene?.spatial, "镜头缺少 VR 空间与拍摄点信息");
+      if (!current || current.scene.id !== scene.id) {
+        current = { scene, frames: 0, fps, duration: 0, segments: [] };
+        runs.push(current);
+      }
+      current.segments.push({ index, offsetFrames: current.frames, frames });
+      current.frames += frames;
+      current.duration += segment.duration;
+    }
+    frame = nextFrame;
+    elapsed += segment.duration;
+  }
+  return runs;
+}
 async function render(
   job,
   audio,
@@ -302,8 +382,12 @@ async function render(
   signal,
   onProgress,
   openingFile,
+  spatialClips,
 ) {
   const c = job.config;
+  const spatial = c.cameraMode === "spatial";
+  const shortTour = c.design === "short-tour";
+  const fps = shortTour ? 30 : 25;
   const [width, height] =
     c.aspectRatio === "9:16"
       ? c.resolution === "720p"
@@ -312,13 +396,38 @@ async function render(
       : c.resolution === "720p"
         ? [1280, 720]
         : [1920, 1080];
+  const hFov = width < height ? (shortTour ? 84 : 70) : 100;
+  const vFov =
+    shortTour && width < height
+      ? (2 *
+          Math.atan((Math.tan((hFov * Math.PI) / 360) * height) / width) *
+          180) /
+        Math.PI
+      : width < height
+        ? 103
+        : 62;
+  const cameras =
+    shortTour && !spatial
+      ? shortTourCameras(
+          job.scenes,
+          audio,
+          c,
+          Boolean((!c.openingPhoto && c.openingClip) || openingFile),
+        )
+      : null;
   const cache = path.join(ownerDir, "cache");
   const clips = [];
   const timeline = [];
   const yaw = new Map();
   let elapsed = 0;
   let frame = 0;
-  for (const [index, segment] of audio.entries()) {
+  for (const [index, narration] of audio.entries()) {
+    const segment = shortTour
+      ? {
+          ...narration,
+          captions: presentation.shortCaptions(narration.captions),
+        }
+      : narration;
     const scene = job.scenes.find((s) => s.id === segment.sceneId);
     ensure(scene, "素材与文案关联丢失");
     const direction = scene.direction || c.direction;
@@ -326,15 +435,18 @@ async function render(
       !scene.kind || scene.kind === "panorama",
       "视频制作仅支持原始 VR 全景图",
     );
-    const nextFrame = Math.round((elapsed + segment.duration) * 25);
+    const nextFrame = Math.round((elapsed + segment.duration) * fps);
     const frames = Math.max(1, nextFrame - frame);
-    const camera = motion(yaw.get(scene.id) ?? scene.yaw, segment.duration, {
-      ...c,
-      direction,
-    });
-    yaw.set(scene.id, camera.end);
+    const camera = spatial
+      ? null
+      : shortTour
+        ? cameras[index]
+        : motion(yaw.get(scene.id) ?? scene.yaw, segment.duration, {
+            ...c,
+            direction,
+          });
     // Wrap the start angle for FFmpeg while preserving continuous turns across segments.
-    const start = ((((camera.start + 180) % 360) + 360) % 360) - 180;
+    const start = wrapYaw(camera?.start ?? scene.yaw);
     const localOpening =
       segment.kind === "opening" && !c.openingPhoto && c.openingClip;
     const openingVideo =
@@ -342,9 +454,20 @@ async function render(
       (localOpening
         ? path.join(ownerDir, "opening", `${localOpening}.mp4`)
         : openingFile);
-    const label = `${scene.room}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
+    const spatialClip =
+      !openingVideo && spatial ? spatialClips?.[index] : undefined;
+    ensure(
+      !spatial || openingVideo || spatialClip,
+      "空间走动镜头未完成，无法合成",
+    );
+    if (!openingVideo && camera) yaw.set(scene.id, camera.end);
+    const label = shortTour
+      ? job.sample
+        ? "独立测试场景，非在售房源"
+        : ""
+      : `${scene.room}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
     const key = hash([
-      "render-v4-panorama",
+      shortTour ? "render-v4-short-tour-30fps" : "render-v5-panorama",
       scene.kind || "panorama",
       scene.asset,
       segment,
@@ -362,6 +485,15 @@ async function render(
           : c.openingClip
         : null,
       presentation.card(job, segment.kind),
+      ...(shortTour ? [camera, hFov, vFov] : []),
+      ...(spatialClip
+        ? [
+            "spatial-v1",
+            path.basename(spatialClip.file),
+            spatialClip.offsetFrames,
+            frames,
+          ]
+        : []),
     ]);
     const name = `clip-${key}.mp4`;
     if (!(await exists(path.join(cache, name)))) {
@@ -369,11 +501,14 @@ async function render(
       const ass = `caption-${key}.ass`;
       await fs.writeFile(
         path.join(cache, cmd),
-        Array.from({ length: Math.max(1, frames - 1) }, (_, i) => {
-          const t = (i + 1) / 25;
-          const angle = start + Math.min(t * c.speed, c.maxSweep) * direction;
-          return `${t.toFixed(6)} v360@camera yaw ${angle.toFixed(6)};`;
-        }).join("\n") + "\n",
+        camera
+          ? cameraCommands(
+              camera,
+              frames,
+              fps,
+              shortTour ? Math.abs(camera.sweep) / camera.duration : c.speed,
+            )
+          : "",
       );
       await fs.writeFile(
         path.join(cache, ass),
@@ -383,7 +518,7 @@ async function render(
             width,
             height,
             label,
-            elapsed - frame / 25,
+            elapsed - frame / fps,
           ),
           segment,
           width,
@@ -392,9 +527,11 @@ async function render(
         ),
       );
       // shortcut: hold the last frame of a short clip, until templates support a timed cut to the room.
-      const base = openingVideo
-        ? `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:${c.openingClip ? "stop=-1" : "stop_duration=5"}`
-        : `scale=4096:2048,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${start}:reset_rot=1,setsar=1`;
+      const base = spatialClip
+        ? `trim=start_frame=${spatialClip.offsetFrames}:end_frame=${spatialClip.offsetFrames + frames},setpts=PTS-STARTPTS,scale=${width}:${height},setsar=1`
+        : openingVideo
+          ? `scale=${width}:${height}:force_original_aspect_ratio=${shortTour ? `increase,crop=${width}:${height}` : `decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`},setsar=1,tpad=stop_mode=clone:${c.openingClip ? "stop=-1" : "stop_duration=5"}`
+          : `scale=4096:2048,loop=loop=-1:size=1:start=0,${shortTour ? "settb=AVTB," : ""}setpts=N/(${fps}*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${hFov}:v_fov=${vFov}:yaw=${start}:reset_rot=1,setsar=1`;
       const temp = `clip-${key}.part.mp4`;
       await run(
         ffmpeg(),
@@ -404,18 +541,20 @@ async function render(
           "-y",
           ...(localOpening ? ["-f", "mov"] : []),
           "-i",
-          openingVideo || path.join(ownerDir, "assets", scene.asset),
+          openingVideo ||
+            spatialClip?.file ||
+            path.join(ownerDir, "assets", scene.asset),
           ...(localOpening ? ["-map", "0:V:0"] : []),
           "-vf",
           base +
-            (c.subtitles || job.sample || c.design === "standard"
+            (c.subtitles || job.sample || c.design === "standard" || shortTour
               ? `,ass=${ass}`
               : ""),
           "-an",
           "-frames:v",
           String(frames),
           "-r",
-          "25",
+          String(fps),
           "-c:v",
           "libx264",
           "-preset",
@@ -443,6 +582,15 @@ async function render(
       duration: segment.duration,
       audio: segment.audio,
       camera: openingVideo ? null : camera,
+      ...(spatialClip
+        ? {
+            spatial: {
+              ...spatialClip.spatial,
+              offsetFrames: spatialClip.offsetFrames,
+              frames,
+            },
+          }
+        : {}),
       captions: segment.captions.map(({ text, start, end }) => ({
         text,
         start: elapsed + start,
@@ -518,7 +666,7 @@ async function render(
     path.join(jobDir, "final.part.mp4"),
     path.join(jobDir, "final.mp4"),
   );
-  if (c.design === "standard") {
+  if (c.design === "standard" || shortTour) {
     const scene =
       job.scenes.find((s) => s.id === (c.coverSceneId || c.leadSceneId)) ||
       job.scenes[0];
@@ -534,7 +682,16 @@ async function render(
         presentation.card(job, "cover"),
       ),
     );
-    const base = `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${scene.yaw}`;
+    const spatialCover =
+      spatialClips?.[
+        audio.findIndex(
+          (segment) =>
+            segment.sceneId === scene.id && segment.kind !== "opening",
+        )
+      ];
+    const base = spatialCover
+      ? `select=eq(n\\,0),scale=${width}:${height},setsar=1`
+      : `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${hFov}:v_fov=${vFov}:yaw=${scene.yaw}`;
     await run(
       ffmpeg(),
       [
@@ -542,7 +699,7 @@ async function render(
         "error",
         "-y",
         "-i",
-        path.join(ownerDir, "assets", scene.asset),
+        spatialCover?.file || path.join(ownerDir, "assets", scene.asset),
         "-vf",
         `${base},ass=${caption}`,
         "-frames:v",
@@ -588,6 +745,9 @@ module.exports = {
   capabilities,
   synthesize,
   render,
+  shortTourCameras,
+  cameraCommands,
+  spatialRuns,
   exists,
   subtitles,
   escapeASS,

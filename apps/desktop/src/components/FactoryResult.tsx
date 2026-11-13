@@ -1,7 +1,16 @@
-import { Alert, Button, Input, Progress, Select, Space, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Input,
+  InputNumber,
+  Progress,
+  Select,
+  Space,
+  Tag,
+} from "antd";
 import { Link } from "react-router-dom";
 import { Download, X } from "lucide-react";
-import type { PanoramaSegment } from "@keagent/shared-types";
+import type { PanoramaScene, PanoramaSegment } from "@keagent/shared-types";
 import { formatDate } from "./common";
 import {
   phaseLabel,
@@ -10,6 +19,12 @@ import {
   type FactoryPhase,
 } from "./factoryClient";
 import { request, stageNames } from "./panoramaClient";
+import {
+  FactoryRenderSettings,
+  renderKeys,
+  renderSettingsError,
+  type RenderEdits,
+} from "./FactoryRenderSettings";
 
 const phaseColor: Partial<Record<FactoryPhase, string>> = {
   preparing: "processing",
@@ -29,10 +44,16 @@ export function FactoryTaskDetail({
   row,
   reviewing,
   segments,
+  scenes,
+  coverTitle,
+  renderSettings,
   dirty,
   busy,
   onClose,
   onEdit,
+  onCamera,
+  onCoverTitle,
+  onRenderSettings,
   onSave,
   onConfirm,
   onOpeningLocation,
@@ -42,10 +63,19 @@ export function FactoryTaskDetail({
   row: FactoryDetail;
   reviewing: boolean;
   segments: PanoramaSegment[];
+  scenes: PanoramaScene[];
+  coverTitle: string;
+  renderSettings: RenderEdits;
   dirty: boolean;
   busy: boolean;
   onClose?: () => void;
   onEdit: (id: string, text: string) => void;
+  onCamera: (
+    id: string,
+    camera: Partial<Pick<PanoramaScene, "yaw" | "direction" | "spatial">>,
+  ) => void;
+  onCoverTitle: (title: string) => void;
+  onRenderSettings: (settings: RenderEdits) => void;
   onSave: () => void;
   onConfirm: () => void;
   onOpeningLocation: (asset: string) => void;
@@ -53,11 +83,17 @@ export function FactoryTaskDetail({
   onExport: (action: () => Promise<unknown>) => void;
 }) {
   const { draft, job, config } = row;
+  const effectiveConfig = job?.config || draft?.config || config;
+  const spatial = effectiveConfig?.cameraMode === "spatial";
   const editable = reviewing && row.phase === "review";
   const reviewable =
-    !!draft && editable && segments.every((s) => s.text.trim());
+    !!draft &&
+    editable &&
+    segments.every((s) => s.text.trim()) &&
+    !renderSettingsError(renderSettings, spatial);
   const finished = job?.status === "succeeded";
   const location = draft?.config.openingLocation;
+  const templateDefaults = draft?.templateSnapshot?.production.config;
   const opening = segments.find((segment) => segment.kind === "opening");
   return (
     <section className="factory-task-detail" aria-label="当前任务详情">
@@ -93,10 +129,81 @@ export function FactoryTaskDetail({
         <span>{formatDate(row.createdAt)}</span>
       </div>
       {row.error && <Alert showIcon type="error" title={row.error} />}
+      {editable && draft ? (
+        <div>
+          <strong>任务制作参数</strong>
+          <FactoryRenderSettings
+            scope="任务"
+            defaults={draft.config}
+            edits={renderSettings}
+            spatial={spatial}
+            disabled={busy}
+            onChange={onRenderSettings}
+            resetDisabled={
+              !!templateDefaults &&
+              renderKeys
+                .filter((key) => !spatial || key === "rate")
+                .every(
+                  (key) =>
+                    Number(renderSettings[key] ?? draft.config[key]) ===
+                    templateDefaults[key],
+                )
+            }
+            onReset={
+              templateDefaults
+                ? () =>
+                    onRenderSettings(
+                      Object.fromEntries(
+                        renderKeys
+                          .filter((key) => !spatial || key === "rate")
+                          .map((key) => [key, String(templateDefaults[key])]),
+                      ),
+                    )
+                : undefined
+            }
+          />
+          {draft.config.design === "short-tour" && !spatial && (
+            <p className="muted">
+              较长镜头受最大转角限制时，会适当降低实际旋转速度。
+            </p>
+          )}
+        </div>
+      ) : (
+        effectiveConfig && (
+          <p className="muted" aria-label="任务制作参数">
+            配音语速 {effectiveConfig.rate} 倍
+            {!spatial &&
+              ` · 镜头速度 ${effectiveConfig.speed}°/秒 · 最大转角 ${effectiveConfig.maxSweep}°`}
+          </p>
+        )
+      )}
+      {spatial && (
+        <p className="muted">
+          镜头从当前拍摄点走向所选目标点，使用原房源三维模型与全景图。
+        </p>
+      )}
+      {editable && draft?.config.design === "short-tour" && (
+        <div style={{ marginBottom: 12 }}>
+          <label>
+            <span>开场／封面标题</span>
+            <Input.TextArea
+              aria-label="开场／封面标题"
+              rows={2}
+              maxLength={120}
+              value={coverTitle}
+              disabled={busy}
+              placeholder="留空使用房源名称和卖点"
+              onChange={(event) => onCoverTitle(event.target.value)}
+            />
+          </label>
+          <span className="muted">最多两行，只填写已核实的房源信息。</span>
+        </div>
+      )}
       {editable && config?.openingPhoto && (
         <p className="muted">
-          开场先交代到访地点和本次带看的房源，建议 6–10 秒，配音须为 2–15
-          秒。确认文案后开始制作。
+          开场先交代到访地点和本次带看的房源，建议
+          {config.design === "short-tour" ? " 2–3 " : " 6–10 "}
+          秒，配音须为 2–15 秒。确认文案后开始制作。
         </p>
       )}
       {!finished && location && (
@@ -182,10 +289,10 @@ export function FactoryTaskDetail({
           {segments
             .filter((segment) => !(location && segment.kind === "opening"))
             .map((segment) => {
-              const index = draft.scenes.findIndex(
+              const index = scenes.findIndex(
                 (scene) => scene.id === segment.sceneId,
               );
-              const scene = draft.scenes[index];
+              const scene = scenes[index];
               const label =
                 segment.kind === "opening"
                   ? "开场介绍"
@@ -202,17 +309,82 @@ export function FactoryTaskDetail({
                     />
                   )}
                   {editable ? (
-                    <label>
-                      <span>{label}</span>
-                      <Input.TextArea
-                        aria-label={label}
-                        autoSize={{ minRows: 2, maxRows: 6 }}
-                        maxLength={2000}
-                        disabled={busy}
-                        value={segment.text}
-                        onChange={(e) => onEdit(segment.id, e.target.value)}
-                      />
-                    </label>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <label>
+                        <span>{label}</span>
+                        <Input.TextArea
+                          aria-label={label}
+                          autoSize={{ minRows: 2, maxRows: 6 }}
+                          maxLength={2000}
+                          disabled={busy}
+                          value={segment.text}
+                          onChange={(e) => onEdit(segment.id, e.target.value)}
+                        />
+                      </label>
+                      {scene && segment.kind === "scene" && (
+                        <Space wrap style={{ marginTop: 8 }}>
+                          <label>
+                            <span>镜头起始角度</span>
+                            <InputNumber
+                              aria-label={`${label}镜头起始角度`}
+                              min={-180}
+                              max={180}
+                              suffix="°"
+                              value={scene.yaw}
+                              disabled={busy}
+                              onChange={(yaw) => {
+                                if (yaw !== null) onCamera(scene.id, { yaw });
+                              }}
+                            />
+                          </label>
+                          {spatial ? (
+                            scene.spatial && (
+                              <label>
+                                <span>走向拍摄点</span>
+                                <Select
+                                  aria-label={`${label}走向拍摄点`}
+                                  style={{ minWidth: 170 }}
+                                  value={scene.spatial.targetPanoIndex}
+                                  disabled={busy}
+                                  options={scene.spatial.targets.map(
+                                    (target) => ({
+                                      value: target.index,
+                                      label: target.label,
+                                    }),
+                                  )}
+                                  onChange={(targetPanoIndex) =>
+                                    onCamera(scene.id, {
+                                      spatial: {
+                                        ...scene.spatial!,
+                                        targetPanoIndex,
+                                      },
+                                    })
+                                  }
+                                />
+                              </label>
+                            )
+                          ) : (
+                            <label>
+                              <span>镜头方向</span>
+                              <Select
+                                aria-label={`${label}镜头方向`}
+                                value={
+                                  scene.direction || draft.config.direction
+                                }
+                                disabled={busy}
+                                options={[
+                                  { value: 1, label: "向右" },
+                                  { value: -1, label: "向左" },
+                                ]}
+                                onChange={(direction) =>
+                                  onCamera(scene.id, { direction })
+                                }
+                              />
+                            </label>
+                          )}
+                        </Space>
+                      )}
+                    </div>
                   ) : (
                     <div className="factory-read-segment">
                       <strong>{label}</strong>
@@ -237,7 +409,7 @@ export function FactoryTaskDetail({
         {editable && (
           <Space wrap>
             <Button disabled={!dirty || !reviewable || busy} onClick={onSave}>
-              保存文案
+              保存修改
             </Button>
             <Button
               type="primary"

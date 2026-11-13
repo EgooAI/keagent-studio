@@ -39,7 +39,10 @@ async function load(
   );
   if (
     savedPanoramas.length &&
-    ((!images.length && !saved.remoteFingerprint) ||
+    // A completed VR import replaces this property's gallery. Cloud image URLs
+    // may remain on the property, but cannot append to that explicit selection.
+    (saved.spatial?.workId ||
+      (!images.length && !saved.remoteFingerprint) ||
       (saved.remoteFingerprint === fingerprint &&
         (saved.remoteSceneIds || saved.scenes.length === images.length)))
   )

@@ -219,6 +219,7 @@ function registerAuth() {
     "importProperties",
     "createProperty",
     "updateProperty",
+    "deleteProperty",
     "createBatch",
     "saveScript",
     "approveScript",
@@ -402,6 +403,7 @@ function registerAuth() {
           "panorama.generate",
           "panorama.prepare",
           "panorama.property-import",
+          "panorama.property-vr-import",
         ].includes(method)
       ) {
         const workspace = (await request("/v1/workspace")).data;

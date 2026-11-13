@@ -40,6 +40,12 @@ func validateProduction(resource object) error {
 	if schema == 1 {
 		keys = append(slices.Clone(keys), legacyScriptKeys...)
 	}
+	if mode, exists := c["cameraMode"]; exists {
+		if mode != "panorama" && (mode != "spatial" || schema != 2) {
+			return fail(422, "空间走动仅支持新版制作模板，请选择有效的镜头模式")
+		}
+		keys = append(slices.Clone(keys), "cameraMode")
+	}
 	if len(c) != len(keys) {
 		return fail(422, "制作规则字段不完整或包含不支持的字段")
 	}
@@ -51,7 +57,7 @@ func validateProduction(resource object) error {
 	for key, options := range map[string][]string{
 		"language": {"zh-CN", "en-US"}, "videoMode": {"voiceover", "avatar"},
 		"aspectRatio": {"9:16", "16:9"}, "resolution": {"720p", "1080p"},
-		"design": {"standard", "classic"}, "subtitleSize": {"standard", "large"},
+		"design": {"standard", "classic", "short-tour"}, "subtitleSize": {"standard", "large"},
 	} {
 		if !slices.Contains(options, str(c[key])) {
 			return fail(422, "制作规则选项无效："+key)
@@ -60,7 +66,7 @@ func validateProduction(resource object) error {
 	if _, ok := c["subtitles"].(bool); !ok || !templateColor.MatchString(str(c["brandColor"])) {
 		return fail(422, "字幕开关或品牌色无效")
 	}
-	for key, bounds := range map[string][2]float64{"rate": {0.5, 2}, "speed": {0.5, 12}, "maxSweep": {1, 180}, "direction": {-1, 1}} {
+	for key, bounds := range map[string][2]float64{"rate": {0.5, 2}, "speed": {0.5, 45}, "maxSweep": {1, 180}, "direction": {-1, 1}} {
 		value, ok := c[key].(float64)
 		if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value < bounds[0] || value > bounds[1] || (key == "direction" && value != -1 && value != 1) {
 			return fail(422, "镜头或配音参数超出范围："+key)

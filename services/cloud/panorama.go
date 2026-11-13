@@ -186,7 +186,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 			for i, template := range templates {
 				item := obj(template)
 				summary := pickFields(item, "id", "name", "version", "description")
-				summary["config"] = pickFields(obj(obj(item["production"])["config"]), "language", "videoMode", "aspectRatio", "resolution")
+				summary["config"] = pickFields(obj(obj(item["production"])["config"]), "language", "videoMode", "aspectRatio", "resolution", "rate", "speed", "maxSweep", "design", "cameraMode")
 				if obj(obj(item["production"])["opening"]) != nil {
 					summary["opening"] = "minimax"
 				}

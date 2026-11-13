@@ -66,15 +66,18 @@ export function PanoramaTemplateEditor({
       setSelected("opening");
   }, [scenes, selected]);
   const cover = selected === "cover";
+  const shortTour = config.design === "short-tour";
   const scene =
     scenes.find(
       (s) =>
         s.id ===
         (cover
           ? config.coverSceneId || config.leadSceneId
-          : selected === "opening" || selected === "closing"
-            ? config.leadSceneId
-            : selected),
+          : selected === "closing" && shortTour
+            ? scenes.at(-1)?.id
+            : selected === "opening" || selected === "closing"
+              ? config.leadSceneId
+              : selected),
     ) || scenes[0];
   const segment = segments.find((s) => s.id === selected);
   const spatial = !["opening", "closing", "cover"].includes(selected);
@@ -103,6 +106,16 @@ export function PanoramaTemplateEditor({
     selected === "closing"
       ? [config.agentName, config.agentContact].filter(Boolean).join(" · ")
       : facts;
+  const hook =
+    shortTour && !config.coverTitle ? property?.sellingPoints[0] || "" : "";
+  const shortHeading =
+    config.coverTitle || property?.community || property?.title || "";
+  const shortLine = (value: string, count = 12) =>
+    Array.from(value).length > count
+      ? Array.from(value)
+          .slice(0, count - 1)
+          .join("") + "…"
+      : value;
   const title = cover
     ? "封面"
     : selected === "opening"
@@ -222,7 +235,7 @@ export function PanoramaTemplateEditor({
         {scene ? (
           <>
             <div
-              className={`template-preview ${config.aspectRatio === "9:16" ? "portrait" : "landscape"}`}
+              className={`template-preview ${config.aspectRatio === "9:16" ? "portrait" : "landscape"} ${shortTour ? "short-tour" : ""}`}
               style={{
                 aspectRatio: config.aspectRatio === "9:16" ? "9/16" : "16/9",
               }}
@@ -233,25 +246,57 @@ export function PanoramaTemplateEditor({
                 style={{ objectPosition: `${position}% center` }}
               />
               <div className="template-preview-shade" />
-              <div className="template-preview-label">
-                {scene.room}
-                {property?.sample ? " · 测试素材" : ""}
-              </div>
-              {config.design !== "classic" && heading && (
-                <div className="template-preview-card">
-                  <span
-                    className="template-preview-accent"
-                    style={{ backgroundColor: config.brandColor || "#167D8D" }}
-                  />
-                  <strong>{heading}</strong>
-                  {detail && <p>{detail}</p>}
+              {(!shortTour || property?.sample) && (
+                <div className="template-preview-label">
+                  {scene.room}
+                  {property?.sample ? " · 测试素材" : ""}
                 </div>
               )}
+              {config.design !== "classic" &&
+                heading &&
+                !(shortTour && selected === "closing") && (
+                  <div
+                    className="template-preview-card"
+                    style={
+                      shortTour &&
+                      selected === "opening" &&
+                      !config.roomOpening &&
+                      (config.openingPhoto || config.openingClip)
+                        ? { top: "4%" }
+                        : undefined
+                    }
+                  >
+                    <span
+                      className="template-preview-accent"
+                      style={{
+                        backgroundColor: config.brandColor || "#167D8D",
+                      }}
+                    />
+                    <strong
+                      style={
+                        shortTour
+                          ? { color: config.brandColor || "#FFD447" }
+                          : undefined
+                      }
+                    >
+                      {shortTour
+                        ? shortLine(shortHeading, hook ? 12 : 24)
+                        : heading}
+                    </strong>
+                    {hook && (
+                      <strong style={{ color: config.brandColor || "#FFD447" }}>
+                        {shortLine(hook)}
+                      </strong>
+                    )}
+                    {detail && <p>{detail}</p>}
+                  </div>
+                )}
               {!cover && config.subtitles && (
                 <div
                   className={`template-preview-caption ${config.subtitleSize === "large" ? "large" : ""}`}
                 >
-                  {segment?.text || "生成文案后，可在此预览并逐段审核"}
+                  {segment?.text?.slice(0, shortTour ? 12 : undefined) ||
+                    "生成文案后，可在此预览并逐段审核"}
                 </div>
               )}
             </div>
@@ -434,6 +479,10 @@ export function PanoramaTemplateEditor({
                           {
                             value: "classic",
                             label: "简洁画面 · 仅空间与字幕",
+                          },
+                          {
+                            value: "short-tour",
+                            label: "短视频带看 · 醒目开场与短字幕",
                           },
                         ]}
                         onChange={(design) => patch({ design })}

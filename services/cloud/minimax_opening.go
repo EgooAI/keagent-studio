@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	_ "image/png"
 	"net/http"
 	"net/url"
 	"regexp"

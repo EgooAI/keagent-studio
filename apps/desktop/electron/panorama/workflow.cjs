@@ -9,6 +9,8 @@ const providers = require("./providers.cjs");
 const sources = require("../production/sources.cjs");
 const templateLibrary = require("../production/templates.cjs");
 const factory = require("../production/factory.cjs");
+const spatialSource = require("../production/spatial-source.cjs");
+const spatialRender = require("../production/spatial-render.cjs");
 const { ProductionQueue } = require("../production/queue.cjs");
 const uuid = /^[a-f0-9-]{36}$/;
 const assetName = /^[a-f0-9]{64}\.(jpg|png)$/;
@@ -461,6 +463,14 @@ class PanoramaWorkflow {
             ? undefined
             : (domain.ensure([1, -1].includes(s.direction), "空间镜头方向无效"),
               s.direction),
+        ...(s.spatial
+          ? {
+              spatial: spatialSource.validateSpatialScene(
+                this.directory(owner),
+                s,
+              ),
+            }
+          : {}),
       };
     });
   }
@@ -550,7 +560,15 @@ class PanoramaWorkflow {
         !this.sourceFlight.has(flightKey),
         "素材操作处理中，请稍候",
       );
-      const pending = sources.handle(this, owner, method, input, assertCurrent);
+      const pending = sources.handle(
+        this,
+        owner,
+        method,
+        input,
+        assertCurrent,
+        undefined,
+        property,
+      );
       this.sourceFlight.set(flightKey, pending);
       try {
         return await pending;
@@ -664,6 +682,7 @@ class PanoramaWorkflow {
     if (method === "generate")
       return this.createDraft(owner, input, property, false, assertCurrent);
     if (method === "prepare") {
+      const overrides = domain.renderOverrides(input.renderOverrides);
       const key =
         owner +
         ":prepare:" +
@@ -672,6 +691,7 @@ class PanoramaWorkflow {
           config: input.config,
           templateVersion: input.templateVersion,
           sceneIds: input.sceneIds,
+          ...(overrides ? { renderOverrides: overrides } : {}),
         });
       const previous = this.sourceFlight.get(key);
       if (previous) return previous;
@@ -699,13 +719,18 @@ class PanoramaWorkflow {
             c.voice === draft.config.voice,
           "内置测试任务使用本机测试配音，请重新选择测试模板",
         );
-      if (draft.templateSnapshot)
+      if (draft.templateSnapshot) {
+        const recipe = draft.templateSnapshot.production.config;
         domain.ensure(
-          Object.entries(draft.templateSnapshot.production.config).every(
-            ([key, value]) => c[key] === value,
-          ),
+          Object.entries(recipe).every(
+            ([key, value]) =>
+              domain.renderOverrideKeys.includes(key) || c[key] === value,
+          ) &&
+            (c.cameraMode ?? "panorama") === (recipe.cameraMode ?? "panorama"),
           "已确认模板的制作规则不可修改，请重新选择模板",
         );
+        if (recipe.cameraMode === undefined) delete c.cameraMode;
+      }
       domain.ensure(
         c.leadSceneId === (draft.config.leadSceneId || ""),
         "开场镜头改变后，请重新生成文案",
@@ -732,16 +757,74 @@ class PanoramaWorkflow {
           ),
         "语言或文案模板改变后，请重新生成分段文案",
       );
+      let scenes = draft.scenes;
+      if (input.scenes !== undefined) {
+        domain.ensure(
+          Array.isArray(input.scenes) &&
+            input.scenes.length === draft.scenes.length &&
+            input.scenes.every(
+              (scene, index) =>
+                scene?.id === draft.scenes[index].id &&
+                ["asset", "kind", "room", "description"].every(
+                  (key) =>
+                    scene[key] === undefined ||
+                    scene[key] === draft.scenes[index][key],
+                ),
+            ),
+          "审核时只能调整镜头角度和方向，不能替换或重排房源素材",
+        );
+        for (const [index, scene] of input.scenes.entries()) {
+          if (scene.spatial === undefined) continue;
+          const original = draft.scenes[index].spatial;
+          domain.ensure(
+            original &&
+              scene.spatial &&
+              ["workId", "panoIndex", "targets"].every(
+                (key) =>
+                  domain.hash(scene.spatial[key] ?? null) ===
+                  domain.hash(original[key] ?? null),
+              ),
+            "审核时不能替换 VR 空间或原始拍摄点",
+          );
+        }
+        scenes = this.scenes(
+          owner,
+          draft.scenes.map((scene, index) => ({
+            ...scene,
+            yaw: input.scenes[index].yaw,
+            direction:
+              input.scenes[index].direction === undefined
+                ? scene.direction
+                : input.scenes[index].direction,
+            ...(scene.spatial
+              ? {
+                  spatial: {
+                    ...scene.spatial,
+                    targetPanoIndex:
+                      input.scenes[index].spatial?.targetPanoIndex ??
+                      scene.spatial.targetPanoIndex,
+                  },
+                }
+              : {}),
+          })),
+        );
+      }
       const previous = {
         segments: draft.segments,
+        scenes: draft.scenes,
         config: draft.config,
         revision: draft.revision,
       };
       draft.segments = domain.validateSegments(input.segments, draft.segments);
+      draft.scenes = scenes;
       draft.config = c;
       draft.revision++;
       try {
-        this.persist(owner);
+        const item = state.production?.items.find(
+          (row) => row.draftId === draft.id,
+        );
+        if (item) this.queue.update(owner, item, { config: c });
+        else this.persist(owner);
       } catch (error) {
         Object.assign(draft, previous);
         throw error;
@@ -869,6 +952,13 @@ class PanoramaWorkflow {
     preparationSignal,
   ) {
     const state = this.store(owner);
+    const overrides = domain.renderOverrides(
+      item
+        ? Object.fromEntries(
+            domain.renderOverrideKeys.map((key) => [key, item.config[key]]),
+          )
+        : input.renderOverrides,
+    );
     const controller = new AbortController();
     this.previews.add(controller);
     const signal = preparationSignal
@@ -901,11 +991,19 @@ class PanoramaWorkflow {
           "模板制作规则无效，请刷新后重试",
         );
       }
+      const resolvedConfig = {
+        ...input.config,
+        ...(templateSnapshot?.production.config || {}),
+        ...overrides,
+      };
+      // Omitted cameraMode in a published snapshot still means panorama.
+      if (
+        templateSnapshot &&
+        templateSnapshot.production.config.cameraMode === undefined
+      )
+        delete resolvedConfig.cameraMode;
       const c = domain.config(
-        {
-          ...input.config,
-          ...(templateSnapshot?.production.config || {}),
-        },
+        resolvedConfig,
         templateSnapshot ? [templateSnapshot] : state.templates,
       );
       if (preparing && property.id === "panorama-cc0-sample") {
@@ -957,6 +1055,10 @@ class PanoramaWorkflow {
                 input.sceneIds,
               )
           : input.scenes,
+      );
+      domain.ensure(
+        c.cameraMode !== "spatial" || scenes.every((scene) => scene.spatial),
+        "空间走动带看需要完整 VR 空间，请先在房源素材中导入 VR 链接",
       );
       if (preparing) {
         c.materialMode = "panorama";
@@ -1074,6 +1176,11 @@ class PanoramaWorkflow {
     }
   }
   async preflight(draft, owner, reviewOnly = false, checks = {}) {
+    domain.ensure(
+      draft.config.cameraMode !== "spatial" ||
+        draft.scenes.every((scene) => scene.spatial),
+      "空间走动带看需要完整 VR 空间，请先导入 VR 链接",
+    );
     if (owner) {
       this.scenes(owner, draft.scenes);
       for (const scene of draft.scenes) {
@@ -1085,6 +1192,11 @@ class PanoramaWorkflow {
           "制作素材已改变，请重新导入并审核",
         );
       }
+      if (draft.config.cameraMode === "spatial")
+        await spatialRender.verifyWorks(
+          draft.scenes.map((scene) => ({ scene })),
+          this.directory(owner),
+        );
     }
     domain.ensure(
       reviewOnly || this.active.size === 0,
@@ -1327,6 +1439,32 @@ class PanoramaWorkflow {
         );
       }
       update("render", 40);
+      let spatialClips;
+      if (job.config.cameraMode === "spatial") {
+        const runs = media.spatialRuns(
+          job,
+          audio,
+          Boolean(
+            openingFile || (!job.config.openingPhoto && job.config.openingClip),
+          ),
+        );
+        const rendered = await spatialRender.renderRuns(
+          runs,
+          dir,
+          job.config,
+          signal,
+          (fraction) => update("render", 40 + fraction * 40),
+        );
+        spatialClips = [];
+        for (const [index, run] of runs.entries())
+          for (const segment of run.segments)
+            spatialClips[segment.index] = {
+              ...rendered[index],
+              offsetFrames: segment.offsetFrames,
+              frames: segment.frames,
+            };
+      }
+      const renderStart = spatialClips ? 80 : 40;
       let last = 0;
       const result = await media.render(
         job,
@@ -1337,10 +1475,15 @@ class PanoramaWorkflow {
         (index, fraction) => {
           if (Date.now() - last > 1000) {
             last = Date.now();
-            update("render", 40 + ((index + fraction) / audio.length) * 58);
+            update(
+              "render",
+              renderStart +
+                ((index + fraction) / audio.length) * (98 - renderStart),
+            );
           }
         },
         openingFile,
+        spatialClips,
       );
       signal.throwIfAborted();
       Object.assign(job, result, {

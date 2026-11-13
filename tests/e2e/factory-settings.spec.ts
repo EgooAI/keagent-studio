@@ -37,6 +37,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
           id: "user-property",
           title: "本人房源联调测试",
           sample: false,
+          details: { vrUrl: "https://realsee.cn/example" },
         },
       ];
       if (miniMax) {
@@ -73,6 +74,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
         workspace,
         catalog,
         aiConfigured: false,
+        spatialImported: false,
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
         ],
@@ -140,7 +142,18 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 templates: [],
                 imageTasks: [],
               };
-            if (method === "panorama.source-restore") return { scenes: [] };
+            if (method === "panorama.source-restore")
+              return {
+                scenes: state.spatialImported
+                  ? [
+                      {
+                        id: "vr-0",
+                        room: "VR 客厅",
+                        url: "/media/interior-1.jpg",
+                      },
+                    ]
+                  : [],
+              };
             state.calls.push({ method, input: args[0] });
             if (method === "beikeCli.status")
               return {
@@ -149,6 +162,10 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 reason: "contract_unverified",
               };
             const input = args[0] || {};
+            if (method === "panorama.property-vr-import") {
+              state.spatialImported = true;
+              return { count: 1 };
+            }
             if (method === "panorama.opening-clip-import") {
               state.openingClip = {
                 id: "a".repeat(64),
@@ -279,6 +296,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 ];
                 const config = {
                   ...t.production.config,
+                  ...input.renderOverrides,
                   voice: state.workspace.profile.defaults.voiceId,
                   openingPhoto: t.production.opening
                     ? input.openingPhoto
@@ -293,12 +311,26 @@ async function fixture(page: Page, large = false, miniMax = false) {
                   property: p,
                   revision: 1,
                   config,
+                  templateSnapshot: structuredClone(t),
                   scenes: miniMax
                     ? [
                         {
                           id: "room-1",
                           room: "客厅",
+                          yaw: 0,
+                          direction: 1,
                           url: "/media/interior-1.jpg",
+                          ...(config.cameraMode === "spatial" && {
+                            spatial: {
+                              workId: "fixture-work",
+                              panoIndex: 0,
+                              targetPanoIndex: 1,
+                              targets: [
+                                { index: 1, label: "餐厅" },
+                                { index: 2, label: "走廊" },
+                              ],
+                            },
+                          }),
                         },
                       ]
                     : [],
@@ -368,8 +400,11 @@ async function fixture(page: Page, large = false, miniMax = false) {
               row.draft = {
                 ...row.draft,
                 revision: row.revision,
+                config: input.config,
                 segments: input.segments,
+                scenes: input.scenes || row.draft.scenes,
               };
+              row.config = row.draft.config;
               return row.draft;
             }
             throw new Error("Unexpected fixture method " + method);
@@ -386,6 +421,17 @@ async function choose(page: Page, label: string, option: string) {
   await page
     .locator(".ant-select-dropdown")
     .getByText(option, { exact: true })
+    .click();
+}
+
+async function selectTemplates(page: Page, names: string[]) {
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  for (const name of names)
+    await page
+      .getByRole("checkbox", { name: "选择" + name, exact: true })
+      .check();
+  await page
+    .getByRole("button", { name: `确认选择（${names.length}）`, exact: true })
     .click();
 }
 
@@ -513,7 +559,9 @@ test("素材不足或读取失败时不能确认选图", async ({ page }) => {
   ).toBeDisabled();
 });
 
-test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async ({ page }) => {
+test("MiniMax 模板要求经纪人授权，审核页可更换地点图和镜头角度", async ({
+  page,
+}) => {
   await fixture(page, false, true);
   await page.goto("/#/settings/appearance");
   await expect(page.getByRole("heading", { name: "形象与背景" })).toBeVisible();
@@ -582,6 +630,15 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
   await expect(
     page.getByRole("textbox", { name: "1 · 客厅", exact: true }),
   ).toHaveCount(1);
+  const angle = page.getByRole("spinbutton", { name: "1 · 客厅镜头起始角度" });
+  const save = page.getByRole("button", { name: "保存修改", exact: true });
+  await expect(save).toBeDisabled();
+  await angle.fill("150");
+  await expect(save).toBeEnabled();
+  await angle.fill("0");
+  await expect(save).toBeDisabled();
+  await angle.fill("150");
+  await choose(page, "1 · 客厅镜头方向", "向左");
   await page
     .getByRole("textbox", { name: "开场介绍", exact: true })
     .fill(
@@ -597,6 +654,7 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
   await expect(
     page.getByRole("img", { name: "开场地点图", exact: true }),
   ).toHaveAttribute("src", /hotel_room/);
+  await expect(angle).toHaveValue("150");
   const calls = await page.evaluate(
     () => (window as any).factorySettingsTest.calls,
   );
@@ -608,6 +666,11 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
     openingAuthorized: true,
     openingRecipe: true,
   });
+  expect(
+    calls.find((call: any) => call.method === "panorama.save").input.scenes,
+  ).toEqual([
+    expect.objectContaining({ id: "room-1", yaw: 150, direction: -1 }),
+  ]);
   expect(
     calls.find((call: any) => call.method === "panorama.factory-create").input
       .openingClip,
@@ -622,6 +685,302 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
   });
 });
 
+test("短视频带看审核可单独保存两行开场封面标题", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择短视频带看 · 1.0.0", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await chooseImages(page);
+  await page.getByRole("button", { name: "生成 1 条文案" }).click();
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  const title = page.getByRole("textbox", {
+    name: "开场／封面标题",
+    exact: true,
+  });
+  const save = page.getByRole("button", { name: "保存修改", exact: true });
+  await expect(save).toBeDisabled();
+  const value = "崇文门西大街\n南北通透 · 低楼层";
+  await title.fill(value);
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(save).toBeDisabled();
+  await expect(title).toHaveValue(value);
+  const input = await page.evaluate(
+    () =>
+      (window as any).factorySettingsTest.calls.find(
+        (call: any) => call.method === "panorama.save",
+      ).input,
+  );
+  expect(input.config.coverTitle).toBe(value);
+  expect(input.segments[0].text).toBe("请确认这条房源文案。");
+});
+
+test("制作参数默认跟随模板，清空或越界不能生成，恢复后省略覆盖参数", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await selectTemplates(page, ["短视频带看 · 1.1.0"]);
+  await chooseImages(page);
+  const speed = page.getByRole("spinbutton", {
+    name: "批次镜头速度",
+    exact: true,
+  });
+  const rate = page.getByRole("spinbutton", {
+    name: "批次配音语速",
+    exact: true,
+  });
+  const sweep = page.getByRole("spinbutton", {
+    name: "批次最大转角",
+    exact: true,
+  });
+  const create = page.getByRole("button", {
+    name: "生成 1 条文案",
+    exact: true,
+  });
+  await expect(speed).toHaveValue("36");
+  await expect(rate).toHaveValue("1.1");
+  await expect(sweep).toHaveValue("180");
+  await speed.fill("46");
+  await rate.focus();
+  await expect(speed).toHaveValue("46");
+  await expect(create).toBeDisabled();
+  await speed.fill("");
+  await expect(create).toBeDisabled();
+  await page.getByRole("button", { name: "恢复模板值", exact: true }).click();
+  await expect(speed).toHaveValue("36");
+  await expect(create).toBeEnabled();
+  await page.screenshot({ path: test.info().outputPath("batch-pacing.png") });
+  await create.click();
+  const state = await page.evaluate(() => (window as any).factorySettingsTest);
+  expect(
+    state.calls.find((call: any) => call.method === "panorama.factory-create")
+      .input,
+  ).not.toHaveProperty("renderOverrides");
+  expect(state.rows[0].draft.config).toMatchObject({
+    speed: 36,
+    rate: 1.1,
+    maxSweep: 180,
+  });
+});
+
+test("批次只覆盖改过的制作参数，多模板仍保留各自默认值", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await selectTemplates(page, ["标准房源带看 · 1.0.0", "短视频带看 · 1.1.0"]);
+  await expect(
+    page.getByText(
+      "自定义值用于本批所有模板；未修改的项分别沿用各模板默认值。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("spinbutton", { name: "批次镜头速度", exact: true }),
+  ).toHaveValue("");
+  await page
+    .getByRole("spinbutton", { name: "批次配音语速", exact: true })
+    .fill("1.3");
+  await page.getByRole("tab", { name: "制作任务", exact: true }).click();
+  await page.getByRole("tab", { name: "新建视频", exact: true }).click();
+  await expect(
+    page.getByRole("spinbutton", { name: "批次配音语速", exact: true }),
+  ).toHaveValue("1.3");
+  await chooseImages(page);
+  await page
+    .getByRole("button", { name: "生成 2 条文案", exact: true })
+    .click();
+  const state = await page.evaluate(() => (window as any).factorySettingsTest);
+  expect(
+    state.calls.find((call: any) => call.method === "panorama.factory-create")
+      .input.renderOverrides,
+  ).toEqual({ rate: 1.3 });
+  expect(
+    state.rows.map((row: any) => ({
+      speed: row.draft.config.speed,
+      rate: row.draft.config.rate,
+      maxSweep: row.draft.config.maxSweep,
+    })),
+  ).toEqual([
+    { speed: 4, rate: 1.3, maxSweep: 100 },
+    { speed: 36, rate: 1.3, maxSweep: 180 },
+  ]);
+  expect(
+    state.rows.map(
+      (row: any) => row.draft.templateSnapshot.production.config.rate,
+    ),
+  ).toEqual([1, 1.1]);
+});
+
+test("审核制作参数支持保存、离开提醒、恢复模板与确认持久化", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await selectTemplates(page, ["短视频带看 · 1.1.0"]);
+  await page
+    .getByRole("spinbutton", { name: "批次镜头速度", exact: true })
+    .fill("20");
+  await page
+    .getByRole("spinbutton", { name: "批次配音语速", exact: true })
+    .fill("1.4");
+  await page
+    .getByRole("spinbutton", { name: "批次最大转角", exact: true })
+    .fill("120");
+  await chooseImages(page);
+  await page
+    .getByRole("button", { name: "生成 1 条文案", exact: true })
+    .click();
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  const speed = page.getByRole("spinbutton", {
+    name: "任务镜头速度",
+    exact: true,
+  });
+  const rate = page.getByRole("spinbutton", {
+    name: "任务配音语速",
+    exact: true,
+  });
+  const sweep = page.getByRole("spinbutton", {
+    name: "任务最大转角",
+    exact: true,
+  });
+  const save = page.getByRole("button", { name: "保存修改", exact: true });
+  const confirm = page.getByRole("button", {
+    name: "确认并下一条",
+    exact: true,
+  });
+  await expect(speed).toHaveValue("20");
+  await expect(rate).toHaveValue("1.4");
+  await expect(sweep).toHaveValue("120");
+  await expect(save).toBeDisabled();
+  await rate.fill("");
+  await expect(save).toBeDisabled();
+  await expect(confirm).toBeDisabled();
+  await rate.fill("1.5");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "任务修改尚未保存", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "返回编辑", exact: true }).click();
+  await expect(rate).toHaveValue("1.5");
+  await save.click();
+  await expect(save).toBeDisabled();
+  await expect(rate).toHaveValue("1.5");
+  await page.getByRole("button", { name: "恢复模板值", exact: true }).click();
+  await expect(speed).toHaveValue("36");
+  await expect(rate).toHaveValue("1.1");
+  await expect(sweep).toHaveValue("180");
+  await page.screenshot({
+    path: test.info().outputPath("task-pacing-review.png"),
+  });
+  await confirm.click();
+  await page.getByRole("button", { name: "详情", exact: true }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "当前任务详情", exact: true })
+      .getByLabel("任务制作参数", { exact: true }),
+  ).toHaveText("配音语速 1.1 倍 · 镜头速度 36°/秒 · 最大转角 180°");
+  const state = await page.evaluate(() => (window as any).factorySettingsTest);
+  expect(
+    state.calls.find((call: any) => call.method === "panorama.factory-create")
+      .input.renderOverrides,
+  ).toEqual({ speed: 20, rate: 1.4, maxSweep: 120 });
+  const saves = state.calls.filter(
+    (call: any) => call.method === "panorama.save",
+  );
+  expect(saves[0].input.config).toMatchObject({
+    speed: 20,
+    rate: 1.5,
+    maxSweep: 120,
+  });
+  expect(saves[1].input.config).toMatchObject({
+    speed: 36,
+    rate: 1.1,
+    maxSweep: 180,
+  });
+  expect(
+    state.calls.find((call: any) => call.method === "panorama.factory-act")
+      .input,
+  ).toMatchObject({
+    action: "confirm",
+    rows: [{ id: "review-0", revision: 3 }],
+  });
+  expect(state.rows[0].draft.templateSnapshot.production.config).toMatchObject({
+    speed: 36,
+    rate: 1.1,
+    maxSweep: 180,
+  });
+});
+
+test("空间走动审核可单独保存目标拍摄点并隐藏旋转方向", async ({ page }) => {
+  await fixture(page, false, true);
+  await page.goto("/#/settings/appearance");
+  await page
+    .getByRole("button", { name: "上传经纪人照片", exact: true })
+    .click();
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "选择空间走动带看 · 经纪人开场 · 1.0.0",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await expect(
+    page.getByRole("spinbutton", { name: "批次镜头速度", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("spinbutton", { name: "批次最大转角", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("spinbutton", { name: "批次配音语速", exact: true }),
+  ).toHaveValue("1.1");
+  await page
+    .getByRole("checkbox", {
+      name: "我确认已获得经纪人照片和开场素材的使用授权",
+    })
+    .check();
+  await chooseImages(page);
+  await page.getByRole("button", { name: "生成 1 条文案" }).click();
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  await expect(
+    page.getByRole("spinbutton", { name: "任务镜头速度", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("spinbutton", { name: "任务最大转角", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("spinbutton", { name: "任务配音语速", exact: true }),
+  ).toHaveValue("1.1");
+  await expect(
+    page.getByRole("combobox", { name: "1 · 客厅镜头方向" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("spinbutton", { name: "1 · 客厅镜头起始角度" }),
+  ).toBeVisible();
+  const save = page.getByRole("button", { name: "保存修改", exact: true });
+  await expect(save).toBeDisabled();
+  await choose(page, "1 · 客厅走向拍摄点", "走廊");
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(save).toBeDisabled();
+  const input = await page.evaluate(
+    () =>
+      (window as any).factorySettingsTest.calls.find(
+        (call: any) => call.method === "panorama.save",
+      ).input,
+  );
+  expect(input.scenes[0]).toMatchObject({
+    yaw: 0,
+    direction: 1,
+    spatial: { workId: "fixture-work", panoIndex: 0, targetPanoIndex: 2 },
+  });
+  expect(input.config.cameraMode).toBe("spatial");
+});
+
 test("内置房源没有核验日期时仍可查看素材", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/properties/panorama-cc0-sample");
@@ -630,7 +989,7 @@ test("内置房源没有核验日期时仍可查看素材", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
 });
 
-test("房源制作素材只提供 VR 全景和文案参考图入口", async ({ page }) => {
+test("房源制作素材可导入 VR 空间并刷新图库", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/properties/user-property");
   await page.getByRole("tab", { name: "制作素材" }).click();
@@ -644,6 +1003,17 @@ test("房源制作素材只提供 VR 全景和文案参考图入口", async ({ p
     0,
   );
   await expect(page.getByText(/AI 扩图|生成 AI 扩图/)).toHaveCount(0);
+  await page.getByRole("button", { name: "导入 VR 空间", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "房源图片 1", exact: true }),
+  ).toHaveAttribute("src", "/media/interior-1.jpg");
+  await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
+  const request = await page.evaluate(() =>
+    (window as any).factorySettingsTest.calls.find(
+      (call: any) => call.method === "panorama.property-vr-import",
+    ),
+  );
+  expect(request.input).toEqual({ propertyId: "user-property" });
 });
 
 test("正式房源导入显示贝壳联调状态并可切换到手动添加", async ({ page }) => {

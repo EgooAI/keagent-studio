@@ -49,6 +49,7 @@ import {
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
 import { request as productionRequest } from "../components/panoramaClient";
 import { PropertyForm } from "../components/PropertyForm";
+import { DeletePropertyButton } from "../components/DeletePropertyButton";
 import type { PanoramaScene } from "@keagent/shared-types";
 
 export default function PropertiesPage() {
@@ -70,7 +71,8 @@ export default function PropertiesPage() {
       .filter((p) => p.status === "published")
       .map(
         (p) => data.tasks.find((t) => t.id === p.productionTaskId)?.propertyId,
-      ),
+      )
+      .filter((id) => data.properties.some((property) => property.id === id)),
   );
   const filtered = data.properties.filter(
     (p) =>
@@ -229,6 +231,7 @@ export default function PropertiesPage() {
                       ? "素材已就绪"
                       : "待补充素材"}
                   </span>
+                  <DeletePropertyButton property={property} compact />
                   <Link
                     to={`/studio/create?propertyId=${property.id}`}
                     className="text-link"
@@ -279,7 +282,12 @@ export default function PropertiesPage() {
               {
                 title: "操作",
                 render: (_, p: Property) => (
-                  <Link to={`/studio/create?propertyId=${p.id}`}>创建视频</Link>
+                  <>
+                    <Link to={`/studio/create?propertyId=${p.id}`}>
+                      创建视频
+                    </Link>
+                    <DeletePropertyButton property={p} compact />
+                  </>
                 ),
               },
             ]}
@@ -497,12 +505,12 @@ export function PropertyDetailPage() {
       }),
   });
   const property = data?.properties.find((p) => p.id === propertyId);
-  const addMaterial = async (kind: "panorama" | "reference") => {
+  const addMaterial = async (kind: "panorama" | "reference" | "spatial") => {
     setImporting(true);
     try {
       const value = await productionRequest<{ count: number }>(
-        "property-import",
-        { propertyId, kind },
+        kind === "spatial" ? "property-vr-import" : "property-import",
+        kind === "spatial" ? { propertyId } : { propertyId, kind },
       );
       await Promise.all([
         material.refetch(),
@@ -544,6 +552,10 @@ export function PropertyDetailPage() {
         description={`${property.city} · ${property.district} · 房源号 ${property.propertyNumber}`}
         actions={
           <>
+            <DeletePropertyButton
+              property={property}
+              onDeleted={() => navigate("/properties", { replace: true })}
+            />
             <Button disabled={property.sample} onClick={() => setEditing(true)}>
               {property.sample ? "内置测试资料" : "编辑房源"}
             </Button>
@@ -695,28 +707,44 @@ export function PropertyDetailPage() {
                       内置素材已就绪，可直接创建视频任务。
                     </p>
                   ) : window.desktop ? (
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                      <Button
-                        loading={importing}
-                        onClick={() => void addMaterial("panorama")}
+                    <>
+                      <p className="muted">
+                        导入 VR 空间需先在房源资料填写含三维模型的 Realsee
+                        看房链接。
+                        导入会更新当前素材列表，已创建任务的素材和成片仍保留。
+                      </p>
+                      <div
+                        style={{ display: "flex", gap: 12, flexWrap: "wrap" }}
                       >
-                        添加 VR 全景图
-                      </Button>
-                      <Button
-                        loading={importing}
-                        onClick={() => void addMaterial("reference")}
-                      >
-                        添加户型图／参考图
-                      </Button>
-                      <Button
-                        type="primary"
-                        onClick={() =>
-                          navigate(`/studio?propertyId=${property.id}`)
-                        }
-                      >
-                        制作视频
-                      </Button>
-                    </div>
+                        <Button
+                          loading={importing}
+                          disabled={!details?.vrUrl}
+                          onClick={() => void addMaterial("spatial")}
+                        >
+                          导入 VR 空间
+                        </Button>
+                        <Button
+                          loading={importing}
+                          onClick={() => void addMaterial("panorama")}
+                        >
+                          添加 VR 全景图
+                        </Button>
+                        <Button
+                          loading={importing}
+                          onClick={() => void addMaterial("reference")}
+                        >
+                          添加户型图／参考图
+                        </Button>
+                        <Button
+                          type="primary"
+                          onClick={() =>
+                            navigate(`/studio?propertyId=${property.id}`)
+                          }
+                        >
+                          制作视频
+                        </Button>
+                      </div>
+                    </>
                   ) : isLive ? (
                     <p className="muted">
                       请在桌面端添加 VR 全景原图和户型参考图。

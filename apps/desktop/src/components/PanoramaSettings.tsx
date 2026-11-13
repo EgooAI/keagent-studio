@@ -224,17 +224,37 @@ export function PanoramaSettings({
             label: "镜头、字幕与输出",
             children: (
               <div className="panorama-form-grid">
-                <Form.Item label="全景旋转速度">
+                {config.cameraMode === "spatial" && (
+                  <p className="muted">
+                    空间走动沿真实拍摄点移动，镜头时长跟随配音。
+                  </p>
+                )}
+                <Form.Item
+                  hidden={config.cameraMode === "spatial"}
+                  label={
+                    config.design === "short-tour"
+                      ? "全景旋转基准速度"
+                      : "全景旋转速度"
+                  }
+                  extra={
+                    config.design === "short-tour"
+                      ? "同图连续镜头受最大转角限制，较长镜头会降低实际速度。"
+                      : undefined
+                  }
+                >
                   <InputNumber
                     min={0.5}
-                    max={12}
+                    max={45}
                     step={0.5}
                     value={config.speed}
                     onChange={(speed) => patch({ speed: speed ?? 4 })}
                     addonAfter="°/秒"
                   />
                 </Form.Item>
-                <Form.Item label="旋转方向">
+                <Form.Item
+                  label="旋转方向"
+                  hidden={config.cameraMode === "spatial"}
+                >
                   <Select
                     value={config.direction}
                     options={[
@@ -244,7 +264,14 @@ export function PanoramaSettings({
                     onChange={(direction) => patch({ direction })}
                   />
                 </Form.Item>
-                <Form.Item label="单段最大转角">
+                <Form.Item
+                  hidden={config.cameraMode === "spatial"}
+                  label={
+                    config.design === "short-tour"
+                      ? "同图连续镜头最大转角"
+                      : "单段最大转角"
+                  }
+                >
                   <InputNumber
                     min={1}
                     max={180}

@@ -67,7 +67,7 @@ test("手动新增和编辑使用同一份完整房源资料", async ({ page }) 
   await expect(page.getByText("中层／共 18 层")).toBeVisible();
   await expect(page.getByText("双阳台", { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "制作素材", exact: true }).click();
-  await expect(page.getByText("0 张制作图片")).toBeVisible();
+  await expect(page.getByText("0 张 VR 全景图")).toBeVisible();
   await page.getByRole("tab", { name: "房源资料", exact: true }).click();
   await page.getByRole("button", { name: "编辑房源" }).click();
   const edit = page.getByRole("dialog", { name: "编辑房源资料" });

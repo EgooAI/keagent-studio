@@ -5,6 +5,7 @@ const {
   hash,
   validateSegments,
   config,
+  renderOverrides,
 } = require("../panorama/domain.cjs");
 
 const MAX_BATCH = 200;
@@ -390,6 +391,7 @@ class ProductionQueue {
 
   async create({ owner, assertCurrent }, input) {
     const data = this.data(owner);
+    const overrides = renderOverrides(input.renderOverrides);
     ensure(
       validID(input.requestId) &&
         Array.isArray(input.pairs) &&
@@ -435,6 +437,7 @@ class ProductionQueue {
       ...(input.openingPhoto ? [input.openingPhoto] : []),
       ...(input.openingBackground ? [input.openingBackground] : []),
       ...(input.openingRecipe === true ? ["opening-recipe"] : []),
+      ...(overrides ? [{ renderOverrides: overrides }] : []),
     ]);
     const existing = () => {
       const previous = data.batches.find(
@@ -653,6 +656,7 @@ class ProductionQueue {
         {
           ...caps.defaultConfig,
           ...recipe,
+          ...overrides,
           templateId: template.id,
           scriptProvider: sample ? "template" : "ai",
           ttsProvider:
@@ -696,6 +700,11 @@ class ProductionQueue {
           );
         }
         scenes = selectedMaterials.get(property.id);
+        ensure(
+          resolved.cameraMode !== "spatial" ||
+            scenes.every((scene) => scene.spatial),
+          "空间走动带看需要完整 VR 空间，请先在房源素材中导入 VR 链接",
+        );
       } catch (error) {
         assertCurrent();
         issue(reason(error));

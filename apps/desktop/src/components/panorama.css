@@ -237,6 +237,31 @@
 .template-preview.portrait .template-preview-caption.large {
   font-size: 5.6cqw;
 }
+.template-preview.short-tour .template-preview-card {
+  top: 13%;
+  text-align: center;
+  text-shadow:
+    -1px -1px #111,
+    1px 1px #111,
+    1px -1px #111,
+    -1px 1px #111;
+}
+.template-preview.short-tour .template-preview-card strong {
+  margin-bottom: 8px;
+  white-space: pre-line;
+}
+.template-preview.short-tour .template-preview-accent {
+  display: none;
+}
+.template-preview.short-tour .template-preview-caption {
+  bottom: 28%;
+  font-weight: 700;
+  text-shadow:
+    -1px -1px #111,
+    1px 1px #111,
+    1px -1px #111,
+    -1px 1px #111;
+}
 .template-settings .panorama-form-grid {
   grid-template-columns: 1fr;
 }
