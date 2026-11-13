@@ -96,7 +96,10 @@ function config(input, personalTemplates = []) {
     "文案模板不存在",
   );
   ensure(["zh-CN", "en-US"].includes(c.language), "请选择支持的语言");
-  ensure(["panorama", "expand"].includes(c.materialMode), "素材制作方式无效");
+  ensure(
+    c.materialMode === "panorama",
+    "视频制作仅支持原始 VR 全景图，请重新选择房源生成文案",
+  );
   ensure(["template", "ai"].includes(c.scriptProvider), "文案生成方式无效");
   ensure(
     ["system", "volcengine", "personal"].includes(c.ttsProvider),

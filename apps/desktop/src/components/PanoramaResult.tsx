@@ -173,7 +173,7 @@ export function PanoramaResult({
                           ? "MiniMax 开场"
                           : "开场片段"
                         : job.config.materialMode === "expand"
-                          ? "扩图平移"
+                          ? "历史照片素材"
                           : "—",
                 },
               ]}

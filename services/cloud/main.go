@@ -162,9 +162,6 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := int64(1 << 20)
-	if r.URL.Path == "/v1/panorama/image-submit" {
-		limit = 15 << 20
-	}
 	if r.URL.Path == "/v1/panorama/script-vision" || r.URL.Path == "/v1/panorama/opening-submit" {
 		limit = 16 << 20
 	}
@@ -1076,9 +1073,6 @@ func main() {
 	}
 	if err = seedVideoTemplates(context.Background(), db); err != nil {
 		log.Fatal("video template migration failed")
-	}
-	if _, err = db.Exec(productionImageSchema); err != nil {
-		log.Fatal("production image migration failed")
 	}
 	if _, err = db.Exec(voiceSchema); err != nil {
 		log.Fatal("voice migration failed")

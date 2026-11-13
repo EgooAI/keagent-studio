@@ -129,7 +129,6 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 managedVoices: true,
                 volcTts: true,
                 ai: state.aiConfigured,
-                imageExpansion: true,
                 beike: false,
                 voices: [],
               };
@@ -238,6 +237,23 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 nextReviewId: rows.find(
                   (row) => row.phase === "review" && row.id !== input.afterId,
                 )?.id,
+              };
+            }
+            if (method === "panorama.factory-materials") {
+              if ((state as any).materialError)
+                throw new Error("素材读取失败，请重试");
+              return {
+                scenes: Array.from(
+                  { length: (state as any).materialCount ?? 2 },
+                  (_, i) => ({
+                    id: `${input.propertyId}-scene-${i + 1}`,
+                    room: `空间 ${i + 1}`,
+                    url:
+                      i % 2
+                        ? "/media/panoramas/hotel_room.jpg"
+                        : "/media/panoramas/lebombo.jpg",
+                  }),
+                ),
               };
             }
             if (method === "panorama.factory-create") {
@@ -373,6 +389,130 @@ async function choose(page: Page, label: string, option: string) {
     .click();
 }
 
+async function chooseImages(page: Page, count = 1) {
+  await page.getByRole("button", { name: "选择视频图片", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "选择视频图片",
+    exact: true,
+  });
+  for (let i = 0; i < count; i++) {
+    await dialog.getByRole("button", { name: "选择全部", exact: true }).click();
+    if (i < count - 1)
+      await dialog.getByRole("button", { name: "下一套房源" }).click();
+  }
+  await dialog.getByRole("button", { name: "确认选图", exact: true }).click();
+}
+
+test("选图限制为 2–7 张，支持预览、重选、失败重试和窄窗口", async ({
+  page,
+}, testInfo) => {
+  await fixture(page);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await page.evaluate(() => {
+    (window as any).factorySettingsTest.materialCount = 14;
+  });
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择标准房源带看 · 1.0.0", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  const create = page.getByRole("button", { name: "生成 1 条文案" });
+  await expect(create).toBeDisabled();
+  await page.getByRole("button", { name: "选择视频图片", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "选择视频图片",
+    exact: true,
+  });
+  const confirm = dialog.getByRole("button", { name: "确认选图", exact: true });
+  await expect(dialog.getByRole("checkbox")).toHaveCount(14);
+  await expect(
+    dialog.getByRole("button", { name: "选择全部", exact: true }),
+  ).toBeDisabled();
+  await expect(confirm).toBeDisabled();
+  await dialog
+    .getByRole("checkbox", { name: "1. 空间 1", exact: true })
+    .check();
+  await expect(confirm).toBeDisabled();
+  for (let i = 2; i <= 7; i++)
+    await dialog
+      .getByRole("checkbox", { name: `${i}. 空间 ${i}`, exact: true })
+      .check();
+  await expect(confirm).toBeEnabled();
+  await expect(
+    dialog.getByRole("checkbox", { name: "8. 空间 8", exact: true }),
+  ).toBeDisabled();
+  await dialog.getByRole("img", { name: "空间 1", exact: true }).click();
+  await expect(page.locator(".ant-image-preview")).toBeVisible();
+  await page.keyboard.press("Escape");
+  for (const width of [1440, 600]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path: testInfo.outputPath(`image-selection-${width}.png`),
+      animations: "disabled",
+    });
+  }
+  await confirm.click();
+  await expect(create).toBeEnabled();
+  await page.getByRole("button", { name: "选择视频图片", exact: true }).click();
+  await expect(dialog.getByRole("checkbox", { checked: true })).toHaveCount(7);
+  await dialog
+    .getByRole("checkbox", { name: "1. 空间 1", exact: true })
+    .uncheck();
+  await dialog
+    .getByRole("checkbox", { name: "8. 空间 8", exact: true })
+    .check();
+  await confirm.click();
+  await create.click();
+  const input = await page.evaluate(
+    () =>
+      (window as any).factorySettingsTest.calls.find(
+        (c: any) => c.method === "panorama.factory-create",
+      ).input,
+  );
+  expect(input.sceneIdsByProperty["user-property"]).toEqual(
+    Array.from({ length: 7 }, (_, i) => `user-property-scene-${i + 2}`),
+  );
+});
+
+test("素材不足或读取失败时不能确认选图", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择标准房源带看 · 1.0.0", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await page.evaluate(() => {
+    Object.assign((window as any).factorySettingsTest, {
+      materialError: true,
+      materialCount: 1,
+    });
+  });
+  await page.getByRole("button", { name: "选择视频图片", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "选择视频图片",
+    exact: true,
+  });
+  await expect(dialog.getByRole("button", { name: /重\s*试/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "确认选图" })).toBeDisabled();
+  await page.evaluate(() => {
+    (window as any).factorySettingsTest.materialError = false;
+  });
+  await dialog.getByRole("button", { name: /重\s*试/ }).click();
+  await expect(
+    dialog.getByText("至少需要 2 张全景图，请先补充素材。", { exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole("checkbox").check();
+  await expect(dialog.getByRole("button", { name: "确认选图" })).toBeDisabled();
+  await dialog.getByRole("button", { name: /取\s*消/, exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "生成 1 条文案" }),
+  ).toBeDisabled();
+});
+
 test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async ({ page }) => {
   await fixture(page, false, true);
   await page.goto("/#/settings/appearance");
@@ -423,6 +563,7 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图", async 
       name: "我确认已获得经纪人照片和开场素材的使用授权",
     })
     .check();
+  await chooseImages(page);
   await expect(create).toBeEnabled();
   await create.click();
   await expect(
@@ -489,6 +630,22 @@ test("内置房源没有核验日期时仍可查看素材", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
 });
 
+test("房源制作素材只提供 VR 全景和文案参考图入口", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/properties/user-property");
+  await page.getByRole("tab", { name: "制作素材" }).click();
+  await expect(
+    page.getByRole("button", { name: "添加 VR 全景图" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "添加户型图／参考图" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加房源照片" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/AI 扩图|生成 AI 扩图/)).toHaveCount(0);
+});
+
 test("正式房源导入显示贝壳联调状态并可切换到手动添加", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/properties?import=1");
@@ -535,6 +692,7 @@ test("新视频继续使用已保存的制作偏好", async ({ page }) => {
       page.evaluate(() => (window as any).factorySettingsTest.rows.length),
     )
     .toBe(0);
+  await chooseImages(page);
   await page.getByRole("button", { name: "生成 1 条文案" }).click();
   await page.getByRole("button", { name: "审核", exact: true }).click();
   await expect(
@@ -573,6 +731,7 @@ test("设置只展示制作服务状态，支持刷新和旧链接", async ({ pa
     page.getByRole("heading", { name: "制作服务状态", exact: true }),
   ).toBeVisible();
   const panel = page.getByRole("tabpanel", { name: "制作服务状态" });
+  await expect(panel.getByText("AI 扩图")).toHaveCount(0);
   await expect(panel.getByRole("combobox")).toHaveCount(0);
   await expect(
     panel.getByRole("cell", { name: /AI 文案.*未配置/ }),
@@ -642,6 +801,7 @@ test("批量选择跨页保留，审核弹窗支持连续处理和调整窗口",
     .getByRole("checkbox", { name: "选择标准房源带看 · 1.0.0", exact: true })
     .check();
   await templates.getByRole("button", { name: "确认选择（1）" }).click();
+  await chooseImages(page, 21);
   await page.getByRole("button", { name: "生成 21 条文案" }).click();
   await expect(
     page.getByRole("button", { name: "审核", exact: true }),

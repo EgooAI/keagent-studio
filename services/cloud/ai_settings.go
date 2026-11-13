@@ -52,7 +52,6 @@ var aiSpecs = []aiSpec{
 	{"script", "script", "多模态文案", "OpenAI 兼容接口", []aiField{{"AI_BASE_URL", "服务地址", "url"}, {"AI_MODEL", "模型名", "text"}, {"AI_API_KEY", "API Key", "secret"}}},
 	{"tts", "speech", "火山配音", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}}},
 	{"voice-clone", "speech", "声音复刻", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}, {"VOLC_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}, {"VOLC_VOICE_CLONE_RESOURCE_ID", "复刻资源编号", "text"}}},
-	{"expansion", "expansion", "百炼扩图", "阿里云百炼", []aiField{{"DASHSCOPE_BASE_URL", "服务地址", "url"}, {"DASHSCOPE_API_KEY", "API Key", "secret"}}},
 	{"beike", "beike", "贝壳取材", "贝壳开放平台", []aiField{{"BEIKE_ACCESS_TOKEN", "Access Token", "secret"}}},
 	{"opening", "opening", "MiniMax 开场", "MiniMax", []aiField{{"MINIMAX_API_KEY", "API Key", "secret"}}},
 }
@@ -90,10 +89,6 @@ func environmentAI(group string) aiValues {
 			values["VOLC_VOICE_CLONE_RESOURCE_ID"] = "seed-icl-2.0"
 		}
 		values["VOLC_VOICE_CLONE_ENABLED"] = strconv.FormatBool(values["VOLC_VOICE_CLONE_ENABLED"] == "true")
-	case "expansion":
-		if values["DASHSCOPE_BASE_URL"] == "" {
-			values["DASHSCOPE_BASE_URL"] = "https://dashscope.aliyuncs.com"
-		}
 	}
 	return values
 }
@@ -264,10 +259,6 @@ func aiConfigIssues(spec aiSpec, values aiValues) (missing []string, issues []st
 	case "voice-clone":
 		if !speechResourceID.MatchString(values["VOLC_VOICE_CLONE_RESOURCE_ID"]) {
 			issues = append(issues, "复刻资源编号格式无效")
-		}
-	case "expansion":
-		if _, err := validateDashscopeBase(values["DASHSCOPE_BASE_URL"]); err != nil {
-			issues = append(issues, err.Error())
 		}
 	}
 	return

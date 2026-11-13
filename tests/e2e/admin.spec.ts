@@ -370,7 +370,6 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     tts: "火山配音",
     opening: "MiniMax 开场",
     "voice-clone": "声音复刻",
-    expansion: "百炼扩图",
     beike: "贝壳取材",
   } satisfies Record<AdminAIService["id"], string>;
   const stamp = new Date().toISOString();

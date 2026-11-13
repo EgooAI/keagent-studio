@@ -230,7 +230,6 @@ export function PanoramaSettings({
                     max={12}
                     step={0.5}
                     value={config.speed}
-                    disabled={config.materialMode === "expand"}
                     onChange={(speed) => patch({ speed: speed ?? 4 })}
                     addonAfter="°/秒"
                   />
@@ -250,7 +249,6 @@ export function PanoramaSettings({
                     min={1}
                     max={180}
                     value={config.maxSweep}
-                    disabled={config.materialMode === "expand"}
                     onChange={(maxSweep) =>
                       patch({ maxSweep: maxSweep ?? 100 })
                     }
@@ -284,9 +282,7 @@ export function PanoramaSettings({
                   />
                 </Form.Item>
                 <p className="muted panorama-span">
-                  {config.materialMode === "expand"
-                    ? "扩图使用小幅横向运镜。"
-                    : "配音决定镜头时长。达到最大转角后镜头停留，讲解继续完整播放。"}
+                  配音决定镜头时长。达到最大转角后镜头停留，讲解继续完整播放。
                 </p>
               </div>
             ),

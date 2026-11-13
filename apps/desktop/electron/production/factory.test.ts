@@ -17,6 +17,13 @@ afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+function selectedIds(workflow: any, propertyId: string): string[] {
+  return (workflow.store(workflow.owner("a")).imports[propertyId]?.scenes || [])
+    .filter(
+      (scene: { kind?: string }) => !scene.kind || scene.kind === "panorama",
+    )
+    .map((scene: { id: string }) => scene.id);
+}
 async function fixture() {
   const parent = path.resolve("output/factory-tests");
   fs.mkdirSync(parent, { recursive: true });
@@ -45,19 +52,23 @@ async function fixture() {
   const scenes = [];
   for (const [index, room] of ["卧室", "客厅"].entries())
     scenes.push({
-      ...(await workflow.importBytes(owner, bytes(index + 1), room, "photo")),
+      ...(await workflow.importBytes(
+        owner,
+        bytes(index + 1),
+        room,
+        "panorama",
+      )),
       description: "已核实的原图说明",
     });
   workflow.store(owner).imports[property.id] = {
     property,
     scenes,
-    materialMode: "expand",
+    materialMode: "panorama",
   };
   workflow.persist(owner);
   vi.spyOn(workflow, "capabilities").mockResolvedValue({
     ffmpeg: true,
     ffprobe: true,
-    imageExpansion: true,
     voices: [{ name: "test", language: "zh-CN" }],
   });
   vi.spyOn(providers, "downloadImage").mockResolvedValue(bytes(8));
@@ -91,12 +102,6 @@ async function fixture() {
             .map((image) => image.id),
           "closing",
         ].map((id) => ({ id, text: `生成的${id}介绍` }));
-      if (method === "image-submit") return { status: "PENDING" };
-      if (method === "image-query")
-        return {
-          status: "SUCCEEDED",
-          imageUrl: "https://test.aliyuncs.com/expanded.jpg",
-        };
       throw new Error("Unexpected remote operation " + method);
     },
   );
@@ -117,6 +122,140 @@ async function fixture() {
   };
 }
 describe("simple video factory", () => {
+  it("requires 2–7 owned images and sends only the selection in original material order", async () => {
+    const { workflow, owner, property, config, scenes, bytes } =
+      await fixture();
+    for (let i = 3; i <= 9; i++)
+      scenes.push(
+        await workflow.importBytes(owner, bytes(i), `空间 ${i}`, "panorama"),
+      );
+    const ids = scenes.map((scene) => scene.id);
+    for (const sceneIds of [
+      undefined,
+      [],
+      ids.slice(0, 1),
+      ids.slice(0, 8),
+      [ids[0], ids[0]],
+      [ids[0], "other-property-scene"],
+    ]) {
+      await expect(
+        workflow.handle(
+          "a",
+          "prepare",
+          { propertyId: property.id, config, sceneIds },
+          property,
+        ),
+      ).rejects.toThrow(/2–7|不属于/);
+    }
+    expect(
+      workflow.remote.mock.calls.some(
+        (c: unknown[]) => c[0] === "script-vision",
+      ),
+    ).toBe(false);
+    for (const sceneIds of [[ids[3], ids[1]], ids.slice(0, 7).reverse()]) {
+      const draft = await workflow.handle(
+        "a",
+        "prepare",
+        { propertyId: property.id, config, sceneIds },
+        property,
+      );
+      const expected = ids.filter((id) => sceneIds.includes(id));
+      expect(draft.scenes.map((scene: { id: string }) => scene.id)).toEqual(
+        expected,
+      );
+      const vision = workflow.remote.mock.calls
+        .filter((c: unknown[]) => c[0] === "script-vision")
+        .at(-1);
+      expect(vision[1].images.map((image: { id: string }) => image.id)).toEqual(
+        expected,
+      );
+    }
+    expect(workflow.store(owner).imports[property.id].scenes).toHaveLength(9);
+  });
+  it("downloads only remote VR originals and reuses them when ordinary photos change", async () => {
+    const { workflow, owner, property, config, bytes } = await fixture();
+    delete workflow.store(owner).imports[property.id];
+    const remote = {
+      ...property,
+      panoramas: [
+        "https://p.ljcdn.com/pano.jpg",
+        "https://p.ljcdn.com/pano2.jpg",
+      ],
+      images: ["https://p.ljcdn.com/photo.jpg"],
+    };
+    providers.downloadImage.mockImplementation(async (url: string) =>
+      bytes(url.endsWith("pano2.jpg") ? 10 : 9),
+    );
+    await require("./factory.cjs").load(workflow, owner, remote, () => {});
+    const draft = await workflow.handle(
+      "a",
+      "prepare",
+      {
+        propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
+        config,
+      },
+      remote,
+    );
+    expect(draft.scenes).toHaveLength(2);
+    expect(draft.scenes[0].kind).toBe("panorama");
+    expect(providers.downloadImage).toHaveBeenCalledWith(
+      remote.panoramas[0],
+      expect.any(AbortSignal),
+    );
+    await workflow.handle(
+      "a",
+      "prepare",
+      {
+        propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
+        config,
+      },
+      { ...remote, images: ["https://p.ljcdn.com/new-photo.jpg"] },
+    );
+    expect(providers.downloadImage).toHaveBeenCalledTimes(2);
+  });
+  it("allows replacing a full legacy photo collection with VR materials without deleting history", async () => {
+    const { workflow, owner, property, bytes } = await fixture();
+    const photo = await workflow.importBytes(
+      owner,
+      bytes(6),
+      "旧照片",
+      "photo",
+    );
+    workflow.store(owner).imports[property.id].scenes = Array.from(
+      { length: 20 },
+      () => ({ ...photo }),
+    );
+    expect(workflow.withPropertyCovers("a", [property])[0].importStatus).toBe(
+      "incomplete",
+    );
+    const file = path.join(workflow.root, "全景.jpg");
+    fs.writeFileSync(file, bytes(5));
+    workflow.dialogs.open = async () => [file];
+    await expect(
+      workflow.handle("a", "property-import", { kind: "photo" }, property),
+    ).rejects.toThrow("VR 全景图");
+    expect(
+      await workflow.handle(
+        "a",
+        "property-import",
+        { kind: "panorama" },
+        property,
+      ),
+    ).toEqual({ count: 1 });
+    expect(workflow.store(owner).imports[property.id].scenes).toHaveLength(21);
+    expect(
+      (
+        await workflow.handle("a", "source-restore", {
+          propertyId: property.id,
+        })
+      ).scenes,
+    ).toHaveLength(1);
+    expect(workflow.withPropertyCovers("a", [property])[0].importStatus).toBe(
+      "ready",
+    );
+  });
   it("cancels a pending script on logout without saving a draft", async () => {
     const { workflow, owner, property, config } = await fixture();
     workflow.remote = vi.fn(
@@ -130,7 +269,11 @@ describe("simple video factory", () => {
     const pending = workflow.handle(
       "a",
       "prepare",
-      { propertyId: property.id, config },
+      {
+        propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
+        config,
+      },
       property,
     );
     await vi.waitFor(() => expect(workflow.remote).toHaveBeenCalledTimes(1));
@@ -139,41 +282,16 @@ describe("simple video factory", () => {
     expect(workflow.store(owner).drafts).toHaveLength(0);
     expect(workflow.previews.size).toBe(0);
   });
-  it("cancels image submission with the video job and does not proceed to speech", async () => {
-    const { workflow, property, config, synthesize } = await fixture();
-    const draft = await workflow.handle(
-      "a",
-      "prepare",
-      { propertyId: property.id, config },
-      property,
-    );
-    workflow.remote = vi.fn(
-      (_method: unknown, _input: unknown, signal: AbortSignal) =>
-        new Promise((_resolve, reject) =>
-          signal.addEventListener("abort", () => reject(new Error("aborted")), {
-            once: true,
-          }),
-        ),
-    );
-    const job = await workflow.handle("a", "start", {
-      id: draft.id,
-      revision: 1,
-      confirmed: true,
-    });
-    await vi.waitFor(() => expect(workflow.remote).toHaveBeenCalledTimes(1));
-    const done = workflow.active.get(job.id).promise;
-    await workflow.handle("a", "cancel", { id: job.id });
-    await done;
-    expect(job.status).toBe("canceled");
-    expect(synthesize).not.toHaveBeenCalled();
-    expect(workflow.previews.size).toBe(0);
-  });
   it("prepares one caption per original image in order, without expanding or rendering before a single confirmation", async () => {
     const { workflow, property, config, synthesize, render } = await fixture();
     const draft = await workflow.handle(
       "a",
       "prepare",
-      { propertyId: property.id, config },
+      {
+        propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
+        config,
+      },
       property,
     );
     expect(draft.confirmation).toBe("whole");
@@ -205,8 +323,7 @@ describe("simple video factory", () => {
     expect(job.confirmedAt).toBeTruthy();
     expect(
       job.scenes.every(
-        (s: { kind: string; approved: boolean }) =>
-          s.kind === "expanded" && s.approved,
+        (s: { kind: string; approved: boolean }) => s.kind === "panorama",
       ),
     ).toBe(true);
     expect(job.scenes.map((s: { room: string }) => s.room)).toEqual([
@@ -217,7 +334,7 @@ describe("simple video factory", () => {
     const count = workflow.remote.mock.calls.filter(
       (c: unknown[]) => c[0] === "image-submit",
     ).length;
-    expect(count).toBe(2);
+    expect(count).toBe(0);
     expect(
       (
         await workflow.handle("a", "start", {
@@ -233,7 +350,7 @@ describe("simple video factory", () => {
       ),
     ).toHaveLength(count);
   });
-  it("sends every original and reference, then expands only the ordinary photos after approval", async () => {
+  it("sends original VR images and references, then renders without image generation", async () => {
     const { workflow, owner, property, config, bytes, scenes } =
       await fixture();
     const pano = await workflow.importBytes(
@@ -258,6 +375,7 @@ describe("simple video factory", () => {
       "prepare",
       {
         propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
         config: {
           ...config,
           templateId: "standard-tour-vision",
@@ -267,7 +385,7 @@ describe("simple video factory", () => {
       },
       property,
     );
-    expect(draft.config.materialMode).toBe("expand");
+    expect(draft.config.materialMode).toBe("panorama");
     expect(draft.templateSnapshot.production.schemaVersion).toBe(2);
     const ids = [
       ...scenes.map((scene) => scene.id).filter((id) => id !== pano.id),
@@ -284,7 +402,7 @@ describe("simple video factory", () => {
         images: [...ids, plan.id].map((id, index) =>
           expect.objectContaining({
             id,
-            kind: ["photo", "photo", "panorama", "reference"][index],
+            kind: ["panorama", "panorama", "panorama", "reference"][index],
             jpeg: bytes([1, 2, 9, 10][index]).toString("base64"),
           }),
         ),
@@ -303,43 +421,93 @@ describe("simple video factory", () => {
         scene.id,
         scene.kind,
       ]),
-    ).toEqual(ids.map((id, i) => [id, i === 2 ? "panorama" : "expanded"]));
+    ).toEqual(ids.map((id) => [id, "panorama"]));
     expect(
       workflow.remote.mock.calls.filter(
         (c: unknown[]) => c[0] === "image-submit",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(0);
   });
-  it("does not repeat uncertain paid image submissions on video retry", async () => {
-    const { workflow, property, config, synthesize } = await fixture();
+  it("rejects photo-only properties and excludes legacy photos from mixed materials", async () => {
+    const { workflow, owner, property, config, bytes, scenes, synthesize } =
+      await fixture();
+    const photo = await workflow.importBytes(
+      owner,
+      bytes(7),
+      "普通照片",
+      "photo",
+    );
+    workflow.store(owner).imports[property.id].scenes = [photo];
+    await expect(
+      workflow.handle(
+        "a",
+        "prepare",
+        {
+          propertyId: property.id,
+          sceneIds: selectedIds(workflow, property.id),
+          config,
+        },
+        property,
+      ),
+    ).rejects.toThrow("VR 全景图");
+    expect(synthesize).not.toHaveBeenCalled();
+    workflow.store(owner).imports[property.id].scenes = [photo, ...scenes];
     const draft = await workflow.handle(
       "a",
       "prepare",
-      { propertyId: property.id, config },
+      {
+        propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
+        config,
+      },
       property,
     );
-    workflow.remote = vi.fn(async (method: string) => {
-      if (method === "image-submit") throw new Error("提交结果未知");
-      throw new Error("提交未确认");
+    expect(draft.scenes.map((s: { id: string }) => s.id)).toEqual(
+      scenes.map((s) => s.id),
+    );
+    expect(workflow.store(owner).imports[property.id].scenes[0]).toEqual(photo);
+  });
+  it("rejects legacy photo drafts and retries before speech or rendering", async () => {
+    const { workflow, owner, property, config, bytes, synthesize } =
+      await fixture();
+    const draft = await workflow.handle(
+      "a",
+      "prepare",
+      {
+        propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
+        config,
+      },
+      property,
+    );
+    const photo = await workflow.importBytes(
+      owner,
+      bytes(7),
+      "普通照片",
+      "photo",
+    );
+    const stored = workflow
+      .store(owner)
+      .drafts.find((d: { id: string }) => d.id === draft.id);
+    stored.scenes = [photo];
+    await expect(
+      workflow.handle("a", "start", {
+        id: draft.id,
+        revision: 1,
+        confirmed: true,
+      }),
+    ).rejects.toThrow("VR 全景图");
+    workflow.store(owner).jobs.push({
+      ...stored,
+      id: "legacy-job",
+      draftId: draft.id,
+      status: "failed",
+      confirmedAt: "2026-11-13",
     });
-    const job = await workflow.handle("a", "start", {
-      id: draft.id,
-      revision: 1,
-      confirmed: true,
-    });
-    await workflow.active.get(job.id)?.promise;
-    expect(job.status).toBe("failed");
+    await expect(
+      workflow.handle("a", "retry", { id: "legacy-job" }),
+    ).rejects.toThrow("VR 全景图");
     expect(synthesize).not.toHaveBeenCalled();
-    await workflow.handle("a", "retry", { id: job.id });
-    await workflow.active.get(job.id)?.promise;
-    expect(
-      workflow.remote.mock.calls.filter(
-        (c: unknown[]) => c[0] === "image-submit",
-      ),
-    ).toHaveLength(1);
-    expect(
-      workflow.remote.mock.calls.some((c: unknown[]) => c[0] === "image-query"),
-    ).toBe(true);
   });
   it("coalesces concurrent script preparation and keeps missing materials explicit", async () => {
     const { workflow, property, config } = await fixture();
@@ -347,13 +515,21 @@ describe("simple video factory", () => {
       workflow.handle(
         "a",
         "prepare",
-        { propertyId: property.id, config },
+        {
+          propertyId: property.id,
+          sceneIds: selectedIds(workflow, property.id),
+          config,
+        },
         property,
       ),
       workflow.handle(
         "a",
         "prepare",
-        { propertyId: property.id, config },
+        {
+          propertyId: property.id,
+          sceneIds: selectedIds(workflow, property.id),
+          config,
+        },
         property,
       ),
     ]);
@@ -363,7 +539,11 @@ describe("simple video factory", () => {
       workflow.handle(
         "b",
         "prepare",
-        { propertyId: property.id, config },
+        {
+          propertyId: property.id,
+          sceneIds: selectedIds(workflow, property.id),
+          config,
+        },
         property,
       ),
     ).rejects.toThrow("补充素材");
@@ -373,26 +553,32 @@ describe("simple video factory", () => {
     const another = { ...property, id: "new-property" };
     const file = path.join(workflow.root, "客厅.jpg");
     fs.writeFileSync(file, bytes(5));
-    workflow.dialogs.open = async () => [file];
+    const secondFile = path.join(workflow.root, "卧室.jpg");
+    fs.writeFileSync(secondFile, bytes(6));
+    workflow.dialogs.open = async () => [file, secondFile];
     expect(
       await workflow.handle(
         "a",
         "property-import",
-        { propertyId: another.id, kind: "photo" },
+        { propertyId: another.id, kind: "panorama" },
         another,
       ),
-    ).toEqual({ count: 1 });
+    ).toEqual({ count: 2 });
     expect(workflow.withPropertyCovers("a", [another])[0].image).toBe(
       workflow.store(workflow.owner("a")).imports[another.id].scenes[0].url,
     );
     const draft = await workflow.handle(
       "a",
       "prepare",
-      { propertyId: another.id, config },
+      {
+        propertyId: another.id,
+        sceneIds: selectedIds(workflow, another.id),
+        config,
+      },
       another,
     );
     expect(draft.scenes[0].room).toBe("客厅");
-    expect(draft.config.materialMode).toBe("expand");
+    expect(draft.config.materialMode).toBe("panorama");
     await expect(
       workflow.handle("b", "source-restore", { propertyId: another.id }),
     ).rejects.toThrow("没有");
@@ -406,13 +592,13 @@ describe("simple video factory", () => {
     };
     const saved = workflow.store(owner).imports[property.id];
     saved.scenes.unshift(
-      await workflow.importBytes(owner, bytes(5), "客厅", "panorama"),
+      await workflow.importBytes(owner, bytes(5), "客厅", "photo"),
     );
     saved.references = [
       await workflow.importBytes(owner, bytes(6), "户型图", "reference"),
     ];
     expect(workflow.withPropertyCovers("a", [listing])[0].image).toBe(
-      saved.scenes[1].url,
+      saved.scenes[0].url,
     );
     expect(workflow.withPropertyCovers("b", [listing])[0].image).toBe(
       "/photo.jpg",
@@ -429,6 +615,7 @@ describe("simple video factory", () => {
       "prepare",
       {
         propertyId: property.id,
+        sceneIds: selectedIds(workflow, property.id),
         templateVersion: "1.0.0",
         config: {
           ...config,
@@ -485,7 +672,11 @@ describe("simple video factory", () => {
       workflow.handle(
         "a",
         "prepare",
-        { propertyId: property.id, config },
+        {
+          propertyId: property.id,
+          sceneIds: selectedIds(workflow, property.id),
+          config,
+        },
         property,
       ),
     ).rejects.toThrow("模板已下架");
@@ -497,7 +688,12 @@ describe("simple video factory", () => {
       workflow.handle(
         "a",
         "prepare",
-        { propertyId: property.id, config, templateVersion: "9.0.0" },
+        {
+          propertyId: property.id,
+          sceneIds: selectedIds(workflow, property.id),
+          config,
+          templateVersion: "9.0.0",
+        },
         property,
       ),
     ).rejects.toThrow("版本变化");

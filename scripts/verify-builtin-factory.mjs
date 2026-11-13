@@ -49,11 +49,16 @@ const property = {
   sellingPoints: [],
   sample: true,
 };
+const materials = await workflow.loadSample(
+  workflow.owner("builtin-regression"),
+  () => {},
+);
 const draft = await workflow.handle(
   "builtin-regression",
   "prepare",
   {
     propertyId: property.id,
+    sceneIds: materials.scenes.map((scene) => scene.id),
     templateVersion: recipe.version,
     config: {
       ...domain.defaultConfig,

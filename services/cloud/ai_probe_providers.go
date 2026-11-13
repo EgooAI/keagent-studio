@@ -1,15 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
-	"image"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,11 +21,8 @@ func validateAIProbeInput(service, mode string, input object) error {
 		return nil
 	}
 	switch service {
-	case "script", "expansion":
+	case "script":
 		count := 2
-		if service == "expansion" {
-			count = 1
-		}
 		images := rows(input["images"])
 		if len(images) != count {
 			return fail(422, "测试示例图片数量无效")
@@ -131,8 +124,6 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 	case "beike":
 		_, err = s.lookupBeike(ctx, input, func(step string) error { return s.aiStep(ctx, p, step) })
 		return err
-	case "expansion":
-		return s.probeAIExpansion(ctx, p, input)
 	case "opening":
 		return s.probeMiniMaxOpening(ctx, p, input)
 	}
@@ -290,106 +281,6 @@ func waitAIProbe(ctx context.Context) error {
 		return nil
 	}
 }
-func (s *server) probeAIExpansion(ctx context.Context, p *aiProbe, input object) error {
-	base, headers, err := expansionConnection(ctx)
-	if err != nil {
-		return err
-	}
-	if p.Progress.Task == "" {
-		if err = s.aiStep(ctx, p, "提交一张示例图扩图"); err != nil {
-			return err
-		}
-		payload, err := expansionPayload(object{"image": rows(input["images"])[0], "prompt": "自然延展室内墙面", "right_scale": 1.2})
-		if err != nil {
-			return err
-		}
-		body, _ := json.Marshal(payload)
-		submit := headers.Clone()
-		submit.Set("X-DashScope-Async", "enable")
-		raw, err := s.productionBody(ctx, "POST", base+"/api/v1/services/aigc/image2image/image-synthesis", submit, body, 2<<20)
-		if err != nil {
-			return err
-		}
-		var result object
-		_ = json.Unmarshal(raw, &result)
-		p.Progress.Task = str(obj(result["output"])["task_id"])
-		if !resourceID.MatchString(p.Progress.Task) {
-			p.Progress.Task = ""
-			return fail(502, "扩图提交结果未知，请核对百炼控制台")
-		}
-		if err = s.saveAIProgress(ctx, p); err != nil {
-			return err
-		}
-	}
-	for {
-		if err = s.aiStep(ctx, p, "查询扩图并校验图片"); err != nil {
-			return err
-		}
-		raw, err := s.productionBody(ctx, "GET", base+"/api/v1/tasks/"+p.Progress.Task, headers, nil, 2<<20)
-		if err != nil {
-			return err
-		}
-		var result object
-		if json.Unmarshal(raw, &result) != nil {
-			return fail(502, "扩图查询输出无效")
-		}
-		output := obj(result["output"])
-		switch str(output["task_status"]) {
-		case "SUCCEEDED":
-			files := rows(output["results"])
-			if len(files) != 1 {
-				return fail(502, "扩图没有返回一张图片")
-			}
-			file, err := readAIProbeImage(ctx, str(obj(files[0])["url"]))
-			if err != nil {
-				return err
-			}
-			if _, _, err = image.DecodeConfig(bytes.NewReader(file)); err != nil {
-				return fail(502, "扩图结果不是可读取的图片")
-			}
-			return nil
-		case "PENDING", "RUNNING":
-			if err = waitAIProbe(ctx); err != nil {
-				return err
-			}
-		case "FAILED", "CANCELED":
-			return fail(502, "扩图任务失败，请在百炼控制台核对权限和额度")
-		default:
-			return fail(502, "扩图结果未知，请核对百炼控制台")
-		}
-	}
-}
 
 //go:embed ai-probe-speech.wav
 var aiProbeSpeech []byte
-
-func readAIProbeImage(ctx context.Context, raw string) ([]byte, error) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.Port() != "" || u.User != nil || u.Fragment != "" {
-		return nil, fail(502, "供应商结果地址无效")
-	}
-	host := strings.ToLower(u.Hostname())
-	suffixes := []string{".aliyuncs.com", ".alicdn.com"}
-	allowed := false
-	for _, suffix := range suffixes {
-		allowed = allowed || strings.HasSuffix(host, suffix)
-	}
-	if !allowed {
-		return nil, fail(502, "供应商结果域名未授权")
-	}
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		return nil, fail(502, "供应商结果地址无效")
-	}
-	client, transport := providerClient()
-	defer transport.CloseIdleConnections()
-	response, err := client.Do(req)
-	if err != nil {
-		return nil, fail(502, "无法读取供应商结果")
-	}
-	defer response.Body.Close()
-	if response.StatusCode/100 != 2 {
-		return nil, fail(502, "供应商结果不可读取")
-	}
-	return io.ReadAll(io.LimitReader(response.Body, 12<<20))
-}

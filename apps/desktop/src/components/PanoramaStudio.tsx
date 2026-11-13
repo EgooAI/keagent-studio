@@ -47,6 +47,7 @@ import {
 import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
+import { FactoryImagePicker } from "./FactoryImagePicker";
 import { FactoryPhaseTag, FactoryTaskDetail } from "./FactoryResult";
 import {
   factoryRequest,
@@ -140,6 +141,10 @@ export function PanoramaStudio() {
   const [expanded, setExpanded] = useState(false);
   const [pairPage, setPairPage] = useState(1);
   const [picker, setPicker] = useState<"property" | "template">();
+  const [imagePicker, setImagePicker] = useState(false);
+  const [sceneIdsByProperty, setSceneIdsByProperty] = useState<
+    Record<string, string[]>
+  >({});
   const [issues, setIssues] = useState<FactoryIssue[]>([]);
   const submission = useRef<{ signature: string; id: string } | undefined>(
     undefined,
@@ -254,6 +259,13 @@ export function PanoramaStudio() {
       )
       .map(templateKey),
   );
+  const imageProperties = [
+    ...new Set(pairs.map((pair) => pair.propertyId)),
+  ].map((id) => ({ id, title: knownProperties[id] || id }));
+  const selectedPropertyCount = imageProperties.filter(
+    ({ id }) =>
+      sceneIdsByProperty[id]?.length >= 2 && sceneIdsByProperty[id].length <= 7,
+  ).length;
   const miniMaxTemplates = new Set(
     templates
       .filter((template) => template.opening === "minimax")
@@ -412,6 +424,9 @@ export function PanoramaStudio() {
     setIssues([]);
   }
   async function create() {
+    const selectedImages = Object.fromEntries(
+      imageProperties.map(({ id }) => [id, sceneIdsByProperty[id]]),
+    );
     const openingClipId = needsOpeningForBatch ? openingClip?.id : undefined;
     const openingPhotoId = useMiniMax ? openingPhoto?.id : undefined;
     const openingBackgroundId = useMiniMax
@@ -419,6 +434,7 @@ export function PanoramaStudio() {
       : undefined;
     const signature = JSON.stringify([
       pairs,
+      selectedImages,
       voiceId,
       openingClipId,
       openingPhotoId,
@@ -432,6 +448,7 @@ export function PanoramaStudio() {
     }>("create", {
       requestId: submission.current.id,
       pairs,
+      sceneIdsByProperty: selectedImages,
       voiceId,
       openingClip: openingClipId,
       openingPhoto: openingPhotoId,
@@ -444,6 +461,7 @@ export function PanoramaStudio() {
     void message.success("已创建 " + pairs.length + " 条视频任务");
     submission.current = undefined;
     setPropertyIds([]);
+    setSceneIdsByProperty({});
     setOpeningAuthorized(false);
     setExcluded(new Set());
     setPairPage(1);
@@ -663,7 +681,7 @@ export function PanoramaStudio() {
     <div className="video-factory">
       <PageHeader
         title="AI 视频工厂"
-        description="选择房源和模板生成文案，审核后进入视频制作队列。"
+        description="选择房源、模板和图片生成文案，审核后进入视频制作队列。"
         actions={
           <Space>
             {desktop && (
@@ -749,7 +767,7 @@ export function PanoramaStudio() {
             <div className="compose-intro">
               <h2>新建一批视频</h2>
               <p className="muted">
-                每套房源按所选模板生成独立任务。先生成文案，确认后再制作视频。
+                每套房源按所选模板生成独立任务。先选 2–7 张图片生成文案，确认后再制作视频。
               </p>
             </div>
             <div className="factory-compose-main">
@@ -813,7 +831,7 @@ export function PanoramaStudio() {
                     title={`按每条约 ${ESTIMATED_CHARS_PER_VIDEO} 字估算；实际按生成文案的千字数计费，供应商失败会退回。`}
                   >
                     <span
- className="factory-cost-estimate"
+                      className="factory-cost-estimate"
                       style={{ color: "var(--muted, #667085)", fontSize: 13 }}
                     >
                       {estimateSummaryText(costEstimate)}
@@ -827,6 +845,7 @@ export function PanoramaStudio() {
                     busy ||
                     !pairs.length ||
                     pairs.length > 200 ||
+                    selectedPropertyCount !== imageProperties.length ||
                     (needsOpeningForBatch && !openingClip) ||
                     (useMiniMax && !miniMaxReady) ||
                     !!catalog.error ||
@@ -838,6 +857,19 @@ export function PanoramaStudio() {
                 </Button>
               </div>
             </div>
+            {imageProperties.length > 0 && (
+              <div className="factory-compose-note">
+                <Space wrap>
+                  <Button disabled={busy} onClick={() => setImagePicker(true)}>
+                    选择视频图片
+                  </Button>
+                  <span>
+                    每套选择 2–7 张全景图 · 已选 {selectedPropertyCount} /{" "}
+                    {imageProperties.length} 套
+                  </span>
+                </Space>
+              </div>
+            )}
             {useMiniMax && (
               <div className="factory-compose-note">
                 <strong>MiniMax H3 开场</strong>
@@ -1297,6 +1329,18 @@ export function PanoramaStudio() {
                 setIssues([]);
                 setPairPage(1);
                 setPicker(undefined);
+              }}
+            />
+          )}
+          {imagePicker && imageProperties.length > 0 && (
+            <FactoryImagePicker
+              properties={imageProperties}
+              value={sceneIdsByProperty}
+              onClose={() => setImagePicker(false)}
+              onConfirm={(value) => {
+                setSceneIdsByProperty(value);
+                setImagePicker(false);
+                setIssues([]);
               }}
             />
           )}

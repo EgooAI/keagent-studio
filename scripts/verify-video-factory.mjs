@@ -73,7 +73,6 @@ try {
               ffmpeg: true,
               ffprobe: true,
               managedVoices: false,
-              imageExpansion: true,
               ai: false,
               voices: [{ name: "Test voice", language: "zh-CN" }],
               defaultConfig: defaults,
@@ -121,7 +120,7 @@ try {
               property,
               scenes,
               segments,
-              config: { ...input.config, materialMode: "expand" },
+              config: { ...input.config, materialMode: "panorama" },
             };
             drafts = [draft];
             return structuredClone(draft);

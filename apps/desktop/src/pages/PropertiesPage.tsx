@@ -497,7 +497,7 @@ export function PropertyDetailPage() {
       }),
   });
   const property = data?.properties.find((p) => p.id === propertyId);
-  const addMaterial = async (kind: "photo" | "panorama" | "reference") => {
+  const addMaterial = async (kind: "panorama" | "reference") => {
     setImporting(true);
     try {
       const value = await productionRequest<{ count: number }>(
@@ -564,7 +564,7 @@ export function PropertyDetailPage() {
           type="info"
           showIcon
           title="内置测试房源，非真实在售房源"
-          description="已附带两张原全景素材，使用模板文案和本机配音，无需贝壳接口、扩图或云端配音即可测试视频。两个场景来自不同地点；成片可预览、下载，不能作为正式房源视频发布。"
+          description="已附带两张原全景素材，使用模板文案和本机配音，无需贝壳接口或云端配音即可测试视频。两个场景来自不同地点；成片可预览、下载，不能作为正式房源视频发布。"
         />
       )}
       <Tabs
@@ -659,13 +659,15 @@ export function PropertyDetailPage() {
                 <section className="panel detail-info">
                   <h2>房源素材</h2>
                   <p className="muted">
-                    {material.data?.scenes.length || property.images.length}{" "}
-                    张制作图片
+                    {material.data?.scenes.length ||
+                      property.panoramas?.length ||
+                      0}{" "}
+                    张 VR 全景图
                   </p>
                   <div className="asset-grid">
                     {(material.data?.scenes.length
                       ? material.data.scenes.map((s) => s.url)
-                      : property.images
+                      : property.panoramas || []
                     ).map((image, i) => (
                       <img
                         key={`${image}-${i}`}
@@ -695,17 +697,10 @@ export function PropertyDetailPage() {
                   ) : window.desktop ? (
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       <Button
-                        icon={<Plus size={16} />}
-                        loading={importing}
-                        onClick={() => void addMaterial("photo")}
-                      >
-                        添加房源照片
-                      </Button>
-                      <Button
                         loading={importing}
                         onClick={() => void addMaterial("panorama")}
                       >
-                        添加已有全景图
+                        添加 VR 全景图
                       </Button>
                       <Button
                         loading={importing}
@@ -724,7 +719,7 @@ export function PropertyDetailPage() {
                     </div>
                   ) : isLive ? (
                     <p className="muted">
-                      请在桌面端添加房源照片、全景原图和户型图。
+                      请在桌面端添加 VR 全景原图和户型参考图。
                     </p>
                   ) : (
                     <Upload

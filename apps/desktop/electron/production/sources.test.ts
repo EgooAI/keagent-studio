@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 const require = createRequire(import.meta.url);
 const { PanoramaWorkflow } = require("../panorama/workflow.cjs");
-const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
 const providers = require("../panorama/providers.cjs");
 const roots: string[] = [];
@@ -57,7 +56,7 @@ function fixture() {
   return { workflow, bytes, property };
 }
 describe("production sources", () => {
-  it("keeps panoramas, photographs and reference images in the owner's cache", async () => {
+  it("keeps only panoramas and reference images in the owner's cache", async () => {
     const { workflow, property } = fixture();
     workflow.remote.mockResolvedValue({
       property,
@@ -68,13 +67,12 @@ describe("production sources", () => {
       ],
     });
     const source = await workflow.handle("a", "beike-import", {});
-    expect(source.materialMode).toBe("expand");
+    expect(source.materialMode).toBe("panorama");
     expect(source.scenes.map((scene: { kind: string }) => scene.kind)).toEqual([
       "panorama",
-      "photo",
     ]);
     expect(source.references).toHaveLength(1);
-    expect(providers.downloadImage).toHaveBeenCalledTimes(3);
+    expect(providers.downloadImage).toHaveBeenCalledTimes(2);
     expect(providers.downloadImage.mock.calls[0][0]).toContain("pano.jpg");
     expect(
       (
@@ -82,92 +80,39 @@ describe("production sources", () => {
           propertyId: property.id,
         })
       ).scenes,
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     await expect(
       workflow.handle("b", "source-restore", { propertyId: property.id }),
     ).rejects.toThrow("没有");
   });
-  it("blocks raw photos and requires review of actual expansion output before script generation", async () => {
+  it("rejects a Beike result with no VR images before downloading photos", async () => {
     const { workflow } = fixture();
-    const source = await workflow.handle("a", "beike-import", {});
-    const config = { ...domain.defaultConfig, materialMode: "expand" };
-    await expect(
-      workflow.handle("a", "generate", {
-        propertyId: source.property.id,
-        scenes: source.scenes,
-        config,
-      }),
-    ).rejects.toThrow("须先完成");
-    const owner = workflow.owner("a");
-    const raw = source.scenes[0];
-    const expanded = await workflow.importBytes(
-      owner,
-      Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(90, 11)]),
-      "客厅",
-      "expanded",
+    await expect(workflow.handle("a", "beike-import", {})).rejects.toThrow(
+      "VR 全景图",
     );
-    await expect(
-      workflow.handle("a", "generate", {
-        propertyId: source.property.id,
-        scenes: [expanded],
-        config,
-      }),
-    ).rejects.toThrow("审核");
-    const draft = await workflow.handle("a", "generate", {
-      propertyId: source.property.id,
-      scenes: [
-        {
-          ...expanded,
-          approved: true,
-          sourceAsset: raw.asset,
-          description: "已核对墙面",
-        },
-      ],
-      config,
-    });
-    expect(draft.scenes[0]).toMatchObject({ kind: "expanded", approved: true });
-    expect(draft.segments[0].text).not.toContain("万元");
+    expect(providers.downloadImage).not.toHaveBeenCalled();
+  });
+  it("rejects photos, approved legacy expansions and expansions relabeled as panoramas", async () => {
+    const { workflow, bytes } = fixture();
+    const owner = workflow.owner("a");
+    const scene = await workflow.importBytes(owner, bytes, "客厅", "photo");
+    expect(() => workflow.scenes(owner, [scene])).toThrow("VR 全景图");
+    const metadata = workflow.store(owner).assetMetadata[scene.asset];
+    metadata.kinds = ["expanded"];
     expect(() =>
-      workflow.scenes(owner, [{ ...expanded, kind: "panorama" }]),
+      workflow.scenes(owner, [{ ...scene, kind: "expanded", approved: true }]),
+    ).toThrow("VR 全景图");
+    expect(() =>
+      workflow.scenes(owner, [
+        { ...scene, kind: "panorama" },
+        { ...scene, id: "99999999-9999-4999-8999-999999999999" },
+      ]),
     ).toThrow("真实全景");
   });
-  it("persists uncertain submissions, recovers through query, and never resubmits automatically", async () => {
-    const { workflow, bytes } = fixture();
-    const source = await workflow.handle("a", "beike-import", {});
-    const scene = source.scenes[0];
-    workflow.remote.mockRejectedValue(new Error("request outcome unknown"));
-    const input = {
-      scene,
-      prompt: "保留原图，扩展边缘",
-      top_scale: 1,
-      bottom_scale: 1,
-      left_scale: 1.5,
-      right_scale: 1.5,
-    };
-    await expect(workflow.handle("a", "image-submit", input)).rejects.toThrow(
-      "unknown",
-    );
-    const calls = workflow.remote.mock.calls.length;
-    await expect(workflow.handle("a", "image-submit", input)).rejects.toThrow(
-      "已有扩图",
-    );
-    expect(workflow.remote.mock.calls).toHaveLength(calls);
-    const recovered = new PanoramaWorkflow(workflow.root, "", {});
-    recovered.remote = vi.fn(async () => ({
-      status: "SUCCEEDED",
-      imageUrl: "https://sample.oss-cn-beijing.aliyuncs.com/result.jpg",
-    }));
-    providers.downloadImage.mockResolvedValue(
-      Buffer.concat([bytes, Buffer.from("expanded")]),
-    );
-    const tasks = await recovered.handle("a", "image-refresh", {});
-    expect(tasks[0].result).toMatchObject({
-      id: scene.id,
-      kind: "expanded",
-      approved: false,
-      sourceAsset: scene.asset,
-    });
-    expect(recovered.remote.mock.calls[0][0]).toBe("image-query");
-    expect((await recovered.handle("b", "state")).imageTasks).toHaveLength(0);
+  it("does not expose image submission or polling to old clients", async () => {
+    const { workflow } = fixture();
+    for (const method of ["image-submit", "image-refresh"])
+      await expect(workflow.handle("a", method, {})).rejects.toThrow();
+    expect(workflow.remote).not.toHaveBeenCalled();
   });
 });

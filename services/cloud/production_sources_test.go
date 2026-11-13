@@ -1,48 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
-	"image"
-	"image/png"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 )
 
-func expansionFixture() object {
-	var data bytes.Buffer
-	_ = png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 512, 512)))
-	return object{"requestKey": id(), "image": base64.StdEncoding.EncodeToString(data.Bytes()), "prompt": "保留房屋主体，仅向左右延展墙面", "left_scale": 1.5, "right_scale": 1.5}
-}
-func TestExpansionPayloadAndOfficialOrigin(t *testing.T) {
-	input := expansionFixture()
-	payload, err := expansionPayload(input)
-	if err != nil || payload["model"] != "wanx2.1-imageedit" || obj(payload["input"])["function"] != "expand" || obj(payload["parameters"])["watermark"] != true {
-		t.Fatal(payload, err)
-	}
-	for key, value := range (object{"image": "%%%", "left_scale": 3.0, "prompt": ""}) {
-		bad := expansionFixture()
-		bad[key] = value
-		if _, err = expansionPayload(bad); err == nil {
-			t.Fatal("invalid expansion accepted", key)
-		}
-	}
-	for _, base := range []string{"https://evil.example", "http://dashscope.aliyuncs.com", "https://dashscope.aliyuncs.com@evil.example", "https://dashscope.aliyuncs.com/path"} {
-		t.Setenv("DASHSCOPE_BASE_URL", base)
-		if _, err = dashscopeBase(); err == nil {
-			t.Fatal("credential target accepted", base)
-		}
-	}
-	t.Setenv("DASHSCOPE_BASE_URL", "https://workspace.cn-beijing.maas.aliyuncs.com")
-	if _, err = dashscopeBase(); err != nil {
-		t.Fatal(err)
-	}
-}
 func TestBeikeAdapterUsesDocumentedInterfacesAndPreservesUnknownFacts(t *testing.T) {
 	t.Setenv("BEIKE_ACCESS_TOKEN", "test-beike-token")
 	s := &server{}
@@ -82,62 +47,18 @@ func TestBeikeAdapterUsesDocumentedInterfacesAndPreservesUnknownFacts(t *testing
 		t.Fatal("missing provider success code accepted")
 	}
 }
-func TestExpansionOwnershipIdempotencyAndUnknownSubmission(t *testing.T) {
-	s := voiceTestServer(t)
-	if _, err := s.db.Exec(productionImageSchema); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
-	t.Setenv("DASHSCOPE_BASE_URL", "")
-	calls := 0
-	s.sourceHTTP = func(_ context.Context, method, endpoint string, headers http.Header, body []byte, _ int64) ([]byte, error) {
-		if headers.Get("Authorization") != "Bearer test-dashscope-key" {
-			t.Fatal("missing provider credential")
+func TestExpansionRemoved(t *testing.T) {
+	s := &server{sourceHTTP: func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error) {
+		t.Fatal("removed expansion called a provider")
+		return nil, nil
+	}}
+	for _, operation := range []string{"image-submit", "image-query"} {
+		_, err := s.panorama(t.Context(), actor{UserID: "a"}, operation, []byte(`{}`))
+		if err == nil || !strings.Contains(err.Error(), "已移除") {
+			t.Fatalf("%s: %v", operation, err)
 		}
-		if method == "POST" {
-			calls++
-			if headers.Get("X-DashScope-Async") != "enable" {
-				t.Fatal("not asynchronous")
-			}
-			return []byte(`{"output":{"task_id":"vendor-task-12345678","task_status":"PENDING"}}`), nil
-		}
-		return []byte(`{"output":{"task_status":"SUCCEEDED","results":[{"url":"https://sample.oss-cn-beijing.aliyuncs.com/result.png"}]}}`), nil
 	}
-	a, b := actor{UserID: "a"}, actor{UserID: "b"}
-	input := expansionFixture()
-	first, err := s.productionImage(t.Context(), a, "image-submit", input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	repeated, err := s.productionImage(t.Context(), a, "image-submit", input)
-	if err != nil || calls != 1 || obj(first)["taskId"] != obj(repeated)["taskId"] {
-		t.Fatal("paid request duplicated", err, calls)
-	}
-	query := object{"requestKey": input["requestKey"]}
-	if _, err = s.productionImage(t.Context(), b, "image-query", query); err == nil {
-		t.Fatal("cross-owner task read")
-	}
-	done, err := s.productionImage(t.Context(), a, "image-query", query)
-	if err != nil || obj(done)["status"] != "SUCCEEDED" {
-		t.Fatal(done, err)
-	}
-	input["prompt"] = "changed"
-	if _, err = s.productionImage(t.Context(), a, "image-submit", input); err == nil {
-		t.Fatal("request key rebound")
-	}
-	unknown := expansionFixture()
-	s.sourceHTTP = func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error) {
-		calls++
-		return nil, errors.New("network outcome unknown")
-	}
-	_, _ = s.productionImage(t.Context(), a, "image-submit", unknown)
-	after := calls
-	_, err = s.productionImage(t.Context(), a, "image-submit", unknown)
-	if err != nil || calls != after {
-		t.Fatal("unknown paid submission repeated", err)
-	}
-	encoded, _ := json.Marshal([]any{first, done})
-	if bytes.Contains(encoded, []byte("test-dashscope-key")) {
-		t.Fatal("credential exposed")
+	if _, ok := specFor("expansion"); ok {
+		t.Fatal("removed expansion is still configurable")
 	}
 }

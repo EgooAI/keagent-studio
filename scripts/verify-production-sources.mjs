@@ -7,7 +7,6 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  readdir,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -18,13 +17,11 @@ const domain = require("../apps/desktop/electron/panorama/domain.cjs");
 const root = fileURLToPath(new URL("../", import.meta.url));
 const output = path.join(root, "output/production-source-verification");
 await mkdir(output, { recursive: true });
-const photo = path.join(root, "apps/desktop/public/media/interior-1.jpg");
 const pano = path.join(root, "apps/desktop/public/media/panoramas/lebombo.jpg");
 const results = [];
 for (const [kind, input, aspectRatio] of [
   ["panorama", pano, "16:9"],
-  ["expanded", photo, "16:9"],
-  ["expanded", photo, "9:16"],
+  ["panorama", pano, "9:16"],
 ]) {
   const directory = await mkdtemp(
     path.join(output, `${kind}-${aspectRatio.replace(":", "x")}-`),
@@ -145,19 +142,6 @@ for (const [kind, input, aspectRatio] of [
       0,
     ) / frames[0].length;
   assert.ok(difference > 0.5, "Camera did not visibly move");
-  if (kind === "expanded") {
-    const captionFiles = (await readdir(cache)).filter((file) =>
-      file.endsWith(".ass"),
-    );
-    assert.ok(captionFiles.length > 0);
-    for (const file of captionFiles)
-      assert.doesNotMatch(
-        await readFile(path.join(cache, file), "utf8"),
-        /AI扩图示意/,
-      );
-    assert.doesNotMatch(coverASS, /AI扩图示意/);
-    assert.ok(result.timeline.every((segment) => segment.camera === null));
-  }
   await media.run(
     process.env.FFMPEG_PATH || "ffmpeg",
     [
@@ -186,7 +170,7 @@ await writeFile(
   path.join(output, "result.json"),
   JSON.stringify(
     {
-      note: "受控渲染验证。expanded 使用普通照片充当供应商输出夹具，不代表已调用或验证真实扩图质量。",
+      note: "原始 VR 全景图横竖屏渲染验证，不调用图片生成服务。",
       results,
     },
     null,

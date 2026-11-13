@@ -99,6 +99,57 @@
   min-width: 170px;
   margin-left: 4px;
 }
+.factory-image-picker {
+  max-height: 65vh;
+  overflow-y: auto;
+}
+.factory-image-property {
+  width: 100%;
+  margin-block: 12px;
+}
+.factory-image-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.factory-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  margin-block: 16px;
+}
+.factory-image-option {
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 8px);
+  overflow: hidden;
+}
+.factory-image-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.factory-image-modal .factory-picker-footer {
+  flex-wrap: wrap;
+}
+.factory-image-option .ant-image {
+  width: 100%;
+  display: block;
+}
+.factory-image-option .ant-image-img {
+  aspect-ratio: 2 / 1;
+  object-fit: contain;
+}
+.factory-image-option .ant-checkbox-wrapper {
+  display: flex;
+  padding: 12px;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+.factory-image-loading {
+  min-height: 180px;
+}
 .factory-filter {
   min-width: 130px;
 }

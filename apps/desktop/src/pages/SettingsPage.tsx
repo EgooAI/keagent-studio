@@ -456,7 +456,7 @@ export default function SettingsPage() {
             key: "ai",
             label: "AI 请求",
             children: isLive
-              ? "按管理员配置调用文案、扩图、配音或 MiniMax 开场服务。原全景素材无需 AI 扩图；服务调用可能产生供应商费用。"
+              ? "按管理员配置调用文案、配音或 MiniMax 开场服务。视频使用原始 VR 全景素材；服务调用可能产生供应商费用。"
               : "未调用外部供应商；话术和生产结果均为演示",
           },
         ]}
@@ -477,7 +477,7 @@ export default function SettingsPage() {
       </Space>
       <p style={{ color: "#667085", maxWidth: 640, lineHeight: 1.8 }}>
         {isLive
-          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原全景或 AI 扩图素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在“制作服务状态”中查看。"
+          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原始 VR 全景素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在“制作服务状态”中查看。"
           : "面向房产经纪人的内容生产工作台。当前提供前端演示操作与模拟任务流程。"}
       </p>
       <Button
@@ -523,7 +523,9 @@ export default function SettingsPage() {
       ) : (
         <>
           <h2 style={{ fontSize: 18, marginTop: 0 }}>我的积分</h2>
-          <p className="muted">演示模式未接入积分；正式版按 AI 服务调用消耗积分。</p>
+          <p className="muted">
+            演示模式未接入积分；正式版按 AI 服务调用消耗积分。
+          </p>
         </>
       ),
     },

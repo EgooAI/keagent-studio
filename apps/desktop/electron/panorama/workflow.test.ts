@@ -49,6 +49,11 @@ function fixture() {
       yaw: -30,
     },
   ];
+  scenes.push({
+    ...scenes[0],
+    id: "99999999-9999-4999-8999-999999999999",
+    room: "餐厅",
+  });
   const config = { ...domain.defaultConfig, voice: "test" };
   vi.spyOn(workflow, "capabilities").mockResolvedValue({
     ffmpeg: true,
@@ -245,7 +250,7 @@ describe("panorama domain", () => {
     );
     expect(draft.segments[0].sceneId).toBe(second.id);
     expect(draft.segments.at(-1).sceneId).toBe(second.id);
-    expect(draft.segments[2].text).toBe("这里是卧室。");
+    expect(draft.segments[3].text).toBe("这里是卧室。");
     expect(draft.segments[0].text).not.toMatch(/0平方米|0万元/);
     await expect(
       workflow.handle(
@@ -631,7 +636,18 @@ describe("production queue", () => {
       })),
     );
     const call = (method: string, input?: unknown) =>
-      workflow.handle("user-a", "factory-" + method, input);
+      workflow.handle(
+        "user-a",
+        "factory-" + method,
+        method === "create"
+          ? {
+              sceneIdsByProperty: Object.fromEntries(
+                properties.map((p) => [p.id, scenes.map((s) => s.id)]),
+              ),
+              ...(input as object),
+            }
+          : input,
+      );
     const act = (
       action: string,
       ...rows: { id: string; revision?: number }[]
@@ -646,6 +662,69 @@ describe("production queue", () => {
       scriptCalls: () => scriptCalls,
     };
   }
+
+  it("validates selections per property and freezes them for every selected template", async () => {
+    const { workflow, owner, scenes, call, pairs } = batchFixture();
+    await call("pause");
+    const propertyId = pairs[0].propertyId;
+    const saved = workflow.store(owner).imports[propertyId];
+    const extra = {
+      ...scenes[0],
+      id: "88888888-8888-4888-8888-888888888888",
+      room: "额外房间",
+    };
+    saved.scenes = [...scenes, extra];
+    const materials = await call("materials", { propertyId });
+    expect(materials.scenes.map((s: { id: string }) => s.id)).toEqual([
+      ...scenes.map((s) => s.id),
+      extra.id,
+    ]);
+    await expect(
+      call("materials", { propertyId: "not-owned" }),
+    ).rejects.toThrow("房源已移除");
+    for (const ids of [
+      [],
+      [scenes[0].id],
+      [scenes[0].id, "not-owned-scene"],
+      Array(8).fill(scenes[0].id),
+    ]) {
+      const result = await call("create", {
+        requestId: "selection-batch",
+        pairs: pairs.slice(0, 2),
+        sceneIdsByProperty: { [propertyId]: ids },
+      });
+      expect(result.batchId).toBeUndefined();
+      expect(result.issues).toHaveLength(2);
+    }
+    expect(workflow.store(owner).production.items).toHaveLength(0);
+    const input = {
+      requestId: "selection-batch",
+      pairs: pairs.slice(0, 2),
+      sceneIdsByProperty: { [propertyId]: [extra.id, scenes[0].id] },
+    };
+    await call("create", input);
+    saved.scenes = scenes;
+    extra.room = "之后修改的名称";
+    const items = workflow.store(owner).production.items;
+    for (const item of items) {
+      expect(item.scenes.map((s: { id: string }) => s.id)).toEqual([
+        scenes[0].id,
+        extra.id,
+      ]);
+      expect(item.scenes[1].room).toBe("额外房间");
+    }
+    expect((await call("create", input)).batchId).toBe("selection-batch");
+    await expect(
+      call("create", {
+        ...input,
+        sceneIdsByProperty: { [propertyId]: scenes.map((s) => s.id) },
+      }),
+    ).rejects.toThrow("提交标识");
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    expect(restarted.store(owner).production.items[0].scenes).toEqual(
+      items[0].scenes,
+    );
+  });
 
   it("sends the approved opening WAV to MiniMax and reuses it as the narration track", async () => {
     const { workflow, owner, scenes, config } = fixture();
@@ -751,6 +830,7 @@ describe("production queue", () => {
     const [, tracks, , , , , videoFile] = render.mock.calls[0];
     expect(tracks).toMatchObject([
       { audio: "opening.wav" },
+      { audio: "scene.wav" },
       { audio: "scene.wav" },
       { audio: "closing.wav" },
     ]);

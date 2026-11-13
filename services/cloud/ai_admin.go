@@ -237,7 +237,7 @@ func patchAIValues(spec aiSpec, values aiValues, patch object) (bool, error) {
 	if maps.Equal(old, values) {
 		return false, nil
 	}
-	for urlKey, secretKey := range map[string]string{"AI_BASE_URL": "AI_API_KEY", "DASHSCOPE_BASE_URL": "DASHSCOPE_API_KEY"} {
+	for urlKey, secretKey := range map[string]string{"AI_BASE_URL": "AI_API_KEY"} {
 		if values[urlKey] != old[urlKey] {
 			previous, _ := url.Parse(old[urlKey])
 			next, _ := url.Parse(values[urlKey])

@@ -71,14 +71,9 @@ async function downloadMiniMaxVideo(value, file, signal) {
   });
   await fs.writeFile(file, await limitedBody(response, 32 * 1024 * 1024));
 }
-async function downloadImage(value, provider, signal) {
+async function downloadImage(value, signal) {
   const host = new URL(value).hostname.toLowerCase();
-  ensure(
-    provider === "beike"
-      ? host.endsWith(".ljcdn.com")
-      : /\.(aliyuncs\.com|alicdn\.com)$/.test(host),
-    "图片下载域名未授权",
-  );
+  ensure(host.endsWith(".ljcdn.com"), "图片下载域名未授权");
   const url = await publicURL(value);
   const response = await fetch(url, {
     redirect: "error",

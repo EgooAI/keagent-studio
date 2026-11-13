@@ -153,8 +153,10 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		return nil, fail(400, "参数格式无效")
 	}
 	switch operation {
-	case "beike-import", "image-submit", "image-query":
-		return s.productionImage(ctx, a, operation, input)
+	case "image-submit", "image-query":
+		return nil, fail(410, "AI 扩图已移除，请使用原始 VR 全景图")
+	case "beike-import":
+		return s.fetchBeike(ctx, input)
 	case "opening-submit", "opening-query":
 		return s.productionOpening(ctx, a, operation, input)
 	case "capabilities":
@@ -180,7 +182,6 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 			templates = filtered
 		}
 		services := aiServicesFor(ctx)
-		_, _, imageConfigErr := expansionConnection(ctx)
 		if input["summary"] == true {
 			for i, template := range templates {
 				item := obj(template)
@@ -192,7 +193,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 				templates[i] = summary
 			}
 		}
-		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "imageExpansion": imageConfigErr == nil, "minimaxOpening": minimaxConfigured(ctx)}, nil
+		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": minimaxConfigured(ctx)}, nil
 	case "template":
 		template, err := s.productionTemplate(ctx, input)
 		if err == nil && obj(obj(template["production"])["opening"]) != nil && input["openingRecipe"] != true {

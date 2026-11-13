@@ -53,10 +53,6 @@ func aiServicesFor(ctx context.Context) []aiService {
 			if values["VOLC_VOICE_CLONE_ENABLED"] != "true" {
 				service.Missing = append(service.Missing, "VOLC_VOICE_CLONE_ENABLED")
 			}
-		case "expansion":
-			service.Purpose = "普通房源照片扩图"
-			service.Model = "wanx2.1-imageedit"
-			service.Endpoint = publicAIURL(values["DASHSCOPE_BASE_URL"])
 		case "beike":
 			service.Purpose = "查询房屋档案与室内照片"
 			service.Endpoint = "https://gw-open.ke.com"

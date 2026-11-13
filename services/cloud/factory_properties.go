@@ -71,7 +71,7 @@ func factoryPropertyPage(w object, input factoryPropertyQuery) object {
 			continue
 		}
 		status := "incomplete"
-		hasMedia := len(rows(p["images"])) > 0 || len(rows(p["panoramas"])) > 0
+		hasMedia := len(rows(p["panoramas"])) > 0 || id == "panorama-cc0-sample"
 		if (p["importStatus"] == "ready" && hasMedia) || ready[id] {
 			status = "ready"
 		}

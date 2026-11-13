@@ -1,4 +1,4 @@
-// Real local end-to-end factory execution using an already completed expansion.
+// Real local end-to-end factory execution using an original VR panorama.
 // No Beike, image generation, cloud speech or publishing request is made.
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir, copyFile } from "node:fs/promises";
@@ -15,7 +15,7 @@ const {
 const media = require("../apps/desktop/electron/panorama/media.cjs");
 const domain = require("../apps/desktop/electron/panorama/domain.cjs");
 const catalog = require("../services/cloud/video_templates.json");
-const root = path.resolve("output/factory-run");
+const root = path.resolve("output/factory-vr-selection-run");
 await mkdir(root, { recursive: true });
 const calls = [];
 const testTemplate = structuredClone(catalog[0]);
@@ -33,7 +33,7 @@ const workflow = new PanoramaWorkflow(root, "", {}, async (method) => {
     "capabilities",
     "No paid calls are permitted in this regression",
   );
-  return { managedVoices: false, imageExpansion: true };
+  return { managedVoices: false };
 });
 const owner = workflow.owner("local-factory-regression");
 const property = {
@@ -48,37 +48,25 @@ const property = {
 };
 let state = workflow.store(owner);
 if (!state.imports[property.id]) {
-  const photo = await workflow.importBytes(
+  const panorama = await workflow.importBytes(
     owner,
-    await readFile(
-      "output/property-samples/beike-official-pic-verify/living-room-01.jpg",
-    ),
+    await readFile("apps/desktop/public/media/panoramas/lebombo.jpg"),
     "示例客厅",
-    "photo",
-  );
-  const expanded = await workflow.importBytes(
-    owner,
-    await readFile("output/production-live-direct-verification/expanded.png"),
-    photo.room,
-    "expanded",
+    "panorama",
   );
   state.imports[property.id] = {
     property,
-    scenes: [{ ...photo, description: "扩展部分由人工智能生成。" }],
-    materialMode: "expand",
+    scenes: [
+      panorama,
+      await workflow.importBytes(
+        owner,
+        await readFile("apps/desktop/public/media/panoramas/hotel_room.jpg"),
+        "示例客房",
+        "panorama",
+      ),
+    ],
+    materialMode: "panorama",
   };
-  state.imageTasks.push({
-    id: "cached-completed-expansion",
-    sceneId: photo.id,
-    source: photo,
-    status: "SUCCEEDED",
-    result: {
-      ...expanded,
-      id: photo.id,
-      sourceAsset: photo.asset,
-      approved: false,
-    },
-  });
   workflow.persist(owner);
 }
 const caps = await workflow.capabilities();
@@ -96,10 +84,14 @@ const config = {
 const draft = await workflow.handle(
   "local-factory-regression",
   "prepare",
-  { propertyId: property.id, config },
+  {
+    propertyId: property.id,
+    config,
+    sceneIds: state.imports[property.id].scenes.map((scene) => scene.id),
+  },
   property,
 );
-assert.equal(draft.scenes[0].kind, "photo");
+assert.equal(draft.scenes[0].kind, "panorama");
 await assert.rejects(
   () =>
     workflow.handle("local-factory-regression", "start", {
@@ -115,8 +107,8 @@ const job = await workflow.handle("local-factory-regression", "start", {
 });
 await workflow.active.get(job.id)?.promise;
 assert.equal(job.status, "succeeded", job.error);
-assert.equal(job.scenes[0].kind, "expanded");
-assert.equal(job.scenes[0].approved, true);
+assert.equal(job.scenes[0].kind, "panorama");
+assert.equal(job.scenes[0].asset, draft.scenes[0].asset);
 assert.equal(
   calls.every((method) => ["capabilities", "template"].includes(method)),
   true,
@@ -137,7 +129,7 @@ const report = {
   video: result,
   paidProviderCalls: 0,
   notes:
-    "Cached real AI expansion, local Windows test voice, actual factory execution and FFmpeg rendering.",
+    "Original VR panorama, local Windows test voice, actual factory execution and FFmpeg rendering.",
 };
 await writeFile(
   path.join(root, "result.json"),

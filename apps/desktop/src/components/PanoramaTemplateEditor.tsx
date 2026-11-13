@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   Button,
-  Checkbox,
   Empty,
   Form,
   Input,
@@ -167,13 +166,9 @@ export function PanoramaTemplateEditor({
               id: s.id,
               label: `${i + 1}. ${s.room}`,
               hint:
-                s.kind === "photo"
-                  ? "待扩图"
-                  : s.kind === "expanded"
-                    ? s.approved
-                      ? "扩图已审核"
-                      : "扩图待审核"
-                    : "全景旋转",
+                !s.kind || s.kind === "panorama"
+                  ? "全景旋转"
+                  : "请更换 VR 全景图",
             })),
             { id: "closing", label: "结尾", hint: "预约引导 · 经纪人" },
             { id: "cover", label: "封面", hint: "代表图 · 房源标题" },
@@ -240,11 +235,6 @@ export function PanoramaTemplateEditor({
               <div className="template-preview-shade" />
               <div className="template-preview-label">
                 {scene.room}
-                {scene.kind === "expanded"
-                  ? " · 已扩图"
-                  : scene.kind === "photo"
-                    ? " · 原图待扩图"
-                    : ""}
                 {property?.sample ? " · 测试素材" : ""}
               </div>
               {config.design !== "classic" && heading && (
@@ -399,20 +389,8 @@ export function PanoramaTemplateEditor({
                             />
                           </Form.Item>
                         )}
-                        {scene.kind === "expanded" && (
-                          <Checkbox
-                            checked={scene.approved}
-                            onChange={(e) =>
-                              editScene(scene.id, {
-                                approved: e.target.checked,
-                              })
-                            }
-                          >
-                            已审核扩图结果
-                          </Checkbox>
-                        )}
-                        {scene.kind === "photo" && (
-                          <p>这张照片需要先扩图并审核。</p>
+                        {scene.kind && scene.kind !== "panorama" && (
+                          <p>请更换为原始 VR 全景图后重新生成文案。</p>
                         )}
                       </>
                     )}

@@ -1,10 +1,24 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
-const { setTimeout: delay } = require("node:timers/promises");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
 const providers = require("../panorama/providers.cjs");
-const sources = require("./sources.cjs");
+
+function selectScenes(scenes, ids) {
+  domain.ensure(
+    Array.isArray(ids) &&
+      ids.length >= 2 &&
+      ids.length <= 7 &&
+      new Set(ids).size === ids.length,
+    "每套房源请选择 2–7 张不重复的 VR 全景图",
+  );
+  const selected = scenes.filter((scene) => ids.includes(scene.id));
+  domain.ensure(
+    selected.length === ids.length,
+    "所选图片已失效或不属于当前房源，请重新选择图片",
+  );
+  return selected;
+}
 
 async function load(
   workflow,
@@ -18,27 +32,26 @@ async function load(
   const state = workflow.store(owner);
   const saved = state.imports[property.id];
   const panoramas = Array.isArray(property.panoramas) ? property.panoramas : [];
-  const photos = Array.isArray(property.images) ? property.images : [];
-  const images = [
-    ...panoramas.map((url) => ({ url, kind: "panorama" })),
-    ...photos.map((url) => ({ url, kind: "photo" })),
-  ];
-  const fingerprint = domain.hash({ panoramas, photos });
+  const images = panoramas.map((url) => ({ url, kind: "panorama" }));
+  const fingerprint = domain.hash({ panoramas });
+  const savedPanoramas = (saved?.scenes || []).filter(
+    (scene) => !scene.kind || scene.kind === "panorama",
+  );
   if (
-    saved &&
+    savedPanoramas.length &&
     ((!images.length && !saved.remoteFingerprint) ||
       (saved.remoteFingerprint === fingerprint &&
         (saved.remoteSceneIds || saved.scenes.length === images.length)))
   )
-    return saved.scenes;
-  const scenes = (saved?.scenes || []).filter((scene) =>
+    return savedPanoramas;
+  const scenes = savedPanoramas.filter((scene) =>
     saved.remoteSceneIds
       ? !saved.remoteSceneIds.includes(scene.id)
       : !saved.remoteFingerprint,
   );
   domain.ensure(
     scenes.length + images.length > 0,
-    "这套房源还没有制作图片，请先到房源详情补充素材",
+    "这套房源还没有 VR 全景图，请先到房源详情补充素材",
   );
   domain.ensure(images.length <= 20, "每套房源最多使用20张制作图片");
   const controller = new AbortController();
@@ -55,7 +68,7 @@ async function load(
       );
       let bytes;
       try {
-        bytes = await providers.downloadImage(url, "beike", signal);
+        bytes = await providers.downloadImage(url, signal);
       } catch (error) {
         if (signal.aborted) throw error;
         throw new Error(
@@ -82,10 +95,11 @@ async function load(
     state.imports[property.id] = {
       ...saved,
       property,
-      scenes,
-      materialMode: scenes.some((s) => s.kind !== "panorama")
-        ? "expand"
-        : "panorama",
+      scenes: [
+        ...(saved?.scenes || []).filter((s) => s.kind && s.kind !== "panorama"),
+        ...scenes,
+      ],
+      materialMode: "panorama",
       remoteFingerprint: fingerprint,
       remoteSceneIds,
     };
@@ -100,7 +114,7 @@ async function scriptImages(workflow, owner, scenes, references, signal) {
   const cwd = workflow.directory(owner);
   for (const scene of [...scenes, ...references]) {
     signal.throwIfAborted();
-    const asset = scene.kind === "expanded" ? scene.sourceAsset : scene.asset;
+    const asset = scene.asset;
     domain.ensure(
       /^[a-f0-9]{64}\.(jpg|png)$/.test(asset || ""),
       "找不到用于编写文案的原图，请重新导入素材",
@@ -125,19 +139,22 @@ async function scriptImages(workflow, owner, scenes, references, signal) {
 }
 async function importProperty(workflow, owner, property, input, assertCurrent) {
   domain.ensure(property, "房源不存在，请重新选择");
+  const kind = input.kind || "panorama";
+  domain.ensure(
+    ["panorama", "reference"].includes(kind),
+    "制作素材仅支持 VR 全景图；户型图可作为文案参考",
+  );
   const files = await workflow.dialogs.open();
   assertCurrent();
   const state = workflow.store(owner);
   const saved = state.imports[property.id];
   const previous = saved?.scenes || [];
   const references = saved?.references || [];
-  const kind = input.kind || "photo";
+  const count =
+    previous.filter((s) => !s.kind || s.kind === "panorama").length +
+    references.length;
   domain.ensure(
-    ["photo", "panorama", "reference"].includes(kind),
-    "图片类型无效",
-  );
-  domain.ensure(
-    previous.length + references.length + files.length <= 20,
+    count + files.length <= 20,
     "每套房源最多保存20张图片（含参考图）",
   );
   const added = [];
@@ -152,7 +169,7 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
     assertCurrent();
     added.push(scene);
   }
-  if (!added.length) return { count: previous.length + references.length };
+  if (!added.length) return { count };
   const referenceOnly = kind === "reference";
   const all = referenceOnly ? previous : [...previous, ...added];
   state.imports[property.id] = {
@@ -160,80 +177,13 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
     property,
     scenes: all,
     references: referenceOnly ? [...references, ...added] : references,
-    materialMode: all.some((s) => s.kind !== "panorama")
-      ? "expand"
-      : "panorama",
+    materialMode: "panorama",
   };
   state.properties = [
     property,
     ...state.properties.filter((p) => p.id !== property.id),
   ];
   workflow.persist(owner);
-  return { count: previous.length + references.length + added.length };
+  return { count: count + added.length };
 }
-async function expand(workflow, owner, job, signal, onProgress) {
-  const state = workflow.store(owner);
-  for (const [index, scene] of job.scenes.entries()) {
-    signal.throwIfAborted();
-    if (scene.kind === "photo") {
-      let task = state.imageTasks.find((t) => t.sceneId === scene.id);
-      if (!task) {
-        await sources.handle(
-          workflow,
-          owner,
-          "image-submit",
-          {
-            scene,
-            prompt:
-              "延展原图左右边缘的室内环境，保留原有主体与水印，延续墙面、地面、光照和透视，不添加门窗、家具或人物。",
-            top_scale: 1,
-            bottom_scale: 1,
-            left_scale: 1.5,
-            right_scale: 1.5,
-          },
-          () => signal.throwIfAborted(),
-          signal,
-        );
-        task = state.imageTasks.find((t) => t.sceneId === scene.id);
-      }
-      domain.ensure(task, "无法恢复图片处理任务");
-      for (let attempt = 0; !task.result && attempt < 180; attempt++) {
-        signal.throwIfAborted();
-        domain.ensure(
-          !["FAILED", "CANCELED", "UNKNOWN"].includes(task.status),
-          task.error || "图片处理失败，请核对供应商任务后重试",
-        );
-        await sources.handle(
-          workflow,
-          owner,
-          "image-refresh",
-          { sceneIds: [scene.id] },
-          () => signal.throwIfAborted(),
-          signal,
-        );
-        domain.ensure(!task.error, task.error || "图片处理失败");
-        if (!task.result) await delay(5000, undefined, { signal });
-      }
-      domain.ensure(task.result, "图片仍在处理中，重试将继续查询原任务");
-      job.scenes[index] = {
-        ...task.result,
-        room: scene.room,
-        description: scene.description,
-        direction: scene.direction,
-        approved: true,
-      };
-    } else if (scene.kind === "expanded")
-      job.scenes[index] = { ...scene, approved: true };
-    const completed = job.scenes[index];
-    const bytes = await fs.readFile(
-      path.join(workflow.directory(owner), "assets", completed.asset),
-    );
-    domain.ensure(
-      domain.hash(bytes) === completed.asset.split(".")[0],
-      "图片处理结果已改变，请在房源详情重新补充素材",
-    );
-    workflow.persist(owner);
-    onProgress((index + 1) / job.scenes.length);
-  }
-}
-module.exports = { load, importProperty, scriptImages, expand };
+module.exports = { load, importProperty, scriptImages, selectScenes };

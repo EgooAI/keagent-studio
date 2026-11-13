@@ -13,7 +13,7 @@ func TestFactoryPropertyPage(t *testing.T) {
 		if i == 0 {
 			status = "incomplete"
 		}
-		properties = append(properties, object{"id": id, "propertyNumber": id, "district": "浦东", "importStatus": status, "images": []any{"image.jpg"}})
+		properties = append(properties, object{"id": id, "propertyNumber": id, "district": "浦东", "importStatus": status, "images": []any{"image.jpg"}, "panoramas": []any{"panorama.jpg"}})
 	}
 	w := object{"properties": properties}
 	page := factoryPropertyPage(w, factoryPropertyQuery{Search: "sh", District: "浦东", Material: "ready", Page: 50})
@@ -32,5 +32,17 @@ func TestFactoryPropertyPage(t *testing.T) {
 	full := factoryPropertyPage(w, factoryPropertyQuery{IDs: []string{"SH0999", "missing"}})
 	if items := rows(full["rows"]); len(items) != 1 || len(rows(obj(items[0])["images"])) != 1 {
 		t.Fatal("only existing selected properties should return full snapshots")
+	}
+}
+
+func TestFactoryRejectsPhotoOnlyMaterials(t *testing.T) {
+	w := object{"properties": []any{object{"id": "photo-only", "importStatus": "ready", "images": []any{"photo.jpg"}}}}
+	page := factoryPropertyPage(w, factoryPropertyQuery{SelectedIDs: []string{"photo-only"}})
+	if obj(rows(page["rows"])[0])["importStatus"] != "incomplete" {
+		t.Fatal("photo-only property was ready")
+	}
+	page = factoryPropertyPage(w, factoryPropertyQuery{SelectedIDs: []string{"photo-only"}, ReadyIDs: []string{"photo-only"}})
+	if obj(rows(page["rows"])[0])["importStatus"] != "ready" {
+		t.Fatal("local VR materials were ignored")
 	}
 }

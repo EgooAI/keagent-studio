@@ -368,7 +368,7 @@ export function ProductionTemplateEditor({ disabled }: { disabled?: boolean }) {
           name={field("maxSweep")}
           label="单镜头最大幅度（度）"
           rules={[{ required: true }]}
-          extra="全景为旋转，扩图为平移；时长跟随配音，不强制拉伸。"
+          extra="VR 全景使用旋转运镜，时长跟随配音，不强制拉伸。"
         >
           <InputNumber min={1} max={180} />
         </Form.Item>
@@ -554,8 +554,8 @@ export function ProductionTemplateRules() {
       </p>
       <h3>2. 结构与素材处理固定</h3>
       <p>
-        开场 → 每张图片一个空间 →
-        结尾，保持房源素材顺序。全景图旋转运镜，普通照片在文案确认后扩图并平移运镜。封面默认第一张图与房源标题。
+        开场 → 每张图片一个空间 → 结尾，保持房源素材顺序。仅使用原始 VR
+        全景图旋转运镜。封面默认第一张图与房源标题。
       </p>
       <h3>3. 只填写可复用规则</h3>
       <p>

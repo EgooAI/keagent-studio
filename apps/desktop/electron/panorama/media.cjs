@@ -316,26 +316,15 @@ async function render(
   const clips = [];
   const timeline = [];
   const yaw = new Map();
-  const sceneDurations = new Map();
-  const sceneOffsets = new Map();
-  for (const segment of audio)
-    sceneDurations.set(
-      segment.sceneId,
-      (sceneDurations.get(segment.sceneId) || 0) + segment.duration,
-    );
   let elapsed = 0;
   let frame = 0;
   for (const [index, segment] of audio.entries()) {
     const scene = job.scenes.find((s) => s.id === segment.sceneId);
     ensure(scene, "素材与文案关联丢失");
-    const expanded = scene.kind === "expanded";
     const direction = scene.direction || c.direction;
-    const panOffset = sceneOffsets.get(scene.id) || 0;
-    const panDuration = sceneDurations.get(scene.id);
-    sceneOffsets.set(scene.id, panOffset + segment.duration);
     ensure(
-      !scene.kind || scene.kind === "panorama" || (expanded && scene.approved),
-      "素材尚未扩图或未经审核",
+      !scene.kind || scene.kind === "panorama",
+      "视频制作仅支持原始 VR 全景图",
     );
     const nextFrame = Math.round((elapsed + segment.duration) * 25);
     const frames = Math.max(1, nextFrame - frame);
@@ -355,7 +344,7 @@ async function render(
         : openingFile);
     const label = `${scene.room}${job.sample ? " · 独立测试场景，非在售房源" : ""}`;
     const key = hash([
-      expanded ? "render-v6-expanded" : "render-v4-panorama",
+      "render-v4-panorama",
       scene.kind || "panorama",
       scene.asset,
       segment,
@@ -372,7 +361,6 @@ async function render(
           ? path.basename(openingVideo)
           : c.openingClip
         : null,
-      expanded ? [panOffset, panDuration] : null,
       presentation.card(job, segment.kind),
     ]);
     const name = `clip-${key}.mp4`;
@@ -406,9 +394,7 @@ async function render(
       // shortcut: hold the last frame of a short clip, until templates support a timed cut to the room.
       const base = openingVideo
         ? `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,tpad=stop_mode=clone:${c.openingClip ? "stop=-1" : "stop_duration=5"}`
-        : expanded
-          ? `scale=${Math.ceil(width * 1.06) * 2}:${Math.ceil(height * 1.06) * 2}:force_original_aspect_ratio=increase,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),crop=${width * 2}:${height * 2}:x='(iw-ow)*${direction === 1 ? `min(1,(${panOffset}+n/25)/${panDuration})` : `(1-min(1,(${panOffset}+n/25)/${panDuration}))`}':y='(ih-oh)/2',scale=${width}:${height},setsar=1`
-          : `scale=4096:2048,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${start}:reset_rot=1,setsar=1`;
+        : `scale=4096:2048,loop=loop=-1:size=1:start=0,setpts=N/(25*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${start}:reset_rot=1,setsar=1`;
       const temp = `clip-${key}.part.mp4`;
       await run(
         ffmpeg(),
@@ -456,7 +442,7 @@ async function render(
       start: elapsed,
       duration: segment.duration,
       audio: segment.audio,
-      camera: openingVideo || expanded ? null : camera,
+      camera: openingVideo ? null : camera,
       captions: segment.captions.map(({ text, start, end }) => ({
         text,
         start: elapsed + start,
@@ -536,7 +522,6 @@ async function render(
     const scene =
       job.scenes.find((s) => s.id === (c.coverSceneId || c.leadSceneId)) ||
       job.scenes[0];
-    const expanded = scene.kind === "expanded";
     const caption = "cover.ass";
     const label = job.sample ? "独立测试场景，非在售房源" : "";
     await fs.writeFile(
@@ -549,9 +534,7 @@ async function render(
         presentation.card(job, "cover"),
       ),
     );
-    const base = expanded
-      ? `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`
-      : `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${scene.yaw}`;
+    const base = `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${width < height ? 70 : 100}:v_fov=${width < height ? 103 : 62}:yaw=${scene.yaw}`;
     await run(
       ffmpeg(),
       [

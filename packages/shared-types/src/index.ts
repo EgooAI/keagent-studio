@@ -52,6 +52,7 @@ export interface Property {
   details?: PropertyDetails;
   image: string;
   images: string[];
+  panoramas?: string[];
   videoCount: number;
   importStatus: "ready" | "incomplete";
   lastVerifiedAt: string;

@@ -275,11 +275,8 @@ export default function AIConfigDialog({
       request.current = { key, id: crypto.randomUUID() };
     const requestId = request.current.id;
     try {
-      if (
-        mode !== "connection" &&
-        (service === "script" || service === "expansion")
-      ) {
-        sample.images = await fixtureImages(service === "script" ? 2 : 1);
+      if (mode !== "connection" && service === "script") {
+        sample.images = await fixtureImages(2);
       }
       if (mode === "training") {
         const max = 10;

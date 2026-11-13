@@ -23,8 +23,6 @@ const configLabels: Record<string, string> = {
   VOLC_TTS_API_KEY: "火山语音服务密钥",
   VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
   VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻资源编号",
-  DASHSCOPE_API_KEY: "百炼 API Key",
-  DASHSCOPE_BASE_URL: "百炼服务地址",
   BEIKE_ACCESS_TOKEN: "贝壳 Access Token",
 };
 
@@ -57,7 +55,6 @@ const serviceOrder: AdminAIService["id"][] = [
   "tts",
   "opening",
   "voice-clone",
-  "expansion",
   "beike",
 ];
 

@@ -40,7 +40,6 @@ export function ProductionServiceStatus() {
           [
             ["AI 文案", catalog.data?.ai],
             ["云端配音", catalog.data?.volcTts],
-            ["AI 扩图", catalog.data?.imageExpansion],
             ["MiniMax 开场", catalog.data?.minimaxOpening],
             ["贝壳房源接入", catalog.data?.beike],
           ] as [string, boolean | undefined][]

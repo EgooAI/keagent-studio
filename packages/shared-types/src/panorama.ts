@@ -116,7 +116,6 @@ export interface PanoramaState {
 }
 export interface PanoramaCapabilities {
   beike?: boolean;
-  imageExpansion?: boolean;
   ffmpeg: boolean;
   ffprobe: boolean;
   voices: { name: string; language: string }[];

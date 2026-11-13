@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const factory = require("./factory.cjs");
 const {
   ensure,
   hash,
@@ -176,9 +177,36 @@ class ProductionQueue {
         openingPhoto: state.openingPhoto,
         openingBackground: state.openingBackground,
       };
+    if (method === "materials") {
+      ensure(validID(input.propertyId), "请选择房源");
+      const result = await this.workflow.factoryProperties({
+        ids: [input.propertyId],
+      });
+      assertCurrent();
+      const property = result.rows.find((p) => p.id === input.propertyId);
+      ensure(property, "房源已移除，请重新选择");
+      const scenes = await factory.load(
+        this.workflow,
+        owner,
+        property,
+        assertCurrent,
+      );
+      assertCurrent();
+      return {
+        scenes: scenes.map((scene) => ({
+          id: scene.id,
+          room: scene.room,
+          url: this.workflow.url(owner, `assets/${scene.asset}`),
+        })),
+      };
+    }
     if (method === "properties") {
       const readyIds = Object.entries(state.imports)
-        .filter(([, value]) => value.scenes?.length)
+        .filter(([, value]) =>
+          value.scenes?.some(
+            (scene) => !scene.kind || scene.kind === "panorama",
+          ),
+        )
         .map(([id]) => id);
       const result = await this.workflow.factoryProperties({
         search: input.search,
@@ -275,7 +303,7 @@ class ProductionQueue {
           this.workflow.url(owner, `assets/${location.asset}`),
         openingLocations:
           location?.source === "property"
-            ? this.workflow.openingLocations(owner, draft.scenes)
+            ? this.workflow.openingLocations(owner, draft.property.id)
             : undefined,
       };
     }
@@ -287,7 +315,7 @@ class ProductionQueue {
       ensure(
         location?.source === "property" &&
           this.workflow
-            .openingLocations(owner, draft.scenes)
+            .openingLocations(owner, draft.property.id)
             .some(({ asset }) => asset === input.asset),
         "请选择当前房源的原始实拍图",
       );
@@ -401,6 +429,7 @@ class ProductionQueue {
       );
     const fingerprint = hash([
       input.pairs,
+      input.sceneIdsByProperty,
       input.voiceId,
       input.openingClip ?? input.avatarId,
       ...(input.openingPhoto ? [input.openingPhoto] : []),
@@ -441,6 +470,7 @@ class ProductionQueue {
     const state = this.workflow.store(owner);
     const openingClip = state.openingClip?.id;
     const fixedOpenings = new Map();
+    const selectedMaterials = new Map();
     const items = [];
     const issues = [];
     const seen = new Set();
@@ -471,15 +501,16 @@ class ProductionQueue {
         continue;
       }
       const sample = property.id === "panorama-cc0-sample";
-      const remoteMedia = [property.images, property.panoramas].some(
-        (assets) => Array.isArray(assets) && assets.length > 0,
-      );
+      const remoteMedia =
+        Array.isArray(property.panoramas) && property.panoramas.length > 0;
       if (
         !sample &&
-        !state.imports[property.id]?.scenes?.length &&
+        !state.imports[property.id]?.scenes?.some(
+          (scene) => !scene.kind || scene.kind === "panorama",
+        ) &&
         (property.importStatus !== "ready" || !remoteMedia)
       ) {
-        issue("缺少制作图片，请补充房源素材");
+        issue("缺少 VR 全景图，请补充房源素材");
         continue;
       }
       if (!template) {
@@ -643,10 +674,38 @@ class ProductionQueue {
         },
         [template],
       );
+      let scenes;
+      try {
+        if (!selectedMaterials.has(property.id)) {
+          const available = await factory.load(
+            this.workflow,
+            owner,
+            property,
+            assertCurrent,
+          );
+          assertCurrent();
+          selectedMaterials.set(
+            property.id,
+            this.workflow.scenes(
+              owner,
+              factory.selectScenes(
+                available,
+                input.sceneIdsByProperty?.[property.id],
+              ),
+            ),
+          );
+        }
+        scenes = selectedMaterials.get(property.id);
+      } catch (error) {
+        assertCurrent();
+        issue(reason(error));
+        continue;
+      }
       items.push({
         id: randomUUID(),
         batchId: input.requestId,
         property,
+        scenes: structuredClone(scenes),
         config: resolved,
         templateVersion: template.version,
         templateName: template.name,
@@ -696,7 +755,7 @@ class ProductionQueue {
       ensure(item.phase === "review", "任务已离开待审核状态");
       const draft = this.workflow.draft(owner, item.draftId, revision);
       validateSegments(draft.segments, draft.segments);
-      await this.workflow.preflight(draft, owner, true, true, checks);
+      await this.workflow.preflight(draft, owner, true, checks);
       assertCurrent();
       if (item.approvedRevision === revision && item.phase !== "review") return;
       ensure(item.phase === "review", "任务已离开待审核状态");

@@ -360,7 +360,6 @@ function PricingAndWelcome() {
     voice_clone: "声音复刻（每次）",
     script: "AI 文案（每次）",
     tts_per_kilo_char: "云端配音（每千字）",
-    image_expand: "AI 扩图（每次，0 = 不收费）",
   };
   async function savePricing(next: Record<string, number>) {
     await run(() => serviceRequest("/v1/admin/credits/pricing", { prices: next }), "价目已保存");
@@ -375,7 +374,7 @@ function PricingAndWelcome() {
     <div style={{ maxWidth: 560 }}>
       <h3 style={{ marginTop: 0 }}>计费单价（版本 {pricing.data?.version ?? "…"}）</h3>
       {pricing.data &&
-        Object.entries(pricing.data.prices).map(([key, value]) => (
+        Object.entries(pricing.data.prices).filter(([key]) => key !== "image_expand").map(([key, value]) => (
           <PricingRow key={key} label={priceLabels[key] ?? key} value={value} onSave={(next) => void savePricing({ [key]: next })} busy={busy} />
         ))}
       <h3 style={{ marginTop: 28 }}>新用户欢迎赠送</h3>
