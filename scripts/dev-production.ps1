@@ -17,8 +17,8 @@ if (!$env:GOPROXY) { $env:GOPROXY = 'https://goproxy.cn,direct' }
 
 $busyPorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(5173, 5174, 18080, 18081) }
 if ($busyPorts) { throw 'Application ports are occupied. Stop the other workspace application before starting this worktree.' }
-if (!(Get-NetTCPConnection -State Listen -LocalPort 55432 -ErrorAction SilentlyContinue)) {
-  throw 'Start the local PostgreSQL instance on port 55432 first. This script does not manage shared database processes.'
+if (!(Get-NetTCPConnection -State Listen -LocalPort 5432 -ErrorAction SilentlyContinue)) {
+  throw 'Start the local PostgreSQL instance on port 5432 first. This script does not manage shared database processes.'
 }
 
 Write-Host 'Starting the production worktree with its own Electron profile. Ctrl+C stops application services.'

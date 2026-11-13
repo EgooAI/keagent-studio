@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS keagent_credit_ledger (
  operator_id text NOT NULL DEFAULT '', metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
  created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS keagent_credit_ledger_owner_idx ON keagent_credit_ledger(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS keagent_credit_ledger_capture_time_idx ON keagent_credit_ledger(created_at) WHERE kind='capture';
 CREATE TABLE IF NOT EXISTS keagent_credit_code (
  batch_id text NOT NULL, code_hash text PRIMARY KEY, amount bigint NOT NULL,
  used_by text NOT NULL DEFAULT '', used_at timestamptz, expires_at timestamptz,

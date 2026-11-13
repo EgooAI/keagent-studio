@@ -1,6 +1,6 @@
 # Windows 本地开发环境
 
-本机使用 Node.js 24、项目固定的 pnpm 10.33.3，以及 `output/tools` 中的 Go 1.25.4、PostgreSQL 18 和 FFmpeg。工具、数据库、日志和账号凭据均不进入 Git。
+本机使用 Node.js 24、项目固定的 pnpm 10.33.3，本机 PostgreSQL 18 服务（5432），以及 Go 1.25.4 和 FFmpeg。工具、数据库、日志和账号凭据均不进入 Git。
 
 ## 日常启动
 
@@ -10,11 +10,10 @@
 powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1
 ```
 
-此命令启动项目独立数据库、认证服务、Go 业务服务、管理后台，以及 Vite + Electron 桌面窗口。只开发网页时添加 `-WebOnly`。Ctrl+C 停止本次启动的应用进程，数据库保留运行。
+请先确保本机 PostgreSQL 服务已启动。此命令连接 5432 上的 `keagent` 数据库，启动认证服务、Go 业务服务、管理后台，以及 Vite + Electron 桌面窗口。只开发网页时添加 `-WebOnly`。Ctrl+C 停止本次启动的应用进程，数据库保留运行。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -Action status
-powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -Action stop-db
 ```
 
 | 服务        | 地址                                    |
@@ -23,11 +22,11 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -Action stop-db
 | 管理后台    | http://127.0.0.1:5174/#/admin/dashboard |
 | 认证        | http://127.0.0.1:18080                  |
 | Go 业务 API | http://127.0.0.1:18081                  |
-| PostgreSQL  | 127.0.0.1:55432 / keagent               |
+| PostgreSQL  | 127.0.0.1:5432 / keagent                |
 
 ## 配置和账号
 
-`.env.local` 保存数据库连接、随机服务端密钥及本机开发账号配置。`output/local-accounts.json` 保存管理员与普通用户的登录信息。两者均已被 Git 忽略；账号持久化在本项目 `output/postgres` 数据库中。
+`.env.local` 保存数据库连接、随机服务端密钥及本机开发账号配置。`output/local-accounts.json` 保存管理员与普通用户的登录信息。两者均已被 Git 忽略；账号持久化在本机 5432 实例的 `keagent` 数据库中，应用使用独立 `keagent` 账号。启动脚本不会启停共享数据库服务。旧 `output/postgres` 和 `output/backups` 中的迁移备份保留用于回退。
 
 管理员登录管理后台；普通用户登录客户端。统一使用 `127.0.0.1`，避免与 `localhost` 混用导致 Cookie 和 Origin 不一致。
 

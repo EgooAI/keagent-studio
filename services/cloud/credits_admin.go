@@ -24,6 +24,8 @@ func (s *server) adminCredits(r *http.Request, a actor, kind string, body []byte
 	switch r.Method {
 	case "GET":
 		switch kind {
+		case "credits/usage":
+			return s.creditUsage(ctx, query, nil)
 		case "credits/list":
 			return s.adminCreditList(ctx, query)
 		case "credits/holds":

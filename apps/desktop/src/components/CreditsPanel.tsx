@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Coins } from "lucide-react";
 import { authRequest, ServiceRequestError } from "@keagent/api-client";
+import CreditUsage from "./CreditUsage";
 
 interface CreditSummary {
   purchased?: { available?: number; held?: number };
@@ -25,6 +26,14 @@ const ledgerLabels: Record<string, string> = {
   release: "退回",
   adjust: "调整",
   expire: "过期",
+};
+
+const opLabels: Record<string, string> = {
+  opening: "MiniMax 开场",
+  voice_clone: "声音复刻",
+  script: "AI 文案",
+  tts: "云端配音",
+  image_expand: "AI 扩图",
 };
 
 export function CreditsPanel() {
@@ -64,7 +73,8 @@ export function CreditsPanel() {
     <>
       <h2 style={{ fontSize: 18, marginTop: 0 }}>我的积分</h2>
       <p style={{ color: "#667085" }}>
-        AI 文案、配音、声音复刻和 MiniMax 开场按实际调用消耗积分；本机视频合成与平台发布不消耗。
+        AI 文案、配音、声音复刻和 MiniMax
+        开场按实际调用消耗积分；本机视频合成与平台发布不消耗。
       </p>
       {summary.error && (
         <Alert
@@ -94,7 +104,10 @@ export function CreditsPanel() {
             处理中 {(purchased?.held ?? 0) + (granted?.held ?? 0)}
           </Tag>
         )}
-        <Button onClick={() => void summary.refetch()} loading={summary.isFetching}>
+        <Button
+          onClick={() => void summary.refetch()}
+          loading={summary.isFetching}
+        >
           刷新
         </Button>
       </Space>
@@ -115,16 +128,25 @@ export function CreditsPanel() {
           onPressEnter={() => void redeem()}
           allowClear
         />
-        <Button type="primary" loading={redeeming} onClick={() => void redeem()}>
+        <Button
+          type="primary"
+          loading={redeeming}
+          onClick={() => void redeem()}
+        >
           兑换
         </Button>
       </div>
+      <CreditUsage opLabels={opLabels} />
       <h3 style={{ fontSize: 16, margin: "0 0 10px" }}>最近流水</h3>
+      <p className="muted">余额在冻结时扣减，结算时的实际消耗单独列示。</p>
       <Table
         size="small"
-        rowKey={(record) => `${record.kind}-${record.createdAt}-${record.amount}`}
+        rowKey={(record) =>
+          `${record.kind}-${record.createdAt}-${record.amount}`
+        }
         dataSource={summary.data?.ledger ?? []}
         pagination={{ pageSize: 8, hideOnSinglePage: true }}
+        scroll={{ x: 600 }}
         columns={[
           {
             title: "类型",
@@ -133,7 +155,7 @@ export function CreditsPanel() {
             render: (kind: string) => ledgerLabels[kind] ?? kind,
           },
           {
-            title: "变动",
+            title: "余额变动",
             dataIndex: "amount",
             width: 90,
             render: (amount: number) => (
@@ -143,28 +165,38 @@ export function CreditsPanel() {
             ),
           },
           {
+            title: "实际消耗",
+            width: 90,
+            render: (record: NonNullable<CreditSummary["ledger"]>[number]) =>
+              record.kind === "capture" ? (record.metadata?.spent ?? "—") : "—",
+          },
+          {
             title: "说明",
             render: (record: NonNullable<CreditSummary["ledger"]>[number]) =>
-              record.metadata?.note ||
-              (record.kind === "capture"
-                ? `${record.op} 消耗 ${record.metadata?.spent ?? 0}`
-                : record.op),
+              record.metadata?.note || opLabels[record.op] || record.op || "—",
           },
           {
             title: "时间",
             dataIndex: "createdAt",
             render: (createdAt: string) =>
-              new Date(createdAt).toLocaleString("zh-CN"),
+              new Date(createdAt).toLocaleString("zh-CN", {
+                timeZone: "Asia/Shanghai",
+              }),
           },
         ]}
       />
       {summary.data && (summary.data.ledger?.length ?? 0) === 0 && (
-        <p className="muted">暂无流水。积分不足时可在管理后台充值或使用兑换码。</p>
+        <p className="muted">
+          暂无流水。积分不足时可在管理后台充值或使用兑换码。
+        </p>
       )}
     </>
   );
 }
 
 export function isInsufficientCredits(error: unknown): boolean {
-  return error instanceof ServiceRequestError && error.code === "CREDITS_INSUFFICIENT";
+  return (
+    error instanceof ServiceRequestError &&
+    error.code === "CREDITS_INSUFFICIENT"
+  );
 }

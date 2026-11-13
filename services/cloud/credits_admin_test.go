@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func adminCreditServer(t *testing.T) *server {
@@ -29,6 +30,131 @@ func adminCall(t *testing.T, s *server, a actor, method, path string, body any) 
 	}
 	r := httptest.NewRequest(method, "http://internal"+path, bytes.NewReader(payload))
 	return s.admin(r, a, payload)
+}
+
+func TestAdminCreditUsageInvalidRange(t *testing.T) {
+	for _, query := range []string{
+		"", "?from=2026-11-01", "?from=&to=2026-11-13",
+		"?from=2026-02-30&to=2026-11-13", "?from=2026-11-14&to=2026-11-13",
+		"?from=2026-11-01&from=2026-11-02&to=2026-11-13",
+		"?from=2026-11-01&to=invalid", "?from=0000-01-01&to=2026-11-13",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := adminCall(t, &server{}, actor{Role: "admin"}, "GET", "/v1/admin/credits/usage"+query, nil)
+			if f, ok := err.(fault); !ok || f.status != 422 {
+				t.Fatalf("expected invalid range rejection, got %v", err)
+			}
+		})
+	}
+}
+
+func TestAdminCreditUsage(t *testing.T) {
+	s := adminCreditServer(t)
+	ctx := t.Context()
+	admin := actor{UserID: "admin-1", Role: "admin"}
+	grantForTest(t, s, "u1", creditKindGranted, 7, time.Hour)
+	grantForTest(t, s, "u1", creditKindPurchased, 100, 0)
+	grantForTest(t, s, "u2", creditKindPurchased, 100, 0)
+	settle := func(owner, op, key, at string, amount, actual int64) {
+		t.Helper()
+		hold, err := s.holdCredits(ctx, owner, op, key, amount, key, "v1", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.captureHold(ctx, hold.ID, actual); err != nil {
+			t.Fatal(err)
+		}
+		settledAt, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE keagent_credit_ledger SET created_at=$1 WHERE owner_id=$2 AND idem_key=$3`, settledAt, owner, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 10 分跨赠送与充值两批结算，冻结 20 分的差额退回不算消耗。
+	settle("u1", "script", "split", "2026-11-12T16:00:00Z", 20, 10)
+	settle("u2", "script", "other-owner", "2026-11-13T15:59:59.999999Z", 5, 5)
+	settle("u2", "tts", "tts", "2026-11-13T04:00:00Z", 30, 30)
+	settle("u1", "opening", "before", "2026-11-12T15:59:59.999999Z", 11, 11)
+	settle("u1", "opening", "after", "2026-11-13T16:00:00Z", 13, 13)
+	settle("u1", "voice_clone", "released", "2026-11-13T04:00:00Z", 15, 0)
+	if _, err := s.holdCredits(ctx, "u2", "opening", "pending", 20, "pending", "v1", nil); err != nil {
+		t.Fatal(err)
+	}
+	// 其他流水即使带 spent 元数据也不能混进结算汇总。
+	if _, err := s.db.ExecContext(ctx, `UPDATE keagent_credit_ledger SET created_at='2026-11-13T04:00:00Z', metadata=metadata || '{"spent":999}'::jsonb WHERE kind <> 'capture'`); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := adminCall(t, s, admin, "GET", "/v1/admin/credits/usage?from=2026-11-13&to=2026-11-13", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj(usage)["total"] != int64(45) {
+		t.Fatalf("usage total: %#v", usage)
+	}
+	expected := map[string]int64{"script": 15, "tts": 30, "opening": 0, "voice_clone": 0, "image_expand": 0}
+	items := rows(obj(usage)["items"])
+	if len(items) != len(expected) {
+		t.Fatalf("services missing: %#v", items)
+	}
+	for _, item := range items {
+		row := obj(item)
+		if want, exists := expected[str(row["op"])]; !exists || row["spent"] != want {
+			t.Fatalf("unexpected service consumption: %#v", row)
+		}
+	}
+	empty, err := adminCall(t, s, admin, "GET", "/v1/admin/credits/usage?from=2026-12-01&to=2026-12-31", nil)
+	if err != nil || obj(empty)["total"] != int64(0) || len(rows(obj(empty)["items"])) != len(creditOps) {
+		t.Fatalf("empty range: %#v, %v", empty, err)
+	}
+	detail, err := adminCall(t, s, admin, "GET", "/v1/admin/credits/list?ownerId=u1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var splitSpent float64
+	var splitRows int
+	for _, item := range rows(obj(detail)["ledger"]) {
+		row := obj(item)
+		if row["kind"] == "capture" && row["refId"] == "split" {
+			if row["amount"] != int64(0) {
+				t.Fatalf("capture must not deduct balance twice: %#v", row)
+			}
+			splitSpent += obj(row["metadata"])["spent"].(float64)
+			splitRows++
+		}
+	}
+	if splitSpent != 10 || splitRows != 2 {
+		t.Fatalf("split settlement detail: spent=%v rows=%d", splitSpent, splitRows)
+	}
+	s.secret = "test-secret-with-at-least-32-characters"
+	for userID, want := range map[string]float64{"u1": 10, "u2": 35, "unused": 0} {
+		w := signedCreditsRequest(t, s, "GET", "/v1/credits/usage?from=2026-11-13&to=2026-11-13&ownerId=u2", nil, userID)
+		var own object
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &own) != nil || own["total"] != want {
+			t.Fatalf("own usage must ignore supplied ownerId (%s): %d %s", userID, w.Code, w.Body.String())
+		}
+	}
+	for _, path := range []string{
+		"/v1/credits/usage?from=2026-11-13&to=2026-11-13",
+		"/v1/admin/credits/usage?from=2026-11-13&to=2026-11-13",
+	} {
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 401 {
+			t.Fatalf("anonymous usage request accepted: %d", w.Code)
+		}
+	}
+	w := signedCreditsRequest(t, s, "GET", "/v1/admin/credits/usage?from=2026-11-13&to=2026-11-13", nil, "u1")
+	if w.Code != 403 {
+		t.Fatalf("ordinary user queried global usage: %d", w.Code)
+	}
+	w = signedCreditsRequest(t, s, "GET", "/v1/credits/usage?from=2026-11-14&to=2026-11-13", nil, "u1")
+	if w.Code != 422 {
+		t.Fatalf("invalid user range accepted: %d", w.Code)
+	}
+	creditInvariant(t, s, "u1")
+	creditInvariant(t, s, "u2")
 }
 
 func TestAdminCreditGrantAndList(t *testing.T) {

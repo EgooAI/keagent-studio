@@ -10,7 +10,7 @@ if (
   new URL(authURL).origin !== "http://127.0.0.1:18080" ||
   new URL(goURL).origin !== "http://127.0.0.1:18081" ||
   databaseURL.hostname !== "127.0.0.1" ||
-  databaseURL.port !== "55432" ||
+  databaseURL.port !== "5432" ||
   databaseURL.pathname !== "/keagent"
 )
   throw new Error("管理联调仅允许本项目本机服务与独立数据库");

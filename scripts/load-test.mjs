@@ -85,7 +85,7 @@ async function main() {
   loadEnvFile(".env.local");
   const originalURL = new URL(process.env.DATABASE_URL);
   assert.equal(originalURL.hostname, "127.0.0.1", "Local database required");
-  assert.equal(originalURL.port, "55432");
+  assert.equal(originalURL.port, "5432");
   assert.equal(originalURL.pathname, "/keagent");
   const authURL = "http://127.0.0.1:18080";
   const goURL = "http://127.0.0.1:18081";

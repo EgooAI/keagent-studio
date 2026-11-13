@@ -222,6 +222,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, v, e)
 		return
 	}
+	if r.Method == "GET" && r.URL.Path == "/v1/credits/usage" {
+		v, e := s.creditUsage(r.Context(), r.URL.Query(), &a.UserID)
+		respond(w, v, e)
+		return
+	}
 	if r.Method == "GET" && r.URL.Path == "/v1/credits/pricing" {
 		prices, version, e := readCreditPricing(r.Context(), s.db)
 		if e != nil {

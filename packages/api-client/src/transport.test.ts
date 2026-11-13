@@ -16,6 +16,36 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("queries own credit usage with an authenticated GET and preserves IPC errors", async () => {
+  const range = { from: "2026-11-01", to: "2026-11-13" };
+  const usage = { items: [{ op: "script", spent: 5 }], total: 5 };
+  fetchMock
+    .mockResolvedValueOnce(json({ token: "jwt" }))
+    .mockResolvedValueOnce(json(usage));
+  await expect(authRequest("credits.usage", [range])).resolves.toEqual(usage);
+  expect(String(fetchMock.mock.calls[1][0])).toBe(
+    "http://127.0.0.1:18081/v1/credits/usage?from=2026-11-01&to=2026-11-13",
+  );
+  expect(fetchMock.mock.calls[1][1]).toMatchObject({
+    method: "GET",
+    body: undefined,
+  });
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, data: usage })
+    .mockResolvedValueOnce({
+      ok: false,
+      error: { message: "日期无效", status: 422 },
+    });
+  vi.stubGlobal("window", { desktop: { request }, dispatchEvent: vi.fn() });
+  await expect(authRequest("credits.usage", [range])).resolves.toEqual(usage);
+  expect(request).toHaveBeenCalledWith("credits.usage", [range]);
+  await expect(authRequest("credits.usage", [range])).rejects.toMatchObject({
+    message: "日期无效",
+    status: 422,
+  });
+});
+
 it("routes voice uploads through authenticated business transport without replaying service failures", async () => {
   fetchMock
     .mockResolvedValueOnce(json({ token: "jwt" }))

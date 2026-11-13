@@ -337,6 +337,7 @@ function registerAuth() {
     const creditRoutes = {
       "credits.summary": "/v1/credits",
       "credits.pricing": "/v1/credits/pricing",
+      "credits.usage": "/v1/credits/usage",
       "credits.redeem": "/v1/credits/redeem",
     };
     if (Object.hasOwn(creditRoutes, method)) {
@@ -345,7 +346,10 @@ function registerAuth() {
           ok: true,
           data: (
             await request(
-              creditRoutes[method],
+              creditRoutes[method] +
+                (method === "credits.usage"
+                  ? `?${new URLSearchParams(args[0])}`
+                  : ""),
               method === "credits.redeem" ? args[0] || {} : undefined,
             )
           ).data,
