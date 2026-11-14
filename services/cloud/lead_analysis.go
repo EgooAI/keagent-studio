@@ -278,7 +278,7 @@ func (s *server) readAnalysisList(ctx context.Context, a actor, body []byte) (an
 		Cursor    string `json:"cursor"`
 		Limit     int    `json:"limit"`
 	}
-	if decodeExchange(body, &in) != nil || in.Limit < 0 || in.Limit > 100 {
+	if decodeExchange(body, &in) != nil || in.Limit < 0 || in.Limit > 500 {
 		return nil, collectionInvalid()
 	}
 	if in.Limit == 0 {

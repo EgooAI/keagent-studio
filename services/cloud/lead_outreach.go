@@ -222,7 +222,7 @@ func (s *server) outreachList(ctx context.Context, a actor, body []byte) (any, e
 		Status    string `json:"status"`
 		Limit     int    `json:"limit"`
 	}
-	if decodeExchange(body, &in) != nil || in.Limit < 0 || in.Limit > 100 {
+	if decodeExchange(body, &in) != nil || in.Limit < 0 || in.Limit > 500 {
 		return nil, collectionInvalid()
 	}
 	if in.Limit == 0 {
