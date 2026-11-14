@@ -202,4 +202,5 @@ export interface OutreachTask {
   status: OutreachStatus;
   creatorhubTaskId: string;
   error: string;
+  draft: string;
 }

@@ -7,6 +7,7 @@ import {
   Checkbox,
   Input,
   InputNumber,
+  Popconfirm,
   Select,
   Space,
   Spin,
@@ -70,6 +71,7 @@ const outreachColors: Record<OutreachStatus, string> = {
 };
 const definitiveSubmitCodes = new Set([
   "CREATORHUB_URL_INVALID",
+  "CREATORHUB_ACCOUNT_UNAVAILABLE",
   "COMMENT_PROFILE_UNAVAILABLE",
   "COMMENT_PURPOSE_DENIED",
   "COMMENT_NOT_QUALIFIED",
@@ -77,6 +79,12 @@ const definitiveSubmitCodes = new Set([
   "INVALID_INPUT",
   "FORBIDDEN",
   "OUTREACH_EXISTS",
+]);
+const terminalOutreachStatuses = new Set<OutreachStatus>([
+  "sent",
+  "uncertain",
+  "failed",
+  "canceled",
 ]);
 function definitiveSubmitError(error: unknown) {
   if (!(error instanceof ServiceRequestError)) return false;
@@ -87,6 +95,17 @@ function definitiveSubmitError(error: unknown) {
 function isOutreachExists(error: unknown) {
   return (
     error instanceof ServiceRequestError && error.code === "OUTREACH_EXISTS"
+  );
+}
+function outreachRefreshable(status: OutreachStatus) {
+  return status === "submitted" || status === "sending";
+}
+function outreachDraftEditable(task: OutreachTask | undefined) {
+  return (
+    !task ||
+    task.status === "approved" ||
+    task.status === "failed" ||
+    task.status === "canceled"
   );
 }
 
@@ -190,6 +209,10 @@ function CommentLeadWorkspace() {
     }
     if (accounts.length === 1) setAccountId(accounts[0].id);
   }, [status.data, accounts, accountId]);
+  useEffect(() => {
+    if (!status.data || !accountId) return;
+    if (!accounts.some((account) => account.id === accountId)) setAccountId("");
+  }, [accounts, accountId, status.data]);
   const analyze = useMutation({
     mutationFn: () => {
       analyzeKey.current ||= crypto.randomUUID();
@@ -276,21 +299,39 @@ function CommentLeadWorkspace() {
     },
     retry: false,
   });
+  const refreshTask = useMutation({
+    mutationFn: (task: OutreachTask) =>
+      creatorHubApi.refreshOutreach(task.id, task.attempt),
+    onSuccess: (task, previous) => {
+      setSubmitted((current) => ({
+        ...current,
+        [task.analysisId || previous.analysisId]: task,
+      }));
+      void queryClient.invalidateQueries({ queryKey: outreachKey });
+      if (
+        task.status !== previous.status &&
+        terminalOutreachStatuses.has(task.status)
+      )
+        void message.info(`任务状态已更新：${outreachLabels[task.status]}`);
+    },
+    onError: (error) => void message.error(error.message),
+    retry: false,
+  });
   const tasksByAnalysis = new Map<string, OutreachTask>();
-  for (const task of outreach.data?.items ?? [])
-    tasksByAnalysis.set(task.analysisId, task);
   for (const [analysisId, task] of Object.entries(submitted))
     tasksByAnalysis.set(analysisId, task);
+  for (const task of outreach.data?.items ?? [])
+    tasksByAnalysis.set(task.analysisId, task);
   const submit = useMutation({
-    mutationFn: (row: LeadAnalysisRow) => {
-      submitKeys.current[row.id] ||= crypto.randomUUID();
+    mutationFn: (input: { row: LeadAnalysisRow; draft: string }) => {
+      submitKeys.current[input.row.id] ||= crypto.randomUUID();
       return creatorHubApi.submitOutreach({
-        analysisId: row.id,
-        draft: (drafts[row.id] ?? row.draft).trim(),
-        requestKey: submitKeys.current[row.id]!,
+        analysisId: input.row.id,
+        draft: input.draft.trim(),
+        requestKey: submitKeys.current[input.row.id]!,
       });
     },
-    onSuccess: (task, row) => {
+    onSuccess: (task, { row }) => {
       if (
         task.status === "submitted" ||
         task.status === "sending" ||
@@ -312,11 +353,13 @@ function CommentLeadWorkspace() {
       }
       void queryClient.invalidateQueries({ queryKey: outreachKey });
     },
-    onError: (error, row) => {
+    onError: (error, { row }) => {
       // Definitive failures leave Go in `failed`; a new attempt needs a new key.
-      if (definitiveSubmitError(error)) delete submitKeys.current[row.id];
-      if (isOutreachExists(error)) {
+      if (definitiveSubmitError(error)) {
+        delete submitKeys.current[row.id];
         void queryClient.invalidateQueries({ queryKey: outreachKey });
+      }
+      if (isOutreachExists(error)) {
         void message.info("该评论已有私信任务，已刷新状态");
       }
     },
@@ -347,8 +390,8 @@ function CommentLeadWorkspace() {
         return (
           <Input.TextArea
             aria-label={`私信草稿-${row.commenterName}`}
-            value={drafts[row.id] ?? row.draft}
-            readOnly={!!task}
+            value={drafts[row.id] ?? task?.draft ?? row.draft}
+            readOnly={!!task && !outreachDraftEditable(task)}
             maxLength={320}
             showCount
             onChange={(event) =>
@@ -369,45 +412,85 @@ function CommentLeadWorkspace() {
       render: (_: unknown, row) => {
         const task = tasksByAnalysis.get(row.id);
         if (task) {
-          const retryable =
-            task.status === "failed" || task.status === "canceled";
+          const draft = (drafts[row.id] ?? task.draft ?? row.draft).trim();
           return (
             <Space orientation="vertical" size={4}>
               <Tag color={outreachColors[task.status] ?? "default"}>
                 {outreachLabels[task.status] ?? task.status}
               </Tag>
+              {outreachRefreshable(task.status) && (
+                <Button
+                  size="small"
+                  loading={
+                    refreshTask.isPending &&
+                    refreshTask.variables?.id === task.id
+                  }
+                  onClick={() => refreshTask.mutate(task)}
+                >
+                  刷新状态
+                </Button>
+              )}
               {task.status === "uncertain" && (
                 <Space size={4} wrap>
-                  <Button
-                    size="small"
-                    type="primary"
-                    loading={
-                      confirm.isPending &&
-                      confirm.variables?.task.id === task.id
-                    }
-                    onClick={() => confirm.mutate({ task, status: "sent" })}
+                  <Popconfirm
+                    title="确认私信已发送？"
+                    description="确认后任务将标记为已发送，且无法撤销。"
+                    okText="确认"
+                    cancelText="取消"
+                    onConfirm={() => confirm.mutate({ task, status: "sent" })}
                   >
-                    确认已发送
-                  </Button>
-                  <Button
-                    size="small"
-                    loading={
-                      confirm.isPending &&
-                      confirm.variables?.task.id === task.id
-                    }
-                    onClick={() => confirm.mutate({ task, status: "failed" })}
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={
+                        confirm.isPending &&
+                        confirm.variables?.task.id === task.id
+                      }
+                    >
+                      确认已发送
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="确认私信发送失败？"
+                    description="确认后任务将标记为失败，且无法撤销。"
+                    okText="确认"
+                    cancelText="取消"
+                    onConfirm={() => confirm.mutate({ task, status: "failed" })}
                   >
-                    确认失败
-                  </Button>
+                    <Button
+                      size="small"
+                      loading={
+                        confirm.isPending &&
+                        confirm.variables?.task.id === task.id
+                      }
+                    >
+                      确认失败
+                    </Button>
+                  </Popconfirm>
                 </Space>
               )}
-              {retryable && (
+              {task.status === "approved" && (
                 <Button
                   size="small"
                   type="primary"
-                  loading={submit.isPending && submit.variables?.id === row.id}
-                  disabled={!row.commenterProfile}
-                  onClick={() => submit.mutate(row)}
+                  loading={
+                    submit.isPending && submit.variables?.row.id === row.id
+                  }
+                  disabled={!row.commenterProfile || !draft}
+                  onClick={() => submit.mutate({ row, draft })}
+                >
+                  继续发送
+                </Button>
+              )}
+              {(task.status === "failed" || task.status === "canceled") && (
+                <Button
+                  size="small"
+                  type="primary"
+                  loading={
+                    submit.isPending && submit.variables?.row.id === row.id
+                  }
+                  disabled={!row.commenterProfile || !draft}
+                  onClick={() => submit.mutate({ row, draft })}
                 >
                   重新提交
                 </Button>
@@ -422,8 +505,8 @@ function CommentLeadWorkspace() {
             <Button
               type="primary"
               disabled={noProfile || !draft}
-              loading={submit.isPending && submit.variables?.id === row.id}
-              onClick={() => submit.mutate(row)}
+              loading={submit.isPending && submit.variables?.row.id === row.id}
+              onClick={() => submit.mutate({ row, draft })}
             >
               确认发送
             </Button>

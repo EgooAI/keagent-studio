@@ -186,6 +186,7 @@ export class CreatorHubOutreach {
       status: "submitted",
       creatorhubTaskId: String(task.id),
       error: "",
+      draft: input.draft,
     };
   }
 
@@ -196,17 +197,28 @@ export class CreatorHubOutreach {
     })) as {
       items: Array<{
         id: string;
+        analysisId: string;
         status: string;
         attempt: number;
         creatorhubTaskId: string;
         accountId: string;
         workId: string;
+        draft: string;
       }>;
     };
     const row = result.items[0];
     if (!row)
       throw new PublishingError("OUTREACH_NOT_FOUND", "私信任务不存在", 404);
-    return row;
+    return {
+      id: row.id,
+      analysisId: row.analysisId,
+      status: row.status,
+      attempt: row.attempt,
+      creatorhubTaskId: row.creatorhubTaskId,
+      accountId: row.accountId,
+      workId: row.workId,
+      draft: row.draft,
+    };
   }
 
   async refresh(input: { outreachId: string; attempt: number }) {
