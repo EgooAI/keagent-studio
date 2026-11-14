@@ -89,13 +89,18 @@ func (s *server) analyzeCommentWithCriteria(ctx context.Context, a actor, in com
 	if err != nil {
 		return result, row, err
 	}
-	current, _, err := s.authorizedComment(ctx, a, in, "analyze")
+	current, currentGrant, err := s.authorizedComment(ctx, a, in, "analyze")
 	if err != nil {
 		return leadAnalysisResult{}, row, err
 	}
 	if current.CommentText == nil || row.CommentText == nil ||
-		*current.CommentText != *row.CommentText || !current.UpdatedAt.Equal(row.UpdatedAt) {
+		*current.CommentText != *row.CommentText ||
+		!current.UpdatedAt.Equal(row.UpdatedAt) ||
+		currentGrant.policyKey() != grant.policyKey() {
 		return leadAnalysisResult{}, row, exchangeFail(409, "COMMENT_CHANGED", "评论或授权已更新，请重新分析")
+	}
+	if !currentGrant.ManualContact {
+		result.Draft = ""
 	}
 	return result, row, nil
 }
@@ -160,6 +165,24 @@ func (s *server) createAnalysisJob(ctx context.Context, a actor, body []byte) (a
 	if version == "" {
 		version = "v1"
 	}
+	// Compare the request against an existing job before touching mutable consent/source
+	// state, so an identical retry keeps working after a grant refresh.
+	var existingJob, existingAccount, existingWork, existingCriteria string
+	var existingMax int
+	err = s.db.QueryRowContext(ctx, `SELECT id,account_id,work_id,criteria,max_comments
+		FROM keagent_comment_analysis_jobs WHERE owner_id=$1 AND device_id=$2 AND request_key=$3`,
+		a.UserID, a.DeviceID, in.RequestKey).Scan(
+		&existingJob, &existingAccount, &existingWork, &existingCriteria, &existingMax)
+	if err == nil {
+		if existingAccount != in.AccountID || existingWork != in.WorkID ||
+			existingCriteria != in.Criteria || existingMax != in.MaxComments {
+			return nil, exchangeFail(409, "REQUEST_CONFLICT", "同一请求已用于其他分析")
+		}
+		return s.loadAnalysisJob(ctx, a, existingJob)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	scope := commentScope{AccountID: in.AccountID, WorkID: in.WorkID}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -182,27 +205,15 @@ func (s *server) createAnalysisJob(ctx context.Context, a actor, body []byte) (a
 	if g.Kind != "creatorhub" {
 		return nil, exchangeFail(409, "COMMENT_SOURCE_CONFLICT", "该作品使用其他评论来源")
 	}
-	var existing string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM keagent_comment_analysis_jobs
-		WHERE owner_id=$1 AND device_id=$2 AND request_key=$3`,
-		a.UserID, a.DeviceID, in.RequestKey).Scan(&existing)
-	if err == nil {
-		if err = tx.Commit(); err != nil {
-			return nil, err
-		}
-		return s.loadAnalysisJob(ctx, a, existing)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
 	var total int
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM (
 		SELECT DISTINCT ON (COALESCE(NULLIF(fields->>'commenter_profile',''), 'id:'||COALESCE(fields->>'comment_id',''))) id
 		FROM keagent_comment_observations
 		WHERE source_id=$1
 			AND fields->>'parent_comment_id' IS NULL
-			AND COALESCE(fields->>'comment_text','') <> ''
+			AND btrim(COALESCE(fields->>'comment_text','')) <> ''
 			AND (COALESCE(fields->>'commenter_profile','') <> '' OR COALESCE(fields->>'comment_id','') <> '')
+			AND retain_until > clock_timestamp()
 	) t`, sourceID).Scan(&total); err != nil {
 		return nil, err
 	}
@@ -469,14 +480,24 @@ func (s *server) runAnalysisJob(ctx context.Context, jobID string) {
 		s.finishAnalysisJob(jobID, "failed", "设备已解绑或登录会话已失效")
 		return
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT o.id,o.fields FROM keagent_comment_observations o
-		WHERE o.source_id=$1 AND o.fields->>'parent_comment_id' IS NULL
-		AND NOT EXISTS (
-			SELECT 1 FROM keagent_comment_analyses a
-			WHERE a.source_id=o.source_id AND a.comment_row_id=o.id
-				AND a.criteria_hash=$3 AND a.status='done')
-		ORDER BY (o.fields->>'comment_time') DESC NULLS LAST, o.seq DESC LIMIT $2`,
-		source, job.Total, hash)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,fields FROM (
+		SELECT DISTINCT ON (COALESCE(NULLIF(o.fields->>'commenter_profile',''), 'id:'||COALESCE(o.fields->>'comment_id','')))
+			o.id, o.fields, o.seq
+		FROM keagent_comment_observations o
+		WHERE o.source_id=$1
+			AND o.fields->>'parent_comment_id' IS NULL
+			AND btrim(COALESCE(o.fields->>'comment_text','')) <> ''
+			AND (COALESCE(o.fields->>'commenter_profile','') <> '' OR COALESCE(o.fields->>'comment_id','') <> '')
+			AND o.retain_until > clock_timestamp()
+			AND NOT EXISTS (
+				SELECT 1 FROM keagent_comment_analyses a
+				WHERE a.job_id=$4 AND a.source_id=o.source_id AND a.comment_row_id=o.id
+					AND a.criteria_hash=$3 AND a.status='done')
+		ORDER BY COALESCE(NULLIF(o.fields->>'commenter_profile',''), 'id:'||COALESCE(o.fields->>'comment_id','')),
+			(o.fields->>'comment_time') DESC NULLS LAST, o.seq DESC
+	) o
+	ORDER BY (o.fields->>'comment_time') DESC NULLS LAST, o.seq DESC
+	LIMIT $2`, source, job.Total, hash, jobID)
 	if err != nil {
 		s.finishAnalysisJob(jobID, "failed", err.Error())
 		return

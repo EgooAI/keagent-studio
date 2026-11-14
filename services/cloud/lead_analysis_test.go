@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -215,6 +216,18 @@ func TestAnalysisJobRequestKeyIdempotent(t *testing.T) {
 	if first["id"] != second["id"] {
 		t.Fatalf("retry created a second job: %v %v", first["id"], second["id"])
 	}
+	conflict := object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID,
+		"criteria": "只找北京购房客户", "maxComments": 10, "requestKey": key,
+	}
+	if _, err := collectionCall(f.server, f.actor, "comments/analyze-batch", conflict); err == nil {
+		t.Fatal("conflicting payload reused the request key")
+	} else {
+		var e exchangeFault
+		if !errors.As(err, &e) || e.code != "REQUEST_CONFLICT" {
+			t.Fatalf("expected REQUEST_CONFLICT, got %v", err)
+		}
+	}
 	var jobs int
 	if err := f.db.QueryRow(`SELECT count(*) FROM keagent_comment_analysis_jobs`).Scan(&jobs); err != nil {
 		t.Fatal(err)
@@ -270,5 +283,80 @@ func TestAnalysisCancelIsNotOverwritten(t *testing.T) {
 	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
 	if job["status"] != "canceled" {
 		t.Fatalf("cancellation overwritten: %v", job)
+	}
+}
+
+func TestAnalysisJobSameCriteriaRunsAgain(t *testing.T) {
+	f, first := analysisFixture(t)
+	analysisRun(t, f, first)
+	second := analysisStart(t, f)
+	analysisRun(t, f, second)
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": second})
+	if job["status"] != "done" || job["processed"] != float64(2) {
+		t.Fatalf("second job did not analyze again: %v", job)
+	}
+	list := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{"jobId": second, "limit": 10})
+	if len(rows(list["items"])) != 2 {
+		t.Fatalf("second job list: %v", list)
+	}
+}
+
+func TestAnalysisJobDedupesBeforeLimit(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, []object{
+		{"comment_id": "c1", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/secB",
+			"comment_time": "2026-01-01T00:00:00Z"},
+		{"comment_id": "c2", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/secA",
+			"comment_time": "2026-01-02T00:00:00Z"},
+		{"comment_id": "c3", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/secA",
+			"comment_time": "2026-01-03T00:00:00Z"},
+	})
+	f.server.leadComplete = analysisOK
+	jobID := analysisStart(t, f)
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if job["total"] != float64(2) {
+		t.Fatalf("deduped total: %v", job)
+	}
+	analysisRun(t, f, jobID)
+	job = mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if job["processed"] != float64(2) || job["status"] != "done" {
+		t.Fatalf("dedupe-before-limit job: %v", job)
+	}
+	list := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{"jobId": jobID, "limit": 10})
+	profiles := map[string]bool{}
+	for _, item := range rows(list["items"]) {
+		profile, _ := item.(object)["commenterProfile"].(string)
+		profiles[profile] = true
+	}
+	if len(rows(list["items"])) != 2 || !profiles["https://www.douyin.com/user/secA"] ||
+		!profiles["https://www.douyin.com/user/secB"] {
+		t.Fatalf("distinct commenter hidden by limit: %v", list)
+	}
+}
+
+func TestAnalysisJobRejectsCommentChangeAfterModel(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, []object{
+		{"comment_id": "c1", "comment_text": "想在上海买房", "commenter_name": "甲"},
+	})
+	jobID := analysisStart(t, f)
+	f.server.leadComplete = func(ctx context.Context, content any, prompt string) (string, error) {
+		if _, err := f.db.Exec(`UPDATE keagent_comment_observations o
+			SET fields=jsonb_set(o.fields,'{comment_text}','"评论已更新"')
+			WHERE o.source_id=(SELECT j.source_id FROM keagent_comment_analysis_jobs j WHERE j.id=$1)`, jobID); err != nil {
+			return "", err
+		}
+		return analysisOK(ctx, content, prompt)
+	}
+	analysisRun(t, f, jobID)
+	var status, errText, draft string
+	var qualified bool
+	if err := f.db.QueryRow(`SELECT status,error,qualified,draft FROM keagent_comment_analyses
+		WHERE job_id=$1`, jobID).Scan(&status, &errText, &qualified, &draft); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || qualified || draft != "" || !strings.Contains(errText, "评论或授权已更新") {
+		t.Fatalf("comment change not rejected: status=%s error=%q qualified=%v draft=%q",
+			status, errText, qualified, draft)
 	}
 }
