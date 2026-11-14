@@ -32,6 +32,11 @@ const leadRow = {
 async function leadFixture(
   page: Page,
   initialAccounts: CreatorHubAccountSummary[] = [activeAccount()],
+  respondOutreach?: (input: Record<string, unknown>) => {
+    ok: boolean;
+    data?: unknown;
+    error?: unknown;
+  },
 ) {
   let accounts = [...initialAccounts];
   const submittedKeys: string[] = [];
@@ -93,6 +98,7 @@ async function leadFixture(
         return okay({ items: [leadRow] });
       if (method === "outreach.submit") {
         submittedKeys.push(String(input.requestKey));
+        if (respondOutreach) return respondOutreach(input);
         return okay({
           id: "o1",
           analysisId: "an1",
@@ -151,6 +157,14 @@ async function fillAndStart(page: Page) {
   await expect(page.getByText("已导入 2 条评论")).toBeVisible();
 }
 
+async function openReview(page: Page) {
+  await page.goto("/#/leads/comment-lead");
+  await fillAndStart(page);
+  await page.getByRole("button", { name: "开始分析" }).click();
+  await page.getByRole("button", { name: "查看达标评论" }).click();
+  await expect(page.getByText(leadRow.commentText)).toBeVisible();
+}
+
 test("评论获客：抓取、分析、审核并提交私信草稿", async ({ page }) => {
   const fixture = await leadFixture(page);
   await page.goto("/#/leads/comment-lead");
@@ -182,4 +196,82 @@ test("评论获客：登录后刷新账号并可开始抓取", async ({ page }) 
   await expect(page.getByRole("button", { name: "登录抖音" })).toHaveCount(0);
   expect(fixture.accounts()).toHaveLength(1);
   await fillAndStart(page);
+});
+
+test("评论获客：私信提交失败后使用新请求键重试", async ({ page }) => {
+  let calls = 0;
+  const fixture = await leadFixture(page, undefined, () => {
+    calls++;
+    return calls === 1
+      ? {
+          ok: true,
+          data: {
+            id: "o1",
+            analysisId: "an1",
+            attempt: 1,
+            status: "failed",
+            creatorhubTaskId: "",
+            error: "发送失败",
+          },
+        }
+      : {
+          ok: true,
+          data: {
+            id: "o2",
+            analysisId: "an1",
+            attempt: 2,
+            status: "submitted",
+            creatorhubTaskId: "7",
+            error: "",
+          },
+        };
+  });
+  await openReview(page);
+  const submit = page.getByRole("button", { name: "确认发送" });
+  await submit.click();
+  await expect(page.getByText("上次提交未完成，请重试")).toBeVisible();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
+  await submit.click();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toBeVisible();
+  expect(fixture.submittedKeys).toHaveLength(2);
+  expect(fixture.submittedKeys[0]).not.toBe(fixture.submittedKeys[1]);
+});
+
+test("评论获客：提交结果不确定时保留请求键并提示核对", async ({ page }) => {
+  let calls = 0;
+  const fixture = await leadFixture(page, undefined, () => {
+    calls++;
+    if (calls === 1)
+      return {
+        ok: false,
+        error: {
+          status: 409,
+          code: "OUTREACH_UNCERTAIN",
+          message: "提交结果暂时无法确认",
+        },
+      };
+    return {
+      ok: true,
+      data: {
+        id: "o1",
+        analysisId: "an1",
+        attempt: 1,
+        status: "uncertain",
+        creatorhubTaskId: "",
+        error: "",
+      },
+    };
+  });
+  await openReview(page);
+  const submit = page.getByRole("button", { name: "确认发送" });
+  await submit.click();
+  await expect(page.getByText("提交结果暂时无法确认")).toBeVisible();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
+  await submit.click();
+  await expect(
+    page.getByText("结果待确认，请到 CreatorHub 任务队列核对后再确认"),
+  ).toBeVisible();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
+  expect(fixture.submittedKeys).toHaveLength(2);
+  expect(fixture.submittedKeys[0]).toBe(fixture.submittedKeys[1]);
 });

@@ -191,9 +191,24 @@ function CommentLeadWorkspace() {
         requestKey: submitKeys.current[row.id]!,
       });
     },
-    onSuccess: (_, row) => {
-      delete submitKeys.current[row.id];
-      void message.success("已提交 CreatorHub 私信队列");
+    onSuccess: (task, row) => {
+      if (
+        task.status === "submitted" ||
+        task.status === "sending" ||
+        task.status === "sent"
+      ) {
+        delete submitKeys.current[row.id];
+        void message.success("已提交 CreatorHub 私信队列");
+      } else if (task.status === "uncertain") {
+        // Keep the key: the same key must not trigger a new send.
+        void message.warning(
+          "结果待确认，请到 CreatorHub 任务队列核对后再确认",
+        );
+      } else {
+        // failed/canceled (or an unexpected non-approved status)
+        delete submitKeys.current[row.id];
+        void message.error("上次提交未完成，请重试");
+      }
     },
     retry: false,
   });
@@ -356,6 +371,11 @@ function CommentLeadWorkspace() {
       {step === 1 && (
         <Card title="分析设置">
           <Space orientation="vertical" style={{ width: "100%" }}>
+            {settings.isPending && (
+              <Typography.Text type="secondary">
+                <Spin size="small" /> 正在加载分析设置…
+              </Typography.Text>
+            )}
             <label htmlFor="lead-criteria">筛选提示词</label>
             {settings.data && (
               <Typography.Text type="secondary">
