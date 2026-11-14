@@ -53,7 +53,7 @@ var aiSpecs = []aiSpec{
 	{"tts", "speech", "火山配音", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}}},
 	{"voice-clone", "speech", "声音复刻", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}, {"VOLC_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}, {"VOLC_VOICE_CLONE_RESOURCE_ID", "复刻资源编号", "text"}}},
 	{"beike", "beike", "贝壳取材", "贝壳开放平台", []aiField{{"BEIKE_ACCESS_TOKEN", "Access Token", "secret"}}},
-	{"beike-cli", "beike-cli", "贝壳找房", "贝壳 AI 平台 CLI", []aiField{{"BEIKE_MCP_API_KEY", "MCP API Key", "secret"}, {"BEIKE_CLI_PATH", "CLI 可执行文件绝对路径", "text"}}},
+	{"beike-cli", "beike-cli", "贝壳找房", "贝壳 AI 平台 CLI", []aiField{{"BEIKE_MCP_API_KEY", "MCP API Key", "secret"}, {"BEIKE_CLI_PATH", "CLI 可执行文件路径（可选，留空自动检测）", "text"}}},
 	{"opening", "opening", "MiniMax 开场", "MiniMax", []aiField{{"MINIMAX_API_KEY", "API Key", "secret"}}},
 }
 
@@ -234,6 +234,10 @@ func aiConfigIssues(spec aiSpec, values aiValues) (missing []string, issues []st
 	missing, issues = []string{}, []string{}
 	for _, field := range spec.Fields {
 		if field.Kind != "toggle" && strings.TrimSpace(values[field.Key]) == "" {
+			// BEIKE_CLI_PATH 可选：留空由服务端自动检测 CLI 位置。
+			if spec.ID == "beike-cli" && field.Key == "BEIKE_CLI_PATH" {
+				continue
+			}
 			missing = append(missing, field.Key)
 		}
 	}

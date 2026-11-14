@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -14,11 +15,44 @@ import (
 func beikeCLIConfig(ctx context.Context) (path, key string, configured bool) {
 	path = strings.TrimSpace(aiValue(ctx, "BEIKE_CLI_PATH"))
 	key = strings.TrimSpace(aiValue(ctx, "BEIKE_MCP_API_KEY"))
-	if key == "" || !filepath.IsAbs(path) {
+	if key == "" {
+		return path, key, false
+	}
+	if path == "" {
+		path = detectBeikeCLI()
+	}
+	if !filepath.IsAbs(path) {
 		return path, key, false
 	}
 	info, err := os.Stat(path)
 	return path, key, err == nil && info.Mode().IsRegular()
+}
+
+// detectBeikeCLI 在未显式配置 CLI 路径时，从 PATH 和常见安装位置自动探测 beike 可执行文件。
+func detectBeikeCLI() string {
+	for _, name := range []string{"beike", "beike.exe"} {
+		if path, err := exec.LookPath(name); err == nil && filepath.IsAbs(path) {
+			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+				return path
+			}
+		}
+	}
+	var candidates []string
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		candidates = append(candidates, filepath.Join(local, "beike", "beike.exe"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", "beike"),
+			filepath.Join(home, ".local", "bin", "beike.exe"),
+		)
+	}
+	for _, path := range candidates {
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			return path
+		}
+	}
+	return ""
 }
 
 func beikeCLIEndpoint(ctx context.Context, method, path string, body []byte) (object, error) {
