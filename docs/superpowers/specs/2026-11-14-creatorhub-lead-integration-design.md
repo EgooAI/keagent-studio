@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS keagent_comment_analysis_jobs (
   criteria text NOT NULL,
   criteria_hash text NOT NULL,
   max_comments int NOT NULL DEFAULT 200,
+  concurrency int NOT NULL DEFAULT 2,
   status text NOT NULL DEFAULT 'queued',
   total int NOT NULL DEFAULT 0,
   processed int NOT NULL DEFAULT 0,
@@ -404,7 +405,7 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 ```
 
 - 用户筛选提示词为空时，使用默认规则：`buy / rent / sell / let / viewing / question` 算达标。
-- 筛选提示词保存时计算 `criteria_hash = sha256(prompt_version + criteria)`；每次任务快照提示词和哈希。
+- 筛选提示词保存时计算 `criteria_hash = sha256(JSON(["lead-criteria", version, trimmed_criteria]))`；每次任务快照提示词和哈希。哈希前会去掉提示词首尾空白，确保同一标准的不同空白形式得到相同结果。
 
 ### 11.2 输出
 
