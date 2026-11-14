@@ -1,4 +1,5 @@
 export { douyinApi, douyinDesktop } from "./douyin";
+export { searchBeikeHouses, getBeikeHouseDetail } from "./beike";
 import { serviceRequest } from "./transport";
 export {
   artifactExchange,

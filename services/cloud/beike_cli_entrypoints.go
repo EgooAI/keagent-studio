@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -20,21 +21,49 @@ func beikeCLIConfig() (path, key string, configured bool) {
 	return path, key, err == nil && info.Mode().IsRegular()
 }
 
-func beikeCLIEndpoint(method, path string) (object, error) {
+func beikeCLIEndpoint(ctx context.Context, method, path string, body []byte) (object, error) {
 	if method != http.MethodPost {
 		return nil, fail(http.StatusMethodNotAllowed, "贝壳 CLI 接口仅支持 POST")
 	}
 	switch path {
 	case "/v1/beike-cli/status":
 		_, _, configured := beikeCLIConfig()
-		reason := "not_configured"
-		if configured {
-			reason = "contract_unverified"
+		if !configured {
+			return object{"available": false, "configured": false, "reason": "not_configured"}, nil
 		}
-		return object{"available": false, "configured": configured, "reason": reason}, nil
-	case "/v1/beike-cli/search", "/v1/beike-cli/preview", "/v1/beike-cli/import":
-		// shortcut: hold business routes closed until real CLI responses define the field mapping.
-		return nil, fail(http.StatusServiceUnavailable, "贝壳 CLI 尚未通过真实回包验证")
+		return object{"available": true, "configured": true, "reason": "ready"}, nil
+	case "/v1/beike-cli/search":
+		var input struct {
+			City  string `json:"city"`
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(body, &input); err != nil {
+			return nil, fail(http.StatusBadRequest, "请求格式错误")
+		}
+		return beikeSearch(ctx, input.City, input.Query)
+	case "/v1/beike-cli/detail":
+		var input struct {
+			City string   `json:"city"`
+			ID   string   `json:"id"`
+			IDs  []string `json:"ids"`
+		}
+		if err := json.Unmarshal(body, &input); err != nil {
+			return nil, fail(http.StatusBadRequest, "请求格式错误")
+		}
+		if len(input.IDs) == 0 && input.ID != "" {
+			input.IDs = []string{input.ID}
+		}
+		return beikeDetail(ctx, input.City, input.IDs)
+	case "/v1/beike-cli/call":
+		var req beikeCallRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, fail(http.StatusBadRequest, "请求格式错误")
+		}
+		return beikeCall(ctx, req)
+	case "/v1/beike-cli/commands":
+		return object{"commands": beikeCommandAllowlist}, nil
+	case "/v1/beike-cli/preview", "/v1/beike-cli/import":
+		return nil, fail(http.StatusServiceUnavailable, "该接口尚未开放")
 	default:
 		return nil, fail(http.StatusNotFound, "接口不存在")
 	}

@@ -20,6 +20,8 @@ func TestBeikeCLIArgs(t *testing.T) {
 		{"search", "1000万以内，两居", []string{"--query", "在售二手房，1000万以内，两居", "--house-type", "second", "--json"}},
 		{"search", "在售二手房，两居", []string{"--query", "在售二手房，两居", "--house-type", "second", "--json"}},
 		{"detail", "ID-01", []string{"--id", "ID-01", "--entity-type", "house", "--json"}},
+		{"detail", "ID-01,ID-02", []string{"--id", "ID-01", "--id", "ID-02", "--entity-type", "house", "--json"}},
+		{"detail", "ID-01 ID-02", []string{"--id", "ID-01", "--id", "ID-02", "--entity-type", "house", "--json"}},
 		{"material", "ID-01", []string{"--id", "ID-01", "--entity-type", "house", "--json"}},
 	} {
 		args, err := beikeCLIArgs(tc.operation, " 北京 ", tc.value)
@@ -32,7 +34,7 @@ func TestBeikeCLIArgs(t *testing.T) {
 		{"Search", "北京", "两居"}, {"contact", "北京", "ID"},
 		{"search", "--help", "两居"}, {"material", "北京", ""},
 		{"search", "北京", "--在售二手房"}, {"search", "北京", "在售二手房\n两居"},
-		{"detail", "北京", "ID1,ID2"}, {"material", "北京", "--pretty"},
+		{"material", "北京", "--pretty"},
 	} {
 		if args, err := beikeCLIArgs(tc[0], tc[1], tc[2]); err == nil {
 			t.Fatalf("accepted %q: %q", tc, args)
@@ -40,6 +42,34 @@ func TestBeikeCLIArgs(t *testing.T) {
 	}
 	if _, err := runBeikeCLI(t.Context(), "beike.exe", "test", "search", "北京", "两居"); err == nil {
 		t.Fatal("relative executable path accepted")
+	}
+}
+
+func TestBeikeCLISessionID(t *testing.T) {
+	t.Setenv("BEIKE_CLI_SESSION_ID", "")
+	if got := beikeCLISessionID(); got != "keagent-studio-cloud" {
+		t.Fatalf("default session ID = %q", got)
+	}
+	t.Setenv("BEIKE_CLI_SESSION_ID", "beike-ci-deploy")
+	if got := beikeCLISessionID(); got != "beike-ci-deploy" {
+		t.Fatalf("overridden session ID = %q", got)
+	}
+}
+
+func TestBeikeCLIConcurrency(t *testing.T) {
+	t.Setenv("BEIKE_CLI_CONCURRENCY", "")
+	if got := beikeCLIConcurrency(); got != 2 {
+		t.Fatalf("default = %d", got)
+	}
+	t.Setenv("BEIKE_CLI_CONCURRENCY", "8")
+	if got := beikeCLIConcurrency(); got != 8 {
+		t.Fatalf("override = %d", got)
+	}
+	for _, v := range []string{"999", "0", "abc"} {
+		t.Setenv("BEIKE_CLI_CONCURRENCY", v)
+		if got := beikeCLIConcurrency(); got != 2 {
+			t.Fatalf("invalid %q = %d", v, got)
+		}
 	}
 }
 
@@ -83,6 +113,9 @@ func init() {
 	}
 	if os.Getenv("BEIKE_MCP_BASE_URL") != "" || os.Getenv("AI_CONFIG_ENCRYPTION_KEY") != "" {
 		os.Exit(2)
+	}
+	if os.Getenv("WORKBUDDY_SESSION_ID") == "" {
+		os.Exit(3)
 	}
 	switch os.Args[6] {
 	case "rejected":

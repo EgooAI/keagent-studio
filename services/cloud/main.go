@@ -287,7 +287,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/beike-cli/") {
-		v, e := beikeCLIEndpoint(r.Method, r.URL.Path)
+		v, e := beikeCLIEndpoint(r.Context(), r.Method, r.URL.Path, body)
 		respond(w, v, e)
 		return
 	}

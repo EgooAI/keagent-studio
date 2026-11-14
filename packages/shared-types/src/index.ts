@@ -1,6 +1,7 @@
 export * from "./douyin";
 export type VideoMode = "voiceover" | "avatar";
 export type * from "./artifact";
+export type * from "./beike";
 export type * from "./panorama";
 export type * from "./production-template";
 export type TaskStatus =

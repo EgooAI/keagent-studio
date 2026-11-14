@@ -24,6 +24,7 @@ KeAgent Studio 是面向房产经纪人的 AI 视频生产与营销桌面应用�
 | [本人音色与系统音色](docs/11-personal-voices.md) | 上传录音复刻、系统音色试听、全景配音选择、服务配置与验证边界 |
 | [成片交接契约 V1](docs/12-artifact-exchange.md) | 独立成片与资产模型、验收、交接快照、SDK、错误码及测试夹具 |
 | [两个 worktree 的并行开发准备](docs/13-parallel-worktrees.md) | 视频制作和抖音发布的任务说明、共同基线与环境隔离 |
+| [贝壳 CLI 接入](docs/17-贝壳CLI接入.md) | 云端接入贝壳 AI 平台 CLI 的方式、接口与命令可用性清单 |
 
 ## 已确认的开发基线
 

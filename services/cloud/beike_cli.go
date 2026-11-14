@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -21,10 +23,50 @@ var (
 	errBeikeCLIBusiness      = errors.New("贝壳 CLI 返回业务错误")
 	errBeikeCLIInvalidOutput = errors.New("贝壳 CLI 返回格式不受支持")
 	errBeikeCLIOutputLimit   = errors.New("贝壳 CLI 输出超过上限")
-	beikeCLISlots            = make(chan struct{}, 2)
+	beikeCLISlotsOnce        sync.Once
+	beikeCLISlotsChan        chan struct{}
 )
 
+// beikeCLIConcurrency 返回允许并发的 CLI 子进程数量，通过 BEIKE_CLI_CONCURRENCY 配置，默认 2。
+// 放宽前先小步验证贝壳服务端的容忍度，避免一次放开把 Key 打挂。
+func beikeCLIConcurrency() int {
+	if v := strings.TrimSpace(os.Getenv("BEIKE_CLI_CONCURRENCY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 64 {
+			return n
+		}
+	}
+	return 2
+}
+
+func beikeCLISlots() chan struct{} {
+	beikeCLISlotsOnce.Do(func() {
+		beikeCLISlotsChan = make(chan struct{}, beikeCLIConcurrency())
+	})
+	return beikeCLISlotsChan
+}
+
+// beikeCLISessionID 返回注入 CLI 子进程的 WORKBUDDY_SESSION_ID 值。
+// 贝壳服务端按 User-Agent 宿主标识放行，仅 workbuddy 身份可通过（claude-code、unknown
+// 等会被拒为 invalid cli request）；CLI 检测到 WORKBUDDY_SESSION_ID 非空即以上报 workbuddy。
+// 默认使用稳定标识 keagent-studio-cloud，可用 BEIKE_CLI_SESSION_ID 覆盖以便多环境审计。
+func beikeCLISessionID() string {
+	if v := strings.TrimSpace(os.Getenv("BEIKE_CLI_SESSION_ID")); v != "" {
+		return v
+	}
+	return "keagent-studio-cloud"
+}
+
 func runBeikeCLI(ctx context.Context, executable, key, operation, city, value string) ([]byte, error) {
+	args, err := beikeCLIArgs(operation, city, value)
+	if err != nil {
+		return nil, err
+	}
+	return runBeikeCLIArgs(ctx, executable, key, args, true)
+}
+
+// runBeikeCLIArgs 以任意参数运行贝壳 CLI 子进程，并复用缓存与并发闸门。
+// strict 为 true 时要求输出是 {ok,data} 封套（search/detail 用）；为 false 时接受非封套输出（如 contact 的人读文本）。
+func runBeikeCLIArgs(ctx context.Context, executable, key string, args []string, strict bool) ([]byte, error) {
 	if !filepath.IsAbs(executable) {
 		return nil, errors.New("请配置贝壳 CLI 可执行文件的绝对路径")
 	}
@@ -32,22 +74,29 @@ func runBeikeCLI(ctx context.Context, executable, key, operation, city, value st
 	if key == "" || strings.ContainsAny(key, "\x00\r\n") {
 		return nil, errors.New("贝壳 CLI API Key 未配置或无效")
 	}
-	args, err := beikeCLIArgs(operation, city, value)
-	if err != nil {
-		return nil, err
+	if len(args) == 0 {
+		return nil, errors.New("贝壳 CLI 参数为空")
+	}
+	cacheKey := executable + "\x00" + strings.Join(args, "\x00")
+	if cached, ok := beikeCacheStore.get(cacheKey); ok {
+		return cached, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, beikeCLITimeout)
 	defer cancel()
+	slots := beikeCLISlots()
 	select {
-	case beikeCLISlots <- struct{}{}:
-		defer func() { <-beikeCLISlots }()
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir = filepath.Dir(executable)
-	cmd.Env = []string{"BEIKE_MCP_API_KEY=" + key}
+	cmd.Env = []string{
+		"BEIKE_MCP_API_KEY=" + key,
+		"WORKBUDDY_SESSION_ID=" + beikeCLISessionID(),
+	}
 	for _, name := range []string{"SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"} {
 		if value, exists := os.LookupEnv(name); exists {
 			cmd.Env = append(cmd.Env, name+"="+value)
@@ -74,13 +123,35 @@ func runBeikeCLI(ctx context.Context, executable, key, operation, city, value st
 		return nil, errBeikeCLIExecution
 	}
 	output := stdout.buffer.Bytes()
-	if err = validateBeikeCLIOutput(output); err != nil {
+	if strict {
+		if err := validateBeikeCLIOutput(output); err != nil {
+			return nil, err
+		}
+	} else if err := validateBeikeCLIOutputLenient(output); err != nil {
 		return nil, err
 	}
 	if bytes.Contains(output, []byte(key)) {
 		return nil, errBeikeCLIInvalidOutput
 	}
+	beikeCacheStore.put(cacheKey, output)
 	return output, nil
+}
+
+// validateBeikeCLIOutputLenient 用于 contact/appoint 等不返回 {ok,data} 封套的命令：
+// 只拦截「客户端身份被拒」；其余 ok:false（如 Unknown tool、service temporarily unavailable）
+// 交给调用方（beikeCall）把真实错误信息透出。
+func validateBeikeCLIOutputLenient(stdout []byte) error {
+	if !utf8.Valid(stdout) {
+		return errBeikeCLIInvalidOutput
+	}
+	var envelope struct {
+		OK    *bool  `json:"ok"`
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(stdout, &envelope) == nil && envelope.OK != nil && !*envelope.OK && envelope.Error == "invalid cli request" {
+		return errBeikeCLIRejected
+	}
+	return nil
 }
 
 func beikeCLIArgs(operation, city, value string) ([]string, error) {
@@ -99,14 +170,32 @@ func beikeCLIArgs(operation, city, value string) ([]string, error) {
 		}
 		args = append(args, "--query", value, "--house-type", "second")
 	case "detail", "material":
-		if strings.ContainsAny(value, ", \t") {
-			return nil, errors.New("请填写一个有效的房源实体 ID")
+		ids := beikeSplitIDs(value)
+		if len(ids) == 0 || len(ids) > 20 {
+			return nil, errors.New("请填写 1-20 个有效的房源实体 ID")
 		}
-		args = append(args, "--id", value, "--entity-type", "house")
+		for _, id := range ids {
+			args = append(args, "--id", id)
+		}
+		args = append(args, "--entity-type", "house")
 	default:
 		return nil, errors.New("不支持的贝壳 CLI 操作")
 	}
 	return append(args, "--json"), nil
+}
+
+// beikeSplitIDs 把逗号/空白分隔的房源 ID 列表拆成单个 ID，并丢弃空项。
+func beikeSplitIDs(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '，' || r == ' ' || r == '\t'
+	})
+	ids := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field != "" {
+			ids = append(ids, field)
+		}
+	}
+	return ids
 }
 
 func validateBeikeCLIOutput(stdout []byte) error {

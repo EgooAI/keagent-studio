@@ -10,6 +10,7 @@ import {
   App,
   Alert,
   Button,
+  Checkbox,
   Descriptions,
   Empty,
   Form,
@@ -36,9 +37,20 @@ import {
   Search,
   Upload as UploadIcon,
 } from "lucide-react";
-import { demoApi, isLive, serviceRequest } from "@keagent/api-client";
-import type { ImportResult, Property } from "@keagent/shared-types";
+import {
+  demoApi,
+  isLive,
+  searchBeikeHouses,
+  serviceRequest,
+} from "@keagent/api-client";
+import type {
+  BeikeHouse,
+  BeikeSearchResult,
+  ImportResult,
+  Property,
+} from "@keagent/shared-types";
 import { useWorkspace } from "../lib/workspace";
+import { beikeHouseToPropertyInput } from "../lib/beike";
 import {
   PageHeader,
   PropertyPhoto,
@@ -329,9 +341,9 @@ export default function PropertiesPage() {
 }
 
 type BeikeCliStatus = {
-  available: false;
+  available: boolean;
   configured: boolean;
-  reason: "not_configured" | "contract_unverified";
+  reason: "not_configured" | "ready";
 };
 
 function LiveImportModal({
@@ -343,6 +355,14 @@ function LiveImportModal({
   onClose: () => void;
   onManual: () => void;
 }) {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const [city, setCity] = useState("北京");
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<BeikeSearchResult>();
+  const [selected, setSelected] = useState<string[]>([]);
   const status = useQuery({
     queryKey: ["beike-cli-status"],
     enabled: open,
@@ -352,24 +372,189 @@ function LiveImportModal({
         ? ((await window.desktop.request("beikeCli.status")) as BeikeCliStatus)
         : serviceRequest<BeikeCliStatus>("/v1/beike-cli/status", {}),
   });
-  const reason = status.isError ? undefined : status.data?.reason;
-  let description = "暂时无法检查贝壳 CLI 状态。";
-  if (status.isFetching) description = "正在检查贝壳 CLI 状态…";
-  else if (reason === "not_configured") description = "云端尚未配置贝壳 CLI。";
-  else if (reason === "contract_unverified")
-    description = "贝壳 CLI 已配置，房源返回格式仍待联调验证。";
+  const configured = status.data?.reason === "ready";
+
+  async function runSearch() {
+    if (!query.trim()) {
+      message.warning("请输入搜索条件");
+      return;
+    }
+    setSearching(true);
+    try {
+      const next = await searchBeikeHouses(city.trim(), query.trim());
+      setResult(next);
+      setSelected([]);
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function importSelected() {
+    const chosen = [
+      ...(result?.houses ?? []),
+      ...(result?.overBudget ?? []),
+    ].filter((house) => selected.includes(house.id));
+    if (!chosen.length) return;
+    setImporting(true);
+    let imported = 0;
+    let failed = 0;
+    try {
+      for (const house of chosen) {
+        try {
+          await demoApi.createProperty(
+            beikeHouseToPropertyInput(house, city.trim()),
+          );
+          imported += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      await queryClient.invalidateQueries(
+        { queryKey: ["workspace"] },
+        { cancelRefetch: false },
+      );
+      if (imported) message.success(`已导入 ${imported} 套贝壳房源`);
+      if (failed) message.warning(`${failed} 套未导入（可能已存在）`);
+      if (imported) {
+        setResult(undefined);
+        setSelected([]);
+      }
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  if (!configured) {
+    return (
+      <Modal
+        title="从贝壳找房"
+        open={open}
+        onCancel={onClose}
+        onOk={onManual}
+        cancelText="关闭"
+        okText="手动添加房源"
+      >
+        <p role="status">
+          {status.isFetching
+            ? "正在检查贝壳 CLI 状态…"
+            : "云端尚未配置贝壳 CLI，暂不能自动找房。"}
+        </p>
+      </Modal>
+    );
+  }
+
+  const houses = result?.houses ?? [];
+  const overBudget = result?.overBudget ?? [];
+
   return (
     <Modal
-      title="导入房源"
+      title="从贝壳找房"
       open={open}
       onCancel={onClose}
-      onOk={onManual}
-      cancelText="关闭"
-      okText="手动添加房源"
+      width={680}
+      footer={
+        <>
+          <Button onClick={onClose}>关闭</Button>
+          <Button
+            type="primary"
+            loading={importing}
+            disabled={!selected.length}
+            onClick={importSelected}
+          >
+            导入选中（{selected.length}）
+          </Button>
+        </>
+      }
     >
-      <p role="status">{description}</p>
-      <p>自动导入暂未开放，可先手动添加房源。</p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <Input
+          aria-label="城市"
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          style={{ width: 110 }}
+        />
+        <Input
+          aria-label="搜索条件"
+          placeholder="例如：望京 两居 500万以内"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onPressEnter={runSearch}
+          style={{ flex: 1 }}
+        />
+        <Button type="primary" loading={searching} onClick={runSearch}>
+          搜索
+        </Button>
+      </div>
+      {result && (
+        <p className="muted" role="status">
+          召回 {result.totalRecalled} 套，展示 {result.returned} 套
+          {result.strictBudgetWan != null
+            ? `（已按 ${result.strictBudgetWan} 万严格过滤）`
+            : ""}
+        </p>
+      )}
+      {houses.length > 0 && (
+        <Checkbox.Group
+          style={{ display: "block", maxHeight: 320, overflow: "auto" }}
+          value={selected}
+          onChange={(values) => setSelected(values as string[])}
+        >
+          {houses.map((house) => (
+            <HouseRow key={house.id} house={house} />
+          ))}
+        </Checkbox.Group>
+      )}
+      {overBudget.length > 0 && (
+        <>
+          <Alert
+            style={{ marginTop: 8 }}
+            type="warning"
+            showIcon
+            message={`${overBudget.length} 套超过预算，已单独列出`}
+          />
+          <Checkbox.Group
+            style={{ display: "block", maxHeight: 200, overflow: "auto" }}
+            value={selected}
+            onChange={(values) => setSelected(values as string[])}
+          >
+            {overBudget.map((house) => (
+              <HouseRow key={house.id} house={house} overBudget />
+            ))}
+          </Checkbox.Group>
+        </>
+      )}
+      {result && !houses.length && !overBudget.length && (
+        <p className="muted">没有符合条件的结果，请调整搜索条件。</p>
+      )}
     </Modal>
+  );
+}
+
+function HouseRow({
+  house,
+  overBudget,
+}: {
+  house: BeikeHouse;
+  overBudget?: boolean;
+}) {
+  return (
+    <div style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
+      <Checkbox value={house.id}>
+        <strong>{house.community}</strong>
+        <span className="muted">
+          {" "}
+          {house.layout} · {house.areaSqm}㎡ · 总价 {house.totalPriceWan}万
+        </span>
+        {overBudget && <Tag color="orange">超预算</Tag>}
+        <div className="muted" style={{ fontSize: 12 }}>
+          {house.title}
+        </div>
+      </Checkbox>
+    </div>
   );
 }
 
