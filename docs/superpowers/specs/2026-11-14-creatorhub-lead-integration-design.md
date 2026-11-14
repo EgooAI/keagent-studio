@@ -358,15 +358,17 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 
 | CreatorHub | keagent `commentFields` | 规则 |
 |---|---|---|
-| `comment_id` | `comment_id` | 原样 |
+| `comment_id` | `comment_id` | trim；为空或超过 1024 字符时跳过该行 |
 | `reply_to` | `parent_comment_id` | 一级评论为空 |
-| `text` | `comment_text` | 原样 |
-| `user_nickname` | `commenter_name` | 原样 |
-| `user_sec_uid` | `commenter_profile` | 拼成 `https://www.douyin.com/user/{sec_uid}` |
-| `create_time` | `comment_time` | Unix 秒转 RFC 3339；`0` 或缺失时置 `null` |
-| `like_count` | `like_count` | 原样 |
+| `text` | `comment_text` | trim；超过 8192 字符截断 |
+| `user_nickname` | `commenter_name` | trim；超过 256 字符截断 |
+| `user_sec_uid` | `commenter_profile` | 匹配 `[A-Za-z0-9_-]+` 时拼成 `https://www.douyin.com/user/{sec_uid}`，否则置 `null` |
+| `create_time` | `comment_time` | Unix 秒转 RFC 3339；非有限、`0` 或超出合理范围时置 `null` |
+| `like_count` | `like_count` | 仅保留有限、非负且不超过 2^53-1 的值，否则置 `null` |
 | — | `reply_count` | 置 `null`，CreatorHub 未保存 |
-| — | `truncated` | `false` |
+| — | `truncated` | `text` 超过 8192 字符时为 `true` |
+
+单条坏数据按上述规则清洗或跳过，不能让整批导入失败。CreatorHub 客户端不跟随重定向，只接受 loopback root path 的 JSON 响应；非 JSON 成功响应以 `CREATORHUB_INVALID_RESPONSE` 失败。
 
 `user_sec_uid` 为空时 `commenter_profile` 为 `null`；该评论可以分析，但不能提交私信。
 
@@ -529,7 +531,7 @@ approved ──提交 CreatorHub──> submitted ──CreatorHub 领取──>
 
 ## 14. 安全与授权
 
-- CreatorHub 地址只允许 loopback，Electron 拒绝其他主机、HTTPS、带用户信息或路径的地址。
+- CreatorHub 地址只允许 loopback，Electron 拒绝其他主机、HTTPS、带用户信息、非根路径或查询/片段的地址；客户端不跟随重定向，只接受 loopback 响应。
 - CreatorHub Cookie、storage_state、profile 目录不进入 keagent 数据库、云端、日志或诊断导出。
 - 评论正文是唯一发给模型的内容；昵称、主页、评论 ID 不作为独立字段发送。
 - 用户筛选提示词作为数据传入，固定在系统提示词的 JSON 中，不能覆盖安全约束。

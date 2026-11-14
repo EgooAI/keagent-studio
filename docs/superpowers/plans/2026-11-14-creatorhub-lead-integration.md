@@ -2264,6 +2264,8 @@ export function normalizeComments(rows: CreatorHubComment[]): CommentField[] {
 }
 ```
 
+实现时按 spec 9.2 做行级清洗：trim/跳过空 ID、校验 `user_sec_uid`、超过 8192 字符的文本截断并置 `truncated=true`、非法时间和计数置 `null`。客户端 `call` 必须加 `redirect: "error"`，非 JSON 成功响应以 `CREATORHUB_INVALID_RESPONSE` 失败。
+
 - [ ] **Step 3: 写测试**
 
 ```ts
