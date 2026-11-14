@@ -164,7 +164,7 @@ export interface LeadAnalysisResult {
   reason: string;
   draft: string;
 }
-export interface LeadAnalysisRow extends LeadAnalysisResult {
+export interface LeadAnalysisRow extends Omit<LeadAnalysisResult, "intent"> {
   id: string;
   jobId: string;
   commentId: string;
@@ -175,6 +175,7 @@ export interface LeadAnalysisRow extends LeadAnalysisResult {
   commentTime: string | null;
   status: string;
   error: string;
+  intent: LeadIntent | "";
 }
 export interface AnalysisJob {
   id: string;

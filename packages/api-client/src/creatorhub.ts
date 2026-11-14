@@ -33,6 +33,10 @@ export const creatorHubApi = {
     desktopCloud<AnalysisJob>("collection", "comments/analyze-batch", input),
   job: (jobId: string) =>
     desktopCloud<AnalysisJob>("collection", "comments/analysis/job", { jobId }),
+  retryAnalysis: (jobId: string) =>
+    desktopCloud<AnalysisJob>("collection", "comments/analysis/retry", {
+      jobId,
+    }),
   analyses: (input: { jobId: string; qualified?: boolean; limit?: number }) =>
     desktopCloud<{ items: LeadAnalysisRow[] }>(
       "collection",
