@@ -157,6 +157,56 @@ it("forwards authenticated credit usage and property deletion through Electron",
       headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
     }),
   ]);
+  const analysisJobInput = { jobId: "9".repeat(32) };
+  fetch.mockResolvedValueOnce(
+    Response.json({ id: analysisJobInput.jobId, status: "done" }),
+  );
+  await expect(
+    handler(event, "collection.cloud", [
+      "comments/analysis/job",
+      analysisJobInput,
+    ]),
+  ).resolves.toEqual({
+    ok: true,
+    data: { id: analysisJobInput.jobId, status: "done" },
+  });
+  expect(fetch.mock.calls[7]).toEqual([
+    "http://127.0.0.1:18081/v1/collection/comments/analysis/job",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(analysisJobInput),
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  ]);
+  const analysisListInput = { jobId: analysisJobInput.jobId, limit: 10 };
+  fetch.mockResolvedValueOnce(Response.json({ items: [], hasMore: false }));
+  await expect(
+    handler(event, "collection.cloud", [
+      "comments/analysis/list",
+      analysisListInput,
+    ]),
+  ).resolves.toEqual({ ok: true, data: { items: [], hasMore: false } });
+  expect(fetch.mock.calls[8]).toEqual([
+    "http://127.0.0.1:18081/v1/collection/comments/analysis/list",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(analysisListInput),
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  ]);
+  const outreachListInput = { accountId: "4".repeat(32), limit: 10 };
+  fetch.mockResolvedValueOnce(Response.json({ items: [] }));
+  await expect(
+    handler(event, "collection.cloud", ["outreach/list", outreachListInput]),
+  ).resolves.toEqual({ ok: true, data: { items: [] } });
+  expect(fetch.mock.calls[9]).toEqual([
+    "http://127.0.0.1:18081/v1/collection/outreach/list",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(outreachListInput),
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  ]);
   const scope = { workId: "12345", accountId: "4".repeat(32) };
   for (const [operation, extra] of [
     ["comments/list", { limit: 10 }],

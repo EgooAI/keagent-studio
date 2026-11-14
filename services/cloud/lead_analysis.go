@@ -580,7 +580,7 @@ func (s *server) runAnalysisJob(ctx context.Context, jobID string) {
 			AND NOT EXISTS (
 				SELECT 1 FROM keagent_comment_analyses a
 				WHERE a.job_id=$4 AND a.source_id=o.source_id AND a.comment_row_id=o.id
-					AND a.criteria_hash=$3 AND a.status='done')
+					AND a.criteria_hash=$3)
 		ORDER BY COALESCE(NULLIF(o.fields->>'commenter_profile',''), 'id:'||COALESCE(o.fields->>'comment_id','')),
 			(o.fields->>'comment_time') DESC NULLS LAST, o.seq DESC
 	) o

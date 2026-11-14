@@ -6,11 +6,14 @@ describe("desktopErrorMessage", () => {
   it("keeps actionable Go error messages", () => {
     for (const code of [
       "COMMENT_AI_UNAVAILABLE",
+      "COMMENT_PROFILE_UNAVAILABLE",
+      "COMMENT_CHANGED",
       "CONSENT_REQUIRED",
       "CONSENT_REVOKED",
       "COMMENT_PURPOSE_DENIED",
       "COMMENT_NOT_QUALIFIED",
       "ACCOUNT_UNAVAILABLE",
+      "ACCOUNT_CHANGED",
       "INVALID_INPUT",
       "OUTREACH_EXISTS",
       "CREATORHUB_REJECTED",

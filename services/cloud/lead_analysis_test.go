@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -558,5 +559,79 @@ func TestAnalyzeBatchRespondsAccepted(t *testing.T) {
 	var payload object
 	if err = json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload["id"] == nil {
 		t.Fatalf("accepted body: %v %v", payload, err)
+	}
+}
+
+func analysisCommentText(t *testing.T, f *commentScenario, analysisID string) string {
+	t.Helper()
+	var text string
+	if err := f.db.QueryRow(`SELECT o.fields->>'comment_text'
+		FROM keagent_comment_analyses a
+		JOIN keagent_comment_observations o ON o.id=a.comment_row_id
+		WHERE a.id=$1`, analysisID).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
+func TestAnalysisRetryRunsOnlySelectedFailure(t *testing.T) {
+	f, jobID, ids := failedAnalysisJob(t)
+	selected := analysisCommentText(t, f, ids[0])
+	var mu sync.Mutex
+	var analyzed []string
+	f.server.leadComplete = func(_ context.Context, content any, _ string) (string, error) {
+		var payload struct {
+			CommentText string `json:"comment_text"`
+		}
+		_ = json.Unmarshal([]byte(content.(string)), &payload)
+		mu.Lock()
+		analyzed = append(analyzed, payload.CommentText)
+		mu.Unlock()
+		return analysisOK(context.Background(), content, "")
+	}
+	mustCollection(t, f.server, f.actor, "comments/analysis/retry", object{
+		"jobId": jobID, "analysisIds": []string{ids[0]},
+	})
+	analysisRun(t, f, jobID)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(analyzed) != 1 || analyzed[0] != selected {
+		t.Fatalf("selected retry analyzed %v, want only %q", analyzed, selected)
+	}
+}
+
+func TestAnalysisRetryAllRunsEveryFailure(t *testing.T) {
+	f, jobID, ids := failedAnalysisJob(t)
+	expected := map[string]bool{}
+	for _, analysisID := range ids {
+		expected[analysisCommentText(t, f, analysisID)] = true
+	}
+	var mu sync.Mutex
+	var analyzed []string
+	f.server.leadComplete = func(_ context.Context, content any, _ string) (string, error) {
+		var payload struct {
+			CommentText string `json:"comment_text"`
+		}
+		_ = json.Unmarshal([]byte(content.(string)), &payload)
+		mu.Lock()
+		analyzed = append(analyzed, payload.CommentText)
+		mu.Unlock()
+		return analysisOK(context.Background(), content, "")
+	}
+	mustCollection(t, f.server, f.actor, "comments/analysis/retry", object{"jobId": jobID})
+	analysisRun(t, f, jobID)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(analyzed) != 2 {
+		t.Fatalf("retry-all analyzed %v, want both failures", analyzed)
+	}
+	for _, text := range analyzed {
+		if !expected[text] {
+			t.Fatalf("retry-all analyzed unexpected comment %q", text)
+		}
+		delete(expected, text)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("retry-all skipped comments: %v", expected)
 	}
 }

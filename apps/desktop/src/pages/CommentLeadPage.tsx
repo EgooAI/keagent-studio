@@ -1058,7 +1058,7 @@ function CommentLeadWorkspace() {
                         </Typography.Text>
                         <Popconfirm
                           title="撤销来源授权？"
-                          description="撤销后无法继续分析或提交私信，已保存的评论不会被删除。"
+                          description="撤销后该来源不再提供已保存的评论，并停止新的分析或私信提交；已保存评论按留存策略清理。"
                           okText="确认"
                           cancelText="取消"
                           onConfirm={() => revokeConsent.mutate()}
