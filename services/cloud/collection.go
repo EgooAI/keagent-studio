@@ -80,6 +80,7 @@ type collectionRun struct {
 	InputWorkID    string `json:"inputWorkId"`
 	AccountID      string `json:"accountId"`
 	DeviceID       string `json:"deviceId"`
+	Source         string `json:"source,omitempty"`
 	CreatedAt      string `json:"createdAt"`
 	StartedAt      string `json:"startedAt,omitempty"`
 	EndedAt        string `json:"endedAt,omitempty"`
@@ -450,6 +451,7 @@ const collectionVideoSource = `SELECT DISTINCT ON (v.work_id) r.seq,v.work_id AS
   'deviceId',r.device_id,'panelStatus',r.payload->'panelStatus')) AS payload
  FROM keagent_monitored_videos v JOIN keagent_collection_runs r ON r.owner_id=v.owner_id AND r.payload->>'verifiedWorkId'=v.work_id
  WHERE v.owner_id=$1 AND r.device_id=$2 AND r.observed_at IS NOT NULL AND ($3='' OR r.target_id=$3)
+  AND COALESCE(r.payload->>'source','') <> 'creatorhub'
  ORDER BY v.work_id,r.observed_at DESC,r.seq DESC`
 
 func collectionRead(ctx context.Context, tx *sql.Tx, a actor, op string, body []byte) (any, error) {

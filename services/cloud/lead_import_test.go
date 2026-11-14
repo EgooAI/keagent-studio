@@ -64,6 +64,132 @@ func TestCreatorHubImportRequiresConsent(t *testing.T) {
 	}
 }
 
+func creatorHubConsent(t *testing.T, f *commentScenario, account string) {
+	t.Helper()
+	mustCollection(t, f.server, f.actor, "creatorhub/consent/save", object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID, "label": "CreatorHub 来源",
+		"retentionDays": 7, "expiresAt": time.Now().UTC().Add(24 * time.Hour),
+		"baseUrl": "http://127.0.0.1:8000", "creatorhubAccountId": account,
+	})
+}
+
+func creatorHubImportOne(t *testing.T, f *commentScenario) object {
+	t.Helper()
+	return mustCollection(t, f.server, f.actor, "comments/import", object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID, "requestKey": id(),
+		"snapshotId": id(), "observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"coverage": "partial", "items": []object{
+			{"comment_id": "c1", "comment_text": "想在上海买房", "commenter_name": "甲"},
+		},
+	})
+}
+
+func TestCreatorHubImportCreatesSyntheticVerification(t *testing.T) {
+	f := commentFixture(t)
+	if _, err := f.db.Exec(leadSchema); err != nil {
+		t.Fatal(err)
+	}
+	disableFileGrant(t)
+	enableTestAI(t)
+	if _, err := f.db.Exec(`DELETE FROM keagent_monitored_videos WHERE owner_id=$1 AND work_id=$2`, f.actor.UserID, f.scope.WorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`DELETE FROM keagent_collection_runs WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3`, f.actor.UserID, f.actor.DeviceID, f.scope.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`DELETE FROM keagent_collection_targets WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3 AND payload->>'kind'='video'`, f.actor.UserID, f.actor.DeviceID, f.scope.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	creatorHubConsent(t, f, id())
+	if got := creatorHubImportOne(t, f); got["addedCount"] != float64(1) {
+		t.Fatal(got)
+	}
+	counts := []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"targets", `SELECT count(*) FROM keagent_collection_targets
+			WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3`,
+			[]any{f.actor.UserID, f.actor.DeviceID, f.scope.AccountID}},
+		{"runs", `SELECT count(*) FROM keagent_collection_runs
+			WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3`,
+			[]any{f.actor.UserID, f.actor.DeviceID, f.scope.AccountID}},
+		{"monitored", `SELECT count(*) FROM keagent_monitored_videos
+			WHERE owner_id=$1 AND work_id=$2`,
+			[]any{f.actor.UserID, f.scope.WorkID}},
+	}
+	for _, c := range counts {
+		var n int
+		if err := f.db.QueryRow(c.query, c.args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("expected one %s, got %d", c.name, n)
+		}
+	}
+	page := mustCollection(t, f.server, f.actor, "comments/list", object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID, "limit": 10,
+	})
+	if page["sourceState"] != "active" || len(rows(page["items"])) != 1 {
+		t.Fatal(page)
+	}
+}
+
+func TestCreatorHubImportPreservesDesktopObservation(t *testing.T) {
+	f := commentFixture(t)
+	disableFileGrant(t)
+	enableTestAI(t)
+	var runID string
+	var observed time.Time
+	if err := f.db.QueryRow(`SELECT last_run_id,observed_at FROM keagent_monitored_videos
+		WHERE owner_id=$1 AND work_id=$2`, f.actor.UserID, f.scope.WorkID).Scan(&runID, &observed); err != nil {
+		t.Fatal(err)
+	}
+	creatorHubConsent(t, f, id())
+	creatorHubImportOne(t, f)
+	var afterRun string
+	var afterObserved time.Time
+	if err := f.db.QueryRow(`SELECT last_run_id,observed_at FROM keagent_monitored_videos
+		WHERE owner_id=$1 AND work_id=$2`, f.actor.UserID, f.scope.WorkID).Scan(&afterRun, &afterObserved); err != nil {
+		t.Fatal(err)
+	}
+	if afterRun != runID || !afterObserved.Equal(observed) {
+		t.Fatalf("desktop observation repointed: %s@%s -> %s@%s", runID, observed, afterRun, afterObserved)
+	}
+}
+
+func TestCreatorHubImportRevivesArchivedTarget(t *testing.T) {
+	f := commentFixture(t)
+	disableFileGrant(t)
+	enableTestAI(t)
+	var targetID string
+	if err := f.db.QueryRow(`SELECT id FROM keagent_collection_targets
+		WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3
+		AND payload->>'kind'='video' AND payload->>'value'=$4`,
+		f.actor.UserID, f.actor.DeviceID, f.scope.AccountID, videoBase+f.scope.WorkID).Scan(&targetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`UPDATE keagent_collection_targets SET payload=jsonb_set(payload,'{state}','"archived"') WHERE id=$1`, targetID); err != nil {
+		t.Fatal(err)
+	}
+	creatorHubConsent(t, f, id())
+	creatorHubImportOne(t, f)
+	var state string
+	if err := f.db.QueryRow(`SELECT payload->>'state' FROM keagent_collection_targets WHERE id=$1`, targetID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "active" {
+		t.Fatalf("expected revived target, got %q", state)
+	}
+	page := mustCollection(t, f.server, f.actor, "comments/list", object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID, "limit": 10,
+	})
+	if page["sourceState"] != "active" || len(rows(page["items"])) != 1 {
+		t.Fatal(page)
+	}
+}
+
 func TestCreatorHubImportAfterConsentRefresh(t *testing.T) {
 	f := commentFixture(t)
 	if _, err := f.db.Exec(leadSchema); err != nil {

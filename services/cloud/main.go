@@ -176,6 +176,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/admin/ai-config/test" {
 		limit = 16 << 20
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/collection/comments/import") {
+		limit = 2 << 20
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		respond(w, nil, fail(413, "请求过大"))
