@@ -174,7 +174,11 @@ CREATE TABLE IF NOT EXISTS keagent_comment_consents (
 
 两条路径最终转换成现有的 `commentGrant`，因此 `authorizedComment()`、`applyCommentBatch()` 和留存清理不需要分叉。
 
-`ai_endpoint` 绑定授权时的模型服务地址，由服务端在保存授权时取当前生效的文案模型地址，不接受客户端传入。管理员更换文案模型服务后，来源显示「模型服务已变化，请重新确认授权」，旧授权不再允许分析。
+`creatorhub_account_id` 只接受 `[A-Za-z0-9._:-]{1,64}`，不允许 URL 分隔符或控制字符。
+
+CreatorHub 来源的稳定 `policy_key` 只由 owner/device/account/work、ref、`analyzeWithAI` 和 `manualContact` 计算，不包含 `expiresAt`、`retentionDays`、`label` 或 `aiEndpoint`。重新保存授权只刷新 `keagent_comment_sources.expires_at`，不重建来源，也不会级联删除已有评论、分析和私信记录。
+
+`ai_endpoint` 绑定授权时的模型服务地址，由服务端在保存授权时取当前生效的文案模型地址，不接受客户端传入。管理员更换文案模型服务后，来源仍为 active，但 `canAnalyze=false`，前端显示「模型服务已变化，请重新确认授权」，旧授权不再允许分析。
 
 ### 8.2 `keagent_comment_analysis_jobs`
 
@@ -332,6 +336,8 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 2. 创建或复用一条 `source=creatorhub` 的采集目标、运行记录和监控作品：目标为 `kind=video`、`value=https://www.douyin.com/video/{workId}`；运行记录为 `state=finished`，写入 `verifiedWorkId`、`observedAt` 和来源标签；同时写入 `keagent_monitored_videos(owner_id, work_id, last_run_id, observed_at)`，满足现有 `verifyCommentScope()`；不覆盖用户通过桌面观察产生的运行记录；
 3. 调用 `applyCommentBatch()` 写入评论、去重、计算留存；
 4. 写入 `requestKey` 回执；重复请求返回原结果。
+
+如果来源授权已存在且稳定 policy key 相同，导入只刷新 `keagent_comment_sources.expires_at`，不删除重建来源；否则按现有规则替换来源。这样重复执行同一视频不会清空已有评论、分析和私信记录。
 
 `coverage` 取值：
 
