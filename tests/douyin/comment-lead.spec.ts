@@ -32,34 +32,32 @@ const leadRow = {
   draft: "你好，看到你想在浦东买三居室，方便聊聊预算吗？",
 };
 
+type MockResponse = { ok: boolean; data?: unknown; error?: unknown };
+
 async function leadFixture(
   page: Page,
   initialAccounts: CreatorHubAccountSummary[] = [activeAccount()],
   respondOutreach?: (
     input: Record<string, unknown>,
     items: OutreachTask[],
-  ) => {
-    ok: boolean;
-    data?: unknown;
-    error?: unknown;
-  },
+  ) => MockResponse,
   respondRefresh?: (
     input: Record<string, unknown>,
     items: OutreachTask[],
-  ) => {
-    ok: boolean;
-    data?: unknown;
-    error?: unknown;
-  },
+  ) => MockResponse,
 ) {
   let accounts = [...initialAccounts];
   let startFailure: unknown = undefined;
+  let outreachSequence = 0;
+  let outreachHold: Promise<void> | undefined;
+  let releaseOutreach: (() => void) | undefined;
+  let outreachListCalls = 0;
   const submittedKeys: string[] = [];
   const submittedDrafts: string[] = [];
   const outreachItems: OutreachTask[] = [];
   await page.exposeFunction(
     "leadTestRequest",
-    (method: string, input: Record<string, unknown> = {}) => {
+    async (method: string, input: Record<string, unknown> = {}) => {
       const okay = (data: unknown) => ({ ok: true, data });
       if (method === "state")
         return okay({
@@ -115,7 +113,11 @@ async function leadFixture(
         });
       if (method === "comments/analysis/list")
         return okay({ items: [leadRow] });
-      if (method === "outreach/list") return okay({ items: outreachItems });
+      if (method === "outreach/list") {
+        outreachListCalls++;
+        if (outreachHold) await outreachHold;
+        return okay({ items: outreachItems });
+      }
       if (method === "outreach.refresh") {
         if (respondRefresh) return respondRefresh(input, outreachItems);
         const item = outreachItems.find(
@@ -151,24 +153,79 @@ async function leadFixture(
       if (method === "outreach.submit") {
         submittedKeys.push(String(input.requestKey));
         submittedDrafts.push(String(input.draft));
+        const analysisId = String(input.analysisId);
+        const index = outreachItems.findIndex(
+          (candidate) => candidate.analysisId === analysisId,
+        );
+        const existing = index >= 0 ? outreachItems[index] : undefined;
+        if (existing && existing.requestKey === input.requestKey) {
+          // Go returns the stored receipt for a replayed key. The bridge only
+          // continues sending when that receipt is still `approved`.
+          if (existing.status !== "approved") return okay({ ...existing });
+        }
+        if (
+          existing &&
+          existing.requestKey !== input.requestKey &&
+          existing.status !== "failed" &&
+          existing.status !== "canceled"
+        )
+          return {
+            ok: false,
+            error: {
+              status: 409,
+              code: "OUTREACH_EXISTS",
+              message: "该评论已有私信任务",
+            },
+          };
+        const base: OutreachTask = existing
+          ? existing.requestKey === input.requestKey
+            ? existing
+            : {
+                ...existing,
+                status: "approved",
+                attempt: existing.attempt + 1,
+                creatorhubTaskId: "",
+                error: "",
+                draft: String(input.draft),
+                requestKey: String(input.requestKey),
+              }
+          : {
+              id: `o-${++outreachSequence}`,
+              analysisId,
+              attempt: 1,
+              status: "approved",
+              creatorhubTaskId: "",
+              error: "",
+              draft: String(input.draft),
+              requestKey: String(input.requestKey),
+            };
         const response = respondOutreach
           ? respondOutreach(input, outreachItems)
           : okay({
-              id: "o1",
-              analysisId: "an1",
-              attempt: 1,
+              id: base.id,
+              analysisId,
+              attempt: base.attempt,
               status: "submitted",
               creatorhubTaskId: "7",
               error: "",
               draft: String(input.draft),
+              requestKey: String(input.requestKey),
             });
-        const data = response.data as OutreachTask | undefined;
-        if (
-          response.ok &&
-          data &&
-          !outreachItems.some(({ id }) => id === data.id)
-        )
-          outreachItems.push(data);
+        const data = response.data as Partial<OutreachTask> | undefined;
+        if (response.ok && data) {
+          const stored: OutreachTask = {
+            id: base.id,
+            analysisId,
+            attempt: base.attempt,
+            status: (data.status as OutreachTask["status"]) ?? base.status,
+            creatorhubTaskId: data.creatorhubTaskId ?? base.creatorhubTaskId,
+            error: data.error ?? base.error,
+            draft: data.draft ?? base.draft,
+            requestKey: String(input.requestKey),
+          };
+          if (index >= 0) outreachItems[index] = stored;
+          else outreachItems.push(stored);
+        }
         return response;
       }
       return okay({});
@@ -211,6 +268,17 @@ async function leadFixture(
     setStartFailure: (error: unknown) => {
       startFailure = error;
     },
+    holdOutreach: () => {
+      outreachHold = new Promise<void>((resolve) => {
+        releaseOutreach = resolve;
+      });
+    },
+    releaseOutreach: () => {
+      releaseOutreach?.();
+      outreachHold = undefined;
+      releaseOutreach = undefined;
+    },
+    outreachListCalls: () => outreachListCalls,
     submittedKeys,
     submittedDrafts,
     outreachItems,
@@ -326,10 +394,18 @@ test("评论获客：私信提交失败后使用新请求键重试", async ({ pa
   await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
   await expect(page.getByText("失败", { exact: true })).toBeVisible();
   await expect(fixture.outreachItems).toHaveLength(1);
+  const firstId = fixture.outreachItems[0].id;
   await page.getByRole("button", { name: "重新提交" }).click();
   await expect(page.getByText("已提交 CreatorHub 私信队列")).toBeVisible();
   expect(fixture.submittedKeys).toHaveLength(2);
   expect(fixture.submittedKeys[0]).not.toBe(fixture.submittedKeys[1]);
+  expect(fixture.outreachItems).toHaveLength(1);
+  expect(fixture.outreachItems[0]).toMatchObject({
+    id: firstId,
+    attempt: 2,
+    status: "submitted",
+    requestKey: fixture.submittedKeys[1],
+  });
 });
 
 test("评论获客：提交结果不确定时保留请求键并提示核对", async ({ page }) => {
@@ -387,6 +463,7 @@ test("评论获客：CreatorHub 明确拒绝后展示失败并使用新请求键
         creatorhubTaskId: "",
         error: "CreatorHub 拒绝该私信",
         draft: String(input.draft),
+        requestKey: String(input.requestKey),
       });
       return {
         ok: false,
@@ -421,6 +498,13 @@ test("评论获客：CreatorHub 明确拒绝后展示失败并使用新请求键
   expect(calls).toBe(2);
   expect(fixture.submittedKeys).toHaveLength(2);
   expect(fixture.submittedKeys[0]).not.toBe(fixture.submittedKeys[1]);
+  expect(fixture.outreachItems).toHaveLength(1);
+  expect(fixture.outreachItems[0]).toMatchObject({
+    id: "o-failed",
+    attempt: 2,
+    status: "submitted",
+    requestKey: fixture.submittedKeys[1],
+  });
 });
 
 test("评论获客：已有的私信任务展示状态并禁止重复提交", async ({ page }) => {
@@ -433,6 +517,7 @@ test("评论获客：已有的私信任务展示状态并禁止重复提交", as
     creatorhubTaskId: "9",
     error: "",
     draft: leadRow.draft,
+    requestKey: "existing-request-key",
   });
   await openReview(page);
   await expect(page.getByText("已发送", { exact: true })).toBeVisible();
@@ -497,6 +582,7 @@ test("评论获客：服务商结果待确认的任务可人工确认", async ({
     creatorhubTaskId: "9",
     error: "",
     draft: leadRow.draft,
+    requestKey: "existing-request-key",
   });
   await openReview(page);
   await expect(page.getByText("结果待确认", { exact: true })).toBeVisible();
@@ -520,6 +606,7 @@ test("评论获客：服务端待发送任务可编辑草稿并继续发送", as
     creatorhubTaskId: "",
     error: "",
     draft: "服务端保存的待发送草稿",
+    requestKey: "approved-stored-key",
   });
   await openReview(page);
   await expect(page.getByText("待发送", { exact: true })).toBeVisible();
@@ -532,4 +619,71 @@ test("评论获客：服务端待发送任务可编辑草稿并继续发送", as
   await send.click();
   await expect(page.getByText("已提交 CreatorHub 私信队列")).toBeVisible();
   expect(fixture.submittedDrafts).toEqual(["继续发送时使用的新草稿"]);
+  expect(fixture.submittedKeys).toEqual(["approved-stored-key"]);
+  expect(fixture.outreachItems).toHaveLength(1);
+  expect(fixture.outreachItems[0]).toMatchObject({
+    id: "o-approved",
+    attempt: 1,
+    status: "submitted",
+    requestKey: "approved-stored-key",
+  });
+});
+
+test("评论获客：缺少请求标识的待发送任务无法继续发送", async ({ page }) => {
+  const fixture = await leadFixture(page);
+  fixture.outreachItems.push({
+    id: "o-approved",
+    analysisId: "an1",
+    attempt: 1,
+    status: "approved",
+    creatorhubTaskId: "",
+    error: "",
+    draft: "服务端保存的待发送草稿",
+    requestKey: "",
+  });
+  await openReview(page);
+  await expect(page.getByText("待发送", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "继续发送" })).toHaveCount(0);
+  await expect(
+    page.getByText("缺少请求标识，无法继续发送，请刷新任务"),
+  ).toBeVisible();
+  expect(fixture.submittedKeys).toHaveLength(0);
+});
+
+test("评论获客：刷新后慢速列表回退不会降级状态", async ({ page }) => {
+  const fixture = await leadFixture(
+    page,
+    undefined,
+    undefined,
+    (input, items) => {
+      const item = items.find((candidate) => candidate.id === input.outreachId);
+      if (!item)
+        return {
+          ok: false,
+          error: {
+            status: 404,
+            code: "OUTREACH_NOT_FOUND",
+            message: "私信任务不存在",
+          },
+        };
+      // Return the terminal server row but leave the list copy stale (submitted)
+      // so the delayed refetch tries to downgrade the Tag.
+      return { ok: true, data: { ...item, status: "sent" } };
+    },
+  );
+  await openReview(page);
+  await page.getByRole("button", { name: "确认发送" }).click();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toBeVisible();
+  await expect(page.getByText("已提交", { exact: true })).toBeVisible();
+  await expect
+    .poll(() => fixture.outreachListCalls())
+    .toBeGreaterThanOrEqual(2);
+  const before = fixture.outreachListCalls();
+  fixture.holdOutreach();
+  await page.getByRole("button", { name: "刷新状态" }).click();
+  await expect(page.getByText("已发送", { exact: true })).toBeVisible();
+  fixture.releaseOutreach();
+  await expect.poll(() => fixture.outreachListCalls()).toBeGreaterThan(before);
+  await expect(page.getByText("已发送", { exact: true })).toBeVisible();
+  expect(fixture.outreachItems[0]?.status).toBe("submitted");
 });

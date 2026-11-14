@@ -257,7 +257,7 @@ func (s *server) outreachList(ctx context.Context, a actor, body []byte) (any, e
 	}
 	args = append(args, in.Limit)
 	rs, err := s.db.QueryContext(ctx, `SELECT id,analysis_id,account_id,work_id,draft,status,
-		creatorhub_task_id,method,error,attempts,created_at,submitted_at,finished_at
+		creatorhub_task_id,method,error,attempts,request_key,created_at,submitted_at,finished_at
 		FROM keagent_outreach_tasks`+where+` ORDER BY created_at DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, err
@@ -265,17 +265,17 @@ func (s *server) outreachList(ctx context.Context, a actor, body []byte) (any, e
 	defer rs.Close()
 	items := []object{}
 	for rs.Next() {
-		var id, analysisID, accountID, workID, draft, status, taskID, method, errText string
+		var id, analysisID, accountID, workID, draft, status, taskID, method, errText, requestKey string
 		var attempts int
 		var created time.Time
 		var submitted, finished sql.NullTime
 		if err = rs.Scan(&id, &analysisID, &accountID, &workID, &draft, &status, &taskID,
-			&method, &errText, &attempts, &created, &submitted, &finished); err != nil {
+			&method, &errText, &attempts, &requestKey, &created, &submitted, &finished); err != nil {
 			return nil, err
 		}
 		items = append(items, object{"id": id, "analysisId": analysisID, "accountId": accountID,
 			"workId": workID, "draft": draft, "status": status, "creatorhubTaskId": taskID,
-			"method": method, "error": errText, "attempt": attempts,
+			"method": method, "error": errText, "attempt": attempts, "requestKey": requestKey,
 			"createdAt": created.UTC(), "submittedAt": nullableTime(submitted), "finishedAt": nullableTime(finished)})
 	}
 	return object{"items": items}, rs.Err()

@@ -86,6 +86,26 @@ const terminalOutreachStatuses = new Set<OutreachStatus>([
   "failed",
   "canceled",
 ]);
+const outreachStatusRank: Record<OutreachStatus, number> = {
+  approved: 0,
+  submitted: 1,
+  sending: 2,
+  uncertain: 3,
+  failed: 3,
+  canceled: 3,
+  sent: 4,
+};
+function preferOutreach(
+  current: OutreachTask | undefined,
+  incoming: OutreachTask,
+) {
+  if (!current) return incoming;
+  if (current.attempt !== incoming.attempt)
+    return incoming.attempt > current.attempt ? incoming : current;
+  const currentRank = outreachStatusRank[current.status] ?? -1;
+  const incomingRank = outreachStatusRank[incoming.status] ?? -1;
+  return incomingRank >= currentRank ? incoming : current;
+}
 function definitiveSubmitError(error: unknown) {
   if (!(error instanceof ServiceRequestError)) return false;
   if (error.code === "CREATORHUB_REJECTED")
@@ -279,6 +299,21 @@ function CommentLeadWorkspace() {
     enabled: step === 3 && !!started,
     retry: false,
   });
+  const updateOutreachCache = (task: OutreachTask) => {
+    queryClient.setQueryData<{ items: OutreachTask[] }>(
+      outreachKey,
+      (current) => {
+        if (!current) return current;
+        const index = current.items.findIndex(
+          (item) => item.analysisId === task.analysisId,
+        );
+        if (index < 0) return current;
+        const items = [...current.items];
+        items[index] = task;
+        return { ...current, items };
+      },
+    );
+  };
   const confirm = useMutation({
     mutationFn: (input: { task: OutreachTask; status: "sent" | "failed" }) =>
       creatorHubApi.confirmOutreach(
@@ -292,6 +327,7 @@ function CommentLeadWorkspace() {
         ...current,
         [task.analysisId]: task,
       }));
+      updateOutreachCache(task);
       void queryClient.invalidateQueries({ queryKey: outreachKey });
       void message.success(
         task.status === "sent" ? "已确认发送" : "已确认失败",
@@ -307,6 +343,7 @@ function CommentLeadWorkspace() {
         ...current,
         [task.analysisId || previous.analysisId]: task,
       }));
+      updateOutreachCache(task);
       void queryClient.invalidateQueries({ queryKey: outreachKey });
       if (
         task.status !== previous.status &&
@@ -320,15 +357,23 @@ function CommentLeadWorkspace() {
   const tasksByAnalysis = new Map<string, OutreachTask>();
   for (const [analysisId, task] of Object.entries(submitted))
     tasksByAnalysis.set(analysisId, task);
-  for (const task of outreach.data?.items ?? [])
-    tasksByAnalysis.set(task.analysisId, task);
+  for (const task of outreach.data?.items ?? []) {
+    const current = tasksByAnalysis.get(task.analysisId);
+    tasksByAnalysis.set(task.analysisId, preferOutreach(current, task));
+  }
   const submit = useMutation({
-    mutationFn: (input: { row: LeadAnalysisRow; draft: string }) => {
-      submitKeys.current[input.row.id] ||= crypto.randomUUID();
+    mutationFn: (input: {
+      row: LeadAnalysisRow;
+      draft: string;
+      requestKey?: string;
+    }) => {
+      const requestKey =
+        input.requestKey ||
+        (submitKeys.current[input.row.id] ||= crypto.randomUUID());
       return creatorHubApi.submitOutreach({
         analysisId: input.row.id,
         draft: input.draft.trim(),
-        requestKey: submitKeys.current[input.row.id]!,
+        requestKey,
       });
     },
     onSuccess: (task, { row }) => {
@@ -469,7 +514,7 @@ function CommentLeadWorkspace() {
                   </Popconfirm>
                 </Space>
               )}
-              {task.status === "approved" && (
+              {task.status === "approved" && task.requestKey && (
                 <Button
                   size="small"
                   type="primary"
@@ -477,10 +522,17 @@ function CommentLeadWorkspace() {
                     submit.isPending && submit.variables?.row.id === row.id
                   }
                   disabled={!row.commenterProfile || !draft}
-                  onClick={() => submit.mutate({ row, draft })}
+                  onClick={() =>
+                    submit.mutate({ row, draft, requestKey: task.requestKey })
+                  }
                 >
                   继续发送
                 </Button>
+              )}
+              {task.status === "approved" && !task.requestKey && (
+                <Typography.Text type="warning">
+                  缺少请求标识，无法继续发送，请刷新任务
+                </Typography.Text>
               )}
               {(task.status === "failed" || task.status === "canceled") && (
                 <Button

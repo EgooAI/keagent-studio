@@ -100,12 +100,14 @@ func TestOutreachFailedResetStartsNewAttempt(t *testing.T) {
 	if failed["status"] != "failed" {
 		t.Fatal(failed)
 	}
-	retry := outreachSubmitCall(t, f, analysis["id"].(string), "第二版草稿", id())
+	retryKey := id()
+	retry := outreachSubmitCall(t, f, analysis["id"].(string), "第二版草稿", retryKey)
 	if retry["id"] != first["id"] || retry["status"] != "approved" || retry["attempt"] != float64(2) {
 		t.Fatalf("retry did not advance the generation: %v", retry)
 	}
 	row := outreachRow(t, f, retry["id"])
 	if row["attempt"] != float64(2) || row["draft"] != "第二版草稿" || row["status"] != "approved" ||
+		row["requestKey"] != retryKey ||
 		row["creatorhubTaskId"] != "" || row["method"] != "" || row["error"] != "" ||
 		row["submittedAt"] != nil || row["finishedAt"] != nil {
 		t.Fatalf("reset left stale execution data: %v", row)
@@ -129,7 +131,7 @@ func TestOutreachSubmitSameRequestReturnsReceipt(t *testing.T) {
 		second["status"] != "approved" {
 		t.Fatalf("same request key was not idempotent: %v %v", first, second)
 	}
-	if row := outreachRow(t, f, first["id"]); row["draft"] != "原草稿" {
+	if row := outreachRow(t, f, first["id"]); row["draft"] != "原草稿" || row["requestKey"] != key {
 		t.Fatalf("replay overwrote the receipt: %v", row)
 	}
 	var count int

@@ -187,6 +187,7 @@ export class CreatorHubOutreach {
       creatorhubTaskId: String(task.id),
       error: "",
       draft: input.draft,
+      requestKey: input.requestKey,
     };
   }
 
@@ -204,6 +205,8 @@ export class CreatorHubOutreach {
         accountId: string;
         workId: string;
         draft: string;
+        error: string;
+        requestKey: string;
       }>;
     };
     const row = result.items[0];
@@ -218,6 +221,8 @@ export class CreatorHubOutreach {
       accountId: row.accountId,
       workId: row.workId,
       draft: row.draft,
+      error: row.error,
+      requestKey: row.requestKey,
     };
   }
 

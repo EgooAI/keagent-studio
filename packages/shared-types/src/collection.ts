@@ -203,4 +203,5 @@ export interface OutreachTask {
   creatorhubTaskId: string;
   error: string;
   draft: string;
+  requestKey: string;
 }

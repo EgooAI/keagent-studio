@@ -56,6 +56,8 @@ interface Row {
   accountId: string;
   workId: string;
   draft: string;
+  error: string;
+  requestKey: string;
 }
 
 const outreachId = "o".repeat(32);
@@ -70,6 +72,8 @@ const baseRow: Row = {
   accountId: "account-1",
   workId: "1234567890",
   draft: "您好",
+  error: "",
+  requestKey,
 };
 const approved = {
   id: outreachId,
@@ -136,7 +140,11 @@ describe("CreatorHubOutreach submit", () => {
       requestKey,
     });
     expect(result.status).toBe("submitted");
-    expect(result).toMatchObject({ draft: "您好" });
+    expect(result).toMatchObject({
+      draft: "您好",
+      requestKey,
+      error: "",
+    });
     expect(key).toBe(`ch-${outreachId}-1`);
     expect(payload).toMatchObject({
       account_id: 7,
@@ -423,6 +431,8 @@ describe("CreatorHubOutreach submit", () => {
       analysisId,
       attempt: 2,
       status: "uncertain",
+      requestKey,
+      error: "",
     });
     expect(sends).toBe(0);
     expect(
@@ -643,6 +653,8 @@ describe("CreatorHubOutreach refresh", () => {
       const result = await outreach.refresh({ outreachId, attempt: 3 });
       expect(result.status).toBe(expected);
       expect(result.draft).toBe("您好");
+      expect(result.requestKey).toBe(requestKey);
+      expect(result.error).toBe("");
       const write = calls.find((call) =>
         call.route.endsWith("outreach/result"),
       );
