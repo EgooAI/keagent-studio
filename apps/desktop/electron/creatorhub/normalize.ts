@@ -12,27 +12,73 @@ export interface CommentField {
   truncated: boolean;
 }
 
+const MAX_COMMENT_ID_RUNES = 1024;
+const MAX_COMMENT_TEXT_RUNES = 8192;
+const MAX_NICKNAME_RUNES = 256;
+const MAX_TIMESTAMP_SECONDS = 4_102_444_800;
+const SEC_UID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function stringValue(value: unknown): string {
+  return value == null ? "" : String(value);
+}
+
+function truncateRunes(value: string, max: number) {
+  const runes = Array.from(value);
+  return {
+    value: runes.slice(0, max).join(""),
+    truncated: runes.length > max,
+  };
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function normalizeComments(rows: CreatorHubComment[]): CommentField[] {
   const seen = new Set<string>();
   const out: CommentField[] = [];
   for (const row of rows) {
-    if (row.is_reply || !row.comment_id || seen.has(row.comment_id)) continue;
-    seen.add(row.comment_id);
+    if (row.is_reply) continue;
+    const commentId = stringValue(row.comment_id).trim();
+    if (
+      !commentId ||
+      Array.from(commentId).length > MAX_COMMENT_ID_RUNES ||
+      seen.has(commentId)
+    )
+      continue;
+    seen.add(commentId);
+
+    const text = stringValue(row.text);
+    const truncatedText = truncateRunes(text, MAX_COMMENT_TEXT_RUNES);
+    const nickname = stringValue(row.user_nickname);
+    const secUid = stringValue(row.user_sec_uid).trim();
+    const createTime = finiteNumber(row.create_time);
+    const likeCount = finiteNumber(row.like_count);
+
     out.push({
-      comment_id: row.comment_id,
+      comment_id: commentId,
       parent_comment_id: null,
-      comment_text: row.text || null,
-      commenter_name: row.user_nickname || null,
-      commenter_profile: row.user_sec_uid
-        ? `https://www.douyin.com/user/${row.user_sec_uid}`
+      comment_text: text.trim() ? truncatedText.value : null,
+      commenter_name: nickname.trim()
+        ? truncateRunes(nickname, MAX_NICKNAME_RUNES).value
+        : null,
+      commenter_profile: SEC_UID_PATTERN.test(secUid)
+        ? `https://www.douyin.com/user/${secUid}`
         : null,
       comment_time:
-        row.create_time > 0
-          ? new Date(row.create_time * 1000).toISOString()
+        createTime !== null &&
+        createTime > 0 &&
+        createTime < MAX_TIMESTAMP_SECONDS
+          ? new Date(createTime * 1000).toISOString()
           : null,
-      like_count: Number.isFinite(row.like_count) ? row.like_count : null,
+      like_count:
+        likeCount !== null &&
+        likeCount >= 0 &&
+        likeCount <= Number.MAX_SAFE_INTEGER
+          ? likeCount
+          : null,
       reply_count: null,
-      truncated: false,
+      truncated: text.trim() ? truncatedText.truncated : false,
     });
   }
   return out;

@@ -33,12 +33,35 @@ export interface CreatorHubAction {
 }
 
 function loopbackBase(raw: string) {
-  const url = new URL(raw);
-  if (url.protocol !== "http:" || url.username || url.password ||
-      url.pathname !== "/" || url.search || url.hash)
-    throw new PublishingError("CREATORHUB_URL_INVALID", "CreatorHub 地址必须是本机 HTTP 地址", 422);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new PublishingError(
+      "CREATORHUB_URL_INVALID",
+      "CreatorHub 地址必须是本机 HTTP 地址",
+      422,
+    );
+  }
+  if (
+    url.protocol !== "http:" ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  )
+    throw new PublishingError(
+      "CREATORHUB_URL_INVALID",
+      "CreatorHub 地址必须是本机 HTTP 地址",
+      422,
+    );
   if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
-    throw new PublishingError("CREATORHUB_URL_INVALID", "CreatorHub 地址必须是本机地址", 422);
+    throw new PublishingError(
+      "CREATORHUB_URL_INVALID",
+      "CreatorHub 地址必须是本机地址",
+      422,
+    );
   return url;
 }
 
@@ -56,47 +79,70 @@ export class CreatorHubClient {
     timeout = 30_000,
   ): Promise<T> {
     let response: Response;
+    let text: string;
     try {
+      const headers = new Headers(init.headers);
+      if (!headers.has("content-type"))
+        headers.set("content-type", "application/json");
       response = await this.fetchImpl(new URL(path, this.base), {
         ...init,
+        redirect: "error",
         signal: AbortSignal.timeout(timeout),
-        headers: { "content-type": "application/json", ...(init.headers || {}) },
+        headers,
       });
+      text = await response.text();
     } catch (error) {
       const name = (error as { name?: string }).name;
       throw new PublishingError(
-        name === "TimeoutError" ? "CREATORHUB_TIMEOUT" : "CREATORHUB_UNAVAILABLE",
-        name === "TimeoutError" ? "CreatorHub 响应超时" : "无法连接 CreatorHub，请确认服务已启动",
+        name === "TimeoutError"
+          ? "CREATORHUB_TIMEOUT"
+          : "CREATORHUB_UNAVAILABLE",
+        name === "TimeoutError"
+          ? "CreatorHub 响应超时"
+          : "无法连接 CreatorHub，请确认服务已启动",
         503,
       );
     }
-    const text = await response.text();
     if (!response.ok) {
+      let detail = "CreatorHub 拒绝了请求";
+      try {
+        const parsed = JSON.parse(text) as { detail?: unknown } | null;
+        if (parsed && typeof parsed === "object" && parsed.detail)
+          detail = String(parsed.detail);
+      } catch {
+        // Keep the generic rejection message for non-JSON error bodies.
+      }
+      throw new PublishingError("CREATORHUB_REJECTED", detail, response.status);
+    }
+    if (!text.trim()) return null as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
       throw new PublishingError(
-        "CREATORHUB_REJECTED",
-        (() => {
-          try {
-            return String(JSON.parse(text).detail || "CreatorHub 拒绝了请求");
-          } catch {
-            return "CreatorHub 拒绝了请求";
-          }
-        })(),
-        response.status,
+        "CREATORHUB_INVALID_RESPONSE",
+        "CreatorHub 返回了无法解析的数据",
+        502,
       );
     }
-    return (text ? JSON.parse(text) : null) as T;
   }
   health() {
     return this.call<{ status: string }>("/health", {}, 3_000);
   }
   accounts() {
-    return this.call<CreatorHubAccount[]>("/api/accounts?platform=douyin", {}, 10_000);
+    return this.call<CreatorHubAccount[]>(
+      "/api/accounts?platform=douyin",
+      {},
+      10_000,
+    );
   }
   loginStart() {
-    return this.call<{ task_id: string }>("/api/login/browser/start?proxy=auto", {
-      method: "POST",
-      body: "{}",
-    });
+    return this.call<{ task_id: string }>(
+      "/api/login/browser/start?proxy=auto",
+      {
+        method: "POST",
+        body: "{}",
+      },
+    );
   }
   loginPoll(taskId: string) {
     return this.call<{ status: string; error?: string }>(
@@ -141,11 +187,15 @@ export class CreatorHubClient {
   async comments(watchId: number) {
     const all: CreatorHubComment[] = [];
     for (let page = 1; page <= 20; page++) {
-      const result = await this.call<{ items: CreatorHubComment[]; has_next: boolean }>(
+      const result = await this.call<{
+        items?: CreatorHubComment[];
+        has_next: boolean;
+      }>(
         `/api/comments?platform=douyin&watch_id=${watchId}&paginate=true&page=${page}&page_size=200`,
       );
-      all.push(...result.items);
-      if (!result.has_next) break;
+      const items = result.items ?? [];
+      all.push(...items);
+      if (!result.has_next || items.length === 0) break;
     }
     return all;
   }
