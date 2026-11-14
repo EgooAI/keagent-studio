@@ -85,7 +85,7 @@ def test_resolve_douyin_video(monkeypatch):
         return "7707599736451158395"
 
     monkeypatch.setattr(main, "resolve_aweme_id", fake_resolve)
-    client = TestClient(main.app)
+    client = TestClient(main.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     response = client.post(
         "/api/comment-watches/resolve",
         json={"url_or_id": "https://v.douyin.com/abc/"},
@@ -102,7 +102,7 @@ def test_resolve_rejects_unparseable_target(monkeypatch):
         return ""
 
     monkeypatch.setattr(main, "resolve_aweme_id", fake_resolve)
-    client = TestClient(main.app)
+    client = TestClient(main.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     response = client.post(
         "/api/comment-watches/resolve",
         json={"url_or_id": "not a video"},
