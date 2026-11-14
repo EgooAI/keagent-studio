@@ -102,6 +102,9 @@ export default function CollectionPage() {
             <Button onClick={() => navigate("/leads/comment-observation")}>
               评论观察
             </Button>
+            <Button onClick={() => navigate("/leads/comment-lead")}>
+              评论获客
+            </Button>
           </Space>
         }
       />

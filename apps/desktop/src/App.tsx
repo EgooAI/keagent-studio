@@ -68,6 +68,7 @@ const CommentObservationPage = lazy(
 );
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
 const CollectionPage = lazy(() => import("./pages/CollectionPage"));
+const CommentLeadPage = lazy(() => import("./pages/CommentLeadPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const navigation = [
@@ -289,6 +290,10 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                   element={isLive ? <CollectionPage /> : <LeadsPage />}
                 />
                 <Route path="/leads/collection" element={<CollectionPage />} />
+                <Route
+                  path="/leads/comment-lead"
+                  element={<CommentLeadPage />}
+                />
                 <Route
                   path="/leads/comment-observation"
                   element={<CommentObservationPage />}

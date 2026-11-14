@@ -1,5 +1,6 @@
 export { douyinApi, douyinDesktop } from "./douyin";
 export { collectionApi } from "./collection";
+export { creatorHubApi } from "./creatorhub";
 export { searchBeikeHouses, getBeikeHouseDetail } from "./beike";
 import { serviceRequest } from "./transport";
 export {

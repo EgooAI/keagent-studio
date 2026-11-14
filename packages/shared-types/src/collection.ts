@@ -119,3 +119,78 @@ export interface CommentSyncResult {
   updatedCount: number;
   syncedAt: string;
 }
+
+export type LeadIntent =
+  | "buy"
+  | "rent"
+  | "sell"
+  | "let"
+  | "viewing"
+  | "question"
+  | "unrelated"
+  | "unclear";
+export interface CreatorHubAccountSummary {
+  id: string;
+  nickname: string;
+  status: string;
+  has_read_login: boolean;
+}
+export interface CreatorHubStatus {
+  health: "ready" | "offline";
+  accounts: CreatorHubAccountSummary[];
+  selectedAccountId: string;
+  progress?: string;
+}
+export interface CreatorHubStartInput {
+  url: string;
+  accountId: string;
+  requestKey: string;
+  consent: { accepted: boolean; retentionDays?: number; expiresAt?: string };
+}
+export interface CreatorHubStartResult {
+  watchId: number;
+  awemeId: string;
+  accountId: string;
+  readCount: number;
+  addedCount: number;
+  updatedCount: number;
+  coverage: CommentCoverage;
+  warning?: string;
+}
+export interface LeadAnalysisResult {
+  intent: LeadIntent;
+  evidence: string;
+  qualified: boolean;
+  reason: string;
+  draft: string;
+}
+export interface LeadAnalysisRow extends LeadAnalysisResult {
+  id: string;
+  jobId: string;
+  commentId: string;
+  commentText: string;
+  commenterName: string;
+  commenterProfile: string | null;
+  likeCount: number | null;
+  commentTime: string | null;
+  status: string;
+  error: string;
+}
+export interface AnalysisJob {
+  id: string;
+  status: "queued" | "running" | "done" | "partial" | "failed" | "canceled";
+  total: number;
+  processed: number;
+  qualified: number;
+  failed: number;
+  error: string;
+  criteriaHash: string;
+}
+export interface OutreachTask {
+  id: string;
+  analysisId: string;
+  attempt: number;
+  status: string;
+  creatorhubTaskId: string;
+  error: string;
+}

@@ -185,7 +185,7 @@ export interface Lead {
   reply: string;
   followups: { id: string; note: string; createdAt: string }[];
 }
-export interface AnalysisJob {
+export interface DemoAnalysisJob {
   id: string;
   name: string;
   url: string;
@@ -206,7 +206,7 @@ export interface Workspace {
   profile: AgentProfile;
   draft: ProductionConfig;
   leads: Lead[];
-  analysisJobs: AnalysisJob[];
+  analysisJobs: DemoAnalysisJob[];
   requests: Record<string, string>;
   updatedAt: string;
 }
