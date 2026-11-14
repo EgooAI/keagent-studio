@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-function registerAuth() {
+function registerAuth(onTargetStopped) {
   const { PanoramaWorkflow } = require("./panorama/workflow.cjs");
   const workflow = new PanoramaWorkflow(
     path.join(app.getPath("userData"), "panorama"),
@@ -312,22 +312,49 @@ function registerAuth() {
       return (await request(`/v1/voices/${method.slice(6)}`, args[0] || {}))
         .data;
     }
-    if (method === "douyin.cloud") {
-      if (
-        ![
-          "accounts/list",
-          "workspace",
-          "records/list",
-          "records/get",
-          "records/reconcile",
-        ].includes(args[0])
-      )
-        throw new Error("此发布接口未开放");
+    if (method === "douyin.cloud" || method === "collection.cloud") {
+      const isCollection = method === "collection.cloud";
+      const operations = isCollection
+        ? [
+            "targets/create",
+            "targets/get",
+            "targets/list",
+            "targets/update",
+            "targets/pause",
+            "targets/resume",
+            "targets/archive",
+            "runs/list",
+            "runs/get",
+            "videos/list",
+            "videos/get",
+          ]
+        : [
+            "accounts/list",
+            "workspace",
+            "records/list",
+            "records/get",
+            "records/reconcile",
+          ];
+      if (!operations.includes(args[0]))
+        throw new Error(
+          isCollection ? "此目标管理接口未开放" : "此发布接口未开放",
+        );
+      const service = isCollection ? "collection" : "douyin";
+      const generation = identityGeneration;
       try {
-        return {
-          ok: true,
-          data: (await request(`/v1/douyin/${args[0]}`, args[1] || {})).data,
-        };
+        const { data } = await request(
+          `/v1/${service}/${args[0]}`,
+          args[1] || {},
+        );
+        if (
+          isCollection &&
+          (args[0] === "targets/pause" || args[0] === "targets/archive")
+        ) {
+          const { canceledRunId, ...target } = data;
+          if (canceledRunId) await onTargetStopped?.(canceledRunId, generation);
+          return { ok: true, data: target };
+        }
+        return { ok: true, data };
       } catch (error) {
         return {
           ok: false,

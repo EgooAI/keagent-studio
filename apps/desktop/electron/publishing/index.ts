@@ -1,4 +1,5 @@
 import { CommentObservationService } from "../comment-observation/service";
+import { CollectionRunService } from "../comment-observation/collection-runs";
 import { ipcMain, app, dialog, type BrowserWindow } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -75,6 +76,13 @@ export function registerPublishing(
   const observations = new CommentObservationService(
     browser,
     dependencies.identity,
+    (identity) => files.directoryFor(identity),
+    emit,
+  );
+  const collection = new CollectionRunService(
+    observations,
+    dependencies.identity,
+    dependencies.request,
     (identity) => files.directoryFor(identity),
     emit,
   );
@@ -180,6 +188,7 @@ export function registerPublishing(
   }
   const recoveryTimer = setInterval(() => {
     void recover().catch(() => {});
+    void collection.recover().catch(() => {});
   }, 30000);
   recoveryTimer.unref();
   async function state(): Promise<DouyinDesktopState> {
@@ -199,6 +208,8 @@ export function registerPublishing(
   }
   const methods = new Set([
     "state",
+    "collection.start",
+    "collection.cancel",
     "observation.start",
     "observation.list",
     "observation.cancel",
@@ -243,7 +254,11 @@ export function registerPublishing(
         let data: unknown;
         const accountId =
           typeof value.accountId === "string" ? value.accountId : "";
-        if (method === "observation.start") {
+        if (method === "collection.start") {
+          data = await collection.start(requestIdentity, value);
+        } else if (method === "collection.cancel") {
+          data = await collection.cancel(requestIdentity, value.id);
+        } else if (method === "observation.start") {
           data = observations.start(
             requestIdentity,
             accountId,
@@ -421,6 +436,7 @@ export function registerPublishing(
     }
   });
   function stop() {
+    collection.stop();
     observations.stop();
     queue.stop();
     publisher.stop();
@@ -434,6 +450,11 @@ export function registerPublishing(
   });
   return {
     stop,
+    async targetStopped(runId: string, expectedGeneration: number) {
+      const identity = await dependencies.identity();
+      if (identity.generation === expectedGeneration)
+        await collection.targetStopped(identity, runId);
+    },
     setResolver(value: LocalMediaAssetResolver) {
       resolver = value;
       emit();

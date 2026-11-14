@@ -1,5 +1,6 @@
 export * from "./douyin";
 export * from "./comment-observation";
+export type * from "./collection";
 export type VideoMode = "voiceover" | "avatar";
 export type * from "./artifact";
 export type * from "./beike";

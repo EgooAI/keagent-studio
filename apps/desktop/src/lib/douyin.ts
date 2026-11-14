@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { CommentPanelStatus } from "@keagent/shared-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   douyinApi,
@@ -6,6 +7,16 @@ import {
   ServiceRequestError,
 } from "@keagent/api-client";
 export { douyinApi, douyinDesktop };
+export const panelLabels: Record<CommentPanelStatus, string> = {
+  not_checked: "未检查",
+  visible: "可见",
+  explicitly_empty: "明确为空",
+  not_visible: "当前视口不可见",
+  loading: "加载中",
+  load_failed: "加载失败",
+  restricted: "访问受限",
+  unknown: "无法判断",
+};
 export function publishingFailureText(code: string): string {
   const labels: Record<string, string> = {
     EXECUTION_FAILED: "发布执行失败，请查看账号浏览器后重新操作。",

@@ -257,6 +257,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, v, e)
 		return
 	}
+	if operation, ok := strings.CutPrefix(r.URL.Path, "/v1/collection/"); ok {
+		if r.Method != "POST" {
+			respond(w, nil, fail(405, "目标管理接口仅支持 POST"))
+			return
+		}
+		v, e := s.collection(r.Context(), a, operation, body)
+		respond(w, v, e)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/douyin/") {
 		if r.Method != "POST" {
 			respond(w, nil, fail(405, "抖音业务接口仅支持POST"))
@@ -1102,6 +1111,9 @@ func main() {
 	}
 	if _, err = db.Exec(douyinSchema); err != nil {
 		log.Fatal("douyin migration failed")
+	}
+	if _, err = db.Exec(collectionSchema); err != nil {
+		log.Fatal("collection migration failed")
 	}
 	verifier, err := newJWTVerifier()
 	if err != nil {

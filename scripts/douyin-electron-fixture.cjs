@@ -146,6 +146,7 @@ app.whenReady().then(async () => {
       requests = [];
     let submits = 0;
     let dropTerminal = true;
+    let dropLeaseRenewal = false;
     const sessions = [];
     let generation = 1;
     const testBase = process.env.ARTIFACT_EXCHANGE_TEST_URL;
@@ -353,6 +354,8 @@ app.whenReady().then(async () => {
       dependencies.exchange.getHandoff = (id) =>
         testAPI("/v1/artifact-handoffs/get", { id });
       dependencies.request = async (route, input) => {
+        if (dropLeaseRenewal && route === "/v1/collection/runs/heartbeat")
+          throw new Error("Controlled offline lease renewal");
         if (
           route.endsWith("records/report") &&
           input.state === "accepted" &&
@@ -573,6 +576,146 @@ app.whenReady().then(async () => {
     assert.equal(currentLayout.panelStatus, "visible");
     assert.equal((await observe("10014")).errorCode, "IDENTITY_UNCONFIRMED");
     assert.equal((await observe("10015")).errorCode, "AUTHOR_UNCONFIRMED");
+    if (testBase) {
+      const target = await testAPI("/v1/collection/targets/create", {
+        accountId,
+        kind: "video",
+        value: "https://www.douyin.com/video/10013",
+        name: "夹具作品观察",
+        requestKey: "electron-collection-target-001",
+      });
+      const input = {
+        targetId: target.id,
+        expectedVersion: target.version,
+        requestKey: "electron-collection-run-001",
+      };
+      const run = await call("collection.start", input);
+      assert.equal(run.ok, true, JSON.stringify(run));
+      let result;
+      for (let i = 0; i < 100; i++) {
+        result = await testAPI("/v1/collection/runs/get", { id: run.data.id });
+        if (result.endedAt) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.equal(result.state, "succeeded", JSON.stringify(result));
+      assert.equal(result.panelStatus, "visible");
+      assert.equal(result.verifiedWorkId, "10013");
+      assert.equal(result.author.name, "夹具作者");
+      assert.ok(!JSON.stringify(result).includes("PRIVATE COMMENT FIXTURE"));
+      const duplicate = await call("collection.start", input);
+      assert.equal(duplicate.data.id, result.id);
+      const history = await testAPI("/v1/collection/runs/list", {
+        targetId: target.id,
+      });
+      assert.deepEqual(
+        history.items.map((r) => r.id),
+        [result.id],
+      );
+      const videos = await testAPI("/v1/collection/videos/list", {
+        targetId: target.id,
+      });
+      assert.equal(videos.items.length, 1);
+      assert.equal(videos.items[0].lastRunId, result.id);
+      const local = await call("observation.list");
+      assert.ok(
+        local.data.some(
+          (r) =>
+            r.id === result.id && r.verifiedWorkId === result.verifiedWorkId,
+        ),
+      );
+      assert.equal((await call("account.open", { accountId })).ok, true);
+      const workLoads = () =>
+        requests.filter((entry) => entry === "/video/10013").length;
+      const before = workLoads();
+      const heldRun = await call("collection.start", {
+        ...input,
+        requestKey: "electron-collection-held-002",
+      });
+      assert.equal(heldRun.ok, true, JSON.stringify(heldRun));
+      const heldLocal = (await call("observation.list")).data.find(
+        (r) => r.id === heldRun.data.id,
+      );
+      assert.equal(heldLocal.state, "queued");
+      const cancellation = await call("collection.cancel", {
+        id: heldRun.data.id,
+      });
+      assert.equal(cancellation.data.state, "canceled");
+      assert.equal((await call("browser.hide")).ok, true);
+      assert.equal(workLoads(), before);
+      assert.equal(
+        (await testAPI("/v1/collection/runs/get", { id: heldRun.data.id }))
+          .state,
+        "canceled",
+      );
+      assert.equal(
+        (await testAPI("/v1/collection/videos/list", { targetId: target.id }))
+          .items[0].lastRunId,
+        result.id,
+      );
+      let version = target.version;
+      for (const action of ["offline", "pause", "archive"]) {
+        assert.equal((await call("account.open", { accountId })).ok, true);
+        const queued = await call("collection.start", {
+          ...input,
+          expectedVersion: version,
+          requestKey: "electron-collection-target-" + action,
+        });
+        assert.equal(queued.ok, true, JSON.stringify(queued));
+        const localRun = async () =>
+          (await call("observation.list")).data.find(
+            (r) => r.id === queued.data.id,
+          );
+        assert.equal((await localRun()).state, "queued");
+        if (action === "offline") {
+          dropLeaseRenewal = true;
+        } else {
+          const change = await testAPI("/v1/collection/targets/" + action, {
+            id: target.id,
+            expectedVersion: version,
+          });
+          assert.equal(change.canceledRunId, queued.data.id);
+          version = change.version;
+          // Pause simulates a missed local notification. Archive uses the main process hook.
+          if (action === "archive") {
+            await service.targetStopped(change.canceledRunId, generation);
+          }
+        }
+        assert.equal((await call("browser.hide")).ok, true);
+        let stopped;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          stopped = await localRun();
+          if (stopped?.endedAt) break;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        const errorCode =
+          action === "offline" ? "COLLECTION_UNAVAILABLE" : "CANCELED";
+        assert.equal(stopped?.errorCode, errorCode, JSON.stringify(stopped));
+        assert.equal(stopped.panelStatus, "not_checked");
+        assert.equal(
+          workLoads(),
+          before,
+          action + " must prevent work navigation",
+        );
+        dropLeaseRenewal = false;
+        let remote;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          remote = await testAPI("/v1/collection/runs/get", {
+            id: queued.data.id,
+          });
+          if (remote.endedAt) break;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        assert.equal(remote.errorCode, errorCode, JSON.stringify(remote));
+        if (action === "pause") {
+          const resumed = await testAPI("/v1/collection/targets/resume", {
+            id: target.id,
+            expectedVersion: version,
+          });
+          version = resumed.version;
+        }
+      }
+      console.log("Collection IPC and shared API passed.");
+    }
     assert.equal(
       nativeView.webContents.getURL().startsWith("https://creator.douyin.com/"),
       true,

@@ -30,15 +30,22 @@ function unwrap<T>(reply: Envelope<T>): T {
     );
   return reply.data;
 }
-async function cloud<T>(operation: string, input: unknown = {}): Promise<T> {
+export async function desktopCloud<T>(
+  service: "douyin" | "collection",
+  operation: string,
+  input: unknown = {},
+): Promise<T> {
   if (window.desktop?.request)
     return unwrap(
-      (await window.desktop.request("douyin.cloud", [
+      (await window.desktop.request(`${service}.cloud`, [
         operation,
         input,
       ])) as Envelope<T>,
     );
-  return serviceRequest<T>(`/v1/douyin/${operation}`, input);
+  return serviceRequest<T>(`/v1/${service}/${operation}`, input);
+}
+function cloud<T>(operation: string, input?: unknown) {
+  return desktopCloud<T>("douyin", operation, input);
 }
 export async function douyinDesktop<T>(
   method: string,

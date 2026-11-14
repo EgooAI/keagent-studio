@@ -27,13 +27,9 @@ export class CommentObservationService {
   ) {}
 
   private recorder(identity: PublishingIdentity) {
-    return new ObservationRecorder(
+    const recorder = new ObservationRecorder(
       path.join(this.directory(identity), "comment-observation"),
     );
-  }
-
-  list(identity: PublishingIdentity) {
-    const recorder = this.recorder(identity);
     for (const [id, pending] of this.unsaved) {
       if (pending.directory !== recorder.directory) continue;
       try {
@@ -46,7 +42,15 @@ export class CommentObservationService {
         );
       }
     }
-    return recorder.list(new Set(this.active.keys()));
+    return recorder;
+  }
+
+  list(identity: PublishingIdentity) {
+    return this.recorder(identity).list(new Set(this.active.keys()));
+  }
+
+  get(identity: PublishingIdentity, id: string) {
+    return this.recorder(identity).get(id, this.active.has(id));
   }
 
   start(
@@ -54,12 +58,15 @@ export class CommentObservationService {
     accountId: string,
     url: unknown,
     screenshotOnIssue: boolean,
+    id = randomBytes(16).toString("hex"),
+    onFinished?: () => void,
+    beforeNavigate?: () => Promise<void>,
   ) {
     if (!/^[a-f0-9]{32}$/.test(accountId))
       throw new PublishingError("INVALID_INPUT", "请选择本机抖音账号");
     const recorder = this.recorder(identity);
     const record: CommentObservation = {
-      id: randomBytes(16).toString("hex"),
+      id,
       accountId,
       deviceId: identity.deviceId,
       targetUrl: "",
@@ -80,6 +87,7 @@ export class CommentObservationService {
       });
       recorder.save(record);
       this.changed();
+      onFinished?.();
       return record;
     }
     recorder.save(record);
@@ -110,6 +118,7 @@ export class CommentObservationService {
           accountId,
           signal,
           async (page, hasViewerSession) => {
+            if (beforeNavigate) await beforeNavigate();
             await assertCurrent();
             record.state = "running";
             recorder.save(record);
@@ -188,6 +197,7 @@ export class CommentObservationService {
           });
         }
         this.changed();
+        onFinished?.();
       }
     };
     // Initial journal is durable before IPC acknowledges the queued observation.

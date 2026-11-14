@@ -14,7 +14,10 @@ it("forwards authenticated credit usage and property deletion through Electron",
     .mockResolvedValueOnce(
       Response.json({ error: { message: "日期无效" } }, { status: 422 }),
     );
-  const exports = { exports: {} as { registerAuth: () => unknown } };
+  const targetStopped = vi.fn();
+  const exports = {
+    exports: {} as { registerAuth: (onStop: typeof targetStopped) => unknown },
+  };
   runInNewContext(
     readFileSync(new URL("./auth.cjs", import.meta.url), "utf8"),
     {
@@ -52,7 +55,7 @@ it("forwards authenticated credit usage and property deletion through Electron",
       },
     },
   );
-  exports.exports.registerAuth();
+  exports.exports.registerAuth(targetStopped);
   const handler = handle.mock.calls.find(
     ([channel]) => channel === "identity:request",
   )![1];
@@ -88,4 +91,46 @@ it("forwards authenticated credit usage and property deletion through Electron",
       body: JSON.stringify(["property-1"]),
     }),
   ]);
+  fetch.mockResolvedValueOnce(Response.json({ items: [] }));
+  await expect(
+    handler(event, "collection.cloud", ["runs/list", {}]),
+  ).resolves.toEqual({
+    ok: true,
+    data: { items: [] },
+  });
+  expect(fetch.mock.calls[4]).toEqual([
+    "http://127.0.0.1:18081/v1/collection/runs/list",
+    expect.objectContaining({
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  ]);
+  for (const operation of [
+    "runs/claim",
+    "runs/finish",
+    "../douyin/accounts/list",
+  ])
+    await expect(
+      handler(event, "collection.cloud", [operation]),
+    ).rejects.toThrow("接口未开放");
+  expect(fetch).toHaveBeenCalledTimes(5);
+  const target = { id: "5".repeat(32), expectedVersion: 1 };
+  const canceledRunId = "7".repeat(32);
+  for (const operation of ["targets/pause", "targets/archive"]) {
+    fetch.mockResolvedValueOnce(
+      Response.json({ id: target.id, canceledRunId }),
+    );
+    await expect(
+      handler(event, "collection.cloud", [operation, target]),
+    ).resolves.toEqual({ ok: true, data: { id: target.id } });
+    expect(targetStopped).toHaveBeenLastCalledWith(canceledRunId, 0);
+  }
+  fetch.mockResolvedValueOnce(Response.json({ id: target.id }));
+  await handler(event, "collection.cloud", ["targets/archive", target]);
+  fetch.mockResolvedValueOnce(
+    Response.json({ message: "目标已更新" }, { status: 409 }),
+  );
+  await expect(
+    handler(event, "collection.cloud", ["targets/pause", target]),
+  ).resolves.toMatchObject({ ok: false });
+  expect(targetStopped).toHaveBeenCalledTimes(2);
 });

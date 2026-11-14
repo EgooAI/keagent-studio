@@ -117,7 +117,10 @@ export default function LeadsPage() {
             : "Mock 演示 · 以下分析任务和线索使用示例数据。"
         }
         actions={
-          <Space>
+          <Space wrap>
+            <Button onClick={() => navigate("/leads/collection")}>
+              目标管理
+            </Button>
             <Button onClick={() => navigate("/leads/comment-observation")}>
               评论观察
             </Button>

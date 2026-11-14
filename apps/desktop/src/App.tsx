@@ -67,6 +67,7 @@ const CommentObservationPage = lazy(
   () => import("./pages/CommentObservationPage"),
 );
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
+const CollectionPage = lazy(() => import("./pages/CollectionPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const navigation = [
@@ -283,7 +284,11 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                   path="/publish/:productionTaskId"
                   element={<PublishDetailPage />}
                 />
-                <Route path="/leads" element={<LeadsPage />} />
+                <Route
+                  path="/leads"
+                  element={isLive ? <CollectionPage /> : <LeadsPage />}
+                />
+                <Route path="/leads/collection" element={<CollectionPage />} />
                 <Route
                   path="/leads/comment-observation"
                   element={<CommentObservationPage />}

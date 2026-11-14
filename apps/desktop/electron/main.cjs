@@ -1,6 +1,17 @@
 const { app, BrowserWindow, protocol, net, dialog } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+// One main process owns this userData's browser coordination and recovery journals.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
+app.on("second-instance", () => {
+  const window = BrowserWindow.getAllWindows()[0];
+  if (window?.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
+});
 if (!app.isPackaged) {
   const envFile = path.resolve(__dirname, "../../../.env.local");
   if (require("node:fs").existsSync(envFile)) {
@@ -140,7 +151,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  identity = require("./auth.cjs").registerAuth();
+  identity = require("./auth.cjs").registerAuth((runId, generation) =>
+    publishing?.targetStopped(runId, generation),
+  );
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);
     if (url.hostname === "douyin") {

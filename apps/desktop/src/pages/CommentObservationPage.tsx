@@ -17,27 +17,15 @@ import {
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { douyinApi, isLive } from "@keagent/api-client";
-import type {
-  CommentObservation,
-  CommentPanelStatus,
-} from "@keagent/shared-types";
+import type { CommentObservation } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
 import {
   desktopPublishingAvailable,
+  panelLabels,
   publishingMessage,
   useDouyinDesktop,
 } from "../lib/douyin";
 
-const panelLabels: Record<CommentPanelStatus, string> = {
-  not_checked: "未检查",
-  visible: "可见",
-  explicitly_empty: "明确为空",
-  not_visible: "当前视口不可见",
-  loading: "加载中",
-  load_failed: "加载失败",
-  restricted: "访问受限",
-  unknown: "无法判断",
-};
 const states = {
   queued: "等待浏览器",
   running: "观察中",

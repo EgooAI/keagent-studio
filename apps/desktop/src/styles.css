@@ -275,6 +275,22 @@ svg {
   border-radius: 10px;
   min-width: 0;
 }
+.collection-workspace {
+  padding: 4px 20px 18px;
+}
+.collection-workspace .ant-alert {
+  margin: 4px 0 14px;
+}
+.collection-source {
+  max-width: 34ch;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+.collection-more {
+  margin-top: 12px;
+}
 .section-heading {
   display: flex;
   align-items: center;

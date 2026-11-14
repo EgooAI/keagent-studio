@@ -23,7 +23,7 @@ func TestArtifactMediaElectronAgainstSharedAPI(t *testing.T) {
 		t.Fatal("FFPROBE_PATH must identify the test media probe")
 	}
 	s := exchangeTestServer(t)
-	if _, err := s.db.Exec(douyinSchema); err != nil {
+	if _, err := s.db.Exec(douyinSchema + collectionSchema); err != nil {
 		t.Fatal(err)
 	}
 	s.secret = "artifact-registry-integration-" + id()
@@ -47,6 +47,9 @@ func TestArtifactMediaElectronAgainstSharedAPI(t *testing.T) {
 	if !strings.Contains(string(output), "Hidden Electron verified: real file registration") {
 		t.Fatalf("Electron verification marker missing: %s", output)
 	}
+	if !strings.Contains(string(output), "Collection IPC and shared API passed.") {
+		t.Fatalf("Collection integration did not complete: %s", output)
+	}
 	var artifacts, assets, handoffs, accepted, unknown int
 	for query, destination := range map[string]*int{
 		`SELECT count(*) FROM keagent_video_artifact`:                        &artifacts,
@@ -62,5 +65,14 @@ func TestArtifactMediaElectronAgainstSharedAPI(t *testing.T) {
 	if artifacts != 1 || assets != 2 || handoffs != 1 || accepted != 1 || unknown != 1 {
 		t.Fatalf("unexpected shared facts: artifacts=%d assets=%d handoffs=%d accepted=%d unknown=%d", artifacts, assets, handoffs, accepted, unknown)
 	}
-	t.Log("Real local registry + shared Go/PostgreSQL API + review/handoff + intercepted Electron publishing verified; no production data or real platform writes")
+	var panel string
+	err = s.db.QueryRow(`SELECT r.payload->>'panelStatus' FROM keagent_monitored_videos v
+		JOIN keagent_collection_runs r ON r.id=v.last_run_id AND r.owner_id=v.owner_id
+		JOIN keagent_collection_targets t ON t.id=r.target_id AND t.owner_id=r.owner_id
+		WHERE v.owner_id='fixture-owner' AND r.device_id='fixture-device'
+		AND r.payload->>'verifiedWorkId'=v.work_id AND r.payload->>'state'='succeeded'`).Scan(&panel)
+	if err != nil || panel != "visible" {
+		t.Fatalf("verified work did not match its target and successful run: panel=%q err=%v", panel, err)
+	}
+	t.Log("Verified work, target, run history and intercepted publishing results persisted in the isolated PostgreSQL schema")
 }
