@@ -303,6 +303,15 @@ describe("CreatorHubBridge", () => {
     expect(calls).toEqual([]);
   });
 
+  it("rejects empty identity values", async () => {
+    const { bridge, calls } = await fixture({
+      identity: async () => ({ userId: "", deviceId: "d1" }),
+    });
+    const error = await rejectionOf(bridge.start(startInput()));
+    expectCode(error, "IDENTITY_UNAVAILABLE");
+    expect(calls).toEqual([]);
+  });
+
   it("rejects a concurrent start", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
@@ -369,6 +378,15 @@ describe("CreatorHubBridge", () => {
     const error = await rejectionOf(bridge.start(startInput()));
     expectCode(error, "CREATORHUB_SCAN_FAILED");
     expect(error.message).toBe("抓取失败");
+    expect(calls.map((call) => call.route)).not.toContain(
+      "/v1/collection/comments/import",
+    );
+  });
+
+  it("rejects when the scan has no explicit success", async () => {
+    const { bridge, calls } = await fixture({ scan: {} });
+    const error = await rejectionOf(bridge.start(startInput()));
+    expectCode(error, "CREATORHUB_SCAN_FAILED");
     expect(calls.map((call) => call.route)).not.toContain(
       "/v1/collection/comments/import",
     );

@@ -120,13 +120,14 @@ export class CreatorHubBridge {
     this.running = true;
     let warning: string | undefined;
     try {
-      const identity = this.deps.identity;
-      if (!identity)
+      const identity = await this.deps.identity?.();
+      if (!identity?.userId?.trim() || !identity?.deviceId?.trim())
         throw new PublishingError(
           "IDENTITY_UNAVAILABLE",
-          "无法获取当前身份，请重新登录",
+          "缺少用户或设备身份",
+          409,
         );
-      const { userId, deviceId } = await identity();
+      const { userId, deviceId } = identity;
 
       const settings = await this.settings();
       const client = this.deps.client(settings.creatorhubBaseUrl);
@@ -185,12 +186,6 @@ export class CreatorHubBridge {
           reason?: string;
           error?: string;
         };
-        if (scan?.ok === false)
-          throw new PublishingError(
-            "CREATORHUB_SCAN_FAILED",
-            scan.error || "评论抓取失败，请稍后重试",
-            502,
-          );
         if (scan?.skipped)
           throw new PublishingError(
             "CREATORHUB_SCAN_SKIPPED",
@@ -199,6 +194,12 @@ export class CreatorHubBridge {
                 ? scan.skipped
                 : "当前无法抓取评论，请稍后重试"),
             409,
+          );
+        if (scan?.ok !== true)
+          throw new PublishingError(
+            "CREATORHUB_SCAN_FAILED",
+            scan?.error || "评论抓取失败，请稍后重试",
+            502,
           );
       } catch (error) {
         if (
