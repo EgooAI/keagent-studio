@@ -22,6 +22,104 @@ protocol.registerSchemesAsPrivileged([
 ]);
 const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
 const failVideo = process.env.DOUYIN_TEST_UPLOAD_FAILURE === "1";
+async function verifyCommentSync(
+  testAPI,
+  workId,
+  accountId,
+  ownerId,
+  deviceId,
+) {
+  const scope = { workId, accountId };
+  const request = (operation, data = {}) =>
+    testAPI("/v1/collection/comments/" + operation, { ...scope, ...data });
+  const sync = (requestKey = crypto.randomUUID()) =>
+    request("sync", { requestKey });
+  assert.equal((await request("list")).sourceState, "unconfigured");
+  await assert.rejects(sync(), { code: "COMMENT_SOURCE_UNCONFIGURED" });
+  // The Go integration runner creates these files inside t.TempDir().
+  const grantFile = process.env.COMMENT_FIXTURE_GRANT;
+  assert.ok(grantFile && grantFile === process.env.KEAGENT_COMMENT_GRANTS_FILE);
+  const grant = {
+    ...scope,
+    ownerId,
+    deviceId,
+    ref: "test-export",
+    label: "合成测试导出",
+    kind: "export",
+    exportFile: "test-comments.json",
+    retentionDays: 2,
+    expiresAt: new Date(Date.now() + 86400000).toISOString(),
+    manualContact: true,
+    fields: [
+      "comment_id",
+      "parent_comment_id",
+      "comment_text",
+      "commenter_name",
+      "commenter_profile",
+      "like_count",
+    ],
+  };
+  const snapshot = {
+    ...scope,
+    ownerId,
+    deviceId,
+    sourceRef: grant.ref,
+    snapshotId: "sample-a",
+    observedAt: new Date(Date.now() - 10000).toISOString(),
+    coverage: "partial",
+    items: [
+      {
+        comment_id: "p1",
+        commenter_name: "测试角色",
+        comment_text: "附近有整租的一居室吗？",
+        commenter_profile: "https://www.douyin.com/user/fixture-actor",
+        like_count: 0,
+      },
+      { comment_id: "r1", parent_comment_id: "p1", comment_text: "合成回复" },
+    ],
+  };
+  const writeSnapshot = () =>
+    fs.writeFileSync(
+      path.join(path.dirname(grantFile), grant.exportFile),
+      JSON.stringify(snapshot),
+    );
+  writeSnapshot();
+  fs.writeFileSync(grantFile, JSON.stringify([grant]));
+  const requestKey = crypto.randomUUID();
+  const first = await sync(requestKey);
+  assert.equal(first.addedCount, 2);
+  assert.deepEqual(await sync(requestKey), first);
+  const page = await request("list");
+  assert.equal(page.coverage, "partial");
+  assert.equal(page.canAnalyze, false);
+  assert.equal(page.canContact, true);
+  assert.equal(page.items.length, 2);
+  const parent = page.items.find((row) => row.comment_id === "p1");
+  assert.equal(parent.like_count, 0);
+  assert.equal(parent.commenter_name, "测试角色");
+  assert.equal(parent.reply_count, null);
+  assert.equal(
+    page.items.find((row) => row.comment_id === "r1").parent_comment_id,
+    "p1",
+  );
+  assert.deepEqual(await request("contact", { id: parent.id }), {
+    profileUrl: snapshot.items[0].commenter_profile,
+  });
+  await assert.rejects(request("analyze", { id: parent.id }), { status: 403 });
+  snapshot.snapshotId = "sample-b";
+  snapshot.observedAt = new Date().toISOString();
+  snapshot.items[0].like_count = 3;
+  writeSnapshot();
+  const update = await sync();
+  assert.equal(update.addedCount, 0);
+  assert.equal(update.updatedCount, 1);
+  assert.equal((await request("get", { id: parent.id })).like_count, 3);
+  fs.writeFileSync(grantFile, JSON.stringify([{ ...grant, revoked: true }]));
+  assert.deepEqual((await request("list")).items, []);
+  assert.equal((await request("list")).sourceState, "revoked");
+  await assert.rejects(request("contact", { id: parent.id }), { status: 403 });
+  console.log("Comment detail shared API passed.");
+}
 function creatorForm(videoHash) {
   return `<!doctype html><meta charset="utf-8"><style>
     [contenteditable] { min-height: 40px; white-space: pre-wrap; }
@@ -148,6 +246,9 @@ app.whenReady().then(async () => {
     let dropTerminal = true;
     let dropLeaseRenewal = false;
     const sessions = [];
+    let contactProfile = "https://www.douyin.com/user/fixture-commenter";
+    let contactAccountMarker = "controlled-public-id";
+    let contactChecks = 0;
     let generation = 1;
     const testBase = process.env.ARTIFACT_EXCHANGE_TEST_URL;
     async function testAPI(route, input) {
@@ -200,6 +301,15 @@ app.whenReady().then(async () => {
           structuredClone(fixture.assets.find((asset) => asset.id === id)),
       },
       request: async (route, input = {}) => {
+        if (route === "/v1/collection/comments/contact") {
+          assert.deepEqual(input, {
+            accountId: [...accounts.keys()][0],
+            workId: "10001",
+            id: "3".repeat(32),
+          });
+          contactChecks++;
+          return { profileUrl: contactProfile };
+        }
         const op = route.replace("/v1/douyin/", "");
         if (op === "accounts/list") return { items: [...accounts.values()] };
         if (op === "accounts/bind" || op === "accounts/update") {
@@ -340,8 +450,10 @@ app.whenReady().then(async () => {
           if (url.hostname !== "creator.douyin.com")
             throw new Error("Unexpected fixture host");
           return new Response(
-            '<!doctype html><html><body><div class="avatar"><img alt="avatar"></div><a href="/creator-micro/content/manage">内容管理</a></body></html>',
-            { headers: { "Content-Type": "text/html" } },
+            '<!doctype html><html><body><div class="avatar"><img alt="avatar"></div><p>抖音号：' +
+              contactAccountMarker +
+              '</p><a href="/creator-micro/content/manage">内容管理</a></body></html>',
+            { headers: { "Content-Type": "text/html; charset=utf-8" } },
           );
         });
       },
@@ -616,6 +728,13 @@ app.whenReady().then(async () => {
       });
       assert.equal(videos.items.length, 1);
       assert.equal(videos.items[0].lastRunId, result.id);
+      await verifyCommentSync(
+        testAPI,
+        result.verifiedWorkId,
+        accountId,
+        fixture.ownerId,
+        fixture.deviceId,
+      );
       const local = await call("observation.list");
       assert.ok(
         local.data.some(
@@ -721,6 +840,28 @@ app.whenReady().then(async () => {
       true,
     );
     console.log("Observation IPC and same-Profile Electron fixture passed.");
+    if (!testBase) {
+      const contact = { workId: "10001", accountId, id: "3".repeat(32) };
+      const opened = await call("collection.contact", contact);
+      assert.equal(opened.ok, true, JSON.stringify(opened));
+      assert.equal(opened.data.activeAccountId, accountId);
+      assert.equal(nativeView.webContents.getURL(), contactProfile);
+      assert.equal(nativeView.webContents.session, sessions[0]);
+      assert.equal(contactChecks, 1);
+      assert.equal((await call("browser.hide")).ok, true);
+      contactProfile =
+        "https://www.douyin.com/user/fixture-commenter?modal_id=10001";
+      const denied = await call("collection.contact", contact);
+      assert.equal(denied.error.code, "INVALID_CONTACT_PROFILE");
+      contactAccountMarker = "different-id";
+      const mismatch = await call("collection.contact", contact);
+      assert.equal(mismatch.error.code, "ACCOUNT_CHANGED");
+      assert.equal(contactChecks, 2);
+      contactAccountMarker = "controlled-public-id";
+      console.log(
+        "Manual contact verified in the original Electron Profile; wrong account and non-profile URL rejected.",
+      );
+    }
     const input = {
       requestKey: "electron-publish-fixture-0001",
       handoffId: fixture.id,

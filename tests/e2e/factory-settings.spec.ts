@@ -158,8 +158,8 @@ async function fixture(page: Page, large = false, miniMax = false) {
             if (method === "beikeCli.status")
               return {
                 available: false,
-                configured: true,
-                reason: "contract_unverified",
+                configured: false,
+                reason: "not_configured",
               };
             const input = args[0] || {};
             if (method === "panorama.property-vr-import") {
@@ -1016,13 +1016,13 @@ test("房源制作素材可导入 VR 空间并刷新图库", async ({ page }) =>
   expect(request.input).toEqual({ propertyId: "user-property" });
 });
 
-test("正式房源导入显示贝壳联调状态并可切换到手动添加", async ({ page }) => {
+test("贝壳未配置时可从正式房源导入切换到手动添加", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/properties?import=1");
-  const dialog = page.getByRole("dialog", { name: "导入房源", exact: true });
-  await expect(
-    dialog.getByText("贝壳 CLI 已配置，房源返回格式仍待联调验证。"),
-  ).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "从贝壳找房", exact: true });
+  await expect(dialog.getByRole("status")).toHaveText(
+    "云端尚未配置贝壳 CLI，暂不能自动找房。",
+  );
   await expect(
     dialog.getByRole("button", { name: "开始模拟导入" }),
   ).toHaveCount(0);

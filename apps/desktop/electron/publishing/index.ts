@@ -210,6 +210,7 @@ export function registerPublishing(
     "state",
     "collection.start",
     "collection.cancel",
+    "collection.contact",
     "observation.start",
     "observation.list",
     "observation.cancel",
@@ -258,6 +259,27 @@ export function registerPublishing(
           data = await collection.start(requestIdentity, value);
         } else if (method === "collection.cancel") {
           data = await collection.cancel(requestIdentity, value.id);
+        } else if (method === "collection.contact") {
+          const { workId, id } = value;
+          if (
+            typeof workId !== "string" ||
+            !/^[0-9]{5,30}$/.test(workId) ||
+            typeof id !== "string" ||
+            !/^[a-f0-9]{32}$/.test(id)
+          )
+            throw new PublishingError(
+              "INVALID_INPUT",
+              "评论或作品引用无效",
+              422,
+            );
+          await browser.openCommenter(requestIdentity, accountId, async () => {
+            const result = await dependencies.request(
+              "/v1/collection/comments/contact",
+              { workId, accountId, id },
+            );
+            return (result as { profileUrl?: unknown } | null)?.profileUrl;
+          });
+          data = await state();
         } else if (method === "observation.start") {
           data = observations.start(
             requestIdentity,

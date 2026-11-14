@@ -35,13 +35,15 @@ type actor struct {
 	Nonce     string `json:"nonce"`
 }
 type server struct {
-	db         *sql.DB
-	secret     string
-	nonces     sync.Map
-	jwt        *jwtVerifier
-	origins    []string
-	speech     func(context.Context, string, object, string) ([]byte, error)
-	sourceHTTP func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
+	db           *sql.DB
+	secret       string
+	nonces       sync.Map
+	jwt          *jwtVerifier
+	origins      []string
+	speech       func(context.Context, string, object, string) ([]byte, error)
+	sourceHTTP   func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
+	commentRead  func(context.Context, *commentGrant) (commentBatch, error)
+	commentSyncs sync.Map // per-work in-flight syncs; do not hold a database connection while waiting
 }
 type fault struct {
 	status  int
@@ -1128,6 +1130,7 @@ func main() {
 	go s.douyinBackground(context.Background())
 	go s.runAIProbes(context.Background())
 	go s.creditExpireSweeper(context.Background())
+	go s.commentRetentionWorker(context.Background())
 	log.Println("Go business API listening on 127.0.0.1:18081")
 	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
 }

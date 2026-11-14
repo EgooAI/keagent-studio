@@ -317,6 +317,7 @@ function registerAuth(onTargetStopped) {
       const operations = isCollection
         ? [
             "targets/create",
+            "targets/resolve-video",
             "targets/get",
             "targets/list",
             "targets/update",
@@ -327,6 +328,10 @@ function registerAuth(onTargetStopped) {
             "runs/get",
             "videos/list",
             "videos/get",
+            "comments/list",
+            "comments/get",
+            "comments/sync",
+            "comments/analyze",
           ]
         : [
             "accounts/list",

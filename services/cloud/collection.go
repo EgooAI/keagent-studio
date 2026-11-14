@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS keagent_collection_run_verified ON keagent_collection
 CREATE TABLE IF NOT EXISTS keagent_monitored_videos (
  owner_id text NOT NULL, work_id text NOT NULL, last_run_id text NOT NULL, observed_at timestamptz NOT NULL,
  PRIMARY KEY(owner_id,work_id), FOREIGN KEY(owner_id,last_run_id) REFERENCES keagent_collection_runs(owner_id,id));
-`
+` + commentSchema
 
 type targetFields struct {
 	Kind      string `json:"kind"`
@@ -142,6 +142,12 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 	if a.DeviceID == "" {
 		return nil, exchangeFail(403, "DEVICE_REQUIRED", "请使用已绑定的桌面设备")
 	}
+	if strings.HasPrefix(op, "comments/") {
+		if op == "comments/analyze" || op == "comments/contact" {
+			return s.commentAction(ctx, a, op, body)
+		}
+		return s.commentRecords(ctx, a, op, body)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -151,12 +157,7 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "collection:"+a.DeviceID); err != nil {
 		return nil, err
 	}
-	var valid int
-	err = tx.QueryRowContext(ctx, `SELECT 1 FROM keagent_device WHERE id=$1 AND owner_id=$2 AND session_id=$3 AND NOT revoked FOR SHARE`, a.DeviceID, a.UserID, a.SessionID).Scan(&valid)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, exchangeFail(403, "DEVICE_REQUIRED", "设备已解绑或登录会话已失效")
-	}
-	if err != nil {
+	if err = collectionDevice(ctx, tx, a); err != nil {
 		return nil, err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE keagent_collection_runs SET expires_at=NULL,payload=payload ||
@@ -167,7 +168,7 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 	}
 	var v any
 	switch op {
-	case "targets/create", "targets/update", "targets/pause", "targets/resume", "targets/archive":
+	case "targets/create", "targets/resolve-video", "targets/update", "targets/pause", "targets/resume", "targets/archive":
 		v, err = changeTarget(ctx, tx, a, op, body)
 	case "runs/create":
 		v, err = createCollectionRun(ctx, tx, a, body)
@@ -186,6 +187,15 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 		return nil, err
 	}
 	return v, tx.Commit()
+}
+
+func collectionDevice(ctx context.Context, tx *sql.Tx, a actor) error {
+	var valid int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM keagent_device WHERE id=$1 AND owner_id=$2 AND session_id=$3 AND NOT revoked FOR SHARE`, a.DeviceID, a.UserID, a.SessionID).Scan(&valid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return exchangeFail(403, "DEVICE_REQUIRED", "设备已解绑或登录会话已失效")
+	}
+	return err
 }
 
 func accountStatus(ctx context.Context, tx *sql.Tx, a actor, account string) (string, error) {
@@ -532,16 +542,50 @@ func changeTarget(ctx context.Context, tx *sql.Tx, a actor, op string, body []by
 	var targetID string
 	var expected int
 	switch op {
-	case "targets/create":
+	case "targets/create", "targets/resolve-video":
 		var in struct {
 			targetFields
 			RequestKey string `json:"requestKey"`
 		}
-		if decodeExchange(body, &in) != nil || !exchangeKey.MatchString(in.RequestKey) {
+		if op == "targets/resolve-video" {
+			var quick struct {
+				Value     string `json:"value"`
+				AccountID string `json:"accountId"`
+			}
+			if decodeExchange(body, &quick) != nil {
+				return nil, collectionInvalid()
+			}
+			in.targetFields = targetFields{Kind: "video", Value: quick.Value, AccountID: quick.AccountID, Name: "作品"}
+			in.RequestKey = id()
+		} else if decodeExchange(body, &in) != nil || !exchangeKey.MatchString(in.RequestKey) {
 			return nil, collectionInvalid()
 		}
 		if err := cleanTarget(&in.targetFields); err != nil {
 			return nil, err
+		}
+		validateAccount := func() error {
+			status, err := accountStatus(ctx, tx, a, in.AccountID)
+			if err != nil {
+				return err
+			}
+			if status == "" {
+				return exchangeFail(409, "ACCOUNT_UNAVAILABLE", "请选择本机已绑定的抖音账号")
+			}
+			return nil
+		}
+		if op == "targets/resolve-video" {
+			if err := validateAccount(); err != nil {
+				return nil, err
+			}
+			in.Name = "作品 " + strings.TrimPrefix(in.Value, videoBase)
+			var existing json.RawMessage
+			err := tx.QueryRowContext(ctx, `SELECT payload FROM keagent_collection_targets WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3 AND payload->>'kind'='video' AND payload->>'value'=$4 AND payload->>'state'<>'archived'`, a.UserID, a.DeviceID, in.AccountID, in.Value).Scan(&existing)
+			if err == nil {
+				return existing, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
 		}
 		fingerprint := exchangeFingerprint(in.targetFields)
 		var saved string
@@ -556,12 +600,10 @@ func changeTarget(ctx context.Context, tx *sql.Tx, a actor, op string, body []by
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-		status, err := accountStatus(ctx, tx, a, in.AccountID)
-		if err != nil {
-			return nil, err
-		}
-		if status == "" {
-			return nil, exchangeFail(409, "ACCOUNT_UNAVAILABLE", "请选择本机已绑定的抖音账号")
+		if op == "targets/create" {
+			if err := validateAccount(); err != nil {
+				return nil, err
+			}
 		}
 		at := now()
 		v = collectionTarget{targetFields: in.targetFields, ID: id(), DeviceID: a.DeviceID, State: "active", Version: 1, CreatedAt: at, UpdatedAt: at}

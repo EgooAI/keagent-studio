@@ -108,11 +108,35 @@ it("forwards authenticated credit usage and property deletion through Electron",
     "runs/claim",
     "runs/finish",
     "../douyin/accounts/list",
+    "comments/import",
+    "comments/contact",
+    "comments/grant",
   ])
     await expect(
       handler(event, "collection.cloud", [operation]),
     ).rejects.toThrow("接口未开放");
   expect(fetch).toHaveBeenCalledTimes(5);
+  const scope = { workId: "12345", accountId: "4".repeat(32) };
+  for (const [operation, extra] of [
+    ["comments/list", { limit: 10 }],
+    ["comments/get", { id: "6".repeat(32) }],
+    ["comments/sync", { requestKey: "7".repeat(32) }],
+    ["comments/analyze", { id: "6".repeat(32) }],
+  ] as const) {
+    const input = { ...scope, ...extra };
+    fetch.mockResolvedValueOnce(Response.json({}));
+    await expect(
+      handler(event, "collection.cloud", [operation, input]),
+    ).resolves.toEqual({ ok: true, data: {} });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:18081/v1/collection/" + operation,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+      }),
+    );
+  }
   const target = { id: "5".repeat(32), expectedVersion: 1 };
   const canceledRunId = "7".repeat(32);
   for (const operation of ["targets/pause", "targets/archive"]) {

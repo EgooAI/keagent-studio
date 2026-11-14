@@ -23,6 +23,11 @@ func TestArtifactMediaElectronAgainstSharedAPI(t *testing.T) {
 		t.Fatal("FFPROBE_PATH must identify the test media probe")
 	}
 	s := exchangeTestServer(t)
+	grantFile := filepath.Join(t.TempDir(), "comment-grants.json")
+	if err := os.WriteFile(grantFile, []byte("[]"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KEAGENT_COMMENT_GRANTS_FILE", grantFile)
 	if _, err := s.db.Exec(douyinSchema + collectionSchema); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +44,7 @@ func TestArtifactMediaElectronAgainstSharedAPI(t *testing.T) {
 	}
 	command := exec.CommandContext(t.Context(), "node", filepath.Join(root, "scripts", "douyin-electron-integration.mjs"))
 	command.Dir = root
-	command.Env = append(os.Environ(), "ARTIFACT_EXCHANGE_TEST_URL="+endpoint.URL, "ARTIFACT_EXCHANGE_TEST_SECRET="+s.secret)
+	command.Env = append(os.Environ(), "ARTIFACT_EXCHANGE_TEST_URL="+endpoint.URL, "ARTIFACT_EXCHANGE_TEST_SECRET="+s.secret, "COMMENT_FIXTURE_GRANT="+grantFile)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("real registry integration failed: %v\n%s", err, output)
@@ -49,6 +54,9 @@ func TestArtifactMediaElectronAgainstSharedAPI(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "Collection IPC and shared API passed.") {
 		t.Fatalf("Collection integration did not complete: %s", output)
+	}
+	if !strings.Contains(string(output), "Comment detail shared API passed.") {
+		t.Fatalf("Comment integration did not complete: %s", output)
 	}
 	var artifacts, assets, handoffs, accepted, unknown int
 	for query, destination := range map[string]*int{

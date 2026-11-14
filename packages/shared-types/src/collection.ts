@@ -68,3 +68,54 @@ export interface CollectionPage<T> {
   items: T[];
   nextCursor?: string;
 }
+
+export type CommentCoverage = "unknown" | "partial" | "complete";
+export type CommentSourceState =
+  "unconfigured" | "active" | "expired" | "revoked";
+
+export interface CommentDetail {
+  id: string;
+  comment_id: string | null;
+  parent_comment_id: string | null;
+  comment_text: string | null;
+  commenter_name: string | null;
+  commenter_profile: string | null;
+  comment_time: string | null;
+  like_count: number | null;
+  reply_count: number | null;
+  truncated: boolean;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  updatedAt: string;
+}
+
+export interface CommentDetailPage extends CollectionPage<CommentDetail> {
+  canAnalyze: boolean;
+  canContact: boolean;
+  sourceState: CommentSourceState;
+  sourceLabel?: string;
+  coverage: CommentCoverage;
+  lastSyncedAt?: string;
+}
+
+export interface CommentAnalysis {
+  intent:
+    | "buy"
+    | "rent"
+    | "sell"
+    | "let"
+    | "viewing"
+    | "question"
+    | "unrelated"
+    | "unclear";
+  evidence: string;
+  draft: string;
+}
+
+export interface CommentSyncResult {
+  coverage: CommentCoverage;
+  readCount: number;
+  addedCount: number;
+  updatedCount: number;
+  syncedAt: string;
+}

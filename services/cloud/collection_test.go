@@ -75,6 +75,10 @@ func TestCollectionRunDataAndOwnership(t *testing.T) {
 	}
 	targetIn := object{"requestKey": id(), "kind": "video", "value": "https://www.douyin.com/user/creator?modal_id=12345&from=tag", "name": "A", "accountId": p.AccountID}
 	target := call("targets/create", targetIn)
+	quick := object{"value": targetIn["value"], "accountId": p.AccountID}
+	if found := call("targets/resolve-video", quick); found["id"] != target["id"] || found["name"] != target["name"] {
+		t.Fatal("quick entry must reuse named target", found)
+	}
 	if target["value"] != "https://www.douyin.com/video/12345" || target["id"] != call("targets/create", targetIn)["id"] {
 		t.Fatal("canonical/idempotent target", target)
 	}
@@ -107,6 +111,17 @@ func TestCollectionRunDataAndOwnership(t *testing.T) {
 		return results
 	}
 	created := concurrent(4, func(i int) (object, error) { return collectionCall(s, a, "runs/create", start) })
+	quickNew := object{"value": videoBase + "55555", "accountId": p.AccountID}
+	resolved := concurrent(4, func(i int) (object, error) { return collectionCall(s, a, "targets/resolve-video", quickNew) })
+	for _, r := range resolved {
+		if r["id"] == nil || r["id"] != resolved[0]["id"] || r["name"] != "作品 55555" {
+			t.Fatal("concurrent quick target resolution", resolved)
+		}
+	}
+	call("targets/pause", object{"id": resolved[0]["id"], "expectedVersion": 1})
+	if call("targets/resolve-video", quickNew)["state"] != "paused" {
+		t.Fatal("quick entry must respect paused target")
+	}
 	first := created[0]["id"]
 	for _, r := range created {
 		if first == nil || r["id"] != first || r["state"] != "queued" {
@@ -137,6 +152,7 @@ func TestCollectionRunDataAndOwnership(t *testing.T) {
 	newDevice(wrongOwner)
 	for _, other := range []actor{wrongOwner, wrongDevice} {
 		bad(other, "targets/get", object{"id": target["id"]}, 404)
+		bad(other, "targets/resolve-video", quick, 409)
 		bad(other, "runs/get", object{"id": first}, 404)
 		bad(other, "runs/cancel", object{"id": first}, 404)
 		bad(other, "runs/claim", ctrl, 404)

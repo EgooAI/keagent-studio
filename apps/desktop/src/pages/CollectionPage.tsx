@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   useInfiniteQuery,
   useQuery,
@@ -21,7 +21,12 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { collectionApi, douyinApi, isLive } from "@keagent/api-client";
+import {
+  collectionApi,
+  douyinApi,
+  isLive,
+  ServiceRequestError,
+} from "@keagent/api-client";
 import type {
   CollectionRun,
   CollectionRunState,
@@ -31,6 +36,7 @@ import type {
   MonitoredVideo,
 } from "@keagent/shared-types";
 import { formatDate, PageHeader } from "../components/common";
+import { VideoComments } from "../components/VideoComments";
 import {
   desktopPublishingAvailable,
   panelLabels,
@@ -82,11 +88,21 @@ export default function CollectionPage() {
     <>
       <PageHeader
         title="AI 获客"
-        description="管理抖音目标，使用本机账号手动核验作品并查看评论区状态。"
+        description="用本机账号核验作品，查看评论区状态和获准来源的评论明细。"
         actions={
-          <Button onClick={() => navigate("/leads/comment-observation")}>
-            评论观察
-          </Button>
+          <Space wrap>
+            {isLive && desktopPublishingAvailable() && (
+              <Button
+                type="primary"
+                onClick={() => navigate("/leads/collection?newVideo=1")}
+              >
+                从视频获取评论
+              </Button>
+            )}
+            <Button onClick={() => navigate("/leads/comment-observation")}>
+              评论观察
+            </Button>
+          </Space>
         }
       />
       {isLive && desktopPublishingAvailable() ? (
@@ -121,9 +137,30 @@ function CollectionWorkspace() {
   );
   const accountName = (id: string) =>
     accounts.data?.items.find((a) => a.id === id)?.name ?? id;
-  const [tab, setTab] = useState("targets");
+  const [params, setParams] = useSearchParams();
+  const workId = params.get("work");
+  const commentAccountId = params.get("account");
+  const pendingRunId = params.get("observe");
+  const [currentTab, setTab] = useState(
+    workId && commentAccountId ? "videos" : "targets",
+  );
+  const tab =
+    workId && commentAccountId ? "videos" : pendingRunId ? "runs" : currentTab;
+  function openComments(work?: string, account?: string) {
+    const next = new URLSearchParams(params);
+    next.delete("observe");
+    if (work && account) {
+      next.set("work", work);
+      next.set("account", account);
+      setTab("videos");
+    } else {
+      next.delete("work");
+      next.delete("account");
+    }
+    setParams(next, { replace: true });
+  }
   const [filter, setFilter] = useState<Pick<CollectionTarget, "id" | "name">>();
-  const [editor, setEditor] = useState<CollectionTarget | "new">();
+  const [editor, setEditor] = useState<CollectionTarget | "new" | "quick">();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [form] = Form.useForm<CollectionTargetInput>();
@@ -159,8 +196,39 @@ function CollectionWorkspace() {
     enabled: tab === "videos",
   });
   const shown = tab === "targets" ? targets : tab === "runs" ? runs : videos;
+  const pendingRun = useQuery({
+    queryKey: [...listKey, "run", pendingRunId],
+    queryFn: () => collectionApi.run(pendingRunId!),
+    enabled: !!pendingRunId,
+    refetchInterval: (q) =>
+      q.state.data && activeRun(q.state.data) ? 1200 : false,
+    retry: false,
+  });
+  useEffect(() => {
+    const run = pendingRun.data;
+    if (!pendingRunId || !run || run.id !== pendingRunId || activeRun(run))
+      return;
+    if (
+      run.state === "succeeded" &&
+      run.verifiedWorkId === run.inputWorkId &&
+      run.author
+    ) {
+      openComments(run.verifiedWorkId, run.accountId);
+    } else {
+      const next = new URLSearchParams(params);
+      next.delete("observe");
+      setParams(next, { replace: true });
+      setTab("runs");
+      setActionError(
+        [run.reason || "作品观察未成功", run.errorCode]
+          .filter(Boolean)
+          .join(" · "),
+      );
+    }
+  }, [pendingRun.data, pendingRunId]);
   const error =
     actionError ||
+    (pendingRunId && pendingRun.error && errorText(pendingRun.error)) ||
     (shown.error && errorText(shown.error)) ||
     (accounts.error && errorText(accounts.error)) ||
     (desktop.error && errorText(desktop.error));
@@ -171,6 +239,7 @@ function CollectionWorkspace() {
   function refresh() {
     setActionError("");
     void shown.refetch();
+    if (pendingRunId) void pendingRun.refetch();
     if (accounts.isError) void accounts.refetch();
     if (desktop.isError) void desktop.refetch();
   }
@@ -189,13 +258,13 @@ function CollectionWorkspace() {
       setBusy(false);
     }
   }
-  function openEditor(target: CollectionTarget | "new") {
+  function openEditor(target: CollectionTarget | "new" | "quick") {
     setActionError("");
     createKey.current = { fingerprint: "", key: "" };
     setEditor(target);
     form.resetFields();
     form.setFieldsValue(
-      target === "new"
+      typeof target === "string"
         ? {
             name: "",
             value: "",
@@ -211,9 +280,65 @@ function CollectionWorkspace() {
           },
     );
   }
+  useEffect(() => {
+    if (
+      params.get("newVideo") !== "1" ||
+      accounts.isPending ||
+      desktop.isPending
+    )
+      return;
+    const next = new URLSearchParams(params);
+    next.delete("newVideo");
+    setParams(next, { replace: true });
+    setTab("targets");
+    openEditor("quick");
+  }, [params, accounts.isPending, desktop.isPending]);
   async function save(values: CollectionTargetInput) {
     if (!editor) return;
     await change(async () => {
+      if (editor === "quick") {
+        const target = await collectionApi.resolveVideo({
+          value: values.value.trim(),
+          accountId: values.accountId,
+        });
+        if (target.state !== "active")
+          throw new Error(
+            "该账号的作品目标已暂停。请在目标管理中恢复后再核验。",
+          );
+        const latest = async () =>
+          (await collectionApi.runs({ targetId: target.id, limit: 1 }))
+            .items[0];
+        let run = await latest();
+        if (!run || !activeRun(run)) {
+          try {
+            run = await startRun(target);
+          } catch (error) {
+            if (
+              !(error instanceof ServiceRequestError) ||
+              error.code !== "RUN_ACTIVE"
+            )
+              throw error;
+            run = await latest();
+            if (!run) throw error;
+          }
+        }
+        if (
+          run.targetId !== target.id ||
+          run.accountId !== target.accountId ||
+          run.targetUrl !== target.value
+        ) {
+          throw new Error("观察记录与目标作品不匹配，请刷新后重试。");
+        }
+        setEditor(undefined);
+        showHistory(target);
+        client.setQueryData([...listKey, "run", run.id], run);
+        const next = new URLSearchParams(params);
+        next.delete("work");
+        next.delete("account");
+        next.set("observe", run.id);
+        setParams(next, { replace: true });
+        return;
+      }
       const fields = {
         ...values,
         name: values.name.trim(),
@@ -239,13 +364,21 @@ function CollectionWorkspace() {
       message.success("目标已保存");
     });
   }
+  async function startRun(target: CollectionTarget) {
+    const snapshot = target.id + ":" + target.version;
+    const requestKey = runKeys.current.get(snapshot) ?? crypto.randomUUID();
+    runKeys.current.set(snapshot, requestKey);
+    const run = await collectionApi.startRun(
+      target.id,
+      target.version,
+      requestKey,
+    );
+    runKeys.current.delete(snapshot);
+    return run;
+  }
   function start(target: CollectionTarget) {
     void change(async () => {
-      const snapshot = target.id + ":" + target.version;
-      const requestKey = runKeys.current.get(snapshot) ?? crypto.randomUUID();
-      runKeys.current.set(snapshot, requestKey);
-      await collectionApi.startRun(target.id, target.version, requestKey);
-      runKeys.current.delete(snapshot);
+      await startRun(target);
       showHistory(target);
     });
   }
@@ -265,9 +398,26 @@ function CollectionWorkspace() {
   return (
     <section className="panel collection-workspace">
       {error && !editor && <Alert showIcon type="error" title={error} />}
+      {pendingRunId && pendingRun.data && activeRun(pendingRun.data) && (
+        <Alert
+          showIcon
+          type="info"
+          title={
+            runStates[pendingRun.data.state] +
+            " · " +
+            pendingRun.data.targetName
+          }
+          description="作品核验成功后将打开评论明细。"
+        />
+      )}
       <Tabs
         activeKey={tab}
         onChange={(key) => {
+          if (pendingRunId) {
+            const next = new URLSearchParams(params);
+            next.delete("observe");
+            setParams(next, { replace: true });
+          }
           setTab(key);
           setFilter(undefined);
           setActionError("");
@@ -520,6 +670,15 @@ function CollectionWorkspace() {
                           >
                             取消运行
                           </Button>
+                        ) : r.verifiedWorkId && r.author ? (
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              openComments(r.verifiedWorkId, r.accountId)
+                            }
+                          >
+                            评论明细
+                          </Button>
                         ) : (
                           "—"
                         ),
@@ -569,6 +728,17 @@ function CollectionWorkspace() {
                     dataIndex: "lastObservedAt",
                     render: formatDate,
                   },
+                  {
+                    title: "操作",
+                    render: (_, v) => (
+                      <Button
+                        size="small"
+                        onClick={() => openComments(v.id, v.accountId)}
+                      >
+                        评论明细
+                      </Button>
+                    ),
+                  },
                 ]}
               />
             ),
@@ -604,8 +774,27 @@ function CollectionWorkspace() {
           加载更多
         </Button>
       )}
+      {workId && commentAccountId && (
+        <VideoComments
+          key={workId + ":" + commentAccountId}
+          workId={workId}
+          accountId={commentAccountId}
+          accounts={localAccounts}
+          video={videos.data?.pages
+            .flatMap((p) => p.items)
+            .find((v) => v.id === workId)}
+          onSelectAccount={(id) => openComments(workId, id)}
+          onClose={() => openComments()}
+        />
+      )}
       <Modal
-        title={editor === "new" ? "新建目标" : "编辑目标"}
+        title={
+          editor === "quick"
+            ? "从视频获取评论"
+            : editor === "new"
+              ? "新建目标"
+              : "编辑目标"
+        }
         open={!!editor}
         forceRender
         onCancel={() => {
@@ -616,8 +805,10 @@ function CollectionWorkspace() {
         }}
         onOk={() => form.submit()}
         confirmLoading={busy}
-        okButtonProps={{ "aria-label": "保存" }}
-        okText="保存"
+        okButtonProps={{
+          "aria-label": editor === "quick" ? "核验作品" : "保存",
+        }}
+        okText={editor === "quick" ? "核验作品" : "保存"}
         cancelText="取消"
       >
         <Form
@@ -629,24 +820,36 @@ function CollectionWorkspace() {
           {editor && actionError && (
             <Alert showIcon type="error" title={actionError} />
           )}
-          <Form.Item
-            label="目标名称"
-            name="name"
-            rules={[
-              { required: true, whitespace: true, message: "请输入目标名称" },
-            ]}
-          >
-            <Input maxLength={80} />
-          </Form.Item>
-          <Form.Item label="目标类型" name="kind" rules={[{ required: true }]}>
-            <Select
-              options={Object.entries(kinds).map(([value, label]) => ({
-                value,
-                label,
-              }))}
-              onChange={() => form.setFieldValue("value", "")}
-            />
-          </Form.Item>
+          {editor !== "quick" && (
+            <>
+              <Form.Item
+                label="目标名称"
+                name="name"
+                rules={[
+                  {
+                    required: true,
+                    whitespace: true,
+                    message: "请输入目标名称",
+                  },
+                ]}
+              >
+                <Input maxLength={80} />
+              </Form.Item>
+              <Form.Item
+                label="目标类型"
+                name="kind"
+                rules={[{ required: true }]}
+              >
+                <Select
+                  options={Object.entries(kinds).map(([value, label]) => ({
+                    value,
+                    label,
+                  }))}
+                  onChange={() => form.setFieldValue("value", "")}
+                />
+              </Form.Item>
+            </>
+          )}
           <Form.Item
             label={sourceLabels[kind]}
             name="value"

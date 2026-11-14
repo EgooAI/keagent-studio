@@ -1,4 +1,9 @@
 import { BrowserExecutionCoordinator } from "./browser-execution-coordinator";
+import {
+  confirmContactAccount,
+  publicCommenterProfile,
+} from "../comment-observation/comment-contact";
+import { samePublisher } from "./queue";
 import type { OpenCliPage } from "./runtime/browser/opencli-page";
 import type { BrowserWindow, Session } from "electron";
 import path from "node:path";
@@ -190,6 +195,44 @@ export class DouyinBrowser {
       this.selectManual(accountId);
       this.changed();
       await view.openOrReusePage(DOUYIN_LOGIN_CONFIG.homeUrl);
+      this.changed();
+    });
+  }
+  openCommenter(
+    identity: PublishingIdentity,
+    accountId: string,
+    resolveProfile: () => Promise<unknown>,
+  ) {
+    return this.run(accountId, true, async () => {
+      const account = await this.owned(accountId);
+      const profile = this.profileFor(identity, accountId);
+      if (
+        !account.platformUserId ||
+        account.loginStatus !== "logged_in" ||
+        !this.profiles.isSaved(profile)
+      )
+        throw new PublishingError(
+          "LOGIN_REQUIRED",
+          "请先在当前设备登录并保存读取评论的账号",
+        );
+      const { view } = await this.ensure(accountId);
+      if (!samePublisher(identity, await this.identity()))
+        throw new PublishingError("SESSION_CHANGED", "登录已变更");
+      await view.navigate(DOUYIN_LOGIN_CONFIG.homeUrl);
+      await confirmContactAccount(
+        view.createOpenCliPage(),
+        account.platformUserId,
+      );
+      const destination = publicCommenterProfile(await resolveProfile());
+      if (!samePublisher(identity, await this.identity()))
+        throw new PublishingError("SESSION_CHANGED", "登录已变更");
+      const result = await view.navigate(destination);
+      if (result.url.replace(/\/$/, "") !== destination)
+        throw new PublishingError(
+          "CONTACT_REDIRECTED",
+          "抖音未打开对应的评论者主页，请检查账号或访问限制",
+        );
+      this.selectManual(accountId);
       this.changed();
     });
   }
