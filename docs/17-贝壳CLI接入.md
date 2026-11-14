@@ -190,8 +190,15 @@ CLI 帮助里列了约 40 个子命令，但**贝壳服务端（workbuddy 身份
 
 MCP CLI 的 search/detail/material 回包里**没有 VR 链接、没有 Realsee work ID、没有全景图**，只有 `media_type:["vr"]` 这个「该房源有 VR」的标记。`buy material` 实测只返回户型图。
 
+**决定性验证**：`entity_material` 工具的 schema 确实列了 `fields:["VR"]`，但直接调 MCP `entity_material` 传 `fields:["VR"]` 返回空 `{}`，`fields:["房源图片"]` 也只返回户型图——说明贝壳服务端对二手房源的 material **实际不返回 VR 内容**，VR 字段是空的。`media_type:["vr"]` 只是「VR 存在（在如视 Realsee）」的标记，不是可取的 VR 数据。
+
 「房源 ID → Realsee work ID / VR 页面链接」这个跳转信息在贝壳 Web/App 的「VR 看房」按钮里（`open.realsee.com/ke/<workId>/<token>`），是贝壳前端内部数据，**不在 MCP CLI 或开放平台图片验真里**。
 
 如视 Realsee 开发者 API（`developer.realsee.ai`）面向 VR 内容所有者（用如视硬件扫描的人），有 AK/SK 认证和「VR 列表」接口，但**不是按贝壳房源 ID 查公开 VR 的接口**。
 
-因此 VR/全景图的自动化缺一环，正规通道当前拿不到。两条补法：① 逆向贝壳 Web/App 房源详情 API 抓 VR 链接（脆弱 + 合规风险）；② 与如视/贝壳建立开发者合作关系拿到 VR work 授权（商务路线）。短期沿用现有 Realsee 脚本人工半自动。
+因此 VR/全景图的自动化缺一环。实测结论（2026-11-14）：
+
+- **贝壳 Web 房源详情页（VR 链接所在）被 CAPTCHA + 登录墙保护**：`bj.ke.com` 列表页部分可见（只有「VR 看房」徽标，无真实链接），房源详情页直接 302 重定向到 `hip.ke.com/captcha` 验证码页。破解验证码属明确违规，路线 A 走不通。
+- **Realsee 页面公开可访问**：`open.realsee.com/ke/<workId>/<token>` 无登录/验证码，页面内嵌六面图数据，现有脚本可下载。
+
+所以 VR 内容公开、但「房源 ID → work ID」链接被贝壳验证码墙挡住。剩下两条：① 与如视/贝壳建立开发者合作关系拿 VR work 授权（商务路线，正路）；② 维持 Realsee 脚本人工半自动。
