@@ -13,10 +13,22 @@ import (
 func decodeBeike(data []byte) (object, error) {
 	var response struct {
 		Code *int   `json:"code"`
+		Msg  string `json:"msg"`
 		Data object `json:"data"`
 	}
-	if json.Unmarshal(data, &response) != nil || response.Code == nil || *response.Code != 0 || response.Data == nil {
-		return nil, fail(502, "贝壳未返回成功数据，请检查接口授权与地址")
+	if json.Unmarshal(data, &response) != nil {
+		snippet := strings.TrimSpace(string(data))
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+		return nil, fail(502, "贝壳图片验真返回无法解析："+snippet)
+	}
+	if response.Code == nil || *response.Code != 0 || response.Data == nil {
+		message := strings.TrimSpace(response.Msg)
+		if message == "" {
+			message = "未返回数据"
+		}
+		return nil, fail(502, "贝壳图片验真失败："+message)
 	}
 	return response.Data, nil
 }
