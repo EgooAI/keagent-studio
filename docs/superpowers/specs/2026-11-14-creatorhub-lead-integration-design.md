@@ -110,7 +110,7 @@ Electron 主进程必须位于桥接位置，原因：
 | 解析视频 | `POST /api/comment-watches/resolve` | `url_or_id` | **阶段一新增**，返回 `aweme_id` 和标题 |
 | 监控列表 | `GET /api/comment-watches` | `platform=douyin` | 复用已有监控 |
 | 创建监控 | `POST /api/comment-watches` | `platform=douyin`, `kind=video`, `url_or_id`, `account_id`, `interval_seconds=86400` | 重复时返回 409 |
-| 立即抓取 | `POST /api/comment-watches/{id}/scan-now` | — | 阻塞调用，最长 180 秒 |
+| 立即抓取 | `POST /api/comment-watches/{id}/scan-now` | — | 阻塞调用，最长 180 秒；返回 `ok/skipped/error`，bridge 必须检查 |
 | 评论列表 | `GET /api/comments` | `platform=douyin`, `watch_id`, `paginate=true`, `page_size=200` | 只保留一级评论 |
 | 发私信 | `POST /api/account-actions` | `account_id`, `action=send_dm`, `target_sec_uid`, `target_nick`, `content`, `run_now=false` | 必带 `Idempotency-Key` |
 | 任务列表 | `GET /api/account-actions` | `account_id`, `limit=100` | 轮询发送状态 |
@@ -299,11 +299,12 @@ CREATE TABLE IF NOT EXISTS keagent_lead_settings (
 
 keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` 为隔离维度，而登录态在 CreatorHub。两者需要一个稳定映射：
 
-- CreatorHub 账号 ID 由 `GET /api/accounts` 返回，形如 32 位十六进制。
-- keagent 侧创建一个关联账号记录，`id = sha256("creatorhub:" + creatorhubAccountId)[:32]`，payload 包含 `source="creatorhub"`、`creatorhubAccountId`、显示昵称和 `loginStatus="active"`。
+- CreatorHub 账号 ID 由 `GET /api/accounts` 返回，是 CreatorHub 本地 SQLite 自增整数，不是 32 位十六进制。
+- keagent 侧创建一个关联账号记录，`id = sha256("creatorhub:" + ownerId + ":" + deviceId + ":" + creatorhubAccountId)[:32]`，避免不同用户/设备使用相同 CreatorHub 本地 ID 时碰撞。payload 至少包含显示昵称、`loginStatus="active"`，并传入 `platformUserId`（`sec_uid` / `douyin_id`）以启用账号变更守卫。
 - 该记录只用于来源隔离和权限判断，不启动 keagent 自己的浏览器会话；登录态由 CreatorHub 的健康检查和账号状态维护。
-- 同一 CreatorHub 账号重复绑定时复用同一 ID，不会产生多条账号记录。
-- 账号解绑时保留历史评论和分析，按现有解绑规则处理。
+- 同一用户、同一设备上的同一 CreatorHub 账号重复绑定时复用同一 ID；不同用户或设备使用不同 ID。
+- 账号解绑时保留历史评论和分析，按现有解绑规则处理；解绑后同一 CreatorHub 账号需要用新的关联 ID 重新绑定。
+- 阶段一 Go 的 `accounts/bind` 暂不持久化 `source` / `creatorhubAccountId` 标记，关联账号会出现在账号设置中；阶段二补充来源标记和设置/发布选择器过滤，避免把它当作可发布的真实账号。
 
 `verifyCommentScope()` 只检查账号是否存在以及作品是否已核验，因此关联账号不需要 keagent 本地的抖音登录。
 
@@ -381,7 +382,7 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 | `creatorhub.status` | — | 健康状态、账号列表、选中的账号 |
 | `creatorhub.login` | — | 启动扫码登录并轮询到终态 |
 | `creatorhub.resolve` | `url` | `awemeId`, `title` |
-| `creatorhub.start` | `url, accountId, requestKey, consent` | `watchId, awemeId, snapshotId, readCount, coverage` |
+| `creatorhub.start` | `url, accountId, requestKey, consent` | `watchId, awemeId, snapshotId, readCount, coverage, warning?` |
 | `creatorhub.cancel` | `requestKey` | 尽力中止本地等待；不承诺取消服务端扫描 |
 | `outreach.submit` | `analysisId, draft, requestKey` | `outreachId, attempt, creatorhubTaskId, status` |
 | `outreach.refresh` | `outreachId, attempt` | 最新状态 |
@@ -549,7 +550,8 @@ approved ──提交 CreatorHub──> submitted ──CreatorHub 领取──>
 | 没有有效抖音账号 | 提示登录；不创建监控 |
 | 视频链接无法解析 | 返回解析错误，保留输入 |
 | 创建监控返回 409 | 查找并复用已有监控，不提示失败 |
-| 抓取超时 | 展示超时；允许查询现有评论并继续导入 |
+| 抓取超时 | 继续读取已有评论并导入，`creatorhub.start` 返回 `warning`；UI 明确提示结果可能不是最新 |
+| `scan-now` 返回失败/跳过 | 停止导入，返回 `CREATORHUB_SCAN_FAILED` / `CREATORHUB_SCAN_SKIPPED`，不能把旧评论当作新快照 |
 | 抓取只拿到部分评论 | `coverage=partial`，导入已抓到的内容并明确提示 |
 | 评论为空 | 不创建分析任务，展示空态 |
 | 评论缺少主页 | 可分析、不可提交私信 |

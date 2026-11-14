@@ -2894,6 +2894,7 @@ export interface CreatorHubStartResult {
   addedCount: number;
   updatedCount: number;
   coverage: CommentCoverage;
+  warning?: string;
 }
 export interface LeadAnalysisResult {
   intent: LeadIntent;
