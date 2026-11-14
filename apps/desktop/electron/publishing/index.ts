@@ -312,9 +312,13 @@ export function registerPublishing(
             value as Parameters<typeof outreach.submit>[0],
           );
         } else if (method === "outreach.refresh") {
-          data = await outreach.refresh(value as { outreachId: string });
+          data = await outreach.refresh(
+            value as { outreachId: string; attempt: number },
+          );
         } else if (method === "outreach.cancel") {
-          data = await outreach.cancel(value as { outreachId: string });
+          data = await outreach.cancel(
+            value as { outreachId: string; attempt: number },
+          );
         } else if (method === "outreach.confirm") {
           data = await outreach.confirm(
             value as {

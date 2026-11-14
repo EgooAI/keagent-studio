@@ -1,6 +1,29 @@
 import { PublishingError } from "../publishing/core";
 import type { BridgeDependencies } from "./bridge";
 
+const RETRYABLE = new Set([
+  "CREATORHUB_TIMEOUT",
+  "CREATORHUB_INVALID_RESPONSE",
+]);
+const SIDE_EFFECT_FREE = new Set([
+  "CREATORHUB_REJECTED",
+  "CREATORHUB_UNAVAILABLE",
+  "CREATORHUB_URL_INVALID",
+]);
+
+function codeOf(error: unknown) {
+  return (error as { code?: string }).code ?? "";
+}
+
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function truncateRunes(value: string, limit = 500) {
+  const runes = Array.from(value);
+  return runes.length > limit ? runes.slice(0, limit).join("") : value;
+}
+
 export class CreatorHubOutreach {
   constructor(private deps: Pick<BridgeDependencies, "request" | "client">) {}
 
@@ -18,7 +41,6 @@ export class CreatorHubOutreach {
     analysisId: string;
     draft: string;
     requestKey: string;
-    creatorHubAccountId: string;
   }) {
     const created = (await this.deps.request("/v1/collection/outreach/submit", {
       analysisId: input.analysisId,
@@ -31,45 +53,83 @@ export class CreatorHubOutreach {
       commenterName: string;
       attempt: number;
     };
-    const settings = await this.settings();
-    const client = this.deps.client(settings.creatorhubBaseUrl);
-    if (!created.commenterProfile)
+    if (created.status !== "approved") {
+      const row = await this.load(created.id);
+      return { ...row, analysisId: input.analysisId };
+    }
+    const row = await this.load(created.id);
+    const consent = (await this.deps.request(
+      "/v1/collection/creatorhub/consent/get",
+      { accountId: row.accountId, workId: row.workId },
+    )) as { creatorhubAccountId?: unknown };
+    const creatorHubAccountId = String(consent?.creatorhubAccountId ?? "");
+    if (!/^[0-9]{1,20}$/.test(creatorHubAccountId))
+      throw new PublishingError(
+        "CREATORHUB_ACCOUNT_UNAVAILABLE",
+        "该作品缺少 CreatorHub 账号授权，请重新抓取评论",
+      );
+    const targetSecUid = created.commenterProfile?.split("/").pop() || "";
+    if (!/^[A-Za-z0-9_-]+$/.test(targetSecUid))
       throw new PublishingError(
         "COMMENT_PROFILE_UNAVAILABLE",
         "缺少评论者主页，无法私信",
       );
-    const targetSecUid = created.commenterProfile.split("/").pop()!;
+
+    const settings = await this.settings();
+    const client = this.deps.client(settings.creatorhubBaseUrl);
+    const idempotencyKey = `ch-${created.id}-${created.attempt}`;
     let task: { id: number; status: string } | undefined;
     for (let attempt = 0; attempt < 2 && !task; attempt++) {
       try {
-        task = await client.sendDm({
-          accountId: Number(input.creatorHubAccountId),
+        const sent = await client.sendDm({
+          accountId: Number(creatorHubAccountId),
           targetSecUid,
           targetNick: created.commenterName || "",
           content: input.draft,
-          idempotencyKey: `ch-${created.id}-${created.attempt}`,
+          idempotencyKey,
         });
+        if (!sent)
+          throw new PublishingError(
+            "CREATORHUB_INVALID_RESPONSE",
+            "CreatorHub 未返回任务回执",
+            502,
+          );
+        task = sent;
       } catch (error) {
-        if ((error as { code?: string }).code === "CREATORHUB_REJECTED")
+        const code = codeOf(error);
+        if (SIDE_EFFECT_FREE.has(code)) {
+          // A definitive rejection leaves no remote side effect, so the attempt
+          // can be marked failed and safely reset by the next submission.
+          await this.deps.request("/v1/collection/outreach/result", {
+            id: created.id,
+            attempt: created.attempt,
+            status: "failed",
+            error: truncateRunes(messageOf(error)),
+          });
           throw error;
+        }
+        if (!RETRYABLE.has(code)) throw error;
+        if (attempt === 0) continue;
+        const message = truncateRunes(messageOf(error));
+        await this.deps.request("/v1/collection/outreach/result", {
+          id: created.id,
+          attempt: created.attempt,
+          status: "uncertain",
+          error: message,
+        });
+        throw new PublishingError(
+          "OUTREACH_UNCERTAIN",
+          `私信发送结果不确定，请刷新后确认（任务 ${created.id}，第 ${created.attempt} 次尝试）：${message}`,
+          409,
+        );
       }
     }
-    if (!task) {
-      await this.deps.request("/v1/collection/outreach/result", {
-        id: created.id,
-        attempt: created.attempt,
-        status: "uncertain",
-        error: "CreatorHub 未返回任务回执，请核对发送记录",
-      });
-      return {
-        id: created.id,
-        analysisId: input.analysisId,
-        attempt: created.attempt,
-        status: "uncertain",
-        creatorhubTaskId: "",
-        error: "",
-      };
-    }
+    if (!task)
+      throw new PublishingError(
+        "OUTREACH_UNCERTAIN",
+        `私信发送结果不确定，请刷新后确认（任务 ${created.id}，第 ${created.attempt} 次尝试）`,
+        409,
+      );
     await this.deps.request("/v1/collection/outreach/result", {
       id: created.id,
       attempt: created.attempt,
@@ -107,8 +167,9 @@ export class CreatorHubOutreach {
     return row;
   }
 
-  async refresh(input: { outreachId: string }) {
+  async refresh(input: { outreachId: string; attempt: number }) {
     const row = await this.load(input.outreachId);
+    if (row.attempt !== input.attempt) return row;
     if (
       !row.creatorhubTaskId ||
       ["sent", "uncertain", "failed", "canceled"].includes(row.status)
@@ -140,13 +201,19 @@ export class CreatorHubOutreach {
       attempt: row.attempt,
       status,
       creatorhubTaskId: row.creatorhubTaskId,
-      error: task.error || "",
+      error: truncateRunes(task.error || ""),
     });
     return { ...row, status };
   }
 
-  async cancel(input: { outreachId: string }) {
+  async cancel(input: { outreachId: string; attempt: number }) {
     const row = await this.load(input.outreachId);
+    if (row.attempt !== input.attempt)
+      throw new PublishingError(
+        "OUTREACH_CHANGED",
+        "任务已重试，请刷新后重新操作",
+        409,
+      );
     if (!row.creatorhubTaskId)
       throw new PublishingError(
         "OUTREACH_NOT_SUBMITTED",
@@ -157,7 +224,7 @@ export class CreatorHubOutreach {
     await client.cancelAction(Number(row.creatorhubTaskId));
     await this.deps.request("/v1/collection/outreach/result", {
       id: row.id,
-      attempt: row.attempt,
+      attempt: input.attempt,
       status: "canceled",
       creatorhubTaskId: row.creatorhubTaskId,
     });
@@ -169,11 +236,19 @@ export class CreatorHubOutreach {
     attempt: number;
     status: "sent" | "failed";
   }) {
+    if (input.status !== "sent" && input.status !== "failed")
+      throw new PublishingError("INVALID_INPUT", "确认状态无效", 422);
     const row = await this.load(input.outreachId);
     if (row.attempt !== input.attempt)
       throw new PublishingError(
         "OUTREACH_CHANGED",
         "任务已重试，请刷新后重新确认",
+        409,
+      );
+    if (row.status !== "uncertain")
+      throw new PublishingError(
+        "OUTREACH_NOT_UNCERTAIN",
+        "该任务无需人工确认",
         409,
       );
     await this.deps.request("/v1/collection/outreach/result", {
