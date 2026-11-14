@@ -1,3 +1,4 @@
+import { CommentObservationService } from "../comment-observation/service";
 import { ipcMain, app, dialog, type BrowserWindow } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -70,6 +71,12 @@ export function registerPublishing(
     cloud,
     emit,
     dependencies.configureSession,
+  );
+  const observations = new CommentObservationService(
+    browser,
+    dependencies.identity,
+    (identity) => files.directoryFor(identity),
+    emit,
   );
   const publisher = new DirectPublisher({
     identity: dependencies.identity,
@@ -192,6 +199,10 @@ export function registerPublishing(
   }
   const methods = new Set([
     "state",
+    "observation.start",
+    "observation.list",
+    "observation.cancel",
+    "observation.screenshot",
     "account.add",
     "account.open",
     "account.check",
@@ -232,7 +243,21 @@ export function registerPublishing(
         let data: unknown;
         const accountId =
           typeof value.accountId === "string" ? value.accountId : "";
-        if (method === "state") {
+        if (method === "observation.start") {
+          data = observations.start(
+            requestIdentity,
+            accountId,
+            value.url,
+            value.screenshotOnIssue === true,
+          );
+        } else if (method === "observation.list")
+          data = observations.list(requestIdentity);
+        else if (method === "observation.cancel") {
+          observations.cancel(requestIdentity, String(value.id));
+          data = null;
+        } else if (method === "observation.screenshot")
+          data = observations.screenshot(requestIdentity, String(value.id));
+        else if (method === "state") {
           await recover();
           data = await state();
         } else if (method === "account.add") {
@@ -248,7 +273,11 @@ export function registerPublishing(
           await browser.open(accountId);
           data = await state();
         } else if (method === "account.check" || method === "account.save")
-          data = await browser.check(accountId, method === "account.save");
+          data = await browser.check(
+            accountId,
+            method === "account.save",
+            true,
+          );
         else if (method === "account.unbind") {
           await browser.unbind(accountId);
           data = null;
@@ -392,14 +421,15 @@ export function registerPublishing(
     }
   });
   function stop() {
+    observations.stop();
     queue.stop();
     publisher.stop();
     browser.shutdown();
   }
   window.on("closed", () => {
     clearInterval(recoveryTimer);
-    browser.dispose();
     stop();
+    browser.dispose();
     ipcMain.removeHandler("douyin:request");
   });
   return {

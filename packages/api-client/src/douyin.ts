@@ -1,6 +1,7 @@
 import { ServiceRequestError, serviceRequest } from "./transport";
 import type {
   DouyinAccount,
+  CommentObservation,
   DouyinDesktopState,
   DouyinPublishInput,
   DouyinPublishRecord,
@@ -54,6 +55,17 @@ export async function douyinDesktop<T>(
   );
 }
 export const douyinApi = {
+  observe: (accountId: string, url: string, screenshotOnIssue = false) =>
+    douyinDesktop<CommentObservation>("observation.start", {
+      accountId,
+      url,
+      screenshotOnIssue,
+    }),
+  observations: () => douyinDesktop<CommentObservation[]>("observation.list"),
+  cancelObservation: (id: string) =>
+    douyinDesktop<null>("observation.cancel", { id }),
+  observationScreenshot: (id: string) =>
+    douyinDesktop<string>("observation.screenshot", { id }),
   accounts: () => cloud<{ items: DouyinAccount[] }>("accounts/list"),
   workspace: (input: {
     search?: string;

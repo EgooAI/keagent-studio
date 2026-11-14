@@ -63,6 +63,9 @@ const PublishPage = lazy(() => import("./pages/PublishPage"));
 const PublishDetailPage = lazy(() =>
   import("./pages/PublishPage").then((m) => ({ default: m.PublishDetailPage })),
 );
+const CommentObservationPage = lazy(
+  () => import("./pages/CommentObservationPage"),
+);
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
@@ -281,6 +284,10 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                   element={<PublishDetailPage />}
                 />
                 <Route path="/leads" element={<LeadsPage />} />
+                <Route
+                  path="/leads/comment-observation"
+                  element={<CommentObservationPage />}
+                />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route
                   path="/settings/profile"

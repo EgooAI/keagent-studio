@@ -245,6 +245,7 @@ app.whenReady().then(async () => {
         await session.cookies.set({
           url: "https://creator.douyin.com/",
           name: "sessionid",
+          domain: ".douyin.com",
           value: "explicit-test-cookie",
           expirationDate: Date.now() / 1000 + 3600,
         });
@@ -259,6 +260,51 @@ app.whenReady().then(async () => {
                 "Access-Control-Allow-Credentials": "true",
               },
             });
+          if (url.hostname === "www.douyin.com") {
+            const id = url.pathname.split("/").pop();
+            const rootId = id === "10007" ? "99999" : id;
+            const html =
+              id === "10003"
+                ? '<input placeholder="手机号">'
+                : id === "10004"
+                  ? '<button class="captcha">安全验证</button>'
+                  : id === "10005"
+                    ? '<script>location.replace("/video/10008")</script>'
+                    : ["10013", "10014", "10015"].includes(id)
+                      ? `<title>夹具作品 - 抖音</title><link rel="canonical" href="https://www.douyin.com/video/${id}">
+                         <article data-e2e="video-detail">
+                          <section data-e2e="detail-video-info"><h1>${id === "10014" ? "其他作品" : "夹具作品"}</h1></section>
+                          <aside data-e2e="related-video"><section data-e2e="user-info">
+                           <a href="/user/${id === "10015" ? "other" : "author"}"><img alt="作者头像" width="24" height="24"></a>
+                           <a href="/user/author">夹具作者</a></section></aside>
+                          <section data-e2e="comment-list">评论</section>
+                         </article>`
+                      : id === "10006"
+                        ? '<script>location.replace("/recommend")</script>'
+                        : `<header>作品详情</header>
+               <article data-e2e="video-detail" data-aweme-id="${rootId}">
+                 <a data-e2e="video-author-name" href="${id === "10009" ? "/recommend" : "/user/test-author"}">其他作者</a>
+                 <p data-e2e="video-desc">目标作品</p>
+                 ${
+                   id === "10010"
+                     ? '<section data-e2e="comment-list"><span data-e2e="comment-loading">加载中</span></section>'
+                     : id === "10011"
+                       ? '<section data-e2e="comment-list"><span data-e2e="comment-load-error">加载失败</span></section>'
+                       : id === "10012"
+                         ? '<section data-aweme-id="99999" data-e2e="comment-list">评论</section>'
+                         : id === "10002"
+                           ? '<section hidden data-e2e="comment-list"></section>'
+                           : '<section data-e2e="comment-list">' +
+                             (id === "10001"
+                               ? '<span data-e2e="comment-empty">暂无评论</span>'
+                               : '<p data-e2e="comment-item">PRIVATE COMMENT FIXTURE</p>') +
+                             "</section>"
+                 }
+               </article>`;
+            return new Response(html, {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
           if (url.pathname.includes("user/info"))
             return json({
               status_code: 0,
@@ -433,6 +479,105 @@ app.whenReady().then(async () => {
     const added2 = await call("account.add");
     assert.equal(added2.ok, true);
     assert.notEqual(sessions[0].getStoragePath(), sessions[1].getStoragePath());
+    const held = await call("observation.start", {
+      accountId: added2.data.id,
+      url: "https://www.douyin.com/video/10001",
+    });
+    assert.equal(
+      (await call("observation.list")).data.find((r) => r.id === held.data.id)
+        .state,
+      "queued",
+    );
+    await call("observation.cancel", { id: held.data.id });
+    assert.equal(
+      (await call("observation.list")).data.find((r) => r.id === held.data.id)
+        .errorCode,
+      "CANCELED",
+    );
+    const observe = async (
+      id,
+      screenshotOnIssue = false,
+      url = "https://www.douyin.com/video/" + id,
+    ) => {
+      const start = await call("observation.start", {
+        accountId,
+        url,
+        screenshotOnIssue,
+      });
+      assert.equal(start.ok, true, JSON.stringify(start));
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const history = await call("observation.list");
+        const result = history.data.find((r) => r.id === start.data.id);
+        if (result?.endedAt) {
+          assert.ok(
+            !JSON.stringify(result).includes("PRIVATE COMMENT FIXTURE"),
+          );
+          return result;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error("Observation fixture timed out");
+    };
+    const empty = await observe(
+      "10001",
+      false,
+      "https://www.douyin.com/user/test-author?from_tab_name=main&modal_id=10001&vid=10007",
+    );
+    assert.equal(empty.targetUrl, "https://www.douyin.com/video/10001");
+    assert.ok(
+      !requests.some(
+        (p) => p.includes("from_tab_name") || p.startsWith("/user/test-author"),
+      ),
+    );
+    assert.equal(empty.panelStatus, "explicitly_empty", JSON.stringify(empty));
+    const cancelRunning = await call("observation.start", {
+      accountId,
+      url: "https://www.douyin.com/video/10010",
+    });
+    const canceledId = cancelRunning.data.id;
+    const currentObservation = async () =>
+      (await call("observation.list")).data.find((r) => r.id === canceledId);
+    for (
+      let i = 0;
+      i < 50 && (await currentObservation()).state === "queued";
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal((await currentObservation()).state, "running");
+    await call("observation.cancel", { id: canceledId });
+    for (let i = 0; i < 80 && !(await currentObservation()).endedAt; i++)
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal((await currentObservation()).errorCode, "CANCELED");
+    const hidden = await observe("10002", true);
+    assert.equal(hidden.panelStatus, "not_visible", JSON.stringify(hidden));
+    assert.equal(hidden.author.name, "其他作者");
+    assert.equal(hidden.verifiedWorkId, "10002");
+    assert.equal(hidden.screenshotSaved, true, JSON.stringify(hidden));
+    assert.match(
+      (await call("observation.screenshot", { id: hidden.id })).data,
+      /^data:image\/png;base64,iVBOR/,
+    );
+    assert.equal((await observe("10003")).errorCode, "LOGIN_REQUIRED");
+    assert.equal((await observe("10004")).errorCode, "VERIFICATION_REQUIRED");
+    assert.equal((await observe("10005")).errorCode, "TARGET_REDIRECT");
+    assert.equal((await observe("10006")).errorCode, "TARGET_REDIRECT");
+    assert.equal((await observe("10007")).errorCode, "WORK_MISMATCH");
+    assert.equal((await observe("10008")).panelStatus, "visible");
+    assert.equal((await observe("10009")).errorCode, "AUTHOR_UNCONFIRMED");
+    assert.equal((await observe("10010")).panelStatus, "loading");
+    assert.equal((await observe("10011")).panelStatus, "load_failed");
+    assert.equal((await observe("10012")).panelStatus, "unknown");
+    const currentLayout = await observe("10013");
+    assert.equal(currentLayout.verifiedWorkId, "10013");
+    assert.equal(currentLayout.author.name, "夹具作者");
+    assert.equal(currentLayout.panelStatus, "visible");
+    assert.equal((await observe("10014")).errorCode, "IDENTITY_UNCONFIRMED");
+    assert.equal((await observe("10015")).errorCode, "AUTHOR_UNCONFIRMED");
+    assert.equal(
+      nativeView.webContents.getURL().startsWith("https://creator.douyin.com/"),
+      true,
+    );
+    console.log("Observation IPC and same-Profile Electron fixture passed.");
     const input = {
       requestKey: "electron-publish-fixture-0001",
       handoffId: fixture.id,

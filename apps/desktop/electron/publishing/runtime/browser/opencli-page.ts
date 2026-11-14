@@ -68,6 +68,13 @@ export class OpenCliPage {
     });
   }
 
+  // Keep the observer independent of scripts installed by the remote page.
+  inspectDocument<T>(source: string): Promise<T> {
+    return this.contents.executeJavaScriptInIsolatedWorld(1001, [
+      { code: source },
+    ]);
+  }
+
   async evaluate<T = unknown>(source: string): Promise<T> {
     const expression = buildEvaluateExpression(source);
     try {
@@ -563,6 +570,15 @@ export class OpenCliPage {
       button: "left",
       clickCount: 1,
     });
+  }
+
+  async captureObservation(): Promise<string> {
+    const image = await this.contents.capturePage(undefined, {
+      stayHidden: true,
+      stayAwake: true,
+    });
+    if (image.isEmpty()) throw new Error("Observation screenshot unavailable");
+    return image.toPNG().toString("base64");
   }
 
   async screenshot(options: OpenCliScreenshotOptions = {}): Promise<string> {

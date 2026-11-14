@@ -27,6 +27,24 @@ const session = {
   email: "test@example.test",
   role: "admin",
 };
+test("AI 获客 opens the observation form and renders a controlled desktop result", async ({
+  page,
+}) => {
+  await desktopFixture(page);
+  await page.goto("/#/leads");
+  await page.getByRole("button", { name: "评论观察", exact: true }).click();
+  await page.getByRole("combobox", { name: "本机抖音账号" }).click();
+  await page.getByText(account.name, { exact: true }).last().click();
+  await page
+    .getByLabel("标准视频链接")
+    .fill("https://www.douyin.com/video/12345");
+  await page.getByRole("button", { name: "打开并核验作品" }).click();
+  await expect(page.getByText("明确为空").first()).toBeVisible();
+  await expect(
+    page.getByText("夹具作者", { exact: false }).first(),
+  ).toBeVisible();
+  await expect(page.getByRole("checkbox")).not.toBeChecked();
+});
 async function desktopFixture(
   page: Page,
   resolverAvailable = true,
@@ -67,6 +85,7 @@ async function desktopFixture(
           ]
         : [];
       let activeRecord: unknown;
+      const observations: Record<string, unknown>[] = [];
       const artifacts = [
         fixture.artifact,
         {
@@ -204,6 +223,27 @@ async function desktopFixture(
           publishing: {
             subscribe: () => () => {},
             request: async (method: string, input: Record<string, unknown>) => {
+              if (method === "observation.list") return okay(observations);
+              if (method === "observation.start") {
+                const observed = {
+                  id: "controlled-observation",
+                  accountId: account.id,
+                  deviceId: account.deviceId,
+                  targetUrl: input.url,
+                  inputWorkId: "12345",
+                  verifiedWorkId: "12345",
+                  author: {
+                    name: "夹具作者",
+                    url: "https://www.douyin.com/user/fixture",
+                  },
+                  panelStatus: "explicitly_empty",
+                  state: "finished",
+                  startedAt: new Date().toISOString(),
+                  endedAt: new Date().toISOString(),
+                };
+                observations.unshift(observed);
+                return okay(observed);
+              }
               if (method === "state")
                 return okay({
                   deviceId: fixture.deviceId,
@@ -476,7 +516,7 @@ test("a new acceptance revision clears the old handoff and permits a fresh expli
   await expect(
     page.getByText("发布条件已变化，请返回详情检查验收和本机文件。"),
   ).toBeVisible();
-  await page.keyboard.press("Escape");
+  await config.getByRole("button", { name: /^取\s*消$/ }).click();
   await page.getByRole("button", { name: "放弃修改", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "接收这份成片", exact: true }),

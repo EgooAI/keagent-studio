@@ -1,3 +1,5 @@
+import { BrowserExecutionCoordinator } from "./browser-execution-coordinator";
+import type { OpenCliPage } from "./runtime/browser/opencli-page";
 import type { BrowserWindow, Session } from "electron";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -31,7 +33,8 @@ export class DouyinBrowser {
   >();
   private detection: LoginDetectionService;
   active?: string;
-  locked?: string;
+  private coordinator = new BrowserExecutionCoordinator();
+  private lifetime = new AbortController();
   private timer: ReturnType<typeof setInterval>;
   private navigationChecks = new Map<string, ReturnType<typeof setTimeout>>();
   constructor(
@@ -66,7 +69,8 @@ export class DouyinBrowser {
     this.timer = setInterval(
       () => {
         for (const id of this.views.keys()) {
-          if (id !== this.locked) void this.check(id).catch(() => {});
+          if (!this.coordinator.occupied(id))
+            void this.check(id).catch(() => {});
         }
       },
       20 * 60 * 1000,
@@ -105,21 +109,28 @@ export class DouyinBrowser {
       );
     return account;
   }
-  async ensure(accountId: string) {
+  private profileFor(
+    identity: PublishingIdentity,
+    accountId: string,
+  ): ProfileKey {
+    const workspaceId = createHash("sha256")
+      .update(`${identity.userId}:${identity.deviceId}`)
+      .digest("hex");
+    return { workspaceId, accountId };
+  }
+  private async ensure(accountId: string) {
     await this.owned(accountId);
     const existing = this.views.get(accountId);
     if (existing) return existing;
     const current = await this.identity();
-    const workspaceId = createHash("sha256")
-      .update(`${current.userId}:${current.deviceId}`)
-      .digest("hex");
-    const profile = { workspaceId, accountId };
+    const profile = this.profileFor(current, accountId);
     const opened = await this.profiles.open(profile, { proxyMode: "system" });
     await this.configureSession?.(opened.session);
     const after = await this.identity();
     if (
       after.generation !== current.generation ||
-      after.userId !== current.userId
+      after.userId !== current.userId ||
+      after.deviceId !== current.deviceId
     )
       throw new PublishingError("SESSION_CHANGED", "登录已变更");
     const view = new BrowserView(
@@ -128,7 +139,7 @@ export class DouyinBrowser {
       opened.session,
       false,
       opened.saved,
-      path.join(this.root, workspaceId, accountId, "debug"),
+      path.join(this.root, profile.workspaceId, accountId, "debug"),
       () => {},
       () => this.changed(),
       (url) => this.navigationChanged(accountId, url),
@@ -141,7 +152,7 @@ export class DouyinBrowser {
   }
   private navigationChanged(accountId: string, url: string): void {
     if (
-      this.locked === accountId ||
+      this.coordinator.occupied(accountId) ||
       ![
         ...DOUYIN_LOGIN_CONFIG.loggedOutUrls,
         ...DOUYIN_LOGIN_CONFIG.verificationUrls,
@@ -158,16 +169,38 @@ export class DouyinBrowser {
       }, 500),
     );
   }
-  async open(accountId: string): Promise<void> {
-    const { view } = await this.ensure(accountId);
-    this.active = accountId;
-    this.changed();
-    await view.openOrReusePage(DOUYIN_LOGIN_CONFIG.homeUrl);
-    this.changed();
+  private run<T>(
+    id: string,
+    foreground: boolean,
+    work: () => Promise<T>,
+    signal?: AbortSignal,
+  ) {
+    return this.coordinator.run(
+      id,
+      foreground,
+      work,
+      signal
+        ? AbortSignal.any([signal, this.lifetime.signal])
+        : this.lifetime.signal,
+    );
+  }
+  open(accountId: string) {
+    return this.run(accountId, true, async () => {
+      const { view } = await this.ensure(accountId);
+      this.selectManual(accountId);
+      this.changed();
+      await view.openOrReusePage(DOUYIN_LOGIN_CONFIG.homeUrl);
+      this.changed();
+    });
+  }
+  private selectManual(id?: string) {
+    for (const [key, { view }] of this.views)
+      if (key !== id) view.setVisible(false);
+    this.active = id;
+    this.coordinator.setManual(id);
   }
   hide(): void {
-    for (const { view } of this.views.values()) view.setVisible(false);
-    this.active = undefined;
+    this.selectManual();
     this.changed();
   }
   viewport(
@@ -175,6 +208,7 @@ export class DouyinBrowser {
     input: Electron.Rectangle,
     visible: boolean,
   ): void {
+    if (accountId !== this.active) return;
     const { view } = this.require(accountId);
     const [width, height] = this.window.getContentSize();
     const values = [input.x, input.y, input.width, input.height];
@@ -189,11 +223,21 @@ export class DouyinBrowser {
       height: Math.max(0, Math.min(height - y, Math.round(input.height))),
     });
     for (const [id, entry] of this.views)
-      entry.view.setVisible(visible && id === accountId && id !== this.locked);
+      entry.view.setVisible(visible && id === accountId);
   }
-  async check(accountId: string, save = false): Promise<DouyinAccount> {
-    if (this.locked === accountId)
-      throw new PublishingError("ACCOUNT_BUSY", "发布期间不能检查或更换账号");
+  check(
+    accountId: string,
+    save = false,
+    manual = false,
+  ): Promise<DouyinAccount> {
+    return this.run(accountId, manual, () =>
+      this.checkAccount(accountId, save),
+    );
+  }
+  private async checkAccount(
+    accountId: string,
+    save: boolean,
+  ): Promise<DouyinAccount> {
     const account = await this.owned(accountId);
     const { profile } = await this.ensure(accountId);
     const result = await this.detection.check(
@@ -235,66 +279,62 @@ export class DouyinBrowser {
     action: string,
     recordId?: string,
   ): Promise<void> {
-    await this.owned(accountId);
-    if (this.locked === accountId)
-      throw new PublishingError(
-        "ACCOUNT_BUSY",
-        "发布执行期间已锁定该账号的导航",
-      );
-    const { view } = this.require(accountId);
-    if (action === "back") view.goBack();
-    else if (action === "forward") view.goForward();
-    else if (action === "reload") await view.reload();
-    else if (action === "post") {
-      if (!recordId || !/^[a-f0-9]{32}$/.test(recordId))
-        throw new PublishingError("INVALID_INPUT", "发布记录无效", 422);
-      const record = await this.cloud<DouyinPublishRecord>("records/get", {
-        id: recordId,
-      });
-      if (
-        record.accountId !== accountId ||
-        !/^https:\/\/www\.douyin\.com\/video\/[0-9]{5,30}$/.test(
-          record.url || "",
+    return this.run(accountId, true, async () => {
+      await this.owned(accountId);
+      const { view } = this.require(accountId);
+      if (action === "back") view.goBack();
+      else if (action === "forward") view.goForward();
+      else if (action === "reload") await view.reload();
+      else if (action === "post") {
+        if (!recordId || !/^[a-f0-9]{32}$/.test(recordId))
+          throw new PublishingError("INVALID_INPUT", "发布记录无效", 422);
+        const record = await this.cloud<DouyinPublishRecord>("records/get", {
+          id: recordId,
+        });
+        if (
+          record.accountId !== accountId ||
+          !/^https:\/\/www\.douyin\.com\/video\/[0-9]{5,30}$/.test(
+            record.url || "",
+          )
         )
-      )
-        throw new PublishingError("INVALID_INPUT", "作品引用无效", 422);
-      await view.navigate(record.url!);
-      this.active = accountId;
-    } else if (action === "manage") {
-      await view.navigate(
-        "https://creator.douyin.com/creator-micro/content/manage",
-      );
-      this.active = accountId;
-    } else if (action === "close") {
-      view.destroy();
-      this.views.delete(accountId);
-      if (this.active === accountId) this.active = undefined;
-    } else throw new PublishingError("INVALID_INPUT", "浏览器操作无效", 422);
-    this.changed();
+          throw new PublishingError("INVALID_INPUT", "作品引用无效", 422);
+        await view.navigate(record.url!);
+        this.selectManual(accountId);
+      } else if (action === "manage") {
+        await view.navigate(
+          "https://creator.douyin.com/creator-micro/content/manage",
+        );
+        this.selectManual(accountId);
+      } else if (action === "close") {
+        view.destroy();
+        this.views.delete(accountId);
+        if (this.active === accountId) this.selectManual();
+      } else throw new PublishingError("INVALID_INPUT", "浏览器操作无效", 422);
+      this.changed();
+    });
   }
   async unbind(accountId: string): Promise<void> {
-    const account = await this.owned(accountId);
-    if (this.locked === accountId)
-      throw new PublishingError("ACCOUNT_BUSY", "发布期间不能解绑账号");
-    await this.cloud("accounts/unbind", {
-      id: accountId,
-      name: account.name,
-      loginStatus: account.loginStatus,
+    return this.run(accountId, true, async () => {
+      const account = await this.owned(accountId);
+
+      await this.cloud("accounts/unbind", {
+        id: accountId,
+        name: account.name,
+        loginStatus: account.loginStatus,
+      });
+      const { profile, view } = await this.ensureForDeletion(accountId);
+      view.destroy();
+      this.views.delete(accountId);
+      if (this.active === accountId) this.selectManual();
+      await this.profiles.delete(profile);
+      this.changed();
     });
-    const { profile, view } = await this.ensureForDeletion(accountId);
-    view.destroy();
-    this.views.delete(accountId);
-    await this.profiles.delete(profile);
-    this.changed();
   }
   private async ensureForDeletion(accountId: string) {
     const existing = this.views.get(accountId);
     if (existing) return existing;
     const current = await this.identity();
-    const workspaceId = createHash("sha256")
-      .update(`${current.userId}:${current.deviceId}`)
-      .digest("hex");
-    const profile = { workspaceId, accountId };
+    const profile = this.profileFor(current, accountId);
     const opened = await this.profiles.open(profile, { proxyMode: "system" });
     const view = new BrowserView(
       this.window,
@@ -318,55 +358,136 @@ export class DouyinBrowser {
     beforeSubmit: () => Promise<void>,
     onProgress: (value: number) => void,
   ): Promise<{ externalId: string; url: string }> {
-    const account = await this.owned(accountId);
-    const { view, profile } = await this.ensure(accountId);
-    const login = await steps.run("check_login", "检查抖音登录", () =>
-      this.detection.check(profile, "douyin", "task_execution"),
-    );
-    if (login.status !== "logged_in")
-      throw new PublishingError("LOGIN_REQUIRED", "抖音登录失效或需要人工验证");
-    if (
-      account.platformUserId &&
-      login.checks?.account_api?.accountId !== account.platformUserId
-    )
-      throw new PublishingError(
-        "ACCOUNT_CHANGED",
-        "浏览器中的抖音账号已改变，请重新添加账号",
-      );
-    if (!this.profiles.isSaved(profile))
-      throw new PublishingError(
-        "ACCOUNT_NOT_SAVED",
-        "请先在账号浏览器点击保存账号",
-      );
-    this.locked = accountId;
-    view.setVisible(false);
-    this.changed();
-    try {
-      const page = view.createOpenCliPage(steps);
-      const result = await steps.run(
-        "platform_publish",
-        "执行抖音网页发布",
-        () =>
-          page.withPublishViewport(() =>
-            publishFromCreatorPage(
-              page,
-              input,
-              files,
-              signal,
-              steps,
-              beforeSubmit,
-              onProgress,
+    return this.run(
+      accountId,
+      false,
+      async () => {
+        const account = await this.owned(accountId);
+        const { view, profile } = await this.ensure(accountId);
+        const login = await steps.run("check_login", "检查抖音登录", () =>
+          this.detection.check(profile, "douyin", "task_execution"),
+        );
+        if (login.status !== "logged_in")
+          throw new PublishingError(
+            "LOGIN_REQUIRED",
+            "抖音登录失效或需要人工验证",
+          );
+        if (
+          account.platformUserId &&
+          login.checks?.account_api?.accountId !== account.platformUserId
+        )
+          throw new PublishingError(
+            "ACCOUNT_CHANGED",
+            "浏览器中的抖音账号已改变，请重新添加账号",
+          );
+        if (!this.profiles.isSaved(profile))
+          throw new PublishingError(
+            "ACCOUNT_NOT_SAVED",
+            "请先在账号浏览器点击保存账号",
+          );
+
+        view.setVisible(false);
+        this.changed();
+        const page = view.createOpenCliPage(steps);
+        const result = await steps.run(
+          "platform_publish",
+          "执行抖音网页发布",
+          () =>
+            page.withPublishViewport(() =>
+              publishFromCreatorPage(
+                page,
+                input,
+                files,
+                signal,
+                steps,
+                beforeSubmit,
+                onProgress,
+              ),
             ),
-          ),
-      );
-      await view.flushSession().catch(() => {});
-      return result;
-    } finally {
-      this.locked = undefined;
-      this.changed();
-    }
+        );
+        await view.flushSession().catch(() => {});
+        return result;
+      },
+      signal,
+    );
+  }
+  observe<T>(
+    accountId: string,
+    signal: AbortSignal,
+    work: (page: OpenCliPage, hasViewerSession: boolean) => Promise<T>,
+  ) {
+    return this.run(
+      accountId,
+      false,
+      async () => {
+        const account = await this.owned(accountId);
+        if (account.loginStatus === "verification_required")
+          throw new PublishingError(
+            "VERIFICATION_REQUIRED",
+            "该账号需要人工完成安全验证",
+          );
+        if (account.loginStatus === "risk_controlled")
+          throw new PublishingError(
+            "ACCESS_RESTRICTED",
+            "当前账号处于平台访问限制状态",
+          );
+        if (account.loginStatus !== "logged_in")
+          throw new PublishingError(
+            "LOGIN_REQUIRED",
+            "请先在账号浏览器确认登录并保存账号",
+          );
+        const identity = await this.identity();
+        const profile = this.profileFor(identity, accountId);
+        if (!this.profiles.isSaved(profile))
+          throw new PublishingError(
+            "ACCOUNT_NOT_SAVED",
+            "请先在此设备保存该账号",
+          );
+        const existing = this.views.get(accountId);
+        if (existing && existing.profile.workspaceId !== profile.workspaceId)
+          throw new PublishingError("SESSION_CHANGED", "账号工作区已变更");
+        const session =
+          existing?.session ??
+          (await this.profiles.open(profile, { proxyMode: "system" })).session;
+        if (!existing) await this.configureSession?.(session);
+        signal.throwIfAborted();
+        const view = new BrowserView(
+          this.window,
+          profile,
+          session,
+          false,
+          true,
+          this.root,
+          () => {},
+          () => {},
+          () => {},
+          true,
+        );
+        const close = () => view.destroy();
+        signal.addEventListener("abort", close, { once: true });
+        try {
+          const page = view.createOpenCliPage();
+          const metadata = await view.getCookies(["https://www.douyin.com/"]);
+          const hasViewerSession = metadata.some(
+            (cookie) =>
+              DOUYIN_LOGIN_CONFIG.cookieNames.includes(cookie.name) &&
+              (cookie.expirationDate === undefined ||
+                cookie.expirationDate > Date.now() / 1000),
+          );
+          signal.throwIfAborted();
+          return await work(page, hasViewerSession);
+        } finally {
+          signal.removeEventListener("abort", close);
+          if (!signal.aborted) close();
+        }
+      },
+      signal,
+    );
   }
   shutdown(): void {
+    this.lifetime.abort(new PublishingError("INTERRUPTED", "浏览器执行已中断"));
+    this.lifetime = new AbortController();
+    this.coordinator.reset();
     for (const timer of this.navigationChecks.values()) clearTimeout(timer);
     this.navigationChecks.clear();
     for (const { view } of this.views.values()) view.destroy();

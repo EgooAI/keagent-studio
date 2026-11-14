@@ -24,7 +24,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { demoApi } from "@keagent/api-client";
+import { demoApi, isLive } from "@keagent/api-client";
 import type { Lead, Platform } from "@keagent/shared-types";
 import { platformLabels } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
@@ -111,15 +111,24 @@ export default function LeadsPage() {
     <>
       <PageHeader
         title="AI 获客"
-        description="分析授权视频评论，整理购房需求和跟进记录。"
+        description={
+          isLive
+            ? "查看获客任务或使用本机账号观察指定作品。"
+            : "Mock 演示 · 以下分析任务和线索使用示例数据。"
+        }
         actions={
-          <Button
-            type="primary"
-            icon={<Plus size={16} />}
-            onClick={() => setOpen(true)}
-          >
-            新建分析任务
-          </Button>
+          <Space>
+            <Button onClick={() => navigate("/leads/comment-observation")}>
+              评论观察
+            </Button>
+            <Button
+              type="primary"
+              icon={<Plus size={16} />}
+              onClick={() => setOpen(true)}
+            >
+              新建分析任务
+            </Button>
+          </Space>
         }
       />
       {data.analysisJobs.some((job) => job.status === "running") && (

@@ -65,9 +65,11 @@ export class BrowserView {
     private readonly onError: RuntimeErrorReporter,
     private readonly onStateChange: (state: BrowserState) => void,
     private readonly onNavigation: (url: string) => void,
+    private readonly observation = false,
   ) {
     this.view = new WebContentsView({
       webPreferences: {
+        offscreen: this.observation,
         session: profileSession,
         allowRunningInsecureContent: false,
         contextIsolation: true,
@@ -127,7 +129,8 @@ export class BrowserView {
       normalizeBrowserUserAgent(this.defaultUserAgent, targetUrl),
     );
     try {
-      await this.loadURL(contents, targetUrl);
+      if (this.observation) await contents.loadURL(targetUrl);
+      else await this.loadURL(contents, targetUrl);
       this.navigationFailed = false;
       return this.emitState();
     } catch (error) {
@@ -446,7 +449,8 @@ export class BrowserView {
       this.window.contentView.removeChildView(this.view);
     }
     if (!this.view.webContents.isDestroyed()) {
-      this.view.webContents.session.webRequest.onBeforeSendHeaders(null);
+      if (this.observedAccountApiKey)
+        this.view.webContents.session.webRequest.onBeforeSendHeaders(null);
       this.view.webContents.close();
     }
   }
@@ -480,7 +484,7 @@ export class BrowserView {
     });
     contents.setWindowOpenHandler(({ url }) => {
       // 平台登录经常用新窗口跳转；留在当前受控视图可避免登录页逃离 Profile 隔离。
-      if (isAllowedBrowserUrl(url)) {
+      if (!this.observation && isAllowedBrowserUrl(url)) {
         void this.navigate(url).catch((error: unknown) => {
           this.onError(
             "browser_popup_navigation_failed",
