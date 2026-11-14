@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS keagent_comment_analysis_jobs (
   source_id text NOT NULL REFERENCES keagent_comment_sources(id) ON DELETE CASCADE,
   criteria text NOT NULL,
   criteria_hash text NOT NULL,
+  criteria_version text NOT NULL DEFAULT 'v1',
   max_comments int NOT NULL DEFAULT 200,
   concurrency int NOT NULL DEFAULT 2,
   status text NOT NULL DEFAULT 'queued',
@@ -433,6 +434,7 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 - `evidence` 必须是 `comment_text` 的连续子串；`unclear` 才允许为空。
 - `reason` 最多 320 字；`qualified=true` 时不能为空。
 - `qualified=false` 时 `draft` 必须为空。
+- `intent` 为 `unrelated` 或 `unclear` 时 `qualified` 必须为 false；解析器强制清零并清空草稿。
 - 来源未授权 `manualContact` 时 `draft` 强制为空。
 - `draft` 最多 320 字，不编造库存、价格、身份或承诺，不索取手机号/微信。
 - 任一校验失败：该条标记 `failed`，保存脱敏后的错误原因，不生成草稿，不阻塞其他评论。
@@ -446,6 +448,7 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 - 模型调用是只读操作，允许一次瞬时失败重试；最终失败记录到该条。
 - 任务取消后不再领取新评论；已完成结果保留。
 - 任务进度持久化，浏览器关闭或服务重启后可继续查询；重启时 `running` 状态改为 `queued` 并重新领取未完成项。
+- 重跑或重启只处理未完成/失败项；失败重试不能覆盖已完成的成功结果。
 
 ## 12. 私信状态机
 
