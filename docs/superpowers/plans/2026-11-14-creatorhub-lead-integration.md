@@ -74,9 +74,18 @@ Electron
 
 ```python
 # tests/test_comment_watch_resolve.py
-from fastapi.testclient import TestClient
+import asyncio
+
+import httpx
 
 import app.main as main
+
+
+def client():
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main.app, client=("127.0.0.1", 1234)),
+        base_url="http://127.0.0.1",
+    )
 
 
 def test_resolve_douyin_video(monkeypatch):
@@ -85,16 +94,20 @@ def test_resolve_douyin_video(monkeypatch):
         return "7707599736451158395"
 
     monkeypatch.setattr(main, "resolve_aweme_id", fake_resolve)
-    client = TestClient(main.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
-    response = client.post(
-        "/api/comment-watches/resolve",
-        json={"url_or_id": "https://v.douyin.com/abc/"},
-    )
-    assert response.status_code == 200
-    assert response.json() == {
-        "aweme_id": "7707599736451158395",
-        "title": "视频 7707599736451158395",
-    }
+
+    async def scenario():
+        async with client() as http:
+            response = await http.post(
+                "/api/comment-watches/resolve",
+                json={"url_or_id": "https://v.douyin.com/abc/"},
+            )
+            assert response.status_code == 200
+            assert response.json() == {
+                "aweme_id": "7707599736451158395",
+                "title": "视频 7707599736451158395",
+            }
+
+    asyncio.run(scenario())
 
 
 def test_resolve_rejects_unparseable_target(monkeypatch):
@@ -102,19 +115,23 @@ def test_resolve_rejects_unparseable_target(monkeypatch):
         return ""
 
     monkeypatch.setattr(main, "resolve_aweme_id", fake_resolve)
-    client = TestClient(main.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
-    response = client.post(
-        "/api/comment-watches/resolve",
-        json={"url_or_id": "not a video"},
-    )
-    assert response.status_code == 400
-    assert "无法解析视频 id" in response.json()["detail"]
+
+    async def scenario():
+        async with client() as http:
+            response = await http.post(
+                "/api/comment-watches/resolve",
+                json={"url_or_id": "not a video"},
+            )
+            assert response.status_code == 400
+            assert "无法解析视频 id" in response.json()["detail"]
+
+    asyncio.run(scenario())
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
 ```bash
-python -m pytest tests/test_comment_watch_resolve.py -q
+.venv/Scripts/python.exe -m pytest tests/test_comment_watch_resolve.py -q
 ```
 
 预期：404，因为接口还不存在。
@@ -144,7 +161,7 @@ async def resolve_watch_target(body: WatchResolveIn):
 - [ ] **Step 4: 运行测试确认通过**
 
 ```bash
-python -m pytest tests/test_comment_watch_resolve.py -q
+.venv/Scripts/python.exe -m pytest tests/test_comment_watch_resolve.py -q
 ```
 
 预期：2 passed。
