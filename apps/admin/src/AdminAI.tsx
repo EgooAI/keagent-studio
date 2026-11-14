@@ -24,6 +24,8 @@ const configLabels: Record<string, string> = {
   VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
   VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻资源编号",
   BEIKE_ACCESS_TOKEN: "贝壳 Access Token",
+  BEIKE_MCP_API_KEY: "贝壳找房 MCP Key",
+  BEIKE_CLI_PATH: "贝壳 CLI 可执行文件路径",
 };
 
 export function configLabel(key: string) {
@@ -56,6 +58,7 @@ const serviceOrder: AdminAIService["id"][] = [
   "opening",
   "voice-clone",
   "beike",
+  "beike-cli",
 ];
 
 function ConfigState({ row }: { row: AdminAIManagement }) {

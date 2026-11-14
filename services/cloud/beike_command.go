@@ -87,7 +87,7 @@ func beikeCall(ctx context.Context, req beikeCallRequest) (object, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, key, configured := beikeCLIConfig()
+	path, key, configured := beikeCLIConfig(ctx)
 	if !configured {
 		return nil, fail(503, "服务端未配置贝壳 CLI（BEIKE_CLI_PATH / BEIKE_MCP_API_KEY）")
 	}

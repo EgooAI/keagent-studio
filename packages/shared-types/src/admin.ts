@@ -67,7 +67,7 @@ export interface AdminAudit {
   details: Record<string, string>;
 }
 export interface AdminAIService {
-  id: "script" | "tts" | "voice-clone" | "beike" | "opening";
+  id: "script" | "tts" | "voice-clone" | "beike" | "beike-cli" | "opening";
   label: string;
   purpose: string;
   provider: string;

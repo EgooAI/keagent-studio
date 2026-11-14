@@ -11,9 +11,9 @@ import (
 	"strings"
 )
 
-func beikeCLIConfig() (path, key string, configured bool) {
-	path = strings.TrimSpace(os.Getenv("BEIKE_CLI_PATH"))
-	key = strings.TrimSpace(os.Getenv("BEIKE_MCP_API_KEY"))
+func beikeCLIConfig(ctx context.Context) (path, key string, configured bool) {
+	path = strings.TrimSpace(aiValue(ctx, "BEIKE_CLI_PATH"))
+	key = strings.TrimSpace(aiValue(ctx, "BEIKE_MCP_API_KEY"))
 	if key == "" || !filepath.IsAbs(path) {
 		return path, key, false
 	}
@@ -27,7 +27,7 @@ func beikeCLIEndpoint(ctx context.Context, method, path string, body []byte) (ob
 	}
 	switch path {
 	case "/v1/beike-cli/status":
-		_, _, configured := beikeCLIConfig()
+		_, _, configured := beikeCLIConfig(ctx)
 		if !configured {
 			return object{"available": false, "configured": false, "reason": "not_configured"}, nil
 		}
@@ -73,7 +73,7 @@ func beikeCLIProbe(ctx context.Context, args []string, stdout io.Writer) error {
 	if len(args) != 3 {
 		return errors.New("用法：beike-cli-probe search|detail|material <城市> <搜索条件或实体 ID>")
 	}
-	path, key, configured := beikeCLIConfig()
+	path, key, configured := beikeCLIConfig(ctx)
 	if !configured {
 		return errors.New("请配置官方 CLI 的有效绝对路径 BEIKE_CLI_PATH 和团队 BEIKE_MCP_API_KEY")
 	}

@@ -10,33 +10,33 @@ import (
 // beikeHouseDetail 是从贝壳 buy detail 回包解析出的二手房详情。
 // 相比 search 的摘要，多出挂牌时间、楼龄、产权、供暖、燃气、用水用电等字段。
 type beikeHouseDetail struct {
-	ID            string             `json:"id"`
-	Title         string             `json:"title"`
-	TotalPriceWan float64            `json:"totalPriceWan"`
-	UnitPrice     float64            `json:"unitPrice"`
-	AreaSqm       float64            `json:"areaSqm"`
-	Layout        string             `json:"layout"`
-	Orientation   string             `json:"orientation"`
-	Floor         string             `json:"floor"`
-	TotalFloors   string             `json:"totalFloors"`
-	BuildingAge   string             `json:"buildingAge"`
-	BuiltYear     string             `json:"builtYear"`
-	ListedAt      string             `json:"listedAt"`
-	Community     string             `json:"community"`
-	CommunityID   string             `json:"communityId"`
-	District      string             `json:"district"`
-	Tags          string             `json:"tags"`
-	PropertyYears string             `json:"propertyYears"`
-	Transaction   string             `json:"transaction"`
-	ListingAge    string             `json:"listingAge"`
-	Usage         string             `json:"usage"`
-	Status        string             `json:"status"`
-	Score         float64            `json:"score"`
-	Heating       string             `json:"heating"`
-	Gas           string             `json:"gas"`
-	Water         string             `json:"water"`
-	Electricity   string             `json:"electricity"`
-	School        any                `json:"school,omitempty"`
+	ID            string              `json:"id"`
+	Title         string              `json:"title"`
+	TotalPriceWan float64             `json:"totalPriceWan"`
+	UnitPrice     float64             `json:"unitPrice"`
+	AreaSqm       float64             `json:"areaSqm"`
+	Layout        string              `json:"layout"`
+	Orientation   string              `json:"orientation"`
+	Floor         string              `json:"floor"`
+	TotalFloors   string              `json:"totalFloors"`
+	BuildingAge   string              `json:"buildingAge"`
+	BuiltYear     string              `json:"builtYear"`
+	ListedAt      string              `json:"listedAt"`
+	Community     string              `json:"community"`
+	CommunityID   string              `json:"communityId"`
+	District      string              `json:"district"`
+	Tags          string              `json:"tags"`
+	PropertyYears string              `json:"propertyYears"`
+	Transaction   string              `json:"transaction"`
+	ListingAge    string              `json:"listingAge"`
+	Usage         string              `json:"usage"`
+	Status        string              `json:"status"`
+	Score         float64             `json:"score"`
+	Heating       string              `json:"heating"`
+	Gas           string              `json:"gas"`
+	Water         string              `json:"water"`
+	Electricity   string              `json:"electricity"`
+	School        any                 `json:"school,omitempty"`
 	CommunityInfo *beikeCommunityInfo `json:"communityInfo,omitempty"`
 }
 
@@ -207,7 +207,7 @@ func beikeDetail(ctx context.Context, city string, ids []string) (object, error)
 	if len(cleaned) == 0 || len(cleaned) > 20 {
 		return nil, fail(422, "请填写 1-20 个有效的房源 ID")
 	}
-	path, key, configured := beikeCLIConfig()
+	path, key, configured := beikeCLIConfig(ctx)
 	if !configured {
 		return nil, fail(503, "服务端未配置贝壳 CLI（BEIKE_CLI_PATH / BEIKE_MCP_API_KEY）")
 	}

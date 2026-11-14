@@ -372,6 +372,7 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     opening: "MiniMax 开场",
     "voice-clone": "声音复刻",
     beike: "贝壳取材",
+    "beike-cli": "贝壳找房",
   } satisfies Record<AdminAIService["id"], string>;
   const stamp = new Date().toISOString();
   const management: AdminAIManagement[] = Object.entries(labels).map(

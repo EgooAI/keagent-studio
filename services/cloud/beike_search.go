@@ -175,7 +175,7 @@ func filterBeikeHouses(houses []beikeHouse, budget *float64) (within, over []bei
 
 // beikeSearch 执行「按需求找房」：调用 search，解析结构化房源，按严格预算二次过滤。
 func beikeSearch(ctx context.Context, city, query string) (object, error) {
-	path, key, configured := beikeCLIConfig()
+	path, key, configured := beikeCLIConfig(ctx)
 	if !configured {
 		return nil, fail(503, "服务端未配置贝壳 CLI（BEIKE_CLI_PATH / BEIKE_MCP_API_KEY）")
 	}
@@ -197,14 +197,14 @@ func beikeSearch(ctx context.Context, city, query string) (object, error) {
 	budget := parseBeikeBudget(query)
 	within, over := filterBeikeHouses(houses, budget)
 	return object{
-		"city":           city,
-		"query":          query,
-		"totalRecalled":  parseBeikeTotal(envelope.Data),
-		"returned":       len(houses),
-		"conditions":     parseBeikeConditions(envelope.Data),
+		"city":            city,
+		"query":           query,
+		"totalRecalled":   parseBeikeTotal(envelope.Data),
+		"returned":        len(houses),
+		"conditions":      parseBeikeConditions(envelope.Data),
 		"strictBudgetWan": budget,
-		"houses":         within,
-		"overBudget":     over,
+		"houses":          within,
+		"overBudget":      over,
 	}, nil
 }
 

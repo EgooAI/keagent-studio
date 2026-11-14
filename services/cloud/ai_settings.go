@@ -53,6 +53,7 @@ var aiSpecs = []aiSpec{
 	{"tts", "speech", "火山配音", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}}},
 	{"voice-clone", "speech", "声音复刻", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}, {"VOLC_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}, {"VOLC_VOICE_CLONE_RESOURCE_ID", "复刻资源编号", "text"}}},
 	{"beike", "beike", "贝壳取材", "贝壳开放平台", []aiField{{"BEIKE_ACCESS_TOKEN", "Access Token", "secret"}}},
+	{"beike-cli", "beike-cli", "贝壳找房", "贝壳 AI 平台 CLI", []aiField{{"BEIKE_MCP_API_KEY", "MCP API Key", "secret"}, {"BEIKE_CLI_PATH", "CLI 可执行文件绝对路径", "text"}}},
 	{"opening", "opening", "MiniMax 开场", "MiniMax", []aiField{{"MINIMAX_API_KEY", "API Key", "secret"}}},
 }
 

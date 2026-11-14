@@ -196,7 +196,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if strings.HasPrefix(r.URL.Path, "/v1/panorama/") || strings.HasPrefix(r.URL.Path, "/v1/voices/") {
+	if strings.HasPrefix(r.URL.Path, "/v1/panorama/") || strings.HasPrefix(r.URL.Path, "/v1/voices/") || strings.HasPrefix(r.URL.Path, "/v1/beike-cli/") {
 		ctx, err := s.activeAI(r.Context())
 		if err != nil {
 			respond(w, nil, err)

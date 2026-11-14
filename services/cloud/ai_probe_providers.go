@@ -87,6 +87,9 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 		}
 	}
 	if p.Mode == "connection" {
+		if p.Service == "beike-cli" {
+			return s.probeBeikeCLI(ctx, p)
+		}
 		return s.probeAIConnection(ctx, p)
 	}
 	var input object
@@ -216,6 +219,16 @@ func (s *server) probeAIConnection(ctx context.Context, p *aiProbe) error {
 		}
 	}
 	p.Progress.Message = "网络连通，尚未验证凭证或生成能力"
+	return nil
+}
+func (s *server) probeBeikeCLI(ctx context.Context, p *aiProbe) error {
+	if err := s.aiStep(ctx, p, "验证贝壳 CLI 与 API Key"); err != nil {
+		return err
+	}
+	if _, err := beikeSearch(ctx, "北京", "望京"); err != nil {
+		return err
+	}
+	p.Progress.Message = "贝壳 CLI 连通，已返回房源数据"
 	return nil
 }
 func (s *server) probeAIClone(ctx context.Context, p *aiProbe, input object) error {
