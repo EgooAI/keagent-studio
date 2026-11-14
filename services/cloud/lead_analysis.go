@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type leadAnalysisResult struct {
@@ -26,13 +29,17 @@ const leadAnalysisPrompt = `你协助房产经纪人判断一条抖音评论是�
 func parseLeadAnalysis(original, raw string, allowDraft bool) (leadAnalysisResult, error) {
 	var result leadAnalysisResult
 	if err := strictCommentJSON(strings.NewReader(raw), &result, 16384); err != nil {
-		return result, exchangeFail(502, "COMMENT_ANALYSIS_INVALID", "模型返回的结构无效")
+		return leadAnalysisResult{}, exchangeFail(502, "COMMENT_ANALYSIS_INVALID", "模型返回的结构无效")
 	}
 	if !slices.Contains([]string{"buy", "rent", "sell", "let", "viewing", "question", "unrelated", "unclear"}, result.Intent) ||
 		len([]rune(result.Evidence)) > 320 || !strings.Contains(original, result.Evidence) ||
 		(result.Intent != "unclear" && strings.TrimSpace(result.Evidence) == "") ||
 		len([]rune(result.Reason)) > 320 || (result.Qualified && strings.TrimSpace(result.Reason) == "") {
 		return leadAnalysisResult{}, exchangeFail(502, "COMMENT_ANALYSIS_INVALID", "模型返回的依据无法与原文核对")
+	}
+	if result.Intent == "unrelated" || result.Intent == "unclear" {
+		result.Qualified = false
+		result.Draft = ""
 	}
 	if !result.Qualified || !allowDraft || result.Intent == "unclear" || result.Intent == "unrelated" {
 		result.Draft = ""
@@ -68,6 +75,8 @@ func (s *server) analyzeCommentWithCriteria(ctx context.Context, a actor, in com
 	if grant.AIEndpoint == "" || service.Endpoint != strings.TrimRight(grant.AIEndpoint, "/") {
 		return leadAnalysisResult{}, row, exchangeFail(403, "COMMENT_AI_PROVIDER_UNAPPROVED", "模型服务不在授权范围内，请重新确认授权")
 	}
+	providerCtx, cancel := context.WithDeadline(providerCtx, grant.ExpiresAt)
+	defer cancel()
 	if strings.TrimSpace(criteria) == "" {
 		criteria = defaultLeadCriteria
 	}
@@ -77,19 +86,31 @@ func (s *server) analyzeCommentWithCriteria(ctx context.Context, a actor, in com
 		return leadAnalysisResult{}, row, exchangeFail(502, "COMMENT_AI_UNAVAILABLE", "模型服务未完成此次分析")
 	}
 	result, err := parseLeadAnalysis(*row.CommentText, raw, grant.ManualContact)
-	return result, row, err
+	if err != nil {
+		return result, row, err
+	}
+	current, _, err := s.authorizedComment(ctx, a, in, "analyze")
+	if err != nil {
+		return leadAnalysisResult{}, row, err
+	}
+	if current.CommentText == nil || row.CommentText == nil ||
+		*current.CommentText != *row.CommentText || !current.UpdatedAt.Equal(row.UpdatedAt) {
+		return leadAnalysisResult{}, row, exchangeFail(409, "COMMENT_CHANGED", "评论或授权已更新，请重新分析")
+	}
+	return result, row, nil
 }
 
 type analysisJob struct {
-	ID           string    `json:"id"`
-	Status       string    `json:"status"`
-	Total        int       `json:"total"`
-	Processed    int       `json:"processed"`
-	Qualified    int       `json:"qualified"`
-	Failed       int       `json:"failed"`
-	Error        string    `json:"error"`
-	CriteriaHash string    `json:"criteriaHash"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	Status          string    `json:"status"`
+	Total           int       `json:"total"`
+	Processed       int       `json:"processed"`
+	Qualified       int       `json:"qualified"`
+	Failed          int       `json:"failed"`
+	Error           string    `json:"error"`
+	CriteriaHash    string    `json:"criteriaHash"`
+	CriteriaVersion string    `json:"criteriaVersion"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 func (s *server) leadAnalysis(ctx context.Context, a actor, op string, body []byte) (any, error) {
@@ -132,6 +153,13 @@ func (s *server) createAnalysisJob(ctx context.Context, a actor, body []byte) (a
 	if strings.TrimSpace(in.Criteria) == "" {
 		in.Criteria = settings.Criteria
 	}
+	if strings.TrimSpace(in.Criteria) == "" {
+		in.Criteria = defaultLeadCriteria
+	}
+	version := strings.TrimSpace(settings.CriteriaVersion)
+	if version == "" {
+		version = "v1"
+	}
 	scope := commentScope{AccountID: in.AccountID, WorkID: in.WorkID}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -154,9 +182,28 @@ func (s *server) createAnalysisJob(ctx context.Context, a actor, body []byte) (a
 	if g.Kind != "creatorhub" {
 		return nil, exchangeFail(409, "COMMENT_SOURCE_CONFLICT", "该作品使用其他评论来源")
 	}
+	var existing string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM keagent_comment_analysis_jobs
+		WHERE owner_id=$1 AND device_id=$2 AND request_key=$3`,
+		a.UserID, a.DeviceID, in.RequestKey).Scan(&existing)
+	if err == nil {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		return s.loadAnalysisJob(ctx, a, existing)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	var total int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM keagent_comment_observations
-		WHERE source_id=$1 AND fields->>'parent_comment_id' IS NULL`, sourceID).Scan(&total); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM (
+		SELECT DISTINCT ON (COALESCE(NULLIF(fields->>'commenter_profile',''), 'id:'||COALESCE(fields->>'comment_id',''))) id
+		FROM keagent_comment_observations
+		WHERE source_id=$1
+			AND fields->>'parent_comment_id' IS NULL
+			AND COALESCE(fields->>'comment_text','') <> ''
+			AND (COALESCE(fields->>'commenter_profile','') <> '' OR COALESCE(fields->>'comment_id','') <> '')
+	) t`, sourceID).Scan(&total); err != nil {
 		return nil, err
 	}
 	if total > in.MaxComments {
@@ -165,16 +212,17 @@ func (s *server) createAnalysisJob(ctx context.Context, a actor, body []byte) (a
 	if total == 0 {
 		return nil, exchangeFail(409, "COMMENT_EMPTY", "没有可分析的一级评论")
 	}
-	job := analysisJob{ID: id(), Status: "queued", Total: total,
-		CriteriaHash: criteriaHash("v1", in.Criteria), CreatedAt: time.Now().UTC()}
+	job := analysisJob{ID: id(), Status: "queued", Total: total, CriteriaVersion: version,
+		CriteriaHash: criteriaHash(version, in.Criteria), CreatedAt: time.Now().UTC()}
 	_, err = tx.ExecContext(ctx, `INSERT INTO keagent_comment_analysis_jobs(
 		id,owner_id,device_id,account_id,work_id,source_id,criteria,criteria_hash,
-		max_comments,concurrency,status,total,request_key)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12)`,
+		criteria_version,max_comments,concurrency,status,total,request_key)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued',$12,$13)`,
 		job.ID, a.UserID, a.DeviceID, in.AccountID, in.WorkID, sourceID, in.Criteria,
-		job.CriteriaHash, in.MaxComments, settings.Concurrency, total, in.RequestKey)
+		job.CriteriaHash, version, in.MaxComments, settings.Concurrency, total, in.RequestKey)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23505" {
 			return nil, exchangeFail(409, "REQUEST_CONFLICT", "同一请求已用于其他分析")
 		}
 		return nil, err
@@ -199,10 +247,10 @@ func (s *server) loadAnalysisJob(ctx context.Context, a actor, jobID string) (an
 	var job analysisJob
 	var started, finished sql.NullTime
 	err := s.db.QueryRowContext(ctx, `SELECT id,status,total,processed,qualified,failed,error,
-		criteria_hash,created_at,started_at,finished_at FROM keagent_comment_analysis_jobs
+		criteria_hash,criteria_version,created_at,started_at,finished_at FROM keagent_comment_analysis_jobs
 		WHERE id=$1 AND owner_id=$2 AND device_id=$3`, jobID, a.UserID, a.DeviceID).Scan(
 		&job.ID, &job.Status, &job.Total, &job.Processed, &job.Qualified, &job.Failed,
-		&job.Error, &job.CriteriaHash, &job.CreatedAt, &started, &finished)
+		&job.Error, &job.CriteriaHash, &job.CriteriaVersion, &job.CreatedAt, &started, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return job, collectionMissing()
 	}
@@ -313,6 +361,9 @@ func (s *server) cancelAnalysisJob(ctx context.Context, a actor, body []byte) (a
 		return nil, collectionInvalid()
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE keagent_comment_analysis_jobs SET status='canceled',
+		processed=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND status<>'queued'),
+		qualified=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND qualified),
+		failed=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND status='failed'),
 		finished_at=now() WHERE id=$1 AND owner_id=$2 AND device_id=$3
 		AND status IN ('queued','running')`, in.JobID, a.UserID, a.DeviceID)
 	if err != nil {
@@ -397,11 +448,13 @@ func (s *server) runNextAnalysisJob(ctx context.Context) {
 
 func (s *server) runAnalysisJob(ctx context.Context, jobID string) {
 	var job analysisJob
-	var owner, device, account, work, source, criteria string
+	var owner, device, account, work, source, criteria, hash, version string
 	var concurrency int
 	err := s.db.QueryRowContext(ctx, `SELECT id,owner_id,device_id,account_id,work_id,source_id,
-		criteria,total,concurrency FROM keagent_comment_analysis_jobs WHERE id=$1`, jobID).Scan(
-		&job.ID, &owner, &device, &account, &work, &source, &criteria, &job.Total, &concurrency)
+		criteria,criteria_hash,criteria_version,total,concurrency FROM keagent_comment_analysis_jobs
+		WHERE id=$1`, jobID).Scan(
+		&job.ID, &owner, &device, &account, &work, &source, &criteria, &hash, &version,
+		&job.Total, &concurrency)
 	if err != nil {
 		return
 	}
@@ -416,9 +469,14 @@ func (s *server) runAnalysisJob(ctx context.Context, jobID string) {
 		s.finishAnalysisJob(jobID, "failed", "设备已解绑或登录会话已失效")
 		return
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,fields FROM keagent_comment_observations
-		WHERE source_id=$1 AND fields->>'parent_comment_id' IS NULL
-		ORDER BY (fields->>'comment_time') DESC NULLS LAST, seq DESC LIMIT $2`, source, job.Total)
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id,o.fields FROM keagent_comment_observations o
+		WHERE o.source_id=$1 AND o.fields->>'parent_comment_id' IS NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM keagent_comment_analyses a
+			WHERE a.source_id=o.source_id AND a.comment_row_id=o.id
+				AND a.criteria_hash=$3 AND a.status='done')
+		ORDER BY (o.fields->>'comment_time') DESC NULLS LAST, o.seq DESC LIMIT $2`,
+		source, job.Total, hash)
 	if err != nil {
 		s.finishAnalysisJob(jobID, "failed", err.Error())
 		return
@@ -429,14 +487,17 @@ func (s *server) runAnalysisJob(ctx context.Context, jobID string) {
 	}
 	var items []item
 	seen := map[string]bool{}
+	var scanErr error
 	for rows.Next() {
 		var rowID string
 		var raw []byte
 		var fields commentFields
 		if err = rows.Scan(&rowID, &raw); err != nil {
+			scanErr = err
 			break
 		}
-		if json.Unmarshal(raw, &fields) != nil || fields.CommentText == nil {
+		if json.Unmarshal(raw, &fields) != nil || fields.CommentText == nil ||
+			strings.TrimSpace(*fields.CommentText) == "" {
 			continue
 		}
 		key := ""
@@ -451,7 +512,14 @@ func (s *server) runAnalysisJob(ctx context.Context, jobID string) {
 		seen[key] = true
 		items = append(items, item{rowID, fields})
 	}
+	if err = rows.Err(); err == nil {
+		err = scanErr
+	}
 	rows.Close()
+	if err != nil {
+		s.finishAnalysisJob(jobID, "failed", err.Error())
+		return
+	}
 	if len(items) == 0 {
 		s.finishAnalysisJob(jobID, "done", "")
 		return
@@ -484,7 +552,11 @@ loop:
 				failed++
 				mu.Unlock()
 			}
-			s.saveAnalysis(jobID, a, account, work, source, criteria, it.rowID, it.fields, result, ok, err)
+			if saveErr := s.saveAnalysis(jobID, a, account, work, source, version, criteria, it.rowID, it.fields, result, ok, err); saveErr != nil {
+				mu.Lock()
+				failed++
+				mu.Unlock()
+			}
 		}(it)
 	}
 	wg.Wait()
@@ -499,35 +571,44 @@ loop:
 	s.finishAnalysisJob(jobID, status, "")
 }
 
-func (s *server) saveAnalysis(jobID string, a actor, account, work, source, criteria, rowID string, fields commentFields, result leadAnalysisResult, ok bool, err error) {
+func (s *server) saveAnalysis(jobID string, a actor, account, work, source, version, criteria, rowID string, fields commentFields, result leadAnalysisResult, ok bool, err error) error {
 	status, errText := "done", ""
 	if !ok {
 		status = "failed"
 		errText = sanitizeAnalysisError(err)
+		result = leadAnalysisResult{}
 	}
 	commentID := ""
 	if fields.CommentID != nil {
 		commentID = *fields.CommentID
 	}
-	_, _ = s.db.Exec(`INSERT INTO keagent_comment_analyses(
+	_, execErr := s.db.Exec(`INSERT INTO keagent_comment_analyses(
 		id,job_id,owner_id,device_id,account_id,work_id,source_id,comment_row_id,comment_id,
 		criteria_hash,intent,evidence,qualified,reason,draft,status,error)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT(source_id,comment_row_id,criteria_hash) DO UPDATE SET
 		job_id=excluded.job_id,intent=excluded.intent,evidence=excluded.evidence,
 		qualified=excluded.qualified,reason=excluded.reason,draft=excluded.draft,
-		status=excluded.status,error=excluded.error,updated_at=now()`,
+		status=excluded.status,error=excluded.error,updated_at=now()
+		WHERE keagent_comment_analyses.status <> 'done' OR excluded.status = 'done'`,
 		id(), jobID, a.UserID, a.DeviceID, account, work, source, rowID, commentID,
-		criteriaHash("v1", criteria), result.Intent, result.Evidence, result.Qualified,
+		criteriaHash(version, criteria), result.Intent, result.Evidence, result.Qualified,
 		result.Reason, result.Draft, status, errText)
+	if execErr != nil {
+		log.Printf("analysis save failed: %v", execErr)
+	}
+	return execErr
 }
 
 func (s *server) finishAnalysisJob(jobID, status, errText string) {
-	_, _ = s.db.Exec(`UPDATE keagent_comment_analysis_jobs SET status=$2,error=$3,
+	_, err := s.db.Exec(`UPDATE keagent_comment_analysis_jobs SET status=$2,error=$3,
 		processed=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND status<>'queued'),
 		qualified=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND qualified),
 		failed=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND status='failed'),
-		finished_at=now() WHERE id=$1`, jobID, status, errText)
+		finished_at=now() WHERE id=$1 AND status='running'`, jobID, status, errText)
+	if err != nil {
+		log.Printf("analysis finish failed: %v", err)
+	}
 }
 
 func sanitizeAnalysisError(err error) string {

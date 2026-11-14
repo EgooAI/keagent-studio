@@ -62,6 +62,12 @@ func (s *server) leadSettingsGet(ctx context.Context, a actor) (leadSettings, er
 	if err != nil {
 		return leadSettings{}, err
 	}
+	if strings.TrimSpace(row.Criteria) == "" {
+		row.Criteria = defaultLeadCriteria
+	}
+	if row.CriteriaVersion == "" {
+		row.CriteriaVersion = "v1"
+	}
 	row.CriteriaHash = criteriaHash(row.CriteriaVersion, row.Criteria)
 	utc := updated.UTC()
 	row.UpdatedAt = &utc

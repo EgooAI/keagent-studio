@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS keagent_comment_analysis_jobs (
  account_id text NOT NULL, work_id text NOT NULL,
  source_id text NOT NULL REFERENCES keagent_comment_sources(id) ON DELETE CASCADE,
  criteria text NOT NULL, criteria_hash text NOT NULL,
+ criteria_version text NOT NULL DEFAULT 'v1',
  max_comments int NOT NULL DEFAULT 200, concurrency int NOT NULL DEFAULT 2,
  status text NOT NULL DEFAULT 'queued',
  total int NOT NULL DEFAULT 0, processed int NOT NULL DEFAULT 0,
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS keagent_comment_analysis_jobs (
  UNIQUE(owner_id,device_id,request_key));
 CREATE INDEX IF NOT EXISTS keagent_comment_analysis_job_queue
  ON keagent_comment_analysis_jobs(status,created_at);
+ALTER TABLE keagent_comment_analysis_jobs ADD COLUMN IF NOT EXISTS criteria_version text NOT NULL DEFAULT 'v1';
 
 CREATE TABLE IF NOT EXISTS keagent_comment_analyses (
  id text PRIMARY KEY,
