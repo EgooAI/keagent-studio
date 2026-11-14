@@ -6,6 +6,8 @@ export interface CreatorHubAccount {
   nickname: string;
   status: string;
   has_read_login: boolean;
+  sec_uid?: string;
+  douyin_id?: string;
 }
 export interface CreatorHubWatch {
   id: number;

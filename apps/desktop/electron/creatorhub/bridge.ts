@@ -1,22 +1,38 @@
 import { createHash, randomBytes } from "node:crypto";
 import { PublishingError } from "../publishing/core";
 import { CreatorHubClient } from "./client";
+import type { CreatorHubWatch } from "./client";
 import { normalizeComments } from "./normalize";
 
 export interface BridgeDependencies {
   request(route: string, input?: unknown): Promise<unknown>;
   client(baseUrl: string): CreatorHubClient;
+  identity?(): Promise<{ userId: string; deviceId: string }>;
 }
 
-function linkedAccountId(creatorHubAccountId: string | number) {
+function linkedAccountId(
+  userId: string,
+  deviceId: string,
+  creatorHubAccountId: string | number,
+) {
   return createHash("sha256")
-    .update(`creatorhub:${String(creatorHubAccountId)}`)
+    .update(`creatorhub:${userId}:${deviceId}:${String(creatorHubAccountId)}`)
     .digest("hex")
     .slice(0, 32);
 }
 
+function findWatch(
+  watches: CreatorHubWatch[],
+  awemeId: string,
+  accountId: number,
+) {
+  const matching = watches.filter((item) => item.aweme_id === awemeId);
+  return matching.find((item) => item.account_id === accountId) ?? matching[0];
+}
+
 export class CreatorHubBridge {
   progress = "";
+  private running = false;
   constructor(private deps: BridgeDependencies) {}
 
   private async settings() {
@@ -31,8 +47,8 @@ export class CreatorHubBridge {
 
   async status() {
     const settings = await this.settings();
-    const client = this.deps.client(settings.creatorhubBaseUrl);
     try {
+      const client = this.deps.client(settings.creatorhubBaseUrl);
       await client.health();
       const accounts = (await client.accounts())
         .filter(
@@ -57,7 +73,7 @@ export class CreatorHubBridge {
       return {
         health: "offline",
         accounts: [],
-        selectedAccountId: "",
+        selectedAccountId: settings.creatorhubAccountId,
         progress: this.progress,
       };
     }
@@ -95,93 +111,154 @@ export class CreatorHubBridge {
         "请先确认评论来源授权",
         422,
       );
-    const settings = await this.settings();
-    const client = this.deps.client(settings.creatorhubBaseUrl);
-    this.progress = "检查 CreatorHub";
-    await client.health();
-    const account = (await client.accounts()).find(
-      (item) => String(item.id) === input.accountId,
-    );
-    if (!account || account.status !== "active" || !account.has_read_login)
+    if (this.running)
       throw new PublishingError(
-        "CREATORHUB_ACCOUNT_UNAVAILABLE",
-        "请选择一个已登录的 CreatorHub 抖音账号",
+        "CREATORHUB_BUSY",
+        "已有评论抓取正在进行，请稍后重试",
+        409,
       );
+    this.running = true;
+    let warning: string | undefined;
+    try {
+      const identity = this.deps.identity;
+      if (!identity)
+        throw new PublishingError(
+          "IDENTITY_UNAVAILABLE",
+          "无法获取当前身份，请重新登录",
+        );
+      const { userId, deviceId } = await identity();
 
-    const linked = linkedAccountId(account.id);
-    await this.deps.request("/v1/douyin/accounts/bind", {
-      id: linked,
-      name: account.nickname || "CreatorHub 账号",
-      loginStatus: "logged_in",
-    });
+      const settings = await this.settings();
+      const client = this.deps.client(settings.creatorhubBaseUrl);
+      this.progress = "检查 CreatorHub";
+      await client.health();
+      const account = (await client.accounts()).find(
+        (item) => String(item.id) === input.accountId,
+      );
+      if (!account || account.status !== "active" || !account.has_read_login)
+        throw new PublishingError(
+          "CREATORHUB_ACCOUNT_UNAVAILABLE",
+          "请选择一个已登录的 CreatorHub 抖音账号",
+        );
 
-    this.progress = "解析视频";
-    const resolved = await client.resolve(input.url);
-    const workId = resolved.aweme_id;
-
-    this.progress = "准备评论监控";
-    const watches = await client.watches();
-    let watch = watches.find(
-      (item) =>
-        item.aweme_id === workId && item.account_id === Number(account.id),
-    );
-    if (!watch) {
-      watch = await client.createWatch({
-        platform: "douyin",
-        kind: "video",
-        url_or_id: input.url,
-        account_id: Number(account.id),
-        interval_seconds: 86400,
-        group_name: "creatorhub",
+      const linked = linkedAccountId(userId, deviceId, account.id);
+      await this.deps.request("/v1/douyin/accounts/bind", {
+        id: linked,
+        name: account.nickname || "CreatorHub 账号",
+        loginStatus: "logged_in",
+        platformUserId: account.sec_uid || account.douyin_id || "",
       });
-      await client.disableWatch(watch.id);
-    }
 
-    this.progress = "抓取评论";
-    await client.scan(watch.id);
-    const rows = await client.comments(watch.id);
-    const items = normalizeComments(rows).slice(0, 500);
-    if (items.length === 0)
-      throw new PublishingError(
-        "CREATORHUB_NO_COMMENTS",
-        "该视频没有可读取的一级评论",
-      );
+      this.progress = "解析视频";
+      const resolved = await client.resolve(input.url);
+      const workId = resolved.aweme_id;
 
-    this.progress = "保存来源授权";
-    const retentionDays = input.consent.retentionDays ?? 7;
-    const expiresAt =
-      input.consent.expiresAt ??
-      new Date(Date.now() + 30 * 86400000).toISOString();
-    await this.deps.request("/v1/collection/creatorhub/consent/save", {
-      accountId: linked,
-      workId,
-      label: "CreatorHub 来源",
-      retentionDays,
-      expiresAt,
-      baseUrl: settings.creatorhubBaseUrl,
-      creatorhubAccountId: String(account.id),
-    });
+      this.progress = "准备评论监控";
+      const accountNumber = Number(account.id);
+      let watch = findWatch(await client.watches(), workId, accountNumber);
+      let createdByBridge = false;
+      if (!watch) {
+        try {
+          watch = await client.createWatch({
+            platform: "douyin",
+            kind: "video",
+            url_or_id: workId,
+            account_id: accountNumber,
+            interval_seconds: 86400,
+            group_name: "creatorhub",
+          });
+          createdByBridge = true;
+        } catch (error) {
+          if (!(error instanceof PublishingError) || error.status !== 409)
+            throw error;
+          watch = findWatch(await client.watches(), workId, accountNumber);
+          if (!watch) throw error;
+        }
+      }
+      if (createdByBridge) await client.disableWatch(watch.id);
 
-    this.progress = "导入评论";
-    const imported = (await this.deps.request(
-      "/v1/collection/comments/import",
-      {
+      this.progress = "抓取评论";
+      try {
+        const scan = (await client.scan(watch.id)) as {
+          ok?: boolean;
+          skipped?: boolean | string;
+          reason?: string;
+          error?: string;
+        };
+        if (scan?.ok === false)
+          throw new PublishingError(
+            "CREATORHUB_SCAN_FAILED",
+            scan.error || "评论抓取失败，请稍后重试",
+            502,
+          );
+        if (scan?.skipped)
+          throw new PublishingError(
+            "CREATORHUB_SCAN_SKIPPED",
+            scan.reason ||
+              (typeof scan.skipped === "string"
+                ? scan.skipped
+                : "当前无法抓取评论，请稍后重试"),
+            409,
+          );
+      } catch (error) {
+        if (
+          error instanceof PublishingError &&
+          error.code === "CREATORHUB_TIMEOUT"
+        ) {
+          warning = "抓取超时，已导入现有评论";
+        } else {
+          throw error;
+        }
+      }
+
+      const rows = await client.comments(watch.id);
+      const items = normalizeComments(rows).slice(0, 500);
+      if (items.length === 0)
+        throw new PublishingError(
+          "CREATORHUB_NO_COMMENTS",
+          "该视频没有可读取的一级评论",
+        );
+
+      this.progress = "保存来源授权";
+      const retentionDays = input.consent.retentionDays ?? 7;
+      const expiresAt =
+        input.consent.expiresAt ??
+        new Date(Date.now() + 30 * 86400000).toISOString();
+      await this.deps.request("/v1/collection/creatorhub/consent/save", {
         accountId: linked,
         workId,
-        requestKey: input.requestKey,
-        snapshotId: randomBytes(16).toString("hex"),
-        observedAt: new Date().toISOString(),
+        label: "CreatorHub 来源",
+        retentionDays,
+        expiresAt,
+        baseUrl: settings.creatorhubBaseUrl,
+        creatorhubAccountId: String(account.id),
+      });
+
+      this.progress = "导入评论";
+      const imported = (await this.deps.request(
+        "/v1/collection/comments/import",
+        {
+          accountId: linked,
+          workId,
+          requestKey: input.requestKey,
+          snapshotId: randomBytes(16).toString("hex"),
+          observedAt: new Date().toISOString(),
+          coverage: "partial",
+          items,
+        },
+      )) as { readCount: number; addedCount: number; updatedCount: number };
+
+      return {
+        watchId: watch.id,
+        awemeId: workId,
+        accountId: linked,
+        ...imported,
         coverage: "partial",
-        items,
-      },
-    )) as { readCount: number; addedCount: number; updatedCount: number };
-    this.progress = "";
-    return {
-      watchId: watch.id,
-      awemeId: workId,
-      accountId: linked,
-      ...imported,
-      coverage: "partial",
-    };
+        warning,
+      };
+    } finally {
+      this.progress = "";
+      this.running = false;
+    }
   }
 }
