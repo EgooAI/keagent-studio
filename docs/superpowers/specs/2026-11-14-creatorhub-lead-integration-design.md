@@ -93,7 +93,7 @@ Electron 主进程必须位于桥接位置，原因：
 11. Go 后台 worker 逐条调用现有 AI 网关，保存 `intent / evidence / qualified / reason / draft`。
 12. 用户查看达标结果，编辑草稿并确认发送。
 13. Electron 调用 Go `POST /v1/collection/outreach/submit` 创建持久私信任务。
-14. Electron 调用 CreatorHub `POST /api/account-actions`，带 `action=send_dm` 和稳定的 `Idempotency-Key`。
+14. Electron 调用 CreatorHub `POST /api/account-actions`，带 `action=send_dm` 和按代次稳定的 `Idempotency-Key`。
 15. Electron 把 CreatorHub 任务 ID 和初始状态回写 Go `POST /v1/collection/outreach/result`。
 16. Electron 按需轮询 `GET /api/account-actions?account_id=...&limit=100`，把状态变化回写 Go。
 
@@ -270,6 +270,8 @@ CREATE TABLE IF NOT EXISTS keagent_outreach_tasks (
 );
 ```
 
+`attempts` 作为重试代次：新建为 1，failed/canceled 重提 +1；CreatorHub 幂等键包含该代次，旧代次回调按 attempt 忽略。
+
 `analysis_id` 唯一，保证一条分析结果最多创建一条私信任务。
 
 ### 8.5 `keagent_lead_settings`
@@ -322,8 +324,8 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 | `comments/analysis/list` | `jobId?, accountId, workId, qualified?, intent?, status?, cursor?, limit?` | 分析结果分页 |
 | `comments/analysis/cancel` | `jobId` | 取消任务 |
 | `comments/analysis/retry` | `jobId, analysisIds[]?` | 重试失败项 |
-| `outreach/submit` | `analysisId, draft, requestKey` | 幂等创建私信任务，初始状态 `approved` |
-| `outreach/result` | `id, status, creatorhubTaskId?, error?, method?` | 回写执行状态 |
+| `outreach/submit` | `analysisId, draft, requestKey` | 幂等创建私信任务，初始状态 `approved`；返回 `id`、`attempt`；同一 requestKey 返回原回执 |
+| `outreach/result` | `id, attempt, status, creatorhubTaskId?, error?, method?, confirmed?` | 按代次回写执行状态；`uncertain` 仅 `confirmed=true` 可转 `sent`/`failed` |
 | `outreach/list` | `accountId, workId?, status?, cursor?, limit?` | 私信任务列表 |
 | `outreach/cancel` | `id` | 标记取消，Electron 负责调用 CreatorHub 取消 |
 
@@ -473,13 +475,13 @@ approved ──提交 CreatorHub──> submitted ──CreatorHub 领取──>
 
 约束：
 
-- `outreach/submit` 使用 `requestKey` 幂等；同一 `analysis_id` 只能有一条任务。
-- 调用 CreatorHub 时 `Idempotency-Key = ch-<outreachId>`，格式满足 CreatorHub 的 `[A-Za-z0-9][A-Za-z0-9._:-]{15,127}`。
+- `outreach/submit` 使用 `requestKey` 幂等；同一 `analysis_id` 只能有一条任务；失败/取消后重提会递增 `attempt` 并清空旧的执行字段。同一 requestKey 重试返回原任务回执。
+- 调用 CreatorHub 时 `Idempotency-Key = ch-<outreachId>-<attempt>`，格式满足 CreatorHub 的 `[A-Za-z0-9][A-Za-z0-9._:-]{15,127}`。失败/取消后重提产生新代次和新幂等键，旧代次回执不会阻塞新发送。
 - `run_now=false`，由 CreatorHub 队列按自身节流和夜间静默执行。
 - 请求超时后先用同一幂等键重试；CreatorHub 的 `submit_once()` 返回原回执，不创建第二条任务。
 - 仍无法确认时标记 `uncertain`，提示用户到 CreatorHub 任务队列核对，禁止自动重发。
-- `uncertain` 只能由人工确认后转为 `sent` 或 `failed`，不得自动改回 `approved`。
-- `outreach/result` 的状态只能沿 `approved → submitted → sending → sent` 前进；迟到的旧状态回写被忽略，`sent` 和 `uncertain` 不会被覆盖。
+- `uncertain` 只能由人工确认后转为 `sent` 或 `failed`，不得自动改回 `approved`；`outreach/result` 必须带当前 `attempt` 和 `confirmed=true`。
+- `outreach/result` 的状态只能沿 `approved → submitted → sending → sent` 前进；迟到或旧 `attempt` 的回写被忽略，`sent` 不会被覆盖。
 - 取消只对尚未执行的 CreatorHub 任务有效；任务已 `doing` 或 `done` 时，界面显示 CreatorHub 返回的错误并保持原状态。
 - 来源授权被撤销后，禁止创建新的私信任务；已提交的任务可在 CreatorHub 取消。
 - 评论缺少 `commenter_profile` 时，`outreach/submit` 返回 `409 COMMENT_PROFILE_UNAVAILABLE`。
