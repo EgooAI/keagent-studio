@@ -1117,6 +1117,9 @@ func main() {
 	if _, err = db.Exec(collectionSchema); err != nil {
 		log.Fatal("collection migration failed")
 	}
+	if _, err = db.Exec(leadSchema); err != nil {
+		log.Fatal("lead migration failed")
+	}
 	verifier, err := newJWTVerifier()
 	if err != nil {
 		log.Fatal(err)
