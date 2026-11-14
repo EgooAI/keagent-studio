@@ -2725,6 +2725,8 @@ export class CreatorHubOutreach {
 }
 ```
 
+实现时以 Go 返回的 status 为准：非 `approved` 直接返回现有回执，不再调用 CreatorHub；从 `creatorhub/consent/get` 取 CreatorHub 账号，不接受渲染进程传入；`CREATORHUB_TIMEOUT`/`CREATORHUB_INVALID_RESPONSE` 用同一幂等键重试一次，仍失败写 `uncertain`；`CREATORHUB_REJECTED`/`UNAVAILABLE`/`URL_INVALID` 先写 `failed` 再抛出；其他错误不写。`refresh`/`cancel` 必须带 `attempt`，`confirm` 只允许 `uncertain` 且 `status` 为 `sent`/`failed`。
+
 - [ ] **Step 2: 写 outreach 测试**
 
 ```ts
@@ -2973,7 +2975,7 @@ export const creatorHubApi = {
     desktopCloud<{ items: LeadAnalysisRow[] }>("collection", "comments/analysis/list", input),
   cancelAnalysis: (jobId: string) =>
     desktopCloud<AnalysisJob>("collection", "comments/analysis/cancel", { jobId }),
-  submitOutreach: (input: { analysisId: string; draft: string; requestKey: string; creatorHubAccountId: string }) =>
+  submitOutreach: (input: { analysisId: string; draft: string; requestKey: string }) =>
     douyinDesktop<OutreachTask>("outreach.submit", input),
   outreach: (input: { accountId: string; workId?: string; limit?: number }) =>
     desktopCloud<{ items: OutreachTask[] }>("collection", "outreach/list", input),
@@ -3235,9 +3237,14 @@ const submit = useMutation({
     analysisId: row.id,
     draft: drafts[row.id] ?? row.draft,
     requestKey: crypto.randomUUID(),
-    creatorHubAccountId: accountId,
   }),
-  onSuccess: () => void message.success("已提交 CreatorHub 私信队列"),
+  onSuccess: (task) => {
+    if (task.status === "uncertain") {
+      void message.warning("CreatorHub 未返回确认，请在任务列表核对结果");
+    } else {
+      void message.success("已提交 CreatorHub 私信队列");
+    }
+  },
   retry: false,
 });
 

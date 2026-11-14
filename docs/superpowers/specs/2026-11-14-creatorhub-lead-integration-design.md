@@ -479,7 +479,8 @@ approved ──提交 CreatorHub──> submitted ──CreatorHub 领取──>
 
 约束：
 
-- `outreach/submit` 使用 `requestKey` 幂等；同一 `analysis_id` 只能有一条任务；失败/取消后重提会递增 `attempt` 并清空旧的执行字段。同一 requestKey 重试返回原任务回执。
+- `outreach/submit` 使用 `requestKey` 幂等；同一 `analysis_id` 只能有一条任务；失败/取消后重提会递增 `attempt` 并清空旧的执行字段。同一 requestKey 重试返回原任务回执。非 `approved` 状态的重复提交直接返回现有回执，不再调用 CreatorHub。
+- `outreach/submit` 从作品的 `creatorhub/consent/get` 解析 CreatorHub 账号，不接受渲染进程传入账号 ID；`confirm` 只接受当前 `uncertain` 任务；`refresh`/`cancel` 带当前 `attempt`，不一致时要求刷新。
 - 调用 CreatorHub 时 `Idempotency-Key = ch-<outreachId>-<attempt>`，格式满足 CreatorHub 的 `[A-Za-z0-9][A-Za-z0-9._:-]{15,127}`。失败/取消后重提产生新代次和新幂等键，旧代次回执不会阻塞新发送。
 - `run_now=false`，由 CreatorHub 队列按自身节流和夜间静默执行。
 - 请求超时后先用同一幂等键重试；CreatorHub 的 `submit_once()` 返回原回执，不创建第二条任务。
@@ -558,7 +559,9 @@ approved ──提交 CreatorHub──> submitted ──CreatorHub 领取──>
 | 模型调用失败 | 单条 `failed`，任务继续；可重试失败项 |
 | 模型 JSON 非法或证据不匹配 | 单条 `failed`；不生成草稿 |
 | 来源授权过期 / 撤销 | 停止导入、分析和提交，提示重新授权 |
-| 私信提交超时 | 同一幂等键重试；仍未知则 `uncertain`，人工核对 |
+| 私信提交超时 | 同一幂等键重试一次；仍未知写 `uncertain`，返回 warning/错误而不是成功提示 |
+| CreatorHub 返回无法解析数据 | 视为未知结果，写 `uncertain`，不自动重发 |
+| CreatorHub 返回明确失败 | 写 `failed`，允许人工重试（新 `requestKey`）；非 `approved` 的重复 submit 返回现有回执，不再发送 |
 | CreatorHub 返回 `uncertain` | 保持 `uncertain`，禁止自动重发 |
 | CreatorHub 返回明确失败 | 记录错误；允许人工重试（新 `requestKey`） |
 | keagent 服务重启 | `running` 分析任务改为 `queued`；私信任务状态以 CreatorHub 为准 |
