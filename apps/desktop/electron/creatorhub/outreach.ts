@@ -4,12 +4,9 @@ import type { BridgeDependencies } from "./bridge";
 const RETRYABLE = new Set([
   "CREATORHUB_TIMEOUT",
   "CREATORHUB_INVALID_RESPONSE",
-]);
-const SIDE_EFFECT_FREE = new Set([
-  "CREATORHUB_REJECTED",
   "CREATORHUB_UNAVAILABLE",
-  "CREATORHUB_URL_INVALID",
 ]);
+const REJECTED_WITHOUT_EFFECT = new Set([400, 403, 404, 422]);
 
 function codeOf(error: unknown) {
   return (error as { code?: string }).code ?? "";
@@ -24,6 +21,14 @@ function truncateRunes(value: string, limit = 500) {
   return runes.length > limit ? runes.slice(0, limit).join("") : value;
 }
 
+function uncertainError(id: string, attempt: number, message: string) {
+  return new PublishingError(
+    "OUTREACH_UNCERTAIN",
+    `私信发送结果不确定，请刷新后确认（任务 ${id}，第 ${attempt} 次尝试）：${truncateRunes(message)}`,
+    409,
+  );
+}
+
 export class CreatorHubOutreach {
   constructor(private deps: Pick<BridgeDependencies, "request" | "client">) {}
 
@@ -35,6 +40,24 @@ export class CreatorHubOutreach {
       creatorhubBaseUrl: string;
       creatorhubAccountId: string;
     };
+  }
+
+  private async recordFailure(id: string, attempt: number, message: string) {
+    await this.deps.request("/v1/collection/outreach/result", {
+      id,
+      attempt,
+      status: "failed",
+      error: truncateRunes(message),
+    });
+  }
+
+  private async recordUncertain(id: string, attempt: number, message: string) {
+    await this.deps.request("/v1/collection/outreach/result", {
+      id,
+      attempt,
+      status: "uncertain",
+      error: truncateRunes(message),
+    });
   }
 
   async submit(input: {
@@ -57,26 +80,40 @@ export class CreatorHubOutreach {
       const row = await this.load(created.id);
       return { ...row, analysisId: input.analysisId };
     }
-    const row = await this.load(created.id);
-    const consent = (await this.deps.request(
-      "/v1/collection/creatorhub/consent/get",
-      { accountId: row.accountId, workId: row.workId },
-    )) as { creatorhubAccountId?: unknown };
-    const creatorHubAccountId = String(consent?.creatorhubAccountId ?? "");
-    if (!/^[0-9]{1,20}$/.test(creatorHubAccountId))
-      throw new PublishingError(
-        "CREATORHUB_ACCOUNT_UNAVAILABLE",
-        "该作品缺少 CreatorHub 账号授权，请重新抓取评论",
-      );
-    const targetSecUid = created.commenterProfile?.split("/").pop() || "";
-    if (!/^[A-Za-z0-9_-]+$/.test(targetSecUid))
-      throw new PublishingError(
-        "COMMENT_PROFILE_UNAVAILABLE",
-        "缺少评论者主页，无法私信",
-      );
+    let client: ReturnType<BridgeDependencies["client"]>;
+    let creatorHubAccountId: string;
+    let targetSecUid: string;
+    try {
+      const row = await this.load(created.id);
+      const consent = (await this.deps.request(
+        "/v1/collection/creatorhub/consent/get",
+        { accountId: row.accountId, workId: row.workId },
+      )) as { creatorhubAccountId?: unknown };
+      creatorHubAccountId = String(consent?.creatorhubAccountId ?? "");
+      if (!/^[0-9]{1,20}$/.test(creatorHubAccountId))
+        throw new PublishingError(
+          "CREATORHUB_ACCOUNT_UNAVAILABLE",
+          "该作品缺少 CreatorHub 账号授权，请重新抓取评论",
+        );
+      targetSecUid = created.commenterProfile?.split("/").pop() || "";
+      if (!/^[A-Za-z0-9_-]+$/.test(targetSecUid))
+        throw new PublishingError(
+          "COMMENT_PROFILE_UNAVAILABLE",
+          "缺少评论者主页，无法私信",
+        );
 
-    const settings = await this.settings();
-    const client = this.deps.client(settings.creatorhubBaseUrl);
+      const settings = await this.settings();
+      client = this.deps.client(settings.creatorhubBaseUrl);
+    } catch (error) {
+      // No CreatorHub side effect has happened yet: mark the attempt failed so
+      // a fresh submission can reset the row instead of hitting OUTREACH_EXISTS.
+      await this.recordFailure(
+        created.id,
+        created.attempt,
+        messageOf(error),
+      ).catch(() => {});
+      throw error;
+    }
     const idempotencyKey = `ch-${created.id}-${created.attempt}`;
     let task: { id: number; status: string } | undefined;
     for (let attempt = 0; attempt < 2 && !task; attempt++) {
@@ -97,38 +134,43 @@ export class CreatorHubOutreach {
         task = sent;
       } catch (error) {
         const code = codeOf(error);
-        if (SIDE_EFFECT_FREE.has(code)) {
-          // A definitive rejection leaves no remote side effect, so the attempt
-          // can be marked failed and safely reset by the next submission.
-          await this.deps.request("/v1/collection/outreach/result", {
-            id: created.id,
-            attempt: created.attempt,
-            status: "failed",
-            error: truncateRunes(messageOf(error)),
-          });
+        if (code === "CREATORHUB_REJECTED") {
+          const status = (error as { status?: number }).status;
+          if (status && REJECTED_WITHOUT_EFFECT.has(status)) {
+            // The request was definitively rejected before any remote effect.
+            await this.recordFailure(
+              created.id,
+              created.attempt,
+              messageOf(error),
+            );
+            throw error;
+          }
+          // 409/410, 5xx, and unclassified rejections may have been processed.
+          const message = messageOf(error);
+          await this.recordUncertain(created.id, created.attempt, message);
+          throw uncertainError(created.id, created.attempt, message);
+        }
+        if (code === "CREATORHUB_URL_INVALID") {
+          // The client rejects the URL before any request leaves the process.
+          await this.recordFailure(
+            created.id,
+            created.attempt,
+            messageOf(error),
+          );
           throw error;
         }
         if (!RETRYABLE.has(code)) throw error;
         if (attempt === 0) continue;
-        const message = truncateRunes(messageOf(error));
-        await this.deps.request("/v1/collection/outreach/result", {
-          id: created.id,
-          attempt: created.attempt,
-          status: "uncertain",
-          error: message,
-        });
-        throw new PublishingError(
-          "OUTREACH_UNCERTAIN",
-          `私信发送结果不确定，请刷新后确认（任务 ${created.id}，第 ${created.attempt} 次尝试）：${message}`,
-          409,
-        );
+        const message = messageOf(error);
+        await this.recordUncertain(created.id, created.attempt, message);
+        throw uncertainError(created.id, created.attempt, message);
       }
     }
     if (!task)
-      throw new PublishingError(
-        "OUTREACH_UNCERTAIN",
-        `私信发送结果不确定，请刷新后确认（任务 ${created.id}，第 ${created.attempt} 次尝试）`,
-        409,
+      throw uncertainError(
+        created.id,
+        created.attempt,
+        "CreatorHub 未返回任务回执",
       );
     await this.deps.request("/v1/collection/outreach/result", {
       id: created.id,

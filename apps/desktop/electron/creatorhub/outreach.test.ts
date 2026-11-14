@@ -267,7 +267,7 @@ describe("CreatorHubOutreach submit", () => {
             throw new PublishingError(
               "CREATORHUB_REJECTED",
               "x".repeat(600),
-              400,
+              422,
             );
           },
         }),
@@ -275,7 +275,7 @@ describe("CreatorHubOutreach submit", () => {
     const error = await rejection(
       outreach.submit({ analysisId, draft: "您好", requestKey }),
     );
-    expect(error).toMatchObject({ code: "CREATORHUB_REJECTED", status: 400 });
+    expect(error).toMatchObject({ code: "CREATORHUB_REJECTED", status: 422 });
     const writes = calls.filter((call) =>
       call.route.endsWith("outreach/result"),
     );
@@ -286,6 +286,104 @@ describe("CreatorHubOutreach submit", () => {
       status: "failed",
     });
     expect(Array.from(String(writes[0].input.error))).toHaveLength(500);
+  });
+
+  it.each([409, 410, 500, 503])(
+    "records an uncertain result for a %s rejection that may have been processed",
+    async (status) => {
+      const calls: Call[] = [];
+      const outreach = new CreatorHubOutreach({
+        request: scripted({ calls, submit: approved }),
+        client: () =>
+          fakeClient({
+            sendDm: async () => {
+              throw new PublishingError(
+                "CREATORHUB_REJECTED",
+                "上游错误",
+                status,
+              );
+            },
+          }),
+      });
+      const error = await rejection(
+        outreach.submit({ analysisId, draft: "您好", requestKey }),
+      );
+      expect(error).toMatchObject({ code: "OUTREACH_UNCERTAIN", status: 409 });
+      const writes = calls.filter((call) =>
+        call.route.endsWith("outreach/result"),
+      );
+      expect(writes).toHaveLength(1);
+      expect(writes[0].input).toMatchObject({
+        id: outreachId,
+        attempt: 1,
+        status: "uncertain",
+        error: "上游错误",
+      });
+    },
+  );
+
+  it.each([400, 403, 404, 422])(
+    "records a failed result for a %s rejection that was not processed",
+    async (status) => {
+      const calls: Call[] = [];
+      const outreach = new CreatorHubOutreach({
+        request: scripted({ calls, submit: approved }),
+        client: () =>
+          fakeClient({
+            sendDm: async () => {
+              throw new PublishingError("CREATORHUB_REJECTED", "拒绝", status);
+            },
+          }),
+      });
+      const error = await rejection(
+        outreach.submit({ analysisId, draft: "您好", requestKey }),
+      );
+      expect(error).toMatchObject({ code: "CREATORHUB_REJECTED", status });
+      const writes = calls.filter((call) =>
+        call.route.endsWith("outreach/result"),
+      );
+      expect(writes).toHaveLength(1);
+      expect(writes[0].input).toMatchObject({
+        id: outreachId,
+        attempt: 1,
+        status: "failed",
+        error: "拒绝",
+      });
+    },
+  );
+
+  it("retries an unavailable CreatorHub and records uncertain when it persists", async () => {
+    let sends = 0;
+    const calls: Call[] = [];
+    const outreach = new CreatorHubOutreach({
+      request: scripted({ calls, submit: approved }),
+      client: () =>
+        fakeClient({
+          sendDm: async () => {
+            sends++;
+            throw new PublishingError(
+              "CREATORHUB_UNAVAILABLE",
+              "无法连接",
+              503,
+            );
+          },
+        }),
+    });
+    const error = await rejection(
+      outreach.submit({ analysisId, draft: "您好", requestKey }),
+    );
+    expect(error).toMatchObject({ code: "OUTREACH_UNCERTAIN", status: 409 });
+    expect(sends).toBe(2);
+    const writes = calls.filter((call) =>
+      call.route.endsWith("outreach/result"),
+    );
+    expect(writes).toHaveLength(1);
+    expect(writes[0].input).toMatchObject({
+      id: outreachId,
+      attempt: 1,
+      status: "uncertain",
+      error: "无法连接",
+    });
   });
 
   it("returns the current row without calling CreatorHub when the attempt is not approved", async () => {
@@ -330,10 +428,12 @@ describe("CreatorHubOutreach submit", () => {
     );
   });
 
-  it("rejects approval when the work has no usable CreatorHub account", async () => {
+  it("records a failed result when pre-send account validation fails", async () => {
     let sends = 0;
+    const calls: Call[] = [];
     const outreach = new CreatorHubOutreach({
       request: scripted({
+        calls,
         submit: approved,
         consent: { creatorhubAccountId: "not-a-number" },
       }),
@@ -352,12 +452,74 @@ describe("CreatorHubOutreach submit", () => {
       code: "CREATORHUB_ACCOUNT_UNAVAILABLE",
     });
     expect(sends).toBe(0);
+    const write = calls.find((call) => call.route.endsWith("outreach/result"));
+    expect(write?.input).toMatchObject({
+      id: outreachId,
+      attempt: 1,
+      status: "failed",
+    });
   });
 
-  it("rejects approval when the commenter profile has no safe sec_uid", async () => {
+  it("records a failed result when the settings lookup fails before sending", async () => {
     let sends = 0;
+    const calls: Call[] = [];
+    const outreach = new CreatorHubOutreach({
+      request: async (route, input) => {
+        calls.push({ route, input });
+        if (route.endsWith("outreach/submit")) return approved;
+        if (route.endsWith("outreach/list")) return { items: [baseRow] };
+        if (route.endsWith("creatorhub/consent/get"))
+          return { creatorhubAccountId: "7" };
+        if (route.endsWith("lead/settings/get"))
+          throw new Error("settings down");
+        return {};
+      },
+      client: () =>
+        fakeClient({
+          sendDm: async () => {
+            sends++;
+            return { id: 1, status: "pending" };
+          },
+        }),
+    });
+    const error = await rejection(
+      outreach.submit({ analysisId, draft: "您好", requestKey }),
+    );
+    expect(error).toMatchObject({ message: "settings down" });
+    expect(sends).toBe(0);
+    const write = calls.find((call) => call.route.endsWith("outreach/result"));
+    expect(write?.input).toMatchObject({
+      id: outreachId,
+      attempt: 1,
+      status: "failed",
+      error: "settings down",
+    });
+  });
+
+  it("preserves the pre-send error when the failure write also fails", async () => {
+    const outreach = new CreatorHubOutreach({
+      request: async (route) => {
+        if (route.endsWith("outreach/submit")) return approved;
+        if (route.endsWith("outreach/list")) return { items: [baseRow] };
+        if (route.endsWith("creatorhub/consent/get"))
+          throw new PublishingError("CONSENT_REQUIRED", "缺少授权", 422);
+        if (route.endsWith("outreach/result")) throw new Error("write down");
+        return {};
+      },
+      client: () => fakeClient({}),
+    });
+    const error = await rejection(
+      outreach.submit({ analysisId, draft: "您好", requestKey }),
+    );
+    expect(error).toMatchObject({ code: "CONSENT_REQUIRED", status: 422 });
+  });
+
+  it("records a failed result when the commenter profile has no safe sec_uid", async () => {
+    let sends = 0;
+    const calls: Call[] = [];
     const outreach = new CreatorHubOutreach({
       request: scripted({
+        calls,
         submit: {
           ...approved,
           commenterProfile: "https://www.douyin.com/user/bad id!",
@@ -376,6 +538,73 @@ describe("CreatorHubOutreach submit", () => {
     );
     expect(error).toMatchObject({ code: "COMMENT_PROFILE_UNAVAILABLE" });
     expect(sends).toBe(0);
+    const write = calls.find((call) => call.route.endsWith("outreach/result"));
+    expect(write?.input).toMatchObject({
+      id: outreachId,
+      attempt: 1,
+      status: "failed",
+    });
+  });
+
+  it("uses the next attempt and idempotency key after a failed row", async () => {
+    const keys: string[] = [];
+    const calls: Call[] = [];
+    let attempts = 0;
+    let sends = 0;
+    const outreach = new CreatorHubOutreach({
+      request: async (route, input) => {
+        calls.push({ route, input });
+        if (route.endsWith("outreach/submit")) {
+          attempts++;
+          return { ...approved, attempt: attempts };
+        }
+        if (route.endsWith("outreach/list"))
+          return { items: [{ ...baseRow, attempt: attempts }] };
+        if (route.endsWith("creatorhub/consent/get"))
+          return { creatorhubAccountId: "7" };
+        if (route.endsWith("lead/settings/get"))
+          return {
+            creatorhubBaseUrl: "http://127.0.0.1:1",
+            creatorhubAccountId: "1",
+          };
+        return {};
+      },
+      client: () =>
+        fakeClient({
+          sendDm: async (input) => {
+            keys.push(input.idempotencyKey);
+            sends++;
+            if (sends === 1)
+              throw new PublishingError("CREATORHUB_REJECTED", "拒绝", 422);
+            return { id: 21, status: "pending" };
+          },
+        }),
+    });
+    await rejection(outreach.submit({ analysisId, draft: "您好", requestKey }));
+    const first = calls.find(
+      (call) =>
+        call.route.endsWith("outreach/result") &&
+        call.input.status === "failed",
+    );
+    expect(first?.input).toMatchObject({ attempt: 1, status: "failed" });
+    const result = await outreach.submit({
+      analysisId,
+      draft: "您好",
+      requestKey: "s".repeat(32),
+    });
+    expect(result.status).toBe("submitted");
+    expect(keys).toEqual([`ch-${outreachId}-1`, `ch-${outreachId}-2`]);
+    const submitted = calls.find(
+      (call) =>
+        call.route.endsWith("outreach/result") &&
+        call.input.status === "submitted",
+    );
+    expect(submitted?.input).toMatchObject({
+      id: outreachId,
+      attempt: 2,
+      status: "submitted",
+      creatorhubTaskId: "21",
+    });
   });
 });
 
