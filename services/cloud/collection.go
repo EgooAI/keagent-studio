@@ -142,7 +142,7 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 	if a.DeviceID == "" {
 		return nil, exchangeFail(403, "DEVICE_REQUIRED", "请使用已绑定的桌面设备")
 	}
-	if strings.HasPrefix(op, "lead/settings/") {
+	if strings.HasPrefix(op, "creatorhub/consent/") || strings.HasPrefix(op, "lead/settings/") {
 		return s.leadConfig(ctx, a, op, body)
 	}
 	if strings.HasPrefix(op, "comments/") {

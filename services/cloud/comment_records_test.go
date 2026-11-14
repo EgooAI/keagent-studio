@@ -28,6 +28,9 @@ func commentFixture(t *testing.T) *commentScenario {
 	if _, err := s.db.Exec(collectionSchema); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.Exec(leadSchema); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`INSERT INTO keagent_device(id,owner_id,session_id,name,platform) VALUES($1,$2,$3,'测试','test') ON CONFLICT DO NOTHING`, a.DeviceID, a.UserID, a.SessionID); err != nil {
 		t.Fatal(err)
 	}

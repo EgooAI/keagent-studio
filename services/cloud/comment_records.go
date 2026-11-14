@@ -209,6 +209,12 @@ func prepareCommentSource(ctx context.Context, tx *sql.Tx, a actor, scope commen
 	if err != nil {
 		return nil, "", "", err
 	}
+	if g == nil {
+		g, err = loadCreatorHubConsent(ctx, tx, a, scope)
+		if err != nil {
+			return nil, "", "", err
+		}
+	}
 	state, key := "active", ""
 	switch {
 	case g == nil:
@@ -361,7 +367,7 @@ func (s *server) commentRecords(ctx context.Context, a actor, op string, body []
 		if err != nil {
 			return nil, err
 		}
-		if err = recheckCommentGrant(a, in.commentScope, g); err != nil {
+		if err = recheckCommentGrant(ctx, tx, a, in.commentScope, g); err != nil {
 			return nil, err
 		}
 		return result, tx.Commit()
@@ -457,10 +463,16 @@ func insertCommentSource(ctx context.Context, tx *sql.Tx, a actor, scope comment
 		sourceID, a.UserID, a.DeviceID, scope.AccountID, scope.WorkID, g.policyKey(), g.ExpiresAt, denied)
 	return sourceID, err
 }
-func recheckCommentGrant(a actor, scope commentScope, expected *commentGrant) error {
+func recheckCommentGrant(ctx context.Context, tx *sql.Tx, a actor, scope commentScope, expected *commentGrant) error {
 	current, err := loadCommentGrant(a.UserID, a.DeviceID, scope.AccountID, scope.WorkID)
 	if err != nil {
 		return err
+	}
+	if current == nil {
+		current, err = loadCreatorHubConsent(ctx, tx, a, scope)
+		if err != nil {
+			return err
+		}
 	}
 	if current == nil {
 		return unavailableCommentGrant("unconfigured")
@@ -621,7 +633,7 @@ func (s *server) authorizedComment(ctx context.Context, a actor, in commentInput
 	if err != nil {
 		return zero, nil, commitCommentMiss(tx, err)
 	}
-	if err = recheckCommentGrant(a, in.commentScope, g); err != nil {
+	if err = recheckCommentGrant(ctx, tx, a, in.commentScope, g); err != nil {
 		return zero, nil, err
 	}
 	if err = tx.Commit(); err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -32,6 +33,12 @@ func (s *server) leadConfig(ctx context.Context, a actor, op string, body []byte
 		return s.leadSettingsGet(ctx, a)
 	case "lead/settings/save":
 		return s.leadSettingsSave(ctx, a, body)
+	case "creatorhub/consent/save":
+		return s.creatorHubConsentSave(ctx, a, body)
+	case "creatorhub/consent/get":
+		return s.creatorHubConsentGet(ctx, a, body)
+	case "creatorhub/consent/revoke":
+		return s.creatorHubConsentRevoke(ctx, a, body)
 	default:
 		return nil, collectionMissing()
 	}
@@ -114,4 +121,128 @@ func loopbackBaseURL(raw string) bool {
 	default:
 		return false
 	}
+}
+
+func (s *server) creatorHubConsentSave(ctx context.Context, a actor, body []byte) (any, error) {
+	var in struct {
+		AccountID           string    `json:"accountId"`
+		WorkID              string    `json:"workId"`
+		Label               string    `json:"label"`
+		RetentionDays       int       `json:"retentionDays"`
+		ExpiresAt           time.Time `json:"expiresAt"`
+		BaseURL             string    `json:"baseUrl"`
+		CreatorHubAccountID string    `json:"creatorhubAccountId"`
+	}
+	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) ||
+		!douyinPostID.MatchString(in.WorkID) || !validExchangeText(in.Label, 100) ||
+		in.RetentionDays < 1 || in.RetentionDays > 90 || !loopbackBaseURL(in.BaseURL) ||
+		!validExchangeText(in.CreatorHubAccountID, 64) ||
+		in.ExpiresAt.Before(time.Now()) || in.ExpiresAt.After(time.Now().AddDate(1, 0, 0)) {
+		return nil, collectionInvalid()
+	}
+	providerCtx, err := s.activeAI(ctx)
+	if err != nil {
+		return nil, err
+	}
+	service := aiServicesFor(providerCtx)[0]
+	if service.State != "configured" || service.Endpoint == "" {
+		return nil, exchangeFail(503, "COMMENT_AI_UNAVAILABLE", "请先在服务设置中配置文案模型")
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO keagent_comment_consents(
+		owner_id,device_id,account_id,work_id,label,purposes,expires_at,retention_days,
+		base_url,creatorhub_account_id,ai_endpoint,revoked)
+		VALUES($1,$2,$3,$4,$5,'{"analyzeWithAI":true,"manualContact":true}'::jsonb,$6,$7,$8,$9,$10,false)
+		ON CONFLICT(owner_id,device_id,account_id,work_id) DO UPDATE SET
+		label=excluded.label,purposes=excluded.purposes,expires_at=excluded.expires_at,
+		retention_days=excluded.retention_days,base_url=excluded.base_url,
+		creatorhub_account_id=excluded.creatorhub_account_id,ai_endpoint=excluded.ai_endpoint,
+		revoked=false,consented_at=now()`,
+		a.UserID, a.DeviceID, in.AccountID, in.WorkID, in.Label, in.ExpiresAt,
+		in.RetentionDays, in.BaseURL, in.CreatorHubAccountID, service.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	return s.creatorHubConsentGet(ctx, a, mustJSON(object{"accountId": in.AccountID, "workId": in.WorkID}))
+}
+
+func (s *server) creatorHubConsentGet(ctx context.Context, a actor, body []byte) (any, error) {
+	var in struct {
+		AccountID string `json:"accountId"`
+		WorkID    string `json:"workId"`
+	}
+	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) || !douyinPostID.MatchString(in.WorkID) {
+		return nil, collectionInvalid()
+	}
+	var label, baseURL, creatorHubAccountID, aiEndpoint string
+	var purposes []byte
+	var expires time.Time
+	var retention int
+	var revoked bool
+	err := s.db.QueryRowContext(ctx, `SELECT label,purposes,expires_at,retention_days,base_url,
+		creatorhub_account_id,ai_endpoint,revoked FROM keagent_comment_consents
+		WHERE owner_id=$1 AND device_id=$2 AND account_id=$3 AND work_id=$4`,
+		a.UserID, a.DeviceID, in.AccountID, in.WorkID).Scan(
+		&label, &purposes, &expires, &retention, &baseURL, &creatorHubAccountID, &aiEndpoint, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return object{"state": "unconfigured"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	state := "active"
+	if revoked {
+		state = "revoked"
+	} else if !expires.After(time.Now()) {
+		state = "expired"
+	}
+	return object{"state": state, "label": label, "purposes": json.RawMessage(purposes),
+		"expiresAt": expires.UTC(), "retentionDays": retention, "baseUrl": baseURL,
+		"creatorhubAccountId": creatorHubAccountID, "aiEndpoint": aiEndpoint}, nil
+}
+
+func (s *server) creatorHubConsentRevoke(ctx context.Context, a actor, body []byte) (any, error) {
+	var in struct {
+		AccountID string `json:"accountId"`
+		WorkID    string `json:"workId"`
+	}
+	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) || !douyinPostID.MatchString(in.WorkID) {
+		return nil, collectionInvalid()
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE keagent_comment_consents SET revoked=true
+		WHERE owner_id=$1 AND device_id=$2 AND account_id=$3 AND work_id=$4`,
+		a.UserID, a.DeviceID, in.AccountID, in.WorkID); err != nil {
+		return nil, err
+	}
+	return object{"ok": true}, nil
+}
+
+func loadCreatorHubConsent(ctx context.Context, tx *sql.Tx, a actor, scope commentScope) (*commentGrant, error) {
+	var label, baseURL, creatorHubAccountID, aiEndpoint string
+	var purposes []byte
+	var expires time.Time
+	var retention int
+	var revoked bool
+	err := tx.QueryRowContext(ctx, `SELECT label,purposes,expires_at,retention_days,base_url,
+		creatorhub_account_id,ai_endpoint,revoked FROM keagent_comment_consents
+		WHERE owner_id=$1 AND device_id=$2 AND account_id=$3 AND work_id=$4 FOR SHARE`,
+		a.UserID, a.DeviceID, scope.AccountID, scope.WorkID).Scan(
+		&label, &purposes, &expires, &retention, &baseURL, &creatorHubAccountID, &aiEndpoint, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var grant struct {
+		AnalyzeWithAI bool `json:"analyzeWithAI"`
+		ManualContact bool `json:"manualContact"`
+	}
+	_ = json.Unmarshal(purposes, &grant)
+	return &commentGrant{
+		OwnerID: a.UserID, DeviceID: a.DeviceID, AccountID: scope.AccountID,
+		WorkID: scope.WorkID, Ref: "creatorhub:" + creatorHubAccountID, Label: label,
+		Kind: "creatorhub", ExpiresAt: expires, RetentionDays: retention,
+		Fields: append([]string{}, allowedCommentFields...), AnalyzeWithAI: grant.AnalyzeWithAI,
+		ManualContact: grant.ManualContact, AIEndpoint: aiEndpoint, Revoked: revoked,
+	}, nil
 }
