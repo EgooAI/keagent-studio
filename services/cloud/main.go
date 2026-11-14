@@ -44,6 +44,7 @@ type server struct {
 	sourceHTTP   func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
 	commentRead  func(context.Context, *commentGrant) (commentBatch, error)
 	commentSyncs sync.Map // per-work in-flight syncs; do not hold a database connection while waiting
+	leadComplete func(context.Context, any, string) (string, error)
 }
 type fault struct {
 	status  int
@@ -1137,6 +1138,7 @@ func main() {
 	go s.runAIProbes(context.Background())
 	go s.creditExpireSweeper(context.Background())
 	go s.commentRetentionWorker(context.Background())
+	go s.leadAnalysisWorker(context.Background())
 	log.Println("Go business API listening on 127.0.0.1:18081")
 	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
 }

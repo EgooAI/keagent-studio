@@ -149,6 +149,9 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 	if op == "comments/import" {
 		return s.importCreatorHubComments(ctx, a, body)
 	}
+	if op == "comments/analyze-batch" || strings.HasPrefix(op, "comments/analysis/") {
+		return s.leadAnalysis(ctx, a, op, body)
+	}
 	if strings.HasPrefix(op, "comments/") {
 		if op == "comments/analyze" || op == "comments/contact" {
 			return s.commentAction(ctx, a, op, body)
