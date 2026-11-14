@@ -15,6 +15,7 @@ const defaultLeadCriteria = "判断评论者是否有明确的购房、租房、
 
 type leadSettings struct {
 	Criteria            string     `json:"criteria"`
+	DefaultCriteria     string     `json:"defaultCriteria"`
 	CriteriaVersion     string     `json:"criteriaVersion"`
 	CriteriaHash        string     `json:"criteriaHash"`
 	MaxComments         int        `json:"maxComments"`
@@ -46,7 +47,8 @@ func (s *server) leadConfig(ctx context.Context, a actor, op string, body []byte
 }
 
 func (s *server) leadSettingsGet(ctx context.Context, a actor) (leadSettings, error) {
-	out := leadSettings{Criteria: defaultLeadCriteria, CriteriaVersion: "v1", MaxComments: 200,
+	out := leadSettings{Criteria: defaultLeadCriteria, DefaultCriteria: defaultLeadCriteria,
+		CriteriaVersion: "v1", MaxComments: 200,
 		Concurrency: 2, CreatorHubBaseURL: "http://127.0.0.1:8000"}
 	var row leadSettings
 	var updated time.Time
@@ -69,6 +71,7 @@ func (s *server) leadSettingsGet(ctx context.Context, a actor) (leadSettings, er
 		row.CriteriaVersion = "v1"
 	}
 	row.CriteriaHash = criteriaHash(row.CriteriaVersion, row.Criteria)
+	row.DefaultCriteria = defaultLeadCriteria
 	utc := updated.UTC()
 	row.UpdatedAt = &utc
 	return row, nil

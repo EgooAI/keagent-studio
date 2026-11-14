@@ -132,6 +132,14 @@ func (s *server) verify(r *http.Request, body []byte) (actor, error) {
 	}
 	return a, nil
 }
+
+// accepted marks a successful handler result that should respond with 202.
+type accepted struct{ value any }
+
+func (a accepted) MarshalJSON() ([]byte, error) {
+	return json.Marshal(a.value)
+}
+
 func respond(w http.ResponseWriter, value any, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -153,6 +161,10 @@ func respond(w http.ResponseWriter, value any, err error) {
 		}
 		_ = json.NewEncoder(w).Encode(object{"error": details})
 		return
+	}
+	if async, ok := value.(accepted); ok {
+		w.WriteHeader(http.StatusAccepted)
+		value = async.value
 	}
 	_ = json.NewEncoder(w).Encode(value)
 }

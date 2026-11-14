@@ -18,7 +18,8 @@ func TestLeadSettingsDefaultsAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := mustCollection(t, f.server, f.actor, "lead/settings/get", object{})
-	if got["maxComments"] != float64(200) || got["criteria"] != defaultLeadCriteria {
+	if got["maxComments"] != float64(200) || got["criteria"] != defaultLeadCriteria ||
+		got["defaultCriteria"] != defaultLeadCriteria {
 		t.Fatal(got)
 	}
 	hash, _ := got["criteriaHash"].(string)
@@ -33,7 +34,8 @@ func TestLeadSettingsDefaultsAndValidation(t *testing.T) {
 	input := leadSettingsInput()
 	input["creatorhubAccountId"] = accountID
 	saved := mustCollection(t, f.server, f.actor, "lead/settings/save", input)
-	if saved["maxComments"] != float64(80) || saved["criteria"] != "只找上海购房客户" {
+	if saved["maxComments"] != float64(80) || saved["criteria"] != "只找上海购房客户" ||
+		saved["defaultCriteria"] != defaultLeadCriteria {
 		t.Fatal(saved)
 	}
 	if saved["concurrency"] != float64(2) || saved["creatorhubBaseUrl"] != "http://127.0.0.1:8000" || saved["creatorhubAccountId"] != accountID {

@@ -95,6 +95,14 @@ function startInput() {
   };
 }
 
+function linkedId(generation = 1) {
+  const scope = "creatorhub:u1:d1:1";
+  return createHash("sha256")
+    .update(generation === 1 ? scope : `${scope}:${generation}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
 async function rejectionOf(
   promise: Promise<unknown>,
 ): Promise<PublishingError> {
@@ -120,6 +128,7 @@ interface FixtureOptions {
   comments?: CreatorHubComment[];
   identity?: BridgeDependencies["identity"] | null;
   client?: (baseUrl: string) => CreatorHubClient;
+  bindFailure?: (id: string, attempt: number) => string | undefined;
 }
 
 async function fixture(options: FixtureOptions = {}) {
@@ -204,6 +213,19 @@ async function fixture(options: FixtureOptions = {}) {
   const deps: BridgeDependencies = {
     request: async (route, input) => {
       calls.push({ route, input });
+      if (route === "/v1/douyin/accounts/bind") {
+        const id = String((input as { id?: unknown } | undefined)?.id ?? "");
+        const attempt = calls.filter(
+          (call) => call.route === "/v1/douyin/accounts/bind",
+        ).length;
+        const code = options.bindFailure?.(id, attempt - 1);
+        if (code)
+          throw new PublishingError(
+            code,
+            code,
+            code === "ACCOUNT_UNAVAILABLE" ? 409 : 422,
+          );
+      }
       return route.endsWith("lead/settings/get")
         ? { creatorhubBaseUrl: baseUrl, creatorhubAccountId: "1" }
         : route.endsWith("comments/import")
@@ -266,10 +288,7 @@ describe("CreatorHubBridge", () => {
     const imported = routes.indexOf("/v1/collection/comments/import");
     expect(consent).toBeGreaterThanOrEqual(0);
     expect(imported).toBeGreaterThan(consent);
-    const linked = createHash("sha256")
-      .update("creatorhub:u1:d1:1")
-      .digest("hex")
-      .slice(0, 32);
+    const linked = linkedId();
     const bind = calls.find(
       (call) => call.route === "/v1/douyin/accounts/bind",
     );
@@ -339,6 +358,81 @@ describe("CreatorHubBridge", () => {
     expect(disabledWatches).toEqual([]);
     expect(createWatchBody()).toBeUndefined();
     expect(paths).not.toContain("POST /api/comment-watches");
+  });
+
+  it("disables an enabled bridge watch before reusing it", async () => {
+    const { bridge, createWatchBody, disabledWatches } = await fixture({
+      watches: [watch({ id: 9, enabled: true })],
+    });
+    const result = await bridge.start(startInput());
+    expect(result.watchId).toBe(9);
+    expect(disabledWatches).toEqual([9]);
+    expect(createWatchBody()).toBeUndefined();
+  });
+
+  it("leaves user-created watches untouched", async () => {
+    const { bridge, disabledWatches } = await fixture({
+      watches: [watch({ id: 9, enabled: true, group_name: "user" })],
+    });
+    const result = await bridge.start(startInput());
+    expect(result.watchId).toBe(9);
+    expect(disabledWatches).toEqual([]);
+  });
+
+  it("retries with a new linked account id after ACCOUNT_UNAVAILABLE", async () => {
+    const { bridge, calls } = await fixture({
+      bindFailure: (_id, attempt) =>
+        attempt === 0 ? "ACCOUNT_UNAVAILABLE" : undefined,
+    });
+    const result = await bridge.start(startInput());
+    const binds = calls.filter(
+      (call) => call.route === "/v1/douyin/accounts/bind",
+    );
+    expect(binds.map((call) => (call.input as { id: string }).id)).toEqual([
+      linkedId(1),
+      linkedId(2),
+    ]);
+    expect(linkedId(1)).not.toBe(linkedId(2));
+    expect(result.accountId).toBe(linkedId(2));
+    for (const route of [
+      "/v1/collection/creatorhub/consent/save",
+      "/v1/collection/comments/import",
+    ]) {
+      const call = calls.find((candidate) => candidate.route === route);
+      expect(call?.input).toMatchObject({ accountId: linkedId(2) });
+    }
+  });
+
+  it("reuses an already-bound generation across starts", async () => {
+    const { bridge, calls } = await fixture({
+      // Generation 1 stays unbound; generation 2 is already bound and succeeds.
+      bindFailure: (id) =>
+        id === linkedId(1) ? "ACCOUNT_UNAVAILABLE" : undefined,
+    });
+    const first = await bridge.start(startInput());
+    const second = await bridge.start(startInput());
+    expect(first.accountId).toBe(linkedId(2));
+    expect(second.accountId).toBe(linkedId(2));
+    const binds = calls.filter(
+      (call) => call.route === "/v1/douyin/accounts/bind",
+    );
+    expect(binds.map((call) => (call.input as { id: string }).id)).toEqual([
+      linkedId(1),
+      linkedId(2),
+      linkedId(1),
+      linkedId(2),
+    ]);
+  });
+
+  it("does not retry other bind failures", async () => {
+    const { bridge, calls } = await fixture({
+      bindFailure: () => "INVALID_INPUT",
+    });
+    const error = await rejectionOf(bridge.start(startInput()));
+    expectCode(error, "INVALID_INPUT");
+    expect(
+      calls.filter((call) => call.route === "/v1/douyin/accounts/bind"),
+    ).toHaveLength(1);
   });
 
   it("prefers a watch owned by the selected account", async () => {

@@ -240,7 +240,10 @@ export class CreatorHubOutreach {
     )) as { creatorhubAccountId: string };
     const settings = await this.settings();
     const client = this.deps.client(settings.creatorhubBaseUrl);
-    const tasks = await client.actions(Number(consent.creatorhubAccountId));
+    const tasks = await client.actions(
+      Number(consent.creatorhubAccountId),
+      1000,
+    );
     const task = tasks.find((item) => String(item.id) === row.creatorhubTaskId);
     if (!task) return row;
     const status =

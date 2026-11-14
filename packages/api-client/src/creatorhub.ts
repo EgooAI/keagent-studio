@@ -3,7 +3,9 @@ import type {
   CreatorHubStartInput,
   CreatorHubStartResult,
   CreatorHubStatus,
-  LeadAnalysisRow,
+  LeadAnalysisPage,
+  LeadIntent,
+  LeadSettings,
   OutreachTask,
 } from "@keagent/shared-types";
 import { desktopCloud, douyinDesktop } from "./douyin";
@@ -16,11 +18,7 @@ export const creatorHubApi = {
   saveConsent: (input: unknown) =>
     desktopCloud<unknown>("collection", "creatorhub/consent/save", input),
   settings: () =>
-    desktopCloud<{
-      criteria: string;
-      criteriaHash: string;
-      maxComments: number;
-    }>("collection", "lead/settings/get", {}),
+    desktopCloud<LeadSettings>("collection", "lead/settings/get", {}),
   saveSettings: (input: unknown) =>
     desktopCloud<unknown>("collection", "lead/settings/save", input),
   analyze: (input: {
@@ -33,12 +31,20 @@ export const creatorHubApi = {
     desktopCloud<AnalysisJob>("collection", "comments/analyze-batch", input),
   job: (jobId: string) =>
     desktopCloud<AnalysisJob>("collection", "comments/analysis/job", { jobId }),
-  retryAnalysis: (jobId: string) =>
-    desktopCloud<AnalysisJob>("collection", "comments/analysis/retry", {
-      jobId,
-    }),
-  analyses: (input: { jobId: string; qualified?: boolean; limit?: number }) =>
-    desktopCloud<{ items: LeadAnalysisRow[] }>(
+  retryAnalysis: (jobId: string, analysisIds?: string[]) =>
+    desktopCloud<AnalysisJob>(
+      "collection",
+      "comments/analysis/retry",
+      analysisIds ? { jobId, analysisIds } : { jobId },
+    ),
+  analyses: (input: {
+    jobId: string;
+    qualified?: boolean;
+    intent?: LeadIntent;
+    cursor?: string;
+    limit?: number;
+  }) =>
+    desktopCloud<LeadAnalysisPage>(
       "collection",
       "comments/analysis/list",
       input,

@@ -199,6 +199,22 @@ describe("CreatorHubClient", () => {
     expect(requests).toBe(20);
   });
 
+  it("requests account actions with a bounded limit", async () => {
+    const paths: string[] = [];
+    const { base } = await start((req, res) => {
+      paths.push(req.url ?? "");
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify([]));
+    });
+    const client = new CreatorHubClient(base);
+    await client.actions(5);
+    await client.actions(5, 1000);
+    expect(paths).toEqual([
+      "/api/account-actions?account_id=5&limit=100",
+      "/api/account-actions?account_id=5&limit=1000",
+    ]);
+  });
+
   it("maps a non-JSON success body to CREATORHUB_INVALID_RESPONSE", async () => {
     const { base } = await start((_req, res) => {
       res.setHeader("content-type", "application/json");

@@ -225,9 +225,9 @@ export class CreatorHubClient {
       60_000,
     );
   }
-  actions(accountId: number) {
+  actions(accountId: number, limit = 100) {
     return this.call<CreatorHubAction[]>(
-      `/api/account-actions?account_id=${accountId}&limit=100`,
+      `/api/account-actions?account_id=${accountId}&limit=${limit}`,
     );
   }
   cancelAction(id: number) {

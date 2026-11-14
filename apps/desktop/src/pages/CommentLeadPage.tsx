@@ -698,7 +698,15 @@ function CommentLeadWorkspace() {
               onChange={(event) => setCriteria(event.target.value)}
               autoSize={{ minRows: 3, maxRows: 8 }}
             />
-            <Button onClick={() => setCriteria(settings.data?.criteria ?? "")}>
+            <Button
+              onClick={() =>
+                setCriteria(
+                  settings.data?.defaultCriteria ??
+                    settings.data?.criteria ??
+                    "",
+                )
+              }
+            >
               恢复默认
             </Button>
             <label htmlFor="lead-max">最多分析条数</label>

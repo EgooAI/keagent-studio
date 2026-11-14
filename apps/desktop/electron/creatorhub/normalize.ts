@@ -22,6 +22,10 @@ function stringValue(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+function stripNul(value: string) {
+  return value.replaceAll("\u0000", "");
+}
+
 function truncateRunes(value: string, max: number) {
   const runes = Array.from(value);
   return {
@@ -30,8 +34,10 @@ function truncateRunes(value: string, max: number) {
   };
 }
 
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function safeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
 }
 
 export function normalizeComments(rows: CreatorHubComment[]): CommentField[] {
@@ -39,7 +45,7 @@ export function normalizeComments(rows: CreatorHubComment[]): CommentField[] {
   const out: CommentField[] = [];
   for (const row of rows) {
     if (row.is_reply) continue;
-    const commentId = stringValue(row.comment_id).trim();
+    const commentId = stripNul(stringValue(row.comment_id)).trim();
     if (
       !commentId ||
       Array.from(commentId).length > MAX_COMMENT_ID_RUNES ||
@@ -48,12 +54,12 @@ export function normalizeComments(rows: CreatorHubComment[]): CommentField[] {
       continue;
     seen.add(commentId);
 
-    const text = stringValue(row.text);
+    const text = stripNul(stringValue(row.text));
     const truncatedText = truncateRunes(text, MAX_COMMENT_TEXT_RUNES);
-    const nickname = stringValue(row.user_nickname);
-    const secUid = stringValue(row.user_sec_uid).trim();
-    const createTime = finiteNumber(row.create_time);
-    const likeCount = finiteNumber(row.like_count);
+    const nickname = stripNul(stringValue(row.user_nickname));
+    const secUid = stripNul(stringValue(row.user_sec_uid)).trim();
+    const createTime = safeInteger(row.create_time);
+    const likeCount = safeInteger(row.like_count);
 
     out.push({
       comment_id: commentId,

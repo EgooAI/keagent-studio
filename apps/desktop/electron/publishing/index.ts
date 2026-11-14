@@ -11,6 +11,7 @@ import {
   PublishingError,
   type PublishingIdentity,
 } from "./core";
+import { desktopErrorMessage } from "./errors";
 import { DouyinBrowser } from "./browser";
 import { PublishingFiles } from "./files";
 import { PublishQueue, samePublisher } from "./queue";
@@ -477,10 +478,7 @@ export function registerPublishing(
           error: {
             code: e.code || "DESKTOP_OPERATION_FAILED",
             status: e.status || 409,
-            message:
-              error instanceof PublishingError
-                ? error.message
-                : "桌面发布操作失败，请检查登录、文件与网络后重试",
+            message: desktopErrorMessage(error),
           },
         };
       }

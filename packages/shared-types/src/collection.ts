@@ -177,6 +177,17 @@ export interface LeadAnalysisRow extends Omit<LeadAnalysisResult, "intent"> {
   error: string;
   intent: LeadIntent | "";
 }
+export interface LeadAnalysisPage {
+  items: LeadAnalysisRow[];
+  hasMore?: boolean;
+  nextCursor?: string;
+}
+export interface LeadSettings {
+  criteria: string;
+  defaultCriteria: string;
+  criteriaHash: string;
+  maxComments: number;
+}
 export interface AnalysisJob {
   id: string;
   status: "queued" | "running" | "done" | "partial" | "failed" | "canceled";

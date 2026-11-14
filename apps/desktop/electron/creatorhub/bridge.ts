@@ -14,9 +14,11 @@ function linkedAccountId(
   userId: string,
   deviceId: string,
   creatorHubAccountId: string | number,
+  generation = 1,
 ) {
+  const scope = `creatorhub:${userId}:${deviceId}:${String(creatorHubAccountId)}`;
   return createHash("sha256")
-    .update(`creatorhub:${userId}:${deviceId}:${String(creatorHubAccountId)}`)
+    .update(generation === 1 ? scope : `${scope}:${generation}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -142,13 +144,31 @@ export class CreatorHubBridge {
           "请选择一个已登录的 CreatorHub 抖音账号",
         );
 
-      const linked = linkedAccountId(userId, deviceId, account.id);
-      await this.deps.request("/v1/douyin/accounts/bind", {
-        id: linked,
-        name: account.nickname || "CreatorHub 账号",
-        loginStatus: "logged_in",
-        platformUserId: account.sec_uid || account.douyin_id || "",
-      });
+      let linked = "";
+      let bindError: unknown;
+      for (let generation = 1; generation <= 8; generation++) {
+        const candidate = linkedAccountId(
+          userId,
+          deviceId,
+          account.id,
+          generation,
+        );
+        try {
+          await this.deps.request("/v1/douyin/accounts/bind", {
+            id: candidate,
+            name: account.nickname || "CreatorHub 账号",
+            loginStatus: "logged_in",
+            platformUserId: account.sec_uid || account.douyin_id || "",
+          });
+          linked = candidate;
+          break;
+        } catch (error) {
+          if ((error as { code?: string }).code !== "ACCOUNT_UNAVAILABLE")
+            throw error;
+          bindError = error;
+        }
+      }
+      if (!linked) throw bindError;
 
       this.progress = "解析视频";
       const resolved = await client.resolve(input.url);
@@ -176,7 +196,11 @@ export class CreatorHubBridge {
           if (!watch) throw error;
         }
       }
-      if (createdByBridge) await client.disableWatch(watch.id);
+      if (
+        createdByBridge ||
+        (watch.group_name === "creatorhub" && watch.enabled)
+      )
+        await client.disableWatch(watch.id);
 
       this.progress = "抓取评论";
       try {

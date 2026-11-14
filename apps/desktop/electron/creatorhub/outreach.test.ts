@@ -644,8 +644,9 @@ describe("CreatorHubOutreach refresh", () => {
         request: scripted({ calls, rows: [row] }),
         client: () =>
           fakeClient({
-            actions: async (accountId) => {
+            actions: async (accountId, limit) => {
               expect(accountId).toBe(7);
+              expect(limit).toBe(1000);
               return [{ id: 42, status: taskStatus, error: "e".repeat(600) }];
             },
           }),
@@ -681,7 +682,8 @@ describe("CreatorHubOutreach refresh", () => {
       request: scripted({ calls, rows: [row] }),
       client: () =>
         fakeClient({
-          actions: async () => {
+          actions: async (_accountId, limit) => {
+            expect(limit).toBe(1000);
             actions++;
             return [];
           },

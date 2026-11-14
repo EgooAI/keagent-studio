@@ -118,4 +118,66 @@ describe("normalizeComments", () => {
     expect(out[0].commenter_name).toBeNull();
     expect(out[1].commenter_name).toHaveLength(256);
   });
+
+  it("strips NUL characters from ids, text, and names", () => {
+    const out = normalizeComments([
+      comment({
+        comment_id: "c\u00001",
+        text: "想\u0000买房",
+        user_nickname: "甲\u0000乙",
+        user_sec_uid: "sec\u00001",
+      }),
+      comment({ comment_id: "c\u00001", text: "重复" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].comment_id).toBe("c1");
+    expect(out[0].comment_text).toBe("想买房");
+    expect(out[0].commenter_name).toBe("甲乙");
+    expect(out[0].commenter_profile).toBe("https://www.douyin.com/user/sec1");
+  });
+
+  it("skips NUL-only ids", () => {
+    const out = normalizeComments([
+      comment({ comment_id: "\u0000\u0000" }),
+      comment({ comment_id: "c1" }),
+    ]);
+    expect(out.map((row) => row.comment_id)).toEqual(["c1"]);
+  });
+
+  it("requires safe integer like counts and timestamps", () => {
+    const out = normalizeComments([
+      comment({
+        comment_id: "a",
+        like_count: 1.5,
+        create_time: 1700000000.5,
+      }),
+      comment({
+        comment_id: "b",
+        like_count: Number.MAX_SAFE_INTEGER,
+        create_time: 1700000000,
+      }),
+    ]);
+    expect(out[0].like_count).toBeNull();
+    expect(out[0].comment_time).toBeNull();
+    expect(out[1].like_count).toBe(Number.MAX_SAFE_INTEGER);
+    expect(out[1].comment_time).toBe("2023-11-14T22:13:20.000Z");
+  });
+
+  it("keeps the exact import field contract", () => {
+    const [row] = normalizeComments([comment()]);
+    expect(Object.keys(row).sort()).toEqual(
+      [
+        "comment_id",
+        "parent_comment_id",
+        "comment_text",
+        "commenter_name",
+        "commenter_profile",
+        "comment_time",
+        "like_count",
+        "reply_count",
+        "truncated",
+      ].sort(),
+    );
+    expect(Number.isSafeInteger(row.like_count)).toBe(true);
+  });
 });

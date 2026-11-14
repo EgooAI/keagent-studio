@@ -332,6 +332,17 @@ function registerAuth(onTargetStopped) {
             "comments/get",
             "comments/sync",
             "comments/analyze",
+            "creatorhub/consent/get",
+            "creatorhub/consent/save",
+            "creatorhub/consent/revoke",
+            "lead/settings/get",
+            "lead/settings/save",
+            "comments/analyze-batch",
+            "comments/analysis/job",
+            "comments/analysis/list",
+            "comments/analysis/cancel",
+            "comments/analysis/retry",
+            "outreach/list",
           ]
         : [
             "accounts/list",

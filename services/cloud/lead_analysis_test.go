@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -358,5 +360,203 @@ func TestAnalysisJobRejectsCommentChangeAfterModel(t *testing.T) {
 	if status != "failed" || qualified || draft != "" || !strings.Contains(errText, "评论或授权已更新") {
 		t.Fatalf("comment change not rejected: status=%s error=%q qualified=%v draft=%q",
 			status, errText, qualified, draft)
+	}
+}
+
+func failedAnalysisJob(t *testing.T) (*commentScenario, string, []string) {
+	t.Helper()
+	f := analysisScenario(t)
+	analysisImport(t, f, analysisComments())
+	f.server.leadComplete = func(context.Context, any, string) (string, error) {
+		return "", errors.New("模型失败")
+	}
+	jobID := analysisStart(t, f)
+	analysisRun(t, f, jobID)
+	list := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{"jobId": jobID, "limit": 10})
+	items := rows(list["items"])
+	if len(items) != 2 {
+		t.Fatalf("expected two failed analyses: %v", list)
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, obj(item)["id"].(string))
+	}
+	return f, jobID, ids
+}
+
+func TestAnalysisRetryAllWhenSelectionOmitted(t *testing.T) {
+	f, jobID, _ := failedAnalysisJob(t)
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/retry", object{"jobId": jobID})
+	if job["status"] != "queued" {
+		t.Fatalf("retry-all did not requeue: %v", job)
+	}
+	var remaining int
+	if err := f.db.QueryRow(`SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1`,
+		jobID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("retry-all kept failed analyses: %d", remaining)
+	}
+}
+
+func TestAnalysisRetrySelectedFailures(t *testing.T) {
+	f, jobID, ids := failedAnalysisJob(t)
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/retry", object{
+		"jobId": jobID, "analysisIds": []string{ids[0]},
+	})
+	if job["status"] != "queued" {
+		t.Fatalf("selected retry did not requeue: %v", job)
+	}
+	var remaining []string
+	rs, err := f.db.Query(`SELECT id FROM keagent_comment_analyses WHERE job_id=$1`, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Close()
+	for rs.Next() {
+		var analysisID string
+		if err = rs.Scan(&analysisID); err != nil {
+			t.Fatal(err)
+		}
+		remaining = append(remaining, analysisID)
+	}
+	if len(remaining) != 1 || remaining[0] != ids[1] {
+		t.Fatalf("selected retry touched other analyses: %v", remaining)
+	}
+}
+
+func TestAnalysisRetryRejectsUnknownSelection(t *testing.T) {
+	f, jobID, _ := failedAnalysisJob(t)
+	_, err := collectionCall(f.server, f.actor, "comments/analysis/retry", object{
+		"jobId": jobID, "analysisIds": []string{id()},
+	})
+	expectExchangeStatus(t, err, 409)
+	var remaining int
+	if err = f.db.QueryRow(`SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1`,
+		jobID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("unknown selection deleted analyses: %d", remaining)
+	}
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if job["status"] != "partial" {
+		t.Fatalf("unknown selection changed the job: %v", job)
+	}
+}
+
+func TestAnalysisListFiltersByIntent(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, []object{
+		{"comment_id": "c1", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/sec1"},
+		{"comment_id": "c2", "comment_text": "想在上海租房", "commenter_profile": "https://www.douyin.com/user/sec2"},
+	})
+	f.server.leadComplete = func(_ context.Context, content any, _ string) (string, error) {
+		if strings.Contains(content.(string), "租房") {
+			return `{"intent":"rent","evidence":"想在上海租房","qualified":true,"reason":"明确租房需求","draft":"您好"}`, nil
+		}
+		return `{"intent":"buy","evidence":"想在上海买房","qualified":true,"reason":"明确购房需求","draft":"您好"}`, nil
+	}
+	jobID := analysisStart(t, f)
+	analysisRun(t, f, jobID)
+	buy := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "intent": "buy", "limit": 10,
+	})
+	buyItems := rows(buy["items"])
+	if len(buyItems) != 1 || obj(buyItems[0])["intent"] != "buy" {
+		t.Fatalf("intent filter returned wrong rows: %v", buy)
+	}
+	rent := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "intent": "rent", "limit": 10,
+	})
+	rentItems := rows(rent["items"])
+	if len(rentItems) != 1 || obj(rentItems[0])["intent"] != "rent" {
+		t.Fatalf("intent filter returned wrong rows: %v", rent)
+	}
+	_, err := collectionCall(f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "intent": "bogus",
+	})
+	expectExchangeStatus(t, err, 422)
+}
+
+func TestAnalysisListCursorPaging(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, []object{
+		{"comment_id": "c1", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/sec1"},
+		{"comment_id": "c2", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/sec2"},
+		{"comment_id": "c3", "comment_text": "想在上海买房", "commenter_profile": "https://www.douyin.com/user/sec3"},
+	})
+	f.server.leadComplete = analysisOK
+	jobID := analysisStart(t, f)
+	analysisRun(t, f, jobID)
+	first := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "limit": 2,
+	})
+	firstItems := rows(first["items"])
+	if len(firstItems) != 2 || first["hasMore"] != true {
+		t.Fatalf("first page: %v", first)
+	}
+	cursor, _ := first["nextCursor"].(string)
+	if cursor == "" {
+		t.Fatalf("first page missing nextCursor: %v", first)
+	}
+	second := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "limit": 2, "cursor": cursor,
+	})
+	secondItems := rows(second["items"])
+	if len(secondItems) != 1 || second["hasMore"] != false || second["nextCursor"] != nil {
+		t.Fatalf("second page: %v", second)
+	}
+	seen := map[string]bool{}
+	order := []string{}
+	for _, item := range append(firstItems, secondItems...) {
+		analysisID := obj(item)["id"].(string)
+		if seen[analysisID] {
+			t.Fatalf("cursor paging repeated %s", analysisID)
+		}
+		seen[analysisID] = true
+		order = append(order, analysisID)
+	}
+	if len(order) != 3 {
+		t.Fatalf("cursor paging lost rows: %v", order)
+	}
+	stable := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "limit": 2,
+	})
+	stableItems := rows(stable["items"])
+	for index, item := range stableItems {
+		if obj(item)["id"] != obj(firstItems[index])["id"] {
+			t.Fatalf("cursor paging order changed: %v", stable)
+		}
+	}
+}
+
+func TestAnalyzeBatchRespondsAccepted(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, analysisComments())
+	f.server.leadComplete = analysisOK
+	body, err := json.Marshal(object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID,
+		"criteria": "只找上海购房客户", "maxComments": 10, "requestKey": id(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := f.server.leadAnalysis(context.Background(), f.actor, "comments/analyze-batch", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := value.(accepted); !ok {
+		t.Fatalf("analyze-batch did not mark the response accepted: %T", value)
+	}
+	w := httptest.NewRecorder()
+	respond(w, value, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("analyze-batch status = %d, want 202", w.Code)
+	}
+	var payload object
+	if err = json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload["id"] == nil {
+		t.Fatalf("accepted body: %v %v", payload, err)
 	}
 }

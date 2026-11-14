@@ -111,11 +111,52 @@ it("forwards authenticated credit usage and property deletion through Electron",
     "comments/import",
     "comments/contact",
     "comments/grant",
+    "outreach/result",
   ])
     await expect(
       handler(event, "collection.cloud", [operation]),
     ).rejects.toThrow("接口未开放");
   expect(fetch).toHaveBeenCalledTimes(5);
+  fetch.mockResolvedValueOnce(
+    Response.json({ criteria: "默认", defaultCriteria: "默认" }),
+  );
+  await expect(
+    handler(event, "collection.cloud", ["lead/settings/get", {}]),
+  ).resolves.toEqual({
+    ok: true,
+    data: { criteria: "默认", defaultCriteria: "默认" },
+  });
+  expect(fetch.mock.calls[5]).toEqual([
+    "http://127.0.0.1:18081/v1/collection/lead/settings/get",
+    expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  ]);
+  const analysisInput = {
+    accountId: "4".repeat(32),
+    workId: "1234567890",
+    criteria: "默认",
+    maxComments: 10,
+    requestKey: "8".repeat(32),
+  };
+  fetch.mockResolvedValueOnce(
+    Response.json({ id: "analysis-job" }, { status: 202 }),
+  );
+  await expect(
+    handler(event, "collection.cloud", [
+      "comments/analyze-batch",
+      analysisInput,
+    ]),
+  ).resolves.toEqual({ ok: true, data: { id: "analysis-job" } });
+  expect(fetch.mock.calls[6]).toEqual([
+    "http://127.0.0.1:18081/v1/collection/comments/analyze-batch",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(analysisInput),
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  ]);
   const scope = { workId: "12345", accountId: "4".repeat(32) };
   for (const [operation, extra] of [
     ["comments/list", { limit: 10 }],
