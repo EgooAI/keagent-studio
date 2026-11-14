@@ -123,7 +123,7 @@ def test_resolve_rejects_unparseable_target(monkeypatch):
                 json={"url_or_id": "not a video"},
             )
             assert response.status_code == 400
-            assert "无法解析视频 id" in response.json()["detail"]
+            assert response.json()["detail"] == "无法解析视频 id,请粘贴完整分享文案、作品链接 / 短链 / 数字 id"
 
     asyncio.run(scenario())
 ```
