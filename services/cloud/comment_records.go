@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -284,6 +285,7 @@ func (s *server) commentRecords(ctx context.Context, a actor, op string, body []
 		}
 		defer release()
 	}
+	// A transient AI configuration read failure only affects the canAnalyze hint; analysis re-checks.
 	if providerCtx, aiErr := s.activeAI(ctx); aiErr == nil {
 		ctx = providerCtx
 	}
@@ -433,10 +435,13 @@ func readCommentDetail(ctx context.Context, tx *sql.Tx, in commentInput, sourceI
 }
 func readCommentPage(ctx context.Context, tx *sql.Tx, in commentInput, sourceID string, g *commentGrant) (commentPage, error) {
 	endpoint := ""
+	configured := false
 	if services := aiServicesFor(ctx); len(services) > 0 {
 		endpoint = services[0].Endpoint
+		configured = services[0].State == "configured"
 	}
-	canAnalyze := g.AnalyzeWithAI && (g.AIEndpoint == "" || endpoint == "" || g.AIEndpoint == endpoint)
+	canAnalyze := g.AnalyzeWithAI && configured &&
+		(g.AIEndpoint == "" || strings.TrimRight(g.AIEndpoint, "/") == endpoint)
 	page := commentPage{Items: []commentDetail{}, SourceState: "active", SourceLabel: g.Label, Coverage: "unknown", CanAnalyze: canAnalyze, CanContact: g.ManualContact}
 	var raw []byte
 	err := tx.QueryRowContext(ctx, `SELECT result FROM keagent_comment_snapshots WHERE source_id=$1 AND retain_until>clock_timestamp() ORDER BY observed_at DESC LIMIT 1`, sourceID).Scan(&raw)
