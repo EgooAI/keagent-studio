@@ -1,5 +1,8 @@
 import { CommentObservationService } from "../comment-observation/service";
 import { CollectionRunService } from "../comment-observation/collection-runs";
+import { CreatorHubBridge } from "../creatorhub/bridge";
+import { CreatorHubOutreach } from "../creatorhub/outreach";
+import { CreatorHubClient } from "../creatorhub/client";
 import { ipcMain, app, dialog, type BrowserWindow } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -86,6 +89,15 @@ export function registerPublishing(
     (identity) => files.directoryFor(identity),
     emit,
   );
+  const creatorHub = new CreatorHubBridge({
+    request: dependencies.request,
+    client: (baseUrl) => new CreatorHubClient(baseUrl),
+    identity: dependencies.identity,
+  });
+  const outreach = new CreatorHubOutreach({
+    request: dependencies.request,
+    client: (baseUrl) => new CreatorHubClient(baseUrl),
+  });
   const publisher = new DirectPublisher({
     identity: dependencies.identity,
     exchange: dependencies.exchange,
@@ -211,6 +223,13 @@ export function registerPublishing(
     "collection.start",
     "collection.cancel",
     "collection.contact",
+    "creatorhub.status",
+    "creatorhub.login",
+    "creatorhub.start",
+    "outreach.submit",
+    "outreach.refresh",
+    "outreach.cancel",
+    "outreach.confirm",
     "observation.start",
     "observation.list",
     "observation.cancel",
@@ -280,6 +299,30 @@ export function registerPublishing(
             return (result as { profileUrl?: unknown } | null)?.profileUrl;
           });
           data = await state();
+        } else if (method === "creatorhub.status") {
+          data = await creatorHub.status();
+        } else if (method === "creatorhub.login") {
+          data = await creatorHub.login();
+        } else if (method === "creatorhub.start") {
+          data = await creatorHub.start(
+            value as Parameters<typeof creatorHub.start>[0],
+          );
+        } else if (method === "outreach.submit") {
+          data = await outreach.submit(
+            value as Parameters<typeof outreach.submit>[0],
+          );
+        } else if (method === "outreach.refresh") {
+          data = await outreach.refresh(value as { outreachId: string });
+        } else if (method === "outreach.cancel") {
+          data = await outreach.cancel(value as { outreachId: string });
+        } else if (method === "outreach.confirm") {
+          data = await outreach.confirm(
+            value as {
+              outreachId: string;
+              attempt: number;
+              status: "sent" | "failed";
+            },
+          );
         } else if (method === "observation.start") {
           data = observations.start(
             requestIdentity,
