@@ -12,18 +12,18 @@ import (
 const defaultLeadCriteria = "判断评论者是否有明确的购房、租房、卖房、出租或看房需求。有明确需求且可以合理回应时 qualified=true；不要根据昵称、头像、地区或身份特征推测。"
 
 type leadSettings struct {
-	Criteria            string    `json:"criteria"`
-	CriteriaVersion     string    `json:"criteriaVersion"`
-	CriteriaHash        string    `json:"criteriaHash"`
-	MaxComments         int       `json:"maxComments"`
-	Concurrency         int       `json:"concurrency"`
-	CreatorHubBaseURL   string    `json:"creatorhubBaseUrl"`
-	CreatorHubAccountID string    `json:"creatorhubAccountId"`
-	UpdatedAt           time.Time `json:"updatedAt"`
+	Criteria            string     `json:"criteria"`
+	CriteriaVersion     string     `json:"criteriaVersion"`
+	CriteriaHash        string     `json:"criteriaHash"`
+	MaxComments         int        `json:"maxComments"`
+	Concurrency         int        `json:"concurrency"`
+	CreatorHubBaseURL   string     `json:"creatorhubBaseUrl"`
+	CreatorHubAccountID string     `json:"creatorhubAccountId"`
+	UpdatedAt           *time.Time `json:"updatedAt,omitempty"`
 }
 
 func criteriaHash(version, criteria string) string {
-	return exchangeFingerprint([]string{"lead-criteria", version, criteria})
+	return exchangeFingerprint([]string{"lead-criteria", version, strings.TrimSpace(criteria)})
 }
 
 func (s *server) leadConfig(ctx context.Context, a actor, op string, body []byte) (any, error) {
@@ -52,10 +52,11 @@ func (s *server) leadSettingsGet(ctx context.Context, a actor) (leadSettings, er
 		return out, nil
 	}
 	if err != nil {
-		return out, err
+		return leadSettings{}, err
 	}
 	row.CriteriaHash = criteriaHash(row.CriteriaVersion, row.Criteria)
-	row.UpdatedAt = updated.UTC()
+	utc := updated.UTC()
+	row.UpdatedAt = &utc
 	return row, nil
 }
 
@@ -67,10 +68,16 @@ func (s *server) leadSettingsSave(ctx context.Context, a actor, body []byte) (le
 		CreatorHubBaseURL   string `json:"creatorhubBaseUrl"`
 		CreatorHubAccountID string `json:"creatorhubAccountId"`
 	}
-	if decodeExchange(body, &in) != nil || len([]rune(in.Criteria)) > 8000 ||
+	invalid := exchangeFail(422, "INVALID_INPUT", "获客设置参数无效")
+	if decodeExchange(body, &in) != nil {
+		return leadSettings{}, invalid
+	}
+	in.CreatorHubAccountID = strings.TrimSpace(in.CreatorHubAccountID)
+	if len([]rune(in.Criteria)) > 8000 || strings.ContainsRune(in.Criteria, 0) ||
 		in.MaxComments < 1 || in.MaxComments > 500 || in.Concurrency < 1 || in.Concurrency > 4 ||
-		!loopbackBaseURL(in.CreatorHubBaseURL) {
-		return leadSettings{}, collectionInvalid()
+		!loopbackBaseURL(in.CreatorHubBaseURL) ||
+		(in.CreatorHubAccountID != "" && !validExchangeText(in.CreatorHubAccountID, 64)) {
+		return leadSettings{}, invalid
 	}
 	criteria := strings.TrimSpace(in.Criteria)
 	if criteria == "" {
