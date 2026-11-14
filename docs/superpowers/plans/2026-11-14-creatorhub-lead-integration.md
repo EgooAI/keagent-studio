@@ -2607,7 +2607,7 @@ export class CreatorHubOutreach {
       analysisId: input.analysisId,
       draft: input.draft,
       requestKey: input.requestKey,
-    })) as { id: string; status: string; commenterProfile: string; commenterName: string };
+    })) as { id: string; status: string; commenterProfile: string; commenterName: string; attempt: number };
     const settings = await this.settings();
     const client = this.deps.client(settings.creatorhubBaseUrl);
     if (!created.commenterProfile)
@@ -2621,7 +2621,7 @@ export class CreatorHubOutreach {
           targetSecUid,
           targetNick: created.commenterName || "",
           content: input.draft,
-          idempotencyKey: `ch-${created.id}`,
+          idempotencyKey: `ch-${created.id}-${created.attempt}`,
         });
       } catch (error) {
         if ((error as { code?: string }).code === "CREATORHUB_REJECTED") throw error;
@@ -2630,13 +2630,15 @@ export class CreatorHubOutreach {
     if (!task) {
       await this.deps.request("/v1/collection/outreach/result", {
         id: created.id,
+        attempt: created.attempt,
         status: "uncertain",
         error: "CreatorHub 未返回任务回执，请核对发送记录",
       });
-      return { id: created.id, analysisId: input.analysisId, status: "uncertain", creatorhubTaskId: "", error: "" };
+      return { id: created.id, analysisId: input.analysisId, attempt: created.attempt, status: "uncertain", creatorhubTaskId: "", error: "" };
     }
     await this.deps.request("/v1/collection/outreach/result", {
       id: created.id,
+      attempt: created.attempt,
       status: "submitted",
       creatorhubTaskId: String(task.id),
       method: "browser",
@@ -2644,6 +2646,7 @@ export class CreatorHubOutreach {
     return {
       id: created.id,
       analysisId: input.analysisId,
+      attempt: created.attempt,
       status: "submitted",
       creatorhubTaskId: String(task.id),
       error: "",
@@ -2654,7 +2657,7 @@ export class CreatorHubOutreach {
     const result = (await this.deps.request("/v1/collection/outreach/list", {
       id: outreachId,
       limit: 1,
-    })) as { items: Array<{ id: string; status: string; creatorhubTaskId: string; accountId: string; workId: string }> };
+    })) as { items: Array<{ id: string; status: string; attempt: number; creatorhubTaskId: string; accountId: string; workId: string }> };
     const row = result.items[0];
     if (!row) throw new PublishingError("OUTREACH_NOT_FOUND", "私信任务不存在", 404);
     return row;
@@ -2681,6 +2684,7 @@ export class CreatorHubOutreach {
       task.status === "canceled" ? "canceled" : "submitted";
     await this.deps.request("/v1/collection/outreach/result", {
       id: row.id,
+      attempt: row.attempt,
       status,
       creatorhubTaskId: row.creatorhubTaskId,
       error: task.error || "",
@@ -2697,10 +2701,24 @@ export class CreatorHubOutreach {
     await client.cancelAction(Number(row.creatorhubTaskId));
     await this.deps.request("/v1/collection/outreach/result", {
       id: row.id,
+      attempt: row.attempt,
       status: "canceled",
       creatorhubTaskId: row.creatorhubTaskId,
     });
     return { ...row, status: "canceled" };
+  }
+
+  async confirm(input: { outreachId: string; attempt: number; status: "sent" | "failed" }) {
+    const row = await this.load(input.outreachId);
+    if (row.attempt !== input.attempt)
+      throw new PublishingError("OUTREACH_CHANGED", "任务已重试，请刷新后重新确认", 409);
+    await this.deps.request("/v1/collection/outreach/result", {
+      id: row.id,
+      attempt: input.attempt,
+      status: input.status,
+      confirmed: true,
+    });
+    return { ...row, status: input.status };
   }
 }
 ```
@@ -2733,10 +2751,12 @@ describe("CreatorHubOutreach", () => {
         if (route.endsWith("outreach/submit"))
           return {
             id: "o".repeat(32),
+            attempt: 1,
             status: "approved",
             commenterProfile: "https://www.douyin.com/user/sec1",
             commenterName: "甲",
           };
+        }
         return {};
       },
       client: (baseUrl) => new CreatorHubClient(baseUrl),
@@ -2748,7 +2768,7 @@ describe("CreatorHubOutreach", () => {
       creatorHubAccountId: "1",
     });
     expect(result.status).toBe("submitted");
-    expect(key).toBe(`ch-${"o".repeat(32)}`);
+    expect(key).toBe(`ch-${"o".repeat(32)}-1`);
     expect(calls.some((route) => route.endsWith("outreach/result"))).toBe(true);
     server.close();
   });
@@ -2787,6 +2807,7 @@ const outreach = new CreatorHubOutreach({
 "outreach.submit",
 "outreach.refresh",
 "outreach.cancel",
+"outreach.confirm",
 ```
 
 `creatorhub.cancel`（中断本地等待）放到阶段二，本计划不注册，避免误以为能取消服务端抓取。
@@ -2806,6 +2827,8 @@ const outreach = new CreatorHubOutreach({
   data = await outreach.refresh(value as { outreachId: string });
 } else if (method === "outreach.cancel") {
   data = await outreach.cancel(value as { outreachId: string });
+} else if (method === "outreach.confirm") {
+  data = await outreach.confirm(value as { outreachId: string; attempt: number; status: "sent" | "failed" });
 }
 ```
 
@@ -2902,6 +2925,7 @@ export interface AnalysisJob {
 export interface OutreachTask {
   id: string;
   analysisId: string;
+  attempt: number;
   status: string;
   creatorhubTaskId: string;
   error: string;
@@ -2949,10 +2973,12 @@ export const creatorHubApi = {
     douyinDesktop<OutreachTask>("outreach.submit", input),
   outreach: (input: { accountId: string; workId?: string; limit?: number }) =>
     desktopCloud<{ items: OutreachTask[] }>("collection", "outreach/list", input),
-  refreshOutreach: (outreachId: string) =>
-    douyinDesktop<OutreachTask>("outreach.refresh", { outreachId }),
-  cancelOutreach: (outreachId: string) =>
-    douyinDesktop<OutreachTask>("outreach.cancel", { outreachId }),
+  refreshOutreach: (outreachId: string, attempt: number) =>
+    douyinDesktop<OutreachTask>("outreach.refresh", { outreachId, attempt }),
+  cancelOutreach: (outreachId: string, attempt: number) =>
+    douyinDesktop<OutreachTask>("outreach.cancel", { outreachId, attempt }),
+  confirmOutreach: (outreachId: string, attempt: number, status: "sent" | "failed") =>
+    douyinDesktop<OutreachTask>("outreach.confirm", { outreachId, attempt, status }),
 };
 ```
 
@@ -3291,7 +3317,7 @@ test("评论获客完成抓取、分析和提交", async ({ page }) => {
       return okay({ id: "job1", status: "done", total: 2, processed: 2, qualified: 2, failed: 0, error: "", criteriaHash: "x" });
     if (method === "comments/analysis/list")
       return okay({ items: [{ id: "an1", jobId: "job1", commentId: "c1", commentText: "想买房", commenterName: "甲", commenterProfile: "https://www.douyin.com/user/sec1", likeCount: 1, commentTime: null, intent: "buy", evidence: "想买房", qualified: true, reason: "明确需求", draft: "您好，想了解哪个区域？", status: "done", error: "" }] });
-    if (method === "outreach.submit") return okay({ id: "o1", analysisId: "an1", status: "submitted", creatorhubTaskId: "7", error: "" });
+    if (method === "outreach.submit") return okay({ id: "o1", analysisId: "an1", attempt: 1, status: "submitted", creatorhubTaskId: "7", error: "" });
     return okay({});
   });
   await page.addInitScript(() => {

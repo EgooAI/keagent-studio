@@ -381,9 +381,10 @@ keagent 的评论来源、分析和私信记录都以 keagent 的 `accountId` �
 | `creatorhub.resolve` | `url` | `awemeId`, `title` |
 | `creatorhub.start` | `url, accountId, requestKey, consent` | `watchId, awemeId, snapshotId, readCount, coverage` |
 | `creatorhub.cancel` | `requestKey` | 尽力中止本地等待；不承诺取消服务端扫描 |
-| `outreach.submit` | `analysisId, draft, requestKey` | `outreachId, creatorhubTaskId, status` |
-| `outreach.refresh` | `outreachId` | 最新状态 |
-| `outreach.cancel` | `outreachId` | 取消结果 |
+| `outreach.submit` | `analysisId, draft, requestKey` | `outreachId, attempt, creatorhubTaskId, status` |
+| `outreach.refresh` | `outreachId, attempt` | 最新状态 |
+| `outreach.cancel` | `outreachId, attempt` | 取消结果 |
+| `outreach.confirm` | `outreachId, attempt, status("sent"\|"failed")` | 人工确认 uncertain 结果 |
 
 `accountId` 是 CreatorHub 账号 ID。`consent` 为 `{accepted: boolean, retentionDays?: number, expiresAt?: string}`；只有 `accepted=true` 才允许继续抓取和写入授权。
 
