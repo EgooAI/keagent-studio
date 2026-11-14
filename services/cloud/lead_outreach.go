@@ -8,9 +8,19 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var outreachRank = map[string]int{"approved": 1, "submitted": 2, "sending": 3, "sent": 4, "uncertain": 4, "failed": 4, "canceled": 4}
+
+func outreachConflict(err error) error {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" {
+		return exchangeFail(409, "REQUEST_CONFLICT", "同一请求已用于其他私信任务")
+	}
+	return err
+}
 
 func (s *server) leadOutreach(ctx context.Context, a actor, op string, body []byte) (any, error) {
 	switch op {
@@ -50,7 +60,8 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 		a.qualified,a.status,coalesce(o.fields->>'commenter_profile',''),
 		coalesce(o.fields->>'commenter_name','')
 		FROM keagent_comment_analyses a JOIN keagent_comment_observations o ON o.id=a.comment_row_id
-		WHERE a.id=$1 AND a.owner_id=$2 AND a.device_id=$3 FOR UPDATE`,
+		WHERE a.id=$1 AND a.owner_id=$2 AND a.device_id=$3
+			AND o.retain_until > clock_timestamp() FOR UPDATE`,
 		in.AnalysisID, a.UserID, a.DeviceID).Scan(&analysisID, &owner, &device, &account, &work,
 		&source, &qualified, &status, &commentProfile, &commenterName)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -73,39 +84,65 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 	if state != "active" || !g.ManualContact {
 		return nil, exchangeFail(403, "COMMENT_PURPOSE_DENIED", "来源未授权人工联系")
 	}
-	var existingID, existingStatus string
-	err = tx.QueryRowContext(ctx, `SELECT id,status FROM keagent_outreach_tasks WHERE analysis_id=$1 FOR UPDATE`, analysisID).Scan(&existingID, &existingStatus)
+	// Source refresh may have cascaded the analysis away; never let the insert surface as an FK error.
+	var stillValid bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_comment_analyses a
+		JOIN keagent_comment_observations o ON o.id=a.comment_row_id
+		WHERE a.id=$1 AND a.owner_id=$2 AND a.device_id=$3 AND a.status='done' AND a.qualified
+			AND o.retain_until > clock_timestamp())`,
+		analysisID, a.UserID, a.DeviceID).Scan(&stillValid); err != nil {
+		return nil, err
+	}
+	if !stillValid {
+		return nil, exchangeFail(409, "COMMENT_CHANGED", "评论或授权已更新，请重新分析")
+	}
+	var existingID, existingStatus, existingKey string
+	var existingAttempt int
+	err = tx.QueryRowContext(ctx, `SELECT id,status,attempts,request_key FROM keagent_outreach_tasks
+		WHERE analysis_id=$1 FOR UPDATE`, analysisID).Scan(&existingID, &existingStatus,
+		&existingAttempt, &existingKey)
 	if err == nil {
+		if existingKey == in.RequestKey {
+			if err = tx.Commit(); err != nil {
+				return nil, err
+			}
+			return object{"id": existingID, "analysisId": analysisID, "status": existingStatus,
+				"attempt": existingAttempt, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
+		}
 		if existingStatus != "failed" && existingStatus != "canceled" {
 			return nil, exchangeFail(409, "OUTREACH_EXISTS", "该评论已有私信任务")
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE keagent_outreach_tasks SET draft=$2,status='approved',
-			creatorhub_task_id='',error='',request_key=$3,updated_at=now() WHERE id=$1`,
-			existingID, strings.TrimSpace(in.Draft), in.RequestKey); err != nil {
-			return nil, err
+		// A retry is a new CreatorHub generation; Task 9 keys idempotency by id plus attempt.
+		var attempt int
+		err = tx.QueryRowContext(ctx, `UPDATE keagent_outreach_tasks SET draft=$2,status='approved',
+			creatorhub_task_id='',error='',method='',submitted_at=NULL,finished_at=NULL,
+			request_key=$3,attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING attempts`,
+			existingID, strings.TrimSpace(in.Draft), in.RequestKey).Scan(&attempt)
+		if err != nil {
+			return nil, outreachConflict(err)
 		}
 		if err = tx.Commit(); err != nil {
 			return nil, err
 		}
 		return object{"id": existingID, "analysisId": analysisID, "status": "approved",
-			"commenterProfile": commentProfile, "commenterName": commenterName}, nil
+			"attempt": attempt, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	outreachID := id()
 	_, err = tx.ExecContext(ctx, `INSERT INTO keagent_outreach_tasks(
-		id,analysis_id,owner_id,device_id,account_id,work_id,draft,status,request_key)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'approved',$8)`,
+		id,analysis_id,owner_id,device_id,account_id,work_id,draft,status,attempts,request_key)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'approved',1,$8)`,
 		outreachID, analysisID, a.UserID, a.DeviceID, account, work, strings.TrimSpace(in.Draft), in.RequestKey)
 	if err != nil {
-		return nil, err
+		return nil, outreachConflict(err)
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	return object{"id": outreachID, "analysisId": analysisID, "status": "approved",
-		"commenterProfile": commentProfile, "commenterName": commenterName}, nil
+		"attempt": 1, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
 }
 
 func (s *server) outreachResult(ctx context.Context, a actor, body []byte) (any, error) {
@@ -115,6 +152,8 @@ func (s *server) outreachResult(ctx context.Context, a actor, body []byte) (any,
 		CreatorHubTaskID string `json:"creatorhubTaskId"`
 		Error            string `json:"error"`
 		Method           string `json:"method"`
+		Attempt          int    `json:"attempt"`
+		Confirmed        bool   `json:"confirmed"`
 	}
 	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.ID) ||
 		outreachRank[in.Status] == 0 || len([]rune(in.Error)) > 500 || len([]rune(in.Method)) > 40 {
@@ -126,30 +165,53 @@ func (s *server) outreachResult(ctx context.Context, a actor, body []byte) (any,
 	}
 	defer tx.Rollback()
 	var current string
-	err = tx.QueryRowContext(ctx, `SELECT status FROM keagent_outreach_tasks
-		WHERE id=$1 AND owner_id=$2 AND device_id=$3 FOR UPDATE`, in.ID, a.UserID, a.DeviceID).Scan(&current)
+	var currentAttempt int
+	err = tx.QueryRowContext(ctx, `SELECT status,attempts FROM keagent_outreach_tasks
+		WHERE id=$1 AND owner_id=$2 AND device_id=$3 FOR UPDATE`,
+		in.ID, a.UserID, a.DeviceID).Scan(&current, &currentAttempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, collectionMissing()
 	}
 	if err != nil {
 		return nil, err
 	}
-	if outreachRank[in.Status] < outreachRank[current] || current == "sent" || current == "uncertain" {
-		return object{"id": in.ID, "status": current, "ignored": true}, nil
+	ignored := object{"id": in.ID, "status": current, "attempt": currentAttempt, "ignored": true}
+	if in.Attempt != currentAttempt || current == "sent" {
+		return ignored, nil
+	}
+	// An uncertain delivery is only resolved by an explicit confirmation.
+	if current == "uncertain" && !(in.Confirmed && (in.Status == "sent" || in.Status == "failed")) {
+		return ignored, nil
+	}
+	if outreachRank[in.Status] < outreachRank[current] {
+		return ignored, nil
 	}
 	finished := in.Status == "sent" || in.Status == "uncertain" || in.Status == "failed" || in.Status == "canceled"
-	_, err = tx.ExecContext(ctx, `UPDATE keagent_outreach_tasks SET status=$2,creatorhub_task_id=$3,
-		error=$4,method=$5,updated_at=now(),
-		submitted_at=coalesce(submitted_at,CASE WHEN $2='submitted' THEN now() END),
-		finished_at=CASE WHEN $6 THEN now() ELSE finished_at END WHERE id=$1`,
-		in.ID, in.Status, in.CreatorHubTaskID, in.Error, in.Method, finished)
+	result, err := tx.ExecContext(ctx, `UPDATE keagent_outreach_tasks SET status=$2,
+		creatorhub_task_id=COALESCE(NULLIF($3,''),creatorhub_task_id),
+		error=$4,method=COALESCE(NULLIF($5,''),method),updated_at=now(),
+		submitted_at=COALESCE(submitted_at,CASE WHEN $2 IN ('submitted','sending','sent') THEN now() END),
+		finished_at=CASE WHEN $6 THEN COALESCE(finished_at,now()) ELSE NULL END
+		WHERE id=$1 AND attempts=$7`,
+		in.ID, in.Status, in.CreatorHubTaskID, in.Error, in.Method, finished, currentAttempt)
 	if err != nil {
 		return nil, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return ignored, nil
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return object{"id": in.ID, "status": in.Status}, nil
+	return object{"id": in.ID, "status": in.Status, "attempt": currentAttempt}, nil
+}
+
+func nullableTime(value sql.NullTime) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.Time.UTC()
 }
 
 func (s *server) outreachList(ctx context.Context, a actor, body []byte) (any, error) {
@@ -213,29 +275,34 @@ func (s *server) outreachList(ctx context.Context, a actor, body []byte) (any, e
 		}
 		items = append(items, object{"id": id, "analysisId": analysisID, "accountId": accountID,
 			"workId": workID, "draft": draft, "status": status, "creatorhubTaskId": taskID,
-			"method": method, "error": errText, "attempts": attempts,
-			"createdAt": created.UTC(), "submittedAt": submitted.Time, "finishedAt": finished.Time})
+			"method": method, "error": errText, "attempt": attempts,
+			"createdAt": created.UTC(), "submittedAt": nullableTime(submitted), "finishedAt": nullableTime(finished)})
 	}
 	return object{"items": items}, rs.Err()
 }
 
 func (s *server) outreachCancel(ctx context.Context, a actor, body []byte) (any, error) {
 	var in struct {
-		ID string `json:"id"`
+		ID      string `json:"id"`
+		Attempt int    `json:"attempt"`
 	}
 	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.ID) {
 		return nil, collectionInvalid()
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE keagent_outreach_tasks SET status='canceled',
-		updated_at=now(),finished_at=now()
-		WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND status IN ('approved','submitted')`,
-		in.ID, a.UserID, a.DeviceID)
+	args := []any{in.ID, a.UserID, a.DeviceID}
+	where := ` WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND status IN ('approved','submitted')`
+	if in.Attempt != 0 {
+		args = append(args, in.Attempt)
+		where += fmt.Sprintf(" AND attempts=$%d", len(args))
+	}
+	var attempt int
+	err := s.db.QueryRowContext(ctx, `UPDATE keagent_outreach_tasks SET status='canceled',
+		updated_at=now(),finished_at=now()`+where+` RETURNING attempts`, args...).Scan(&attempt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, exchangeFail(409, "OUTREACH_NOT_CANCELABLE", "任务已执行或不存在")
+	}
 	if err != nil {
 		return nil, err
 	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return nil, exchangeFail(409, "OUTREACH_NOT_CANCELABLE", "任务已执行或不存在")
-	}
-	return object{"id": in.ID, "status": "canceled"}, nil
+	return object{"id": in.ID, "status": "canceled", "attempt": attempt}, nil
 }
