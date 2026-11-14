@@ -594,9 +594,22 @@ func TestAnalysisRetryRunsOnlySelectedFailure(t *testing.T) {
 	})
 	analysisRun(t, f, jobID)
 	mu.Lock()
-	defer mu.Unlock()
-	if len(analyzed) != 1 || analyzed[0] != selected {
-		t.Fatalf("selected retry analyzed %v, want only %q", analyzed, selected)
+	analyzedRun := append([]string(nil), analyzed...)
+	mu.Unlock()
+	if len(analyzedRun) != 1 || analyzedRun[0] != selected {
+		t.Fatalf("selected retry analyzed %v, want only %q", analyzedRun, selected)
+	}
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if job["status"] != "partial" || job["failed"] != float64(1) ||
+		job["processed"] != float64(2) || job["qualified"] != float64(1) {
+		t.Fatalf("job counters after partial retry: %v", job)
+	}
+	list := mustCollection(t, f.server, f.actor, "comments/analysis/list", object{
+		"jobId": jobID, "status": "failed", "limit": 10,
+	})
+	failedItems := rows(list["items"])
+	if len(failedItems) != 1 || obj(failedItems[0])["id"] != ids[1] {
+		t.Fatalf("remaining failure not listed: %v", list)
 	}
 }
 
@@ -633,5 +646,40 @@ func TestAnalysisRetryAllRunsEveryFailure(t *testing.T) {
 	}
 	if len(expected) != 0 {
 		t.Fatalf("retry-all skipped comments: %v", expected)
+	}
+}
+
+func TestAnalysisRestartWithoutSelectableItemsStaysPartial(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, []object{
+		{"comment_id": "c1", "comment_text": "想在上海买房",
+			"commenter_profile": "https://www.douyin.com/user/sec1"},
+	})
+	f.server.leadComplete = func(context.Context, any, string) (string, error) {
+		return "", errors.New("模型失败")
+	}
+	jobID := analysisStart(t, f)
+	analysisRun(t, f, jobID)
+	first := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if first["status"] != "partial" || first["failed"] != float64(1) {
+		t.Fatalf("first run: %v", first)
+	}
+	// Simulated restart: the failed analysis row is persisted, so no observation
+	// is selectable and the worker has nothing to process.
+	analysisRun(t, f, jobID)
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if job["status"] != "partial" || job["failed"] != float64(1) ||
+		job["processed"] != float64(1) {
+		t.Fatalf("restart downgraded a partial job: %v", job)
+	}
+}
+
+func TestAnalysisJobAllSuccessesEndsDone(t *testing.T) {
+	f, jobID := analysisFixture(t)
+	analysisRun(t, f, jobID)
+	job := mustCollection(t, f.server, f.actor, "comments/analysis/job", object{"jobId": jobID})
+	if job["status"] != "done" || job["failed"] != float64(0) ||
+		job["processed"] != float64(2) || job["qualified"] != float64(2) {
+		t.Fatalf("successful job did not end done: %v", job)
 	}
 }

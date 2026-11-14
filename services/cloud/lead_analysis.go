@@ -710,6 +710,18 @@ func (s *server) saveAnalysis(jobID string, a actor, account, work, source, vers
 }
 
 func (s *server) finishAnalysisJob(jobID, status, errText string) {
+	// A run that added no failures can still leave older failed analyses from
+	// earlier attempts or crashes. Spec 8.2 requires `partial` whenever any
+	// analysis for the job failed, so derive the final status from persisted rows.
+	if status == "done" {
+		var failed int
+		if err := s.db.QueryRow(`SELECT count(*) FROM keagent_comment_analyses
+			WHERE job_id=$1 AND status='failed'`, jobID).Scan(&failed); err != nil {
+			log.Printf("analysis failure count failed: %v", err)
+		} else if failed > 0 {
+			status = "partial"
+		}
+	}
 	_, err := s.db.Exec(`UPDATE keagent_comment_analysis_jobs SET status=$2,error=$3,
 		processed=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND status<>'queued'),
 		qualified=(SELECT count(*) FROM keagent_comment_analyses WHERE job_id=$1 AND qualified),
