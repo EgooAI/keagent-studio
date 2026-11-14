@@ -249,7 +249,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -566,7 +565,7 @@ func loadCreatorHubConsent(ctx context.Context, tx *sql.Tx, a actor, scope comme
 }
 ```
 
-需要补 import `encoding/json` 和 `net/url`；`mustJSON` 已存在于 `services/cloud/credits.go`，不要重复定义。
+追加 consent 函数时补 `encoding/json` 导入（`net/url` 已在 Task 2 引入）；`mustJSON` 已存在于 `services/cloud/credits.go`，不要重复定义。
 
 同时把 `leadConfig` 的 switch 补上：
 
