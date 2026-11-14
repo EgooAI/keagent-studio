@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -83,7 +84,7 @@ func (s *server) leadSettingsSave(ctx context.Context, a actor, body []byte) (le
 	if len([]rune(in.Criteria)) > 8000 || strings.ContainsRune(in.Criteria, 0) ||
 		in.MaxComments < 1 || in.MaxComments > 500 || in.Concurrency < 1 || in.Concurrency > 4 ||
 		!loopbackBaseURL(in.CreatorHubBaseURL) ||
-		(in.CreatorHubAccountID != "" && !validExchangeText(in.CreatorHubAccountID, 64)) {
+		(in.CreatorHubAccountID != "" && !validCreatorHubAccountID(in.CreatorHubAccountID)) {
 		return leadSettings{}, invalid
 	}
 	criteria := strings.TrimSpace(in.Criteria)
@@ -105,6 +106,12 @@ func (s *server) leadSettingsSave(ctx context.Context, a actor, body []byte) (le
 		return leadSettings{}, err
 	}
 	return s.leadSettingsGet(ctx, a)
+}
+
+var creatorHubAccountIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+
+func validCreatorHubAccountID(value string) bool {
+	return creatorHubAccountIDPattern.MatchString(value) && !strings.ContainsRune(value, 0)
 }
 
 func loopbackBaseURL(raw string) bool {
@@ -136,7 +143,7 @@ func (s *server) creatorHubConsentSave(ctx context.Context, a actor, body []byte
 	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) ||
 		!douyinPostID.MatchString(in.WorkID) || !validExchangeText(in.Label, 100) ||
 		in.RetentionDays < 1 || in.RetentionDays > 90 || !loopbackBaseURL(in.BaseURL) ||
-		!validExchangeText(in.CreatorHubAccountID, 64) ||
+		!validCreatorHubAccountID(in.CreatorHubAccountID) ||
 		in.ExpiresAt.Before(time.Now()) || in.ExpiresAt.After(time.Now().AddDate(1, 0, 0)) {
 		return nil, collectionInvalid()
 	}
@@ -237,12 +244,19 @@ func loadCreatorHubConsent(ctx context.Context, tx *sql.Tx, a actor, scope comme
 		AnalyzeWithAI bool `json:"analyzeWithAI"`
 		ManualContact bool `json:"manualContact"`
 	}
+	// Malformed purposes deny both uses.
 	_ = json.Unmarshal(purposes, &grant)
+	// Expiry refreshes must not rotate the source policy key; identity and purposes only.
+	stableKey := exchangeFingerprint([]any{
+		"creatorhub-consent", a.UserID, a.DeviceID, scope.AccountID, scope.WorkID,
+		"creatorhub:" + creatorHubAccountID, grant.AnalyzeWithAI, grant.ManualContact,
+	})
 	return &commentGrant{
 		OwnerID: a.UserID, DeviceID: a.DeviceID, AccountID: scope.AccountID,
 		WorkID: scope.WorkID, Ref: "creatorhub:" + creatorHubAccountID, Label: label,
 		Kind: "creatorhub", ExpiresAt: expires, RetentionDays: retention,
 		Fields: append([]string{}, allowedCommentFields...), AnalyzeWithAI: grant.AnalyzeWithAI,
 		ManualContact: grant.ManualContact, AIEndpoint: aiEndpoint, Revoked: revoked,
+		PolicyKey: stableKey,
 	}, nil
 }

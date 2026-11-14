@@ -203,7 +203,7 @@ func verifyCommentScope(ctx context.Context, tx *sql.Tx, a actor, scope commentS
 	return err
 }
 
-// This short transaction consults the local grant file, never the remote provider or export.
+// This short transaction consults the local grant file and CreatorHub consent row, never the remote provider or export.
 func prepareCommentSource(ctx context.Context, tx *sql.Tx, a actor, scope commentScope) (*commentGrant, string, string, error) {
 	g, err := loadCommentGrant(a.UserID, a.DeviceID, scope.AccountID, scope.WorkID)
 	if err != nil {
@@ -227,6 +227,14 @@ func prepareCommentSource(ctx context.Context, tx *sql.Tx, a actor, scope commen
 		key = g.policyKey()
 	}
 	// The source id changes across grant lifetimes. Cascades erase old rows and request receipts.
+	// Refresh the expiry first so an unchanged stable key keeps its rows across repeated saves.
+	if state == "active" {
+		if _, err = tx.ExecContext(ctx, `UPDATE keagent_comment_sources SET expires_at=$6
+			WHERE owner_id=$1 AND device_id=$2 AND account_id=$3 AND work_id=$4 AND policy_key=$5`,
+			a.UserID, a.DeviceID, scope.AccountID, scope.WorkID, key, g.ExpiresAt); err != nil {
+			return nil, "", "", err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM keagent_comment_sources WHERE owner_id=$1 AND device_id=$2 AND account_id=$3 AND work_id=$4 AND (policy_key<>$5 OR expires_at<=clock_timestamp())`,
 		a.UserID, a.DeviceID, scope.AccountID, scope.WorkID, key); err != nil {
 		return nil, "", "", err
@@ -275,6 +283,9 @@ func (s *server) commentRecords(ctx context.Context, a actor, op string, body []
 			return nil, err
 		}
 		defer release()
+	}
+	if providerCtx, aiErr := s.activeAI(ctx); aiErr == nil {
+		ctx = providerCtx
 	}
 	var batch *commentBatch
 	var expectedPolicy, expectedSource string
@@ -421,7 +432,12 @@ func readCommentDetail(ctx context.Context, tx *sql.Tx, in commentInput, sourceI
 	return d, err
 }
 func readCommentPage(ctx context.Context, tx *sql.Tx, in commentInput, sourceID string, g *commentGrant) (commentPage, error) {
-	page := commentPage{Items: []commentDetail{}, SourceState: "active", SourceLabel: g.Label, Coverage: "unknown", CanAnalyze: g.AnalyzeWithAI, CanContact: g.ManualContact}
+	endpoint := ""
+	if services := aiServicesFor(ctx); len(services) > 0 {
+		endpoint = services[0].Endpoint
+	}
+	canAnalyze := g.AnalyzeWithAI && (g.AIEndpoint == "" || endpoint == "" || g.AIEndpoint == endpoint)
+	page := commentPage{Items: []commentDetail{}, SourceState: "active", SourceLabel: g.Label, Coverage: "unknown", CanAnalyze: canAnalyze, CanContact: g.ManualContact}
 	var raw []byte
 	err := tx.QueryRowContext(ctx, `SELECT result FROM keagent_comment_snapshots WHERE source_id=$1 AND retain_until>clock_timestamp() ORDER BY observed_at DESC LIMIT 1`, sourceID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -38,13 +38,21 @@ type commentGrant struct {
 	OpenID        string    `json:"openId,omitempty"`
 	ItemID        string    `json:"itemId,omitempty"`
 	TokenEnv      string    `json:"tokenEnv,omitempty"`
-	directory     string
+	// PolicyKey lets a consent-backed grant carry an identity-only key that survives
+	// expiry refreshes. File grants leave it empty and keep their full-grant hash.
+	PolicyKey string `json:"-"`
+	directory string
 }
 
 var commentTokenEnv = regexp.MustCompile(`^KEAGENT_DOUYIN_COMMENT_TOKEN_[A-Z0-9_]{1,64}$`)
 var allowedCommentFields = []string{"comment_text", "commenter_name", "commenter_profile", "comment_time", "like_count", "reply_count", "comment_id", "parent_comment_id"}
 
-func (g *commentGrant) policyKey() string { return exchangeFingerprint(g) }
+func (g *commentGrant) policyKey() string {
+	if g.PolicyKey != "" {
+		return g.PolicyKey
+	}
+	return exchangeFingerprint(g)
+}
 
 func sourceInvalid() error {
 	return exchangeFail(422, "COMMENT_SOURCE_INVALID", "评论来源配置或数据与授权不匹配，请核对来源文件")
