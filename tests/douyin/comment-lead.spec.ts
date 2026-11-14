@@ -33,6 +33,18 @@ const leadRow = {
   draft: "你好，看到你想在浦东买三居室，方便聊聊预算吗？",
 };
 
+const leadRow2: LeadAnalysisRow = {
+  ...leadRow,
+  id: "an1b",
+  commentId: "comment-1b",
+  commentText: "我想在徐汇租房",
+  commenterName: "第二位客户",
+  commenterProfile: "https://www.douyin.com/user/test-lead-2",
+  intent: "rent",
+  evidence: "想在徐汇租房",
+  draft: "你好，看到你想在徐汇租房，方便聊聊预算吗？",
+};
+
 const failedRow: LeadAnalysisRow = {
   id: "an-failed",
   jobId: "job1",
@@ -70,6 +82,7 @@ const nonQualifiedRow: LeadAnalysisRow = {
 interface FixtureOptions {
   jobStatus?: "queued" | "running" | "done" | "partial" | "failed" | "canceled";
   jobFailed?: number;
+  qualifiedItems?: LeadAnalysisRow[];
   failedItems?: LeadAnalysisRow[];
   allItems?: LeadAnalysisRow[];
 }
@@ -103,6 +116,7 @@ async function leadFixture(
   const startInputs: Record<string, unknown>[] = [];
   const analysisListInputs: Record<string, unknown>[] = [];
   const retryInputs: Record<string, unknown>[] = [];
+  const cancelInputs: Record<string, unknown>[] = [];
   const submittedKeys: string[] = [];
   const submittedDrafts: string[] = [];
   const outreachItems: OutreachTask[] = [];
@@ -195,7 +209,8 @@ async function leadFixture(
         analysisListInputs.push(input);
         if (input.status === "failed")
           return okay({ items: options.failedItems ?? [] });
-        if (input.qualified === true) return okay({ items: [leadRow] });
+        if (input.qualified === true)
+          return okay({ items: options.qualifiedItems ?? [leadRow] });
         return okay({ items: options.allItems ?? [leadRow] });
       }
       if (method === "outreach/list") {
@@ -235,6 +250,27 @@ async function leadFixture(
           };
         item.status = input.status as OutreachTask["status"];
         return okay({ ...item });
+      }
+      if (method === "outreach.cancel") {
+        cancelInputs.push(input);
+        const index = outreachItems.findIndex(
+          (candidate) => candidate.id === input.outreachId,
+        );
+        if (index < 0)
+          return {
+            ok: false,
+            error: {
+              status: 404,
+              code: "OUTREACH_NOT_FOUND",
+              message: "私信任务不存在",
+            },
+          };
+        const canceled: OutreachTask = {
+          ...outreachItems[index],
+          status: "canceled",
+        };
+        outreachItems[index] = canceled;
+        return okay(canceled);
       }
       if (method === "outreach.submit") {
         submittedKeys.push(String(input.requestKey));
@@ -369,6 +405,7 @@ async function leadFixture(
     startInputs,
     analysisListInputs,
     retryInputs,
+    cancelInputs,
     submittedKeys,
     submittedDrafts,
     outreachItems,
@@ -589,7 +626,7 @@ test("评论获客：CreatorHub 明确拒绝后展示失败并使用新请求键
   });
   await openReview(page);
   await page.getByRole("button", { name: "确认发送" }).click();
-  await expect(page.getByText("CreatorHub 拒绝该私信")).toBeVisible();
+  await expect(page.getByText("CreatorHub 拒绝该私信").first()).toBeVisible();
   await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
   await expect(page.getByText("失败", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "重新提交" })).toBeVisible();
@@ -914,4 +951,87 @@ test("评论获客：抓取时传入留存与授权有效期", async ({ page }) 
     (new Date(consentInput.expiresAt).getTime() - Date.now()) / 86400000;
   expect(days).toBeGreaterThan(59.5);
   expect(days).toBeLessThan(60.1);
+});
+
+test("评论获客：批量提交选中的私信草稿", async ({ page }) => {
+  const fixture = await leadFixture(
+    page,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { qualifiedItems: [leadRow, leadRow2] },
+  );
+  await openReview(page);
+  await expect(page.getByText("已加载 2 条达标评论。")).toBeVisible();
+  await page
+    .getByRole("row", { name: new RegExp(leadRow.commenterName) })
+    .getByRole("checkbox")
+    .check();
+  await page
+    .getByRole("row", { name: new RegExp(leadRow2.commenterName) })
+    .getByRole("checkbox")
+    .check();
+  const batch = page.getByRole("button", { name: "批量提交 (2)" });
+  await expect(batch).toBeEnabled();
+  await batch.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(leadRow.commenterName)).toBeVisible();
+  await expect(dialog.getByText(leadRow2.commenterName)).toBeVisible();
+  await expect(dialog.getByText(leadRow.draft)).toBeVisible();
+  await expect(dialog.getByText(leadRow2.draft)).toBeVisible();
+  await dialog.getByRole("button", { name: "确认提交" }).click();
+  await expect(
+    page.getByText("批量提交：成功 2，待确认 0，失败 0"),
+  ).toBeVisible();
+  await expect(page.getByText("已提交", { exact: true })).toHaveCount(2);
+  expect(fixture.submittedKeys).toHaveLength(2);
+  expect(new Set(fixture.submittedKeys).size).toBe(2);
+  expect(fixture.submittedDrafts).toEqual([leadRow.draft, leadRow2.draft]);
+});
+
+test("评论获客：取消排队中的私信任务", async ({ page }) => {
+  const fixture = await leadFixture(page);
+  fixture.outreachItems.push({
+    id: "o-cancel",
+    analysisId: "an1",
+    attempt: 2,
+    status: "submitted",
+    creatorhubTaskId: "9",
+    error: "",
+    draft: leadRow.draft,
+    requestKey: "cancel-request-key",
+  });
+  await openReview(page);
+  await expect(page.getByText("已提交", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "取消发送" }).click();
+  await page.getByRole("button", { name: /^确\s*认$/ }).click();
+  await expect(page.getByText("已取消发送", { exact: true })).toBeVisible();
+  await expect(page.getByText("已取消", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新提交" })).toBeVisible();
+  expect(fixture.cancelInputs).toContainEqual({
+    outreachId: "o-cancel",
+    attempt: 2,
+  });
+});
+
+test("评论获客：待确认任务展示存储的错误信息", async ({ page }) => {
+  const fixture = await leadFixture(page);
+  fixture.outreachItems.push({
+    id: "o-uncertain",
+    analysisId: "an1",
+    attempt: 1,
+    status: "uncertain",
+    creatorhubTaskId: "9",
+    error: "上游返回不确定，请核对后确认发送结果",
+    draft: leadRow.draft,
+    requestKey: "uncertain-request-key",
+  });
+  await openReview(page);
+  await expect(page.getByText("结果待确认", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("上游返回不确定，请核对后确认发送结果"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认已发送" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认失败" })).toBeVisible();
 });

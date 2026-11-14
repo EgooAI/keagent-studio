@@ -7,6 +7,7 @@ import {
   Checkbox,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
   Select,
   Space,
@@ -17,7 +18,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import type { TableColumnsType } from "antd";
+import type { TableColumnsType, TableProps } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   creatorHubApi,
@@ -148,6 +149,12 @@ function outreachDraftEditable(task: OutreachTask | undefined) {
     task.status === "canceled"
   );
 }
+function boundedError(value: string, limit = 120) {
+  const chars = Array.from(value);
+  return chars.length > limit ? `${chars.slice(0, limit).join("")}…` : value;
+}
+const rateLimitNote =
+  "CreatorHub 私信默认限速：2 次/小时、8 次/天、最短 900 秒；发送可能持续多天。";
 
 export default function CommentLeadPage() {
   if (!isLive || !desktopPublishingAvailable()) {
@@ -181,6 +188,10 @@ function CommentLeadWorkspace() {
   const [criteria, setCriteria] = useState("");
   const [maxComments, setMaxComments] = useState(200);
   const [showAll, setShowAll] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState("");
   const [started, setStarted] = useState<{
     workId: string;
     accountId: string;
@@ -440,6 +451,21 @@ function CommentLeadWorkspace() {
     onError: (error) => void message.error(error.message),
     retry: false,
   });
+  const cancelTask = useMutation({
+    mutationFn: (task: OutreachTask) =>
+      creatorHubApi.cancelOutreach(task.id, task.attempt),
+    onSuccess: (task) => {
+      setSubmitted((current) => ({
+        ...current,
+        [task.analysisId]: task,
+      }));
+      updateOutreachCache(task);
+      void queryClient.invalidateQueries({ queryKey: outreachKey });
+      void message.success("已取消发送");
+    },
+    onError: (error) => void message.error(error.message),
+    retry: false,
+  });
   const tasksByAnalysis = new Map<string, OutreachTask>();
   for (const [analysisId, task] of Object.entries(submitted))
     tasksByAnalysis.set(analysisId, task);
@@ -447,6 +473,101 @@ function CommentLeadWorkspace() {
     const current = tasksByAnalysis.get(task.analysisId);
     tasksByAnalysis.set(task.analysisId, preferOutreach(current, task));
   }
+  useEffect(() => {
+    if (!results.data) return;
+    const visible = new Set(results.data.items.map((row) => row.id));
+    setSelectedKeys((current) => {
+      const next = current.filter((key) => visible.has(key));
+      return next.length === current.length ? current : next;
+    });
+  }, [results.data]);
+  const selectableRow = (row: LeadAnalysisRow) => {
+    if (row.status === "failed") return false;
+    const task = tasksByAnalysis.get(row.id);
+    if (task && task.status !== "failed" && task.status !== "canceled")
+      return false;
+    const draft = (drafts[row.id] ?? task?.draft ?? row.draft).trim();
+    return !!draft && !!row.commenterProfile;
+  };
+  const rowsById = new Map(
+    (results.data?.items ?? []).map((row) => [row.id, row]),
+  );
+  const selectedRows = selectedKeys
+    .map((key) => rowsById.get(key))
+    .filter((row): row is LeadAnalysisRow => !!row && selectableRow(row));
+  const rowSelection: TableProps<LeadAnalysisRow>["rowSelection"] = {
+    selectedRowKeys: selectedKeys,
+    onChange: (keys) => setSelectedKeys(keys.map(String)),
+    getCheckboxProps: (row) => ({ disabled: !selectableRow(row) }),
+  };
+  const runBatchSubmit = async () => {
+    const rows = selectedRows;
+    if (rows.length === 0 || batchRunning) return;
+    setBatchRunning(true);
+    const processed: string[] = [];
+    const nextSubmitted: Record<string, OutreachTask> = {};
+    let success = 0;
+    let uncertain = 0;
+    let failed = 0;
+    let skipped = 0;
+    try {
+      for (const [index, row] of rows.entries()) {
+        setBatchProgress(`正在提交 ${index + 1}/${rows.length}`);
+        const task = tasksByAnalysis.get(row.id);
+        const draft = (drafts[row.id] ?? task?.draft ?? row.draft).trim();
+        const requestKey = (submitKeys.current[row.id] ||= crypto.randomUUID());
+        try {
+          const result = await creatorHubApi.submitOutreach({
+            analysisId: row.id,
+            draft,
+            requestKey,
+          });
+          processed.push(row.id);
+          if (
+            result.status === "submitted" ||
+            result.status === "sending" ||
+            result.status === "sent"
+          ) {
+            delete submitKeys.current[row.id];
+            nextSubmitted[row.id] = result;
+            success++;
+          } else if (result.status === "uncertain") {
+            // Keep the key: the same key must not trigger a new send.
+            nextSubmitted[row.id] = result;
+            uncertain++;
+          } else {
+            delete submitKeys.current[row.id];
+            failed++;
+          }
+        } catch (error) {
+          processed.push(row.id);
+          if (
+            error instanceof ServiceRequestError &&
+            error.code === "OUTREACH_UNCERTAIN"
+          ) {
+            // Keep the key; the list refresh below surfaces the uncertain task.
+            uncertain++;
+          } else {
+            if (definitiveSubmitError(error)) delete submitKeys.current[row.id];
+            if (isOutreachExists(error)) skipped++;
+            else failed++;
+          }
+        }
+      }
+      setSubmitted((current) => ({ ...current, ...nextSubmitted }));
+    } finally {
+      setBatchRunning(false);
+      setBatchProgress("");
+      setBatchOpen(false);
+      setSelectedKeys((current) =>
+        current.filter((key) => !processed.includes(key)),
+      );
+      void queryClient.invalidateQueries({ queryKey: outreachKey });
+    }
+    const parts = [`成功 ${success}`, `待确认 ${uncertain}`, `失败 ${failed}`];
+    if (skipped) parts.push(`跳过 ${skipped}`);
+    void message.info(`批量提交：${parts.join("，")}`);
+  };
   const submit = useMutation({
     mutationFn: (input: {
       row: LeadAnalysisRow;
@@ -577,6 +698,40 @@ function CommentLeadWorkspace() {
               <Tag color={outreachColors[task.status] ?? "default"}>
                 {outreachLabels[task.status] ?? task.status}
               </Tag>
+              {(task.status === "uncertain" || task.status === "failed") &&
+                task.error && (
+                  <Tooltip title={boundedError(task.error)}>
+                    <Typography.Text
+                      type="danger"
+                      style={{ display: "inline-block", maxWidth: 150 }}
+                      ellipsis
+                    >
+                      {boundedError(task.error)}
+                    </Typography.Text>
+                  </Tooltip>
+                )}
+              {["approved", "submitted", "sending"].includes(task.status) &&
+                task.creatorhubTaskId && (
+                  <Popconfirm
+                    title="取消发送？"
+                    description="CreatorHub 将取消该排队中的私信任务，取消后可在本页重新提交。"
+                    okText="确认"
+                    cancelText="取消"
+                    onConfirm={() => cancelTask.mutate(task)}
+                  >
+                    <Button
+                      size="small"
+                      danger
+                      disabled={actionsDisabled}
+                      loading={
+                        cancelTask.isPending &&
+                        cancelTask.variables?.id === task.id
+                      }
+                    >
+                      取消发送
+                    </Button>
+                  </Popconfirm>
+                )}
               {outreachRefreshable(task.status) && (
                 <Button
                   size="small"
@@ -1149,11 +1304,7 @@ function CommentLeadWorkspace() {
       {step === 3 && (
         <Card title="审核与提交">
           <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Alert
-              type="info"
-              showIcon
-              title="CreatorHub 私信默认限速：2 次/小时、8 次/天、最短 900 秒；发送可能持续多天。"
-            />
+            <Alert type="info" showIcon title={rateLimitNote} />
             <Space>
               <Checkbox
                 checked={showAll}
@@ -1164,6 +1315,20 @@ function CommentLeadWorkspace() {
               <Typography.Text type="secondary">
                 包含未达标与失败的评论
               </Typography.Text>
+            </Space>
+            <Space>
+              <Button
+                type="primary"
+                disabled={
+                  actionsDisabled || selectedKeys.length === 0 || batchRunning
+                }
+                loading={batchRunning}
+                onClick={() => setBatchOpen(true)}
+              >
+                {batchRunning
+                  ? batchProgress || "批量提交中…"
+                  : `批量提交 (${selectedKeys.length})`}
+              </Button>
             </Space>
             {results.isPending && <Spin />}
             {results.error && (
@@ -1192,6 +1357,9 @@ function CommentLeadWorkspace() {
             {confirm.error && (
               <Alert type="error" showIcon title={confirm.error.message} />
             )}
+            {cancelTask.error && (
+              <Alert type="error" showIcon title={cancelTask.error.message} />
+            )}
             {results.data && (
               <>
                 <Typography.Text>
@@ -1200,6 +1368,7 @@ function CommentLeadWorkspace() {
                 </Typography.Text>
                 <Table<LeadAnalysisRow>
                   rowKey="id"
+                  rowSelection={rowSelection}
                   columns={columns}
                   dataSource={results.data.items}
                   pagination={{ pageSize: 50 }}
@@ -1207,6 +1376,58 @@ function CommentLeadWorkspace() {
                 />
               </>
             )}
+            <Modal
+              open={batchOpen}
+              title="批量提交私信"
+              okText="确认提交"
+              cancelText="取消"
+              confirmLoading={batchRunning}
+              okButtonProps={{ disabled: batchRunning }}
+              cancelButtonProps={{ disabled: batchRunning }}
+              closable={!batchRunning}
+              mask={{ closable: !batchRunning }}
+              onOk={() => void runBatchSubmit()}
+              onCancel={() => {
+                if (!batchRunning) setBatchOpen(false);
+              }}
+            >
+              <Space
+                orientation="vertical"
+                size="middle"
+                style={{ width: "100%" }}
+              >
+                <Typography.Text>
+                  将向 {selectedRows.length} 位评论者发送私信：
+                </Typography.Text>
+                <div>
+                  {selectedRows.map((row) => {
+                    const task = tasksByAnalysis.get(row.id);
+                    const draft = (
+                      drafts[row.id] ??
+                      task?.draft ??
+                      row.draft
+                    ).trim();
+                    return (
+                      <div key={row.id}>
+                        <Typography.Text strong>
+                          {row.commenterName}
+                        </Typography.Text>
+                        <Typography.Text type="secondary">
+                          ：{draft.slice(0, 60)}
+                          {draft.length > 60 ? "…" : ""}
+                        </Typography.Text>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Alert type="info" showIcon title={rateLimitNote} />
+                {batchRunning && (
+                  <Typography.Text type="secondary">
+                    {batchProgress}
+                  </Typography.Text>
+                )}
+              </Space>
+            </Modal>
           </Space>
         </Card>
       )}
