@@ -45,6 +45,10 @@ async function leadFixture(
     input: Record<string, unknown>,
     items: OutreachTask[],
   ) => MockResponse,
+  respondConfirm?: (
+    input: Record<string, unknown>,
+    items: OutreachTask[],
+  ) => MockResponse,
 ) {
   let accounts = [...initialAccounts];
   let startFailure: unknown = undefined;
@@ -135,6 +139,7 @@ async function leadFixture(
             };
       }
       if (method === "outreach.confirm") {
+        if (respondConfirm) return respondConfirm(input, outreachItems);
         const item = outreachItems.find(
           (candidate) => candidate.id === input.outreachId,
         );
@@ -596,6 +601,52 @@ test("评论获客：服务商结果待确认的任务可人工确认", async ({
   expect(fixture.outreachItems[0]?.status).toBe("sent");
 });
 
+test("评论获客：人工确认失败不会被过期列表回退", async ({ page }) => {
+  const fixture = await leadFixture(
+    page,
+    undefined,
+    undefined,
+    undefined,
+    (input, items) => {
+      const item = items.find((candidate) => candidate.id === input.outreachId);
+      if (!item)
+        return {
+          ok: false,
+          error: {
+            status: 404,
+            code: "OUTREACH_NOT_FOUND",
+            message: "私信任务不存在",
+          },
+        };
+      // The confirmation succeeds, but the list copy stays uncertain so a
+      // delayed refetch tries to downgrade the terminal state.
+      return { ok: true, data: { ...item, status: input.status } };
+    },
+  );
+  fixture.outreachItems.push({
+    id: "o-uncertain",
+    analysisId: "an1",
+    attempt: 1,
+    status: "uncertain",
+    creatorhubTaskId: "9",
+    error: "",
+    draft: leadRow.draft,
+    requestKey: "existing-request-key",
+  });
+  await openReview(page);
+  await expect(page.getByText("结果待确认", { exact: true })).toBeVisible();
+  const before = fixture.outreachListCalls();
+  fixture.holdOutreach();
+  await page.getByRole("button", { name: "确认失败" }).click();
+  await page.getByRole("button", { name: /^确\s*认$/ }).click();
+  await expect(page.getByText("已确认失败")).toBeVisible();
+  await expect(page.getByText("失败", { exact: true })).toBeVisible();
+  fixture.releaseOutreach();
+  await expect.poll(() => fixture.outreachListCalls()).toBeGreaterThan(before);
+  await expect(page.getByText("失败", { exact: true })).toBeVisible();
+  expect(fixture.outreachItems[0]?.status).toBe("uncertain");
+});
+
 test("评论获客：服务端待发送任务可编辑草稿并继续发送", async ({ page }) => {
   const fixture = await leadFixture(page);
   fixture.outreachItems.push({
@@ -645,7 +696,7 @@ test("评论获客：缺少请求标识的待发送任务无法继续发送", as
   await expect(page.getByText("待发送", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "继续发送" })).toHaveCount(0);
   await expect(
-    page.getByText("缺少请求标识，无法继续发送，请刷新任务"),
+    page.getByText("缺少请求标识，无法继续发送，请重新分析后再提交"),
   ).toBeVisible();
   expect(fixture.submittedKeys).toHaveLength(0);
 });

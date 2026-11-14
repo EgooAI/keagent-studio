@@ -96,18 +96,30 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 	if !stillValid {
 		return nil, exchangeFail(409, "COMMENT_CHANGED", "评论或授权已更新，请重新分析")
 	}
-	var existingID, existingStatus, existingKey string
+	var existingID, existingStatus, existingKey, existingDraft string
 	var existingAttempt int
-	err = tx.QueryRowContext(ctx, `SELECT id,status,attempts,request_key FROM keagent_outreach_tasks
+	err = tx.QueryRowContext(ctx, `SELECT id,status,attempts,request_key,draft FROM keagent_outreach_tasks
 		WHERE analysis_id=$1 FOR UPDATE`, analysisID).Scan(&existingID, &existingStatus,
-		&existingAttempt, &existingKey)
+		&existingAttempt, &existingKey, &existingDraft)
 	if err == nil {
 		if existingKey == in.RequestKey {
+			draft := existingDraft
+			if existingStatus == "approved" {
+				// The renderer may edit an approved draft before resuming; persist
+				// exactly what will be sent. Replays against any other status stay
+				// pure receipts and must not rewrite the stored draft.
+				draft = strings.TrimSpace(in.Draft)
+				if _, err = tx.ExecContext(ctx, `UPDATE keagent_outreach_tasks SET draft=$2,updated_at=now()
+					WHERE id=$1`, existingID, draft); err != nil {
+					return nil, err
+				}
+			}
 			if err = tx.Commit(); err != nil {
 				return nil, err
 			}
 			return object{"id": existingID, "analysisId": analysisID, "status": existingStatus,
-				"attempt": existingAttempt, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
+				"attempt": existingAttempt, "draft": draft,
+				"commenterProfile": commentProfile, "commenterName": commenterName}, nil
 		}
 		if existingStatus != "failed" && existingStatus != "canceled" {
 			return nil, exchangeFail(409, "OUTREACH_EXISTS", "该评论已有私信任务")

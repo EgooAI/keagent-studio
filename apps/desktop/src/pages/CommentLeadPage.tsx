@@ -104,7 +104,7 @@ function preferOutreach(
     return incoming.attempt > current.attempt ? incoming : current;
   const currentRank = outreachStatusRank[current.status] ?? -1;
   const incomingRank = outreachStatusRank[incoming.status] ?? -1;
-  return incomingRank >= currentRank ? incoming : current;
+  return incomingRank > currentRank ? incoming : current;
 }
 function definitiveSubmitError(error: unknown) {
   if (!(error instanceof ServiceRequestError)) return false;
@@ -531,7 +531,7 @@ function CommentLeadWorkspace() {
               )}
               {task.status === "approved" && !task.requestKey && (
                 <Typography.Text type="warning">
-                  缺少请求标识，无法继续发送，请刷新任务
+                  缺少请求标识，无法继续发送，请重新分析后再提交
                 </Typography.Text>
               )}
               {(task.status === "failed" || task.status === "canceled") && (

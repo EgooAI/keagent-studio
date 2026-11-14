@@ -126,7 +126,7 @@ func TestOutreachSubmitSameRequestReturnsReceipt(t *testing.T) {
 	f, analysis := outreachAnalysis(t)
 	key := id()
 	first := outreachSubmitCall(t, f, analysis["id"].(string), "原草稿", key)
-	second := outreachSubmitCall(t, f, analysis["id"].(string), "重放时不应覆盖草稿", key)
+	second := outreachSubmitCall(t, f, analysis["id"].(string), "原草稿", key)
 	if second["id"] != first["id"] || second["attempt"] != first["attempt"] ||
 		second["status"] != "approved" {
 		t.Fatalf("same request key was not idempotent: %v %v", first, second)
@@ -141,6 +141,45 @@ func TestOutreachSubmitSameRequestReturnsReceipt(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("replay created a second row: %d", count)
+	}
+}
+
+func TestOutreachApprovedReplayPersistsEditedDraft(t *testing.T) {
+	f, analysis := outreachAnalysis(t)
+	key := id()
+	first := outreachSubmitCall(t, f, analysis["id"].(string), "原草稿", key)
+	edited := outreachSubmitCall(t, f, analysis["id"].(string), "  新草稿  ", key)
+	if edited["id"] != first["id"] || edited["attempt"] != first["attempt"] ||
+		edited["status"] != "approved" {
+		t.Fatalf("approved replay changed the receipt identity: %v %v", first, edited)
+	}
+	if edited["draft"] != "新草稿" {
+		t.Fatalf("approved replay returned a stale draft: %v", edited)
+	}
+	row := outreachRow(t, f, first["id"])
+	if row["draft"] != "新草稿" || row["attempt"] != first["attempt"] {
+		t.Fatalf("edited draft was not persisted: %v", row)
+	}
+}
+
+func TestOutreachSubmittedReplayKeepsStoredDraft(t *testing.T) {
+	f, analysis := outreachAnalysis(t)
+	key := id()
+	first := outreachSubmitCall(t, f, analysis["id"].(string), "原草稿", key)
+	mustCollection(t, f.server, f.actor, "outreach/result", object{
+		"id": first["id"], "status": "submitted", "creatorhubTaskId": "42",
+		"method": "browser", "attempt": first["attempt"],
+	})
+	replay := outreachSubmitCall(t, f, analysis["id"].(string), "重放不应覆盖", key)
+	if replay["id"] != first["id"] || replay["status"] != "submitted" ||
+		replay["attempt"] != first["attempt"] {
+		t.Fatalf("submitted replay was not a receipt: %v", replay)
+	}
+	if replay["draft"] != "原草稿" {
+		t.Fatalf("submitted replay returned the wrong draft: %v", replay)
+	}
+	if row := outreachRow(t, f, first["id"]); row["draft"] != "原草稿" {
+		t.Fatalf("submitted replay rewrote the stored draft: %v", row)
 	}
 }
 
