@@ -2793,6 +2793,7 @@ import { CreatorHubClient } from "../creatorhub/client";
 const creatorHub = new CreatorHubBridge({
   request: dependencies.request,
   client: (baseUrl) => new CreatorHubClient(baseUrl),
+  identity: dependencies.identity,
 });
 const outreach = new CreatorHubOutreach({
   request: dependencies.request,
