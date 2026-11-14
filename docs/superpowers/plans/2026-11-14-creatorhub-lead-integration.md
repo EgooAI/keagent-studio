@@ -3238,13 +3238,7 @@ const submit = useMutation({
     draft: drafts[row.id] ?? row.draft,
     requestKey: crypto.randomUUID(),
   }),
-  onSuccess: (task) => {
-    if (task.status === "uncertain") {
-      void message.warning("CreatorHub 未返回确认，请在任务列表核对结果");
-    } else {
-      void message.success("已提交 CreatorHub 私信队列");
-    }
-  },
+  onSuccess: () => void message.success("已提交 CreatorHub 私信队列"),
   retry: false,
 });
 
