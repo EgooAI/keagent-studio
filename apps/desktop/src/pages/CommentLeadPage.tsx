@@ -14,6 +14,7 @@ import {
   Steps,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { TableColumnsType } from "antd";
@@ -24,6 +25,8 @@ import {
   ServiceRequestError,
 } from "@keagent/api-client";
 import type {
+  CreatorHubConsent,
+  CreatorHubStartResult,
   LeadAnalysisRow,
   OutreachStatus,
   OutreachTask,
@@ -68,6 +71,23 @@ const outreachColors: Record<OutreachStatus, string> = {
   uncertain: "warning",
   failed: "error",
   canceled: "default",
+};
+const consentLabels: Record<CreatorHubConsent["state"], string> = {
+  active: "有效",
+  revoked: "已撤销",
+  expired: "已过期",
+  unconfigured: "未配置",
+};
+const consentColors: Record<CreatorHubConsent["state"], string> = {
+  active: "success",
+  revoked: "error",
+  expired: "warning",
+  unconfigured: "default",
+};
+const coverageLabels: Record<string, string> = {
+  partial: "部分覆盖（可能不含全部回复）",
+  complete: "完整",
+  unknown: "未知",
 };
 const definitiveSubmitCodes = new Set([
   "CREATORHUB_URL_INVALID",
@@ -156,11 +176,16 @@ function CommentLeadWorkspace() {
   const [url, setUrl] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accepted, setAccepted] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(7);
+  const [consentDays, setConsentDays] = useState(30);
   const [criteria, setCriteria] = useState("");
   const [maxComments, setMaxComments] = useState(200);
+  const [showAll, setShowAll] = useState(false);
   const [started, setStarted] = useState<{
     workId: string;
     accountId: string;
+    result: CreatorHubStartResult;
+    observedAt: string;
   }>();
   const [jobId, setJobId] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -182,12 +207,23 @@ function CommentLeadWorkspace() {
         url,
         accountId,
         requestKey: startKey.current,
-        consent: { accepted },
+        consent: {
+          accepted,
+          retentionDays,
+          expiresAt: new Date(
+            Date.now() + consentDays * 86400000,
+          ).toISOString(),
+        },
       });
     },
     onSuccess: (result) => {
       startKey.current = "";
-      setStarted({ workId: result.awemeId, accountId: result.accountId });
+      setStarted({
+        workId: result.awemeId,
+        accountId: result.accountId,
+        result,
+        observedAt: new Date().toISOString(),
+      });
       setStep(1);
       void message.success(`已导入 ${result.addedCount} 条评论`);
       if (result.warning) void message.warning(result.warning);
@@ -233,6 +269,28 @@ function CommentLeadWorkspace() {
     if (!status.data || !accountId) return;
     if (!accounts.some((account) => account.id === accountId)) setAccountId("");
   }, [accounts, accountId, status.data]);
+  const consentKey = [
+    "creatorhub",
+    "consent",
+    started?.accountId,
+    started?.workId,
+  ] as const;
+  const consent = useQuery({
+    queryKey: consentKey,
+    queryFn: () => creatorHubApi.consent(started!.accountId, started!.workId),
+    enabled: !!started,
+    retry: false,
+  });
+  const revokeConsent = useMutation({
+    mutationFn: () =>
+      creatorHubApi.revokeConsent(started!.accountId, started!.workId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: consentKey });
+      void message.warning("已撤销来源授权");
+    },
+    retry: false,
+  });
+  const consentActive = consent.data?.state === "active";
   const analyze = useMutation({
     mutationFn: () => {
       analyzeKey.current ||= crypto.randomUUID();
@@ -276,10 +334,38 @@ function CommentLeadWorkspace() {
       }),
     retry: false,
   });
-  const results = useQuery({
-    queryKey: ["creatorhub", "analyses", jobId],
+  const failedItems = useQuery({
+    queryKey: ["creatorhub", "analyses", "failed", jobId],
     queryFn: () =>
-      creatorHubApi.analyses({ jobId, qualified: true, limit: 500 }),
+      creatorHubApi.analyses({ jobId, status: "failed", limit: 500 }),
+    enabled:
+      step === 2 &&
+      !!jobId &&
+      ["partial", "failed"].includes(job.data?.status || ""),
+    retry: false,
+  });
+  const retryItem = useMutation({
+    mutationFn: (analysisId: string) =>
+      creatorHubApi.retryAnalysis(jobId, [analysisId]),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["creatorhub", "job", jobId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["creatorhub", "analyses", "failed", jobId],
+      });
+      void message.success("已重新提交该条分析");
+    },
+    retry: false,
+  });
+  const results = useQuery({
+    queryKey: ["creatorhub", "analyses", jobId, showAll],
+    queryFn: () =>
+      creatorHubApi.analyses({
+        jobId,
+        qualified: showAll ? undefined : true,
+        limit: 500,
+      }),
     enabled: !!jobId && ["done", "partial"].includes(job.data?.status || ""),
   });
   const outreachKey = [
@@ -410,6 +496,7 @@ function CommentLeadWorkspace() {
     },
     retry: false,
   });
+  const actionsDisabled = !consentActive;
   const columns: TableColumnsType<LeadAnalysisRow> = [
     { title: "评论", dataIndex: "commentText", width: 220, ellipsis: true },
     { title: "用户", dataIndex: "commenterName", width: 120 },
@@ -423,6 +510,19 @@ function CommentLeadWorkspace() {
         ) : (
           <Tag>未识别</Tag>
         ),
+    },
+    {
+      title: "点赞数",
+      dataIndex: "likeCount",
+      width: 90,
+      render: (value: LeadAnalysisRow["likeCount"]) => value ?? "-",
+    },
+    {
+      title: "评论时间",
+      dataIndex: "commentTime",
+      width: 170,
+      render: (value: LeadAnalysisRow["commentTime"]) =>
+        value ? new Date(value).toLocaleString() : "-",
     },
     { title: "依据", dataIndex: "evidence", width: 180, ellipsis: true },
     { title: "原因", dataIndex: "reason", width: 160, ellipsis: true },
@@ -455,6 +555,20 @@ function CommentLeadWorkspace() {
       key: "action",
       width: 170,
       render: (_: unknown, row) => {
+        if (row.status === "failed") {
+          const error = row.error || "分析失败";
+          return (
+            <Tooltip title={error}>
+              <Typography.Text
+                type="danger"
+                style={{ display: "inline-block", maxWidth: 150 }}
+                ellipsis
+              >
+                分析失败：{error}
+              </Typography.Text>
+            </Tooltip>
+          );
+        }
         const task = tasksByAnalysis.get(row.id);
         if (task) {
           const draft = (drafts[row.id] ?? task.draft ?? row.draft).trim();
@@ -466,6 +580,7 @@ function CommentLeadWorkspace() {
               {outreachRefreshable(task.status) && (
                 <Button
                   size="small"
+                  disabled={actionsDisabled}
                   loading={
                     refreshTask.isPending &&
                     refreshTask.variables?.id === task.id
@@ -487,6 +602,7 @@ function CommentLeadWorkspace() {
                     <Button
                       size="small"
                       type="primary"
+                      disabled={actionsDisabled}
                       loading={
                         confirm.isPending &&
                         confirm.variables?.task.id === task.id
@@ -504,6 +620,7 @@ function CommentLeadWorkspace() {
                   >
                     <Button
                       size="small"
+                      disabled={actionsDisabled}
                       loading={
                         confirm.isPending &&
                         confirm.variables?.task.id === task.id
@@ -521,7 +638,7 @@ function CommentLeadWorkspace() {
                   loading={
                     submit.isPending && submit.variables?.row.id === row.id
                   }
-                  disabled={!row.commenterProfile || !draft}
+                  disabled={actionsDisabled || !row.commenterProfile || !draft}
                   onClick={() =>
                     submit.mutate({ row, draft, requestKey: task.requestKey })
                   }
@@ -541,7 +658,7 @@ function CommentLeadWorkspace() {
                   loading={
                     submit.isPending && submit.variables?.row.id === row.id
                   }
-                  disabled={!row.commenterProfile || !draft}
+                  disabled={actionsDisabled || !row.commenterProfile || !draft}
                   onClick={() => submit.mutate({ row, draft })}
                 >
                   重新提交
@@ -556,7 +673,7 @@ function CommentLeadWorkspace() {
           <Space orientation="vertical" size={4}>
             <Button
               type="primary"
-              disabled={noProfile || !draft}
+              disabled={actionsDisabled || noProfile || !draft}
               loading={submit.isPending && submit.variables?.row.id === row.id}
               onClick={() => submit.mutate({ row, draft })}
             >
@@ -638,6 +755,34 @@ function CommentLeadWorkspace() {
             >
               我确认已获得读取和使用这些评论的授权（来源授权）
             </Checkbox>
+            <Space size="large" wrap>
+              <Space orientation="vertical" size={2}>
+                <label htmlFor="lead-retention">默认留存天数</label>
+                <InputNumber
+                  id="lead-retention"
+                  min={1}
+                  max={90}
+                  value={retentionDays}
+                  onChange={(value) => setRetentionDays(value || 7)}
+                />
+                <Typography.Text type="secondary">
+                  评论与来源数据的默认留存时间（1–90 天）。
+                </Typography.Text>
+              </Space>
+              <Space orientation="vertical" size={2}>
+                <label htmlFor="lead-consent-days">授权有效期（天）</label>
+                <InputNumber
+                  id="lead-consent-days"
+                  min={1}
+                  max={365}
+                  value={consentDays}
+                  onChange={(value) => setConsentDays(value || 30)}
+                />
+                <Typography.Text type="secondary">
+                  来源授权到期后需重新确认（1–365 天）。
+                </Typography.Text>
+              </Space>
+            </Space>
             {status.data?.health === "offline" && (
               <Alert
                 type="warning"
@@ -679,7 +824,128 @@ function CommentLeadWorkspace() {
       )}
       {step === 1 && (
         <Card title="分析设置">
-          <Space orientation="vertical" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            {started && (
+              <Card size="small" title="抓取结果">
+                <Space orientation="vertical" size={4}>
+                  <Typography.Text>
+                    作品 ID：
+                    <Typography.Link
+                      href={`https://www.douyin.com/video/${started.workId}`}
+                      target="_blank"
+                    >
+                      {started.workId}
+                    </Typography.Link>
+                  </Typography.Text>
+                  <Typography.Text>
+                    抓取时间：
+                    {new Date(started.observedAt).toLocaleString()}
+                  </Typography.Text>
+                  <Typography.Text>
+                    读取评论：{started.result.readCount} 条
+                  </Typography.Text>
+                  <Typography.Text>
+                    新增：{started.result.addedCount} 条
+                  </Typography.Text>
+                  <Typography.Text>
+                    已存在：{started.result.updatedCount} 条
+                  </Typography.Text>
+                  <Typography.Text>
+                    覆盖范围：
+                    {coverageLabels[started.result.coverage] ??
+                      started.result.coverage}
+                  </Typography.Text>
+                  {started.result.warning && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      title={started.result.warning}
+                    />
+                  )}
+                </Space>
+              </Card>
+            )}
+            <Card size="small" title="来源授权">
+              <Space orientation="vertical" size={4}>
+                {consent.isPending && (
+                  <Typography.Text type="secondary">
+                    <Spin size="small" /> 正在加载授权状态…
+                  </Typography.Text>
+                )}
+                {consent.error && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    title={consent.error.message}
+                    action={
+                      <Button onClick={() => void consent.refetch()}>
+                        重试
+                      </Button>
+                    }
+                  />
+                )}
+                {consent.data && (
+                  <>
+                    <Space size={4}>
+                      <Typography.Text>来源授权：</Typography.Text>
+                      <Tag color={consentColors[consent.data.state]}>
+                        {consentLabels[consent.data.state]}
+                      </Tag>
+                    </Space>
+                    {consent.data.state === "active" && (
+                      <>
+                        <Typography.Text type="secondary">
+                          默认留存 {consent.data.retentionDays ?? retentionDays}{" "}
+                          天，授权有效期至{" "}
+                          {consent.data.expiresAt
+                            ? new Date(consent.data.expiresAt).toLocaleString()
+                            : "未知"}
+                        </Typography.Text>
+                        <Popconfirm
+                          title="撤销来源授权？"
+                          description="撤销后无法继续分析或提交私信，已保存的评论不会被删除。"
+                          okText="确认"
+                          cancelText="取消"
+                          onConfirm={() => revokeConsent.mutate()}
+                        >
+                          <Button danger loading={revokeConsent.isPending}>
+                            撤销授权
+                          </Button>
+                        </Popconfirm>
+                      </>
+                    )}
+                    {consent.data.state === "revoked" && (
+                      <Alert
+                        type="error"
+                        showIcon
+                        title="来源授权已撤销，无法继续分析或提交私信。"
+                      />
+                    )}
+                    {consent.data.state === "expired" && (
+                      <Alert
+                        type="error"
+                        showIcon
+                        title="来源授权已过期，请重新抓取评论后再分析。"
+                      />
+                    )}
+                    {consent.data.state === "unconfigured" && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        title="尚未配置来源授权。"
+                      />
+                    )}
+                  </>
+                )}
+                {revokeConsent.error && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    title={revokeConsent.error.message}
+                  />
+                )}
+              </Space>
+            </Card>
             {settings.isPending && (
               <Typography.Text type="secondary">
                 <Spin size="small" /> 正在加载分析设置…
@@ -720,8 +986,13 @@ function CommentLeadWorkspace() {
             <Typography.Text type="secondary">
               最多分析 {maxComments} 条评论
             </Typography.Text>
+            <Typography.Text type="secondary">
+              预计调用 {Math.min(started?.result.readCount ?? 0, maxComments)}{" "}
+              条
+            </Typography.Text>
             <Button
               type="primary"
+              disabled={!consentActive}
               loading={analyze.isPending}
               onClick={() => analyze.mutate()}
             >
@@ -756,6 +1027,11 @@ function CommentLeadWorkspace() {
                 {job.data.qualified}，失败 {job.data.failed}
               </Typography.Text>
             )}
+            {job.data?.criteriaHash && (
+              <Typography.Text type="secondary">
+                当前提示词哈希：{job.data.criteriaHash.slice(0, 8)}
+              </Typography.Text>
+            )}
             {job.data && ["queued", "running"].includes(job.data.status) && (
               <Button
                 loading={cancel.isPending}
@@ -768,12 +1044,86 @@ function CommentLeadWorkspace() {
               <Alert type="error" showIcon title={cancel.error.message} />
             )}
             {job.data && ["partial", "failed"].includes(job.data.status) && (
-              <Button loading={retry.isPending} onClick={() => retry.mutate()}>
+              <Button
+                loading={retry.isPending}
+                disabled={!consentActive}
+                onClick={() => retry.mutate()}
+              >
                 重试分析
               </Button>
             )}
             {retry.error && (
               <Alert type="error" showIcon title={retry.error.message} />
+            )}
+            {failedItems.error && (
+              <Alert
+                type="error"
+                showIcon
+                title={failedItems.error.message}
+                action={
+                  <Button onClick={() => void failedItems.refetch()}>
+                    重试
+                  </Button>
+                }
+              />
+            )}
+            {failedItems.data && failedItems.data.items.length > 0 && (
+              <Card size="small" title="失败条目">
+                <Table<LeadAnalysisRow>
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  dataSource={failedItems.data.items}
+                  columns={[
+                    {
+                      title: "评论",
+                      dataIndex: "commentText",
+                      ellipsis: true,
+                    },
+                    {
+                      title: "用户",
+                      dataIndex: "commenterName",
+                      width: 120,
+                    },
+                    {
+                      title: "错误",
+                      dataIndex: "error",
+                      render: (value: string) => (
+                        <Tooltip title={value || "分析失败"}>
+                          <Typography.Text
+                            type="danger"
+                            style={{ display: "inline-block", maxWidth: 220 }}
+                            ellipsis
+                          >
+                            {value || "分析失败"}
+                          </Typography.Text>
+                        </Tooltip>
+                      ),
+                    },
+                    {
+                      title: "操作",
+                      key: "action",
+                      width: 90,
+                      render: (_: unknown, row) => (
+                        <Button
+                          size="small"
+                          loading={
+                            retryItem.isPending &&
+                            retryItem.variables === row.id
+                          }
+                          disabled={!consentActive}
+                          onClick={() => retryItem.mutate(row.id)}
+                        >
+                          重试
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+            )}
+            {retryItem.error && (
+              <Alert type="error" showIcon title={retryItem.error.message} />
             )}
             {job.data && ["done", "partial"].includes(job.data.status) && (
               <Button type="primary" onClick={() => setStep(3)}>
@@ -804,6 +1154,17 @@ function CommentLeadWorkspace() {
               showIcon
               title="CreatorHub 私信默认限速：2 次/小时、8 次/天、最短 900 秒；发送可能持续多天。"
             />
+            <Space>
+              <Checkbox
+                checked={showAll}
+                onChange={(event) => setShowAll(event.target.checked)}
+              >
+                显示全部
+              </Checkbox>
+              <Typography.Text type="secondary">
+                包含未达标与失败的评论
+              </Typography.Text>
+            </Space>
             {results.isPending && <Spin />}
             {results.error && (
               <Alert
@@ -834,7 +1195,8 @@ function CommentLeadWorkspace() {
             {results.data && (
               <>
                 <Typography.Text>
-                  已加载 {results.data.items.length} 条达标评论。
+                  已加载 {results.data.items.length} 条
+                  {showAll ? "全部" : "达标"}评论。
                 </Typography.Text>
                 <Table<LeadAnalysisRow>
                   rowKey="id"

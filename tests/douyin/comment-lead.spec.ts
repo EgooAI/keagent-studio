@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
 import type {
   CreatorHubAccountSummary,
+  LeadAnalysisRow,
   OutreachTask,
 } from "../../packages/shared-types/src/collection";
 
@@ -32,6 +33,47 @@ const leadRow = {
   draft: "你好，看到你想在浦东买三居室，方便聊聊预算吗？",
 };
 
+const failedRow: LeadAnalysisRow = {
+  id: "an-failed",
+  jobId: "job1",
+  commentId: "comment-failed",
+  commentText: "这条评论分析失败了",
+  commenterName: "失败客户",
+  commenterProfile: "https://www.douyin.com/user/failed-lead",
+  likeCount: null,
+  commentTime: null,
+  status: "failed",
+  error: "模型服务未完成此次分析，请稍后重试",
+  intent: "",
+  evidence: "",
+  qualified: false,
+  reason: "",
+  draft: "",
+};
+
+const nonQualifiedRow: LeadAnalysisRow = {
+  ...leadRow,
+  id: "an2",
+  commentId: "comment-2",
+  commentText: "这个小区物业怎么样",
+  commenterName: "咨询客户",
+  commenterProfile: "https://www.douyin.com/user/question-lead",
+  likeCount: 0,
+  status: "done",
+  intent: "question",
+  evidence: "物业怎么样",
+  qualified: false,
+  reason: "仅咨询物业",
+  draft: "",
+};
+
+interface FixtureOptions {
+  jobStatus?: "queued" | "running" | "done" | "partial" | "failed" | "canceled";
+  jobFailed?: number;
+  failedItems?: LeadAnalysisRow[];
+  allItems?: LeadAnalysisRow[];
+}
+
 type MockResponse = { ok: boolean; data?: unknown; error?: unknown };
 
 async function leadFixture(
@@ -49,13 +91,18 @@ async function leadFixture(
     input: Record<string, unknown>,
     items: OutreachTask[],
   ) => MockResponse,
+  options: FixtureOptions = {},
 ) {
   let accounts = [...initialAccounts];
+  let consentState: "active" | "revoked" = "active";
   let startFailure: unknown = undefined;
   let outreachSequence = 0;
   let outreachHold: Promise<void> | undefined;
   let releaseOutreach: (() => void) | undefined;
   let outreachListCalls = 0;
+  const startInputs: Record<string, unknown>[] = [];
+  const analysisListInputs: Record<string, unknown>[] = [];
+  const retryInputs: Record<string, unknown>[] = [];
   const submittedKeys: string[] = [];
   const submittedDrafts: string[] = [];
   const outreachItems: OutreachTask[] = [];
@@ -76,6 +123,7 @@ async function leadFixture(
         return okay({ health: "ready", accounts, selectedAccountId: "" });
       }
       if (method === "creatorhub.start") {
+        startInputs.push(input);
         if (startFailure) return { ok: false, error: startFailure };
         return okay({
           watchId: 1,
@@ -87,9 +135,24 @@ async function leadFixture(
           coverage: "partial",
         });
       }
+      if (method === "creatorhub/consent/get")
+        return okay({
+          state: consentState,
+          label: "CreatorHub 来源",
+          purposes: { analyzeWithAI: true, manualContact: true },
+          expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+          retentionDays: 7,
+          creatorHubAccountId: "1",
+          aiEndpoint: "https://example.test/v1",
+        });
+      if (method === "creatorhub/consent/revoke") {
+        consentState = "revoked";
+        return okay({ ok: true });
+      }
       if (method === "lead/settings/get")
         return okay({
           criteria: "只找购房客户",
+          defaultCriteria: "判断评论者是否有明确的购房需求。",
           criteriaHash: "x",
           maxComments: 200,
         });
@@ -107,16 +170,34 @@ async function leadFixture(
       if (method === "comments/analysis/job")
         return okay({
           id: "job1",
-          status: "done",
+          status: options.jobStatus ?? "done",
           total: 2,
           processed: 2,
           qualified: 2,
+          failed: options.jobFailed ?? 0,
+          error: "",
+          criteriaHash: "abcdef1234567890",
+        });
+      if (method === "comments/analysis/retry") {
+        retryInputs.push(input);
+        return okay({
+          id: "job1",
+          status: "queued",
+          total: 2,
+          processed: 0,
+          qualified: 0,
           failed: 0,
           error: "",
-          criteriaHash: "x",
+          criteriaHash: "abcdef1234567890",
         });
-      if (method === "comments/analysis/list")
-        return okay({ items: [leadRow] });
+      }
+      if (method === "comments/analysis/list") {
+        analysisListInputs.push(input);
+        if (input.status === "failed")
+          return okay({ items: options.failedItems ?? [] });
+        if (input.qualified === true) return okay({ items: [leadRow] });
+        return okay({ items: options.allItems ?? [leadRow] });
+      }
       if (method === "outreach/list") {
         outreachListCalls++;
         if (outreachHold) await outreachHold;
@@ -284,6 +365,10 @@ async function leadFixture(
       releaseOutreach = undefined;
     },
     outreachListCalls: () => outreachListCalls,
+    consentState: () => consentState,
+    startInputs,
+    analysisListInputs,
+    retryInputs,
     submittedKeys,
     submittedDrafts,
     outreachItems,
@@ -314,6 +399,16 @@ test("评论获客：抓取、分析、审核并提交私信草稿", async ({ pa
   await page.goto("/#/leads/comment-lead");
   await expect(page.getByRole("heading", { name: "评论获客" })).toBeVisible();
   await fillAndStart(page);
+  await expect(page.getByText("读取评论：2 条")).toBeVisible();
+  await expect(page.getByText("新增：2 条")).toBeVisible();
+  await expect(page.getByText("已存在：0 条")).toBeVisible();
+  await expect(
+    page.getByText("覆盖范围：部分覆盖（可能不含全部回复）"),
+  ).toBeVisible();
+  await expect(page.getByText("来源授权：")).toBeVisible();
+  await expect(page.getByText("有效", { exact: true })).toBeVisible();
+  await expect(page.getByText(/默认留存 7 天，授权有效期至/)).toBeVisible();
+  await expect(page.getByText("预计调用 2 条")).toBeVisible();
   await expect(page.getByLabel("筛选提示词")).toHaveValue("只找购房客户");
   await expect(page.getByText("最多分析 200 条评论")).toBeVisible();
   await page.getByRole("button", { name: "开始分析" }).click();
@@ -737,4 +832,86 @@ test("评论获客：刷新后慢速列表回退不会降级状态", async ({ pa
   await expect.poll(() => fixture.outreachListCalls()).toBeGreaterThan(before);
   await expect(page.getByText("已发送", { exact: true })).toBeVisible();
   expect(fixture.outreachItems[0]?.status).toBe("submitted");
+});
+
+test("评论获客：撤销来源授权后无法继续分析", async ({ page }) => {
+  const fixture = await leadFixture(page);
+  await page.goto("/#/leads/comment-lead");
+  await fillAndStart(page);
+  await expect(page.getByText("来源授权：")).toBeVisible();
+  await expect(page.getByText("有效", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "撤销授权" }).click();
+  await page.getByRole("button", { name: /^确\s*认$/ }).click();
+  await expect(page.getByText("已撤销来源授权", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("来源授权已撤销，无法继续分析或提交私信。"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始分析" })).toBeDisabled();
+  expect(fixture.consentState()).toBe("revoked");
+});
+
+test("评论获客：失败条目可单独重试", async ({ page }) => {
+  const fixture = await leadFixture(
+    page,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { jobStatus: "partial", jobFailed: 1, failedItems: [failedRow] },
+  );
+  await page.goto("/#/leads/comment-lead");
+  await fillAndStart(page);
+  await page.getByRole("button", { name: "开始分析" }).click();
+  await expect(page.getByText("失败条目")).toBeVisible();
+  await expect(page.getByText(failedRow.commentText)).toBeVisible();
+  await expect(page.getByText("已处理 2 / 2，达标 2，失败 1")).toBeVisible();
+  await page.getByRole("button", { name: /^重\s*试$/ }).click();
+  await expect(page.getByText("已重新提交该条分析")).toBeVisible();
+  expect(fixture.retryInputs).toContainEqual({
+    jobId: "job1",
+    analysisIds: [failedRow.id],
+  });
+});
+
+test("评论获客：显示全部会加载未达标评论", async ({ page }) => {
+  const fixture = await leadFixture(
+    page,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { allItems: [leadRow, nonQualifiedRow] },
+  );
+  await openReview(page);
+  await expect(page.getByText("已加载 1 条达标评论。")).toBeVisible();
+  await expect(page.getByText(nonQualifiedRow.commentText)).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "显示全部" }).check();
+  await expect(page.getByText(nonQualifiedRow.commentText)).toBeVisible();
+  await expect(page.getByText("已加载 2 条全部评论。")).toBeVisible();
+  expect(
+    fixture.analysisListInputs.some((input) => input.qualified !== true),
+  ).toBe(true);
+});
+
+test("评论获客：抓取时传入留存与授权有效期", async ({ page }) => {
+  const fixture = await leadFixture(page);
+  await page.goto("/#/leads/comment-lead");
+  await page
+    .getByLabel("视频链接")
+    .fill("https://v.douyin.com/comment-lead-test/");
+  await page.getByLabel("默认留存天数").fill("14");
+  await page.getByLabel("授权有效期（天）").fill("60");
+  await page.getByRole("checkbox", { name: "来源授权" }).check();
+  await page.getByRole("button", { name: "开始抓取" }).click();
+  await expect(page.getByText("已导入 2 条评论")).toBeVisible();
+  expect(fixture.startInputs).toHaveLength(1);
+  const consentInput = fixture.startInputs[0].consent as {
+    retentionDays: number;
+    expiresAt: string;
+  };
+  expect(consentInput.retentionDays).toBe(14);
+  const days =
+    (new Date(consentInput.expiresAt).getTime() - Date.now()) / 86400000;
+  expect(days).toBeGreaterThan(59.5);
+  expect(days).toBeLessThan(60.1);
 });

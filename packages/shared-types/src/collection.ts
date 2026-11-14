@@ -188,6 +188,15 @@ export interface LeadSettings {
   criteriaHash: string;
   maxComments: number;
 }
+export interface CreatorHubConsent {
+  state: "unconfigured" | "active" | "revoked" | "expired";
+  label?: string;
+  expiresAt?: string;
+  retentionDays?: number;
+  creatorHubAccountId?: string;
+  aiEndpoint?: string;
+  purposes?: { analyzeWithAI?: boolean; manualContact?: boolean };
+}
 export interface AnalysisJob {
   id: string;
   status: "queued" | "running" | "done" | "partial" | "failed" | "canceled";

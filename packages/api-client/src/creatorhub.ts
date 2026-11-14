@@ -1,5 +1,6 @@
 import type {
   AnalysisJob,
+  CreatorHubConsent,
   CreatorHubStartInput,
   CreatorHubStartResult,
   CreatorHubStatus,
@@ -17,6 +18,16 @@ export const creatorHubApi = {
     douyinDesktop<CreatorHubStartResult>("creatorhub.start", input),
   saveConsent: (input: unknown) =>
     desktopCloud<unknown>("collection", "creatorhub/consent/save", input),
+  consent: (accountId: string, workId: string) =>
+    desktopCloud<CreatorHubConsent>("collection", "creatorhub/consent/get", {
+      accountId,
+      workId,
+    }),
+  revokeConsent: (accountId: string, workId: string) =>
+    desktopCloud<unknown>("collection", "creatorhub/consent/revoke", {
+      accountId,
+      workId,
+    }),
   settings: () =>
     desktopCloud<LeadSettings>("collection", "lead/settings/get", {}),
   saveSettings: (input: unknown) =>
@@ -40,6 +51,7 @@ export const creatorHubApi = {
   analyses: (input: {
     jobId: string;
     qualified?: boolean;
+    status?: string;
     intent?: LeadIntent;
     cursor?: string;
     limit?: number;
