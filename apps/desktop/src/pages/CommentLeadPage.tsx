@@ -17,8 +17,16 @@ import {
 } from "antd";
 import type { TableColumnsType } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { creatorHubApi, isLive } from "@keagent/api-client";
-import type { LeadAnalysisRow } from "@keagent/shared-types";
+import {
+  creatorHubApi,
+  isLive,
+  ServiceRequestError,
+} from "@keagent/api-client";
+import type {
+  LeadAnalysisRow,
+  OutreachStatus,
+  OutreachTask,
+} from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
 import { desktopPublishingAvailable } from "../lib/douyin";
 
@@ -42,6 +50,45 @@ const intentColors: Record<string, string> = {
   unrelated: "default",
   unclear: "default",
 };
+const outreachLabels: Record<OutreachStatus, string> = {
+  approved: "待发送",
+  submitted: "已提交",
+  sending: "发送中",
+  sent: "已发送",
+  uncertain: "结果待确认",
+  failed: "失败",
+  canceled: "已取消",
+};
+const outreachColors: Record<OutreachStatus, string> = {
+  approved: "blue",
+  submitted: "processing",
+  sending: "processing",
+  sent: "success",
+  uncertain: "warning",
+  failed: "error",
+  canceled: "default",
+};
+const definitiveSubmitCodes = new Set([
+  "CREATORHUB_URL_INVALID",
+  "COMMENT_PROFILE_UNAVAILABLE",
+  "COMMENT_PURPOSE_DENIED",
+  "COMMENT_NOT_QUALIFIED",
+  "COMMENT_CHANGED",
+  "INVALID_INPUT",
+  "FORBIDDEN",
+  "OUTREACH_EXISTS",
+]);
+function definitiveSubmitError(error: unknown) {
+  if (!(error instanceof ServiceRequestError)) return false;
+  if (error.code === "CREATORHUB_REJECTED")
+    return [400, 403, 404, 422].includes(error.status);
+  return definitiveSubmitCodes.has(error.code ?? "");
+}
+function isOutreachExists(error: unknown) {
+  return (
+    error instanceof ServiceRequestError && error.code === "OUTREACH_EXISTS"
+  );
+}
 
 export default function CommentLeadPage() {
   if (!isLive || !desktopPublishingAvailable()) {
@@ -78,36 +125,11 @@ function CommentLeadWorkspace() {
   }>();
   const [jobId, setJobId] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [submitted, setSubmitted] = useState<Record<string, OutreachTask>>({});
   const settingsHydrated = useRef(false);
   const startKey = useRef("");
   const analyzeKey = useRef("");
   const submitKeys = useRef<Record<string, string>>({});
-  const status = useQuery({
-    queryKey: ["creatorhub", "status"],
-    queryFn: creatorHubApi.status,
-    retry: false,
-  });
-  const settings = useQuery({
-    queryKey: ["creatorhub", "settings"],
-    queryFn: creatorHubApi.settings,
-    retry: false,
-  });
-  useEffect(() => {
-    if (!settings.data || settingsHydrated.current) return;
-    settingsHydrated.current = true;
-    setCriteria(settings.data.criteria);
-    setMaxComments(settings.data.maxComments);
-  }, [settings.data]);
-  const accounts = status.data?.accounts ?? [];
-  useEffect(() => {
-    if (accountId) return;
-    const preferred = status.data?.selectedAccountId;
-    if (preferred) {
-      setAccountId(preferred);
-      return;
-    }
-    if (accounts.length === 1) setAccountId(accounts[0].id);
-  }, [status.data, accounts, accountId]);
   const login = useMutation({
     mutationFn: creatorHubApi.login,
     onSuccess: (result) =>
@@ -128,11 +150,46 @@ function CommentLeadWorkspace() {
       startKey.current = "";
       setStarted({ workId: result.awemeId, accountId: result.accountId });
       setStep(1);
+      void message.success(`已导入 ${result.addedCount} 条评论`);
       if (result.warning) void message.warning(result.warning);
-      else void message.success(`已导入 ${result.addedCount} 条评论`);
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["creatorhub", "status"],
+      });
     },
     retry: false,
   });
+  const status = useQuery({
+    queryKey: ["creatorhub", "status"],
+    queryFn: creatorHubApi.status,
+    retry: false,
+    refetchInterval: (query) => {
+      if (start.isPending) return 1000;
+      return query.state.data?.health === "offline" ? 5000 : false;
+    },
+  });
+  const settings = useQuery({
+    queryKey: ["creatorhub", "settings"],
+    queryFn: creatorHubApi.settings,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!settings.data || settingsHydrated.current) return;
+    settingsHydrated.current = true;
+    setCriteria(settings.data.criteria);
+    setMaxComments(settings.data.maxComments);
+  }, [settings.data]);
+  const accounts = status.data?.accounts ?? [];
+  useEffect(() => {
+    if (accountId) return;
+    const preferred = status.data?.selectedAccountId;
+    if (preferred && accounts.some((account) => account.id === preferred)) {
+      setAccountId(preferred);
+      return;
+    }
+    if (accounts.length === 1) setAccountId(accounts[0].id);
+  }, [status.data, accounts, accountId]);
   const analyze = useMutation({
     mutationFn: () => {
       analyzeKey.current ||= crypto.randomUUID();
@@ -182,6 +239,48 @@ function CommentLeadWorkspace() {
       creatorHubApi.analyses({ jobId, qualified: true, limit: 500 }),
     enabled: !!jobId && ["done", "partial"].includes(job.data?.status || ""),
   });
+  const outreachKey = [
+    "creatorhub",
+    "outreach",
+    started?.accountId,
+    started?.workId,
+  ] as const;
+  const outreach = useQuery({
+    queryKey: outreachKey,
+    queryFn: () =>
+      creatorHubApi.outreach({
+        accountId: started!.accountId,
+        workId: started!.workId,
+        limit: 500,
+      }),
+    enabled: step === 3 && !!started,
+    retry: false,
+  });
+  const confirm = useMutation({
+    mutationFn: (input: { task: OutreachTask; status: "sent" | "failed" }) =>
+      creatorHubApi.confirmOutreach(
+        input.task.id,
+        input.task.attempt,
+        input.status,
+      ),
+    onSuccess: (task) => {
+      delete submitKeys.current[task.analysisId];
+      setSubmitted((current) => ({
+        ...current,
+        [task.analysisId]: task,
+      }));
+      void queryClient.invalidateQueries({ queryKey: outreachKey });
+      void message.success(
+        task.status === "sent" ? "已确认发送" : "已确认失败",
+      );
+    },
+    retry: false,
+  });
+  const tasksByAnalysis = new Map<string, OutreachTask>();
+  for (const task of outreach.data?.items ?? [])
+    tasksByAnalysis.set(task.analysisId, task);
+  for (const [analysisId, task] of Object.entries(submitted))
+    tasksByAnalysis.set(analysisId, task);
   const submit = useMutation({
     mutationFn: (row: LeadAnalysisRow) => {
       submitKeys.current[row.id] ||= crypto.randomUUID();
@@ -198,9 +297,11 @@ function CommentLeadWorkspace() {
         task.status === "sent"
       ) {
         delete submitKeys.current[row.id];
+        setSubmitted((current) => ({ ...current, [row.id]: task }));
         void message.success("已提交 CreatorHub 私信队列");
       } else if (task.status === "uncertain") {
         // Keep the key: the same key must not trigger a new send.
+        setSubmitted((current) => ({ ...current, [row.id]: task }));
         void message.warning(
           "结果待确认，请到 CreatorHub 任务队列核对后再确认",
         );
@@ -208,6 +309,15 @@ function CommentLeadWorkspace() {
         // failed/canceled (or an unexpected non-approved status)
         delete submitKeys.current[row.id];
         void message.error("上次提交未完成，请重试");
+      }
+      void queryClient.invalidateQueries({ queryKey: outreachKey });
+    },
+    onError: (error, row) => {
+      // Definitive failures leave Go in `failed`; a new attempt needs a new key.
+      if (definitiveSubmitError(error)) delete submitKeys.current[row.id];
+      if (isOutreachExists(error)) {
+        void queryClient.invalidateQueries({ queryKey: outreachKey });
+        void message.info("该评论已有私信任务，已刷新状态");
       }
     },
     retry: false,
@@ -232,25 +342,79 @@ function CommentLeadWorkspace() {
       title: "私信草稿",
       dataIndex: "draft",
       width: 260,
-      render: (_: string, row) => (
-        <Input.TextArea
-          aria-label={`私信草稿-${row.commenterName}`}
-          value={drafts[row.id] ?? row.draft}
-          onChange={(event) =>
-            setDrafts((current) => ({
-              ...current,
-              [row.id]: event.target.value,
-            }))
-          }
-          autoSize={{ minRows: 2, maxRows: 6 }}
-        />
-      ),
+      render: (_: string, row) => {
+        const task = tasksByAnalysis.get(row.id);
+        return (
+          <Input.TextArea
+            aria-label={`私信草稿-${row.commenterName}`}
+            value={drafts[row.id] ?? row.draft}
+            readOnly={!!task}
+            maxLength={320}
+            showCount
+            onChange={(event) =>
+              setDrafts((current) => ({
+                ...current,
+                [row.id]: event.target.value,
+              }))
+            }
+            autoSize={{ minRows: 2, maxRows: 6 }}
+          />
+        );
+      },
     },
     {
       title: "操作",
       key: "action",
-      width: 150,
+      width: 170,
       render: (_: unknown, row) => {
+        const task = tasksByAnalysis.get(row.id);
+        if (task) {
+          const retryable =
+            task.status === "failed" || task.status === "canceled";
+          return (
+            <Space orientation="vertical" size={4}>
+              <Tag color={outreachColors[task.status] ?? "default"}>
+                {outreachLabels[task.status] ?? task.status}
+              </Tag>
+              {task.status === "uncertain" && (
+                <Space size={4} wrap>
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={
+                      confirm.isPending &&
+                      confirm.variables?.task.id === task.id
+                    }
+                    onClick={() => confirm.mutate({ task, status: "sent" })}
+                  >
+                    确认已发送
+                  </Button>
+                  <Button
+                    size="small"
+                    loading={
+                      confirm.isPending &&
+                      confirm.variables?.task.id === task.id
+                    }
+                    onClick={() => confirm.mutate({ task, status: "failed" })}
+                  >
+                    确认失败
+                  </Button>
+                </Space>
+              )}
+              {retryable && (
+                <Button
+                  size="small"
+                  type="primary"
+                  loading={submit.isPending && submit.variables?.id === row.id}
+                  disabled={!row.commenterProfile}
+                  onClick={() => submit.mutate(row)}
+                >
+                  重新提交
+                </Button>
+              )}
+            </Space>
+          );
+        }
         const noProfile = !row.commenterProfile;
         const draft = (drafts[row.id] ?? row.draft).trim();
         return (
@@ -344,6 +508,11 @@ function CommentLeadWorkspace() {
                 type="warning"
                 showIcon
                 title="CreatorHub 未启动或未登录"
+                action={
+                  <Button onClick={() => void status.refetch()}>
+                    刷新状态
+                  </Button>
+                }
               />
             )}
             {status.data?.health === "ready" && accounts.length === 0 && (
@@ -353,6 +522,11 @@ function CommentLeadWorkspace() {
             )}
             {login.error && (
               <Alert type="error" showIcon title={login.error.message} />
+            )}
+            {start.isPending && status.data?.progress && (
+              <Typography.Text type="secondary">
+                抓取进度：{status.data.progress}
+              </Typography.Text>
             )}
             <Button
               type="primary"
@@ -379,7 +553,7 @@ function CommentLeadWorkspace() {
             <label htmlFor="lead-criteria">筛选提示词</label>
             {settings.data && (
               <Typography.Text type="secondary">
-                提示词版本：
+                已保存的提示词版本：
                 {settings.data.criteriaHash.slice(0, 8) || "默认"}
               </Typography.Text>
             )}
@@ -463,14 +637,19 @@ function CommentLeadWorkspace() {
                 查看达标评论
               </Button>
             )}
-            <Button
-              onClick={() => {
-                setStep(1);
-                setJobId("");
-              }}
-            >
-              重新分析
-            </Button>
+            {job.data &&
+              ["done", "partial", "failed", "canceled"].includes(
+                job.data.status,
+              ) && (
+                <Button
+                  onClick={() => {
+                    setStep(1);
+                    setJobId("");
+                  }}
+                >
+                  重新分析
+                </Button>
+              )}
           </Space>
         </Card>
       )}
@@ -493,8 +672,21 @@ function CommentLeadWorkspace() {
                 }
               />
             )}
-            {submit.error && (
+            {outreach.error && (
+              <Alert
+                type="error"
+                showIcon
+                title={outreach.error.message}
+                action={
+                  <Button onClick={() => void outreach.refetch()}>重试</Button>
+                }
+              />
+            )}
+            {submit.error && !isOutreachExists(submit.error) && (
               <Alert type="error" showIcon title={submit.error.message} />
+            )}
+            {confirm.error && (
+              <Alert type="error" showIcon title={confirm.error.message} />
             )}
             {results.data && (
               <>

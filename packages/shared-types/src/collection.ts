@@ -187,11 +187,19 @@ export interface AnalysisJob {
   error: string;
   criteriaHash: string;
 }
+export type OutreachStatus =
+  | "approved"
+  | "submitted"
+  | "sending"
+  | "sent"
+  | "uncertain"
+  | "failed"
+  | "canceled";
 export interface OutreachTask {
   id: string;
   analysisId: string;
   attempt: number;
-  status: string;
+  status: OutreachStatus;
   creatorhubTaskId: string;
   error: string;
 }

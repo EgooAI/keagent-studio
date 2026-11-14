@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
-import type { CreatorHubAccountSummary } from "../../packages/shared-types/src/collection";
+import type {
+  CreatorHubAccountSummary,
+  OutreachTask,
+} from "../../packages/shared-types/src/collection";
 
 function activeAccount(): CreatorHubAccountSummary {
   return {
@@ -40,6 +43,7 @@ async function leadFixture(
 ) {
   let accounts = [...initialAccounts];
   const submittedKeys: string[] = [];
+  const outreachItems: OutreachTask[] = [];
   await page.exposeFunction(
     "leadTestRequest",
     (method: string, input: Record<string, unknown> = {}) => {
@@ -96,6 +100,7 @@ async function leadFixture(
         });
       if (method === "comments/analysis/list")
         return okay({ items: [leadRow] });
+      if (method === "outreach/list") return okay({ items: outreachItems });
       if (method === "outreach.submit") {
         submittedKeys.push(String(input.requestKey));
         if (respondOutreach) return respondOutreach(input);
@@ -143,6 +148,7 @@ async function leadFixture(
   return {
     accounts: () => accounts,
     submittedKeys,
+    outreachItems,
   };
 }
 
@@ -274,4 +280,62 @@ test("评论获客：提交结果不确定时保留请求键并提示核对", as
   await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
   expect(fixture.submittedKeys).toHaveLength(2);
   expect(fixture.submittedKeys[0]).toBe(fixture.submittedKeys[1]);
+});
+
+test("评论获客：CreatorHub 明确拒绝后使用新请求键重新提交", async ({
+  page,
+}) => {
+  let calls = 0;
+  const fixture = await leadFixture(page, undefined, () => {
+    calls++;
+    if (calls === 1)
+      return {
+        ok: false,
+        error: {
+          status: 400,
+          code: "CREATORHUB_REJECTED",
+          message: "CreatorHub 拒绝该私信",
+        },
+      };
+    return {
+      ok: true,
+      data: {
+        id: "o2",
+        analysisId: "an1",
+        attempt: 2,
+        status: "submitted",
+        creatorhubTaskId: "7",
+        error: "",
+      },
+    };
+  });
+  await openReview(page);
+  const submit = page.getByRole("button", { name: "确认发送" });
+  await submit.click();
+  await expect(page.getByText("CreatorHub 拒绝该私信")).toBeVisible();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toHaveCount(0);
+  await submit.click();
+  await expect(page.getByText("已提交 CreatorHub 私信队列")).toBeVisible();
+  expect(calls).toBe(2);
+  expect(fixture.submittedKeys).toHaveLength(2);
+  expect(fixture.submittedKeys[0]).not.toBe(fixture.submittedKeys[1]);
+});
+
+test("评论获客：已有的私信任务展示状态并禁止重复提交", async ({ page }) => {
+  const fixture = await leadFixture(page);
+  fixture.outreachItems.push({
+    id: "o-existing",
+    analysisId: "an1",
+    attempt: 1,
+    status: "sent",
+    creatorhubTaskId: "9",
+    error: "",
+  });
+  await openReview(page);
+  await expect(page.getByText("已发送", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认发送" })).toHaveCount(0);
+  await expect(page.getByLabel("私信草稿-意向客户")).toHaveJSProperty(
+    "readOnly",
+    true,
+  );
 });
