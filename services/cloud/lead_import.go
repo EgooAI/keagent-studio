@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -24,13 +25,13 @@ func (s *server) importCreatorHubComments(ctx context.Context, a actor, body []b
 	}
 	var in leadImportInput
 	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) ||
-		!douyinPostID.MatchString(in.WorkID) || !exchangeKey.MatchString(in.RequestKey) ||
+		!validLeadWork(in.WorkID) || !exchangeKey.MatchString(in.RequestKey) ||
 		!exchangeID.MatchString(in.SnapshotID) || in.ObservedAt.IsZero() ||
 		len(in.Items) > 500 || !validCoverage(in.Coverage) {
 		return nil, collectionInvalid()
 	}
 	for i := range in.Items {
-		if !validCommentFields(&in.Items[i]) {
+		if !validPlatformCommentFields(&in.Items[i], xhsWorkID.MatchString(in.WorkID)) {
 			return nil, collectionInvalid()
 		}
 	}
@@ -62,7 +63,7 @@ func (s *server) importCreatorHubComments(ctx context.Context, a actor, body []b
 		}
 		return nil, unavailableCommentGrant(state)
 	}
-	if g.Kind != "creatorhub" {
+	if g.Kind != "creatorhub" && g.Kind != "electron" {
 		return nil, exchangeFail(409, "COMMENT_SOURCE_CONFLICT", "该作品使用其他评论来源")
 	}
 	if sourceID == "" {
@@ -85,7 +86,7 @@ func (s *server) importCreatorHubComments(ctx context.Context, a actor, body []b
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if err = ensureCreatorHubRun(ctx, tx, a, scope, in.ObservedAt); err != nil {
+	if err = ensureLeadImportRun(ctx, tx, a, scope, in.ObservedAt, g.Kind); err != nil {
 		return nil, err
 	}
 	if err = verifyCommentScope(ctx, tx, a, scope); err != nil {
@@ -107,14 +108,19 @@ func validCoverage(value string) bool {
 	return value == "complete" || value == "partial" || value == "unknown"
 }
 
-func ensureCreatorHubRun(ctx context.Context, tx *sql.Tx, a actor, scope commentScope, observed time.Time) error {
+func ensureLeadImportRun(ctx context.Context, tx *sql.Tx, a actor, scope commentScope, observed time.Time, kind string) error {
 	observed = observed.UTC().Truncate(time.Microsecond)
 	if observed.Before(time.Now().Add(-24*time.Hour)) || observed.After(time.Now().Add(5*time.Minute)) {
 		return exchangeFail(409, "COMMENT_OBSERVATION_STALE", "评论抓取时间无效，请重新抓取")
 	}
 	value := videoBase + scope.WorkID
+	title := "抖音作品 " + scope.WorkID
+	if xhsWorkID.MatchString(scope.WorkID) {
+		value = "https://www.xiaohongshu.com/explore/" + strings.TrimPrefix(scope.WorkID, "xhs-")
+		title = "小红书笔记 " + strings.TrimPrefix(scope.WorkID, "xhs-")
+	}
 	// The account scopes the key so two accounts observing the same work cannot collide.
-	targetKey := "creatorhub-" + exchangeFingerprint([]string{scope.AccountID, value})
+	targetKey := kind + "-" + exchangeFingerprint([]string{scope.AccountID, value})
 	var targetID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM keagent_collection_targets
 		WHERE owner_id=$1 AND device_id=$2 AND payload->>'accountId'=$3
@@ -145,7 +151,7 @@ func ensureCreatorHubRun(ctx context.Context, tx *sql.Tx, a actor, scope comment
 		case errors.Is(err, sql.ErrNoRows):
 			targetID = id()
 			target := collectionTarget{
-				targetFields: targetFields{Kind: "video", Value: value, Name: "CreatorHub 视频", AccountID: scope.AccountID},
+				targetFields: targetFields{Kind: "video", Value: value, Name: title, AccountID: scope.AccountID},
 				ID:           targetID, DeviceID: a.DeviceID, State: "active", Version: 1,
 				CreatedAt: now(), UpdatedAt: now(),
 			}
@@ -159,7 +165,7 @@ func ensureCreatorHubRun(ctx context.Context, tx *sql.Tx, a actor, scope comment
 	if err != nil {
 		return err
 	}
-	runRequestKey := "creatorhub-" + exchangeFingerprint([]string{a.UserID, a.DeviceID, scope.AccountID, scope.WorkID})
+	runRequestKey := kind + "-" + exchangeFingerprint([]string{a.UserID, a.DeviceID, scope.AccountID, scope.WorkID})
 	var runID string
 	var storedObserved sql.NullTime
 	err = tx.QueryRowContext(ctx, `SELECT id,observed_at FROM keagent_collection_runs
@@ -178,11 +184,10 @@ func ensureCreatorHubRun(ctx context.Context, tx *sql.Tx, a actor, scope comment
 		run := collectionRun{
 			collectionResult: collectionResult{
 				State: "succeeded", PanelStatus: "visible", VerifiedWorkID: scope.WorkID,
-				Title:  "CreatorHub 视频",
-				Author: &observedAuthor{Name: "CreatorHub", URL: "https://www.douyin.com/user/creatorhub"},
+				Title: title,
 			},
-			Source: "creatorhub",
-			ID:     runID, TargetID: targetID, TargetName: "CreatorHub 视频", TargetVersion: 1,
+			Source: kind,
+			ID:     runID, TargetID: targetID, TargetName: title, TargetVersion: 1,
 			TargetURL: value, InputWorkID: scope.WorkID, AccountID: scope.AccountID,
 			DeviceID: a.DeviceID, CreatedAt: now(), StartedAt: now(), EndedAt: now(),
 		}

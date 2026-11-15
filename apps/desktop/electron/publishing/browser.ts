@@ -10,10 +10,12 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type {
   DouyinAccount,
+  SocialPlatform,
   DouyinBrowserTab,
   DouyinPublishInput,
   DouyinPublishRecord,
 } from "@keagent/shared-types";
+import { XHS_HOME, checkXhsLogin } from "./plugins/checkLogin/xhs";
 import { BrowserView } from "./runtime/browser/browser-view";
 import { ProfileManager } from "./runtime/profiles/profile-manager";
 import { LoginDetectionService } from "./runtime/login/login-detection";
@@ -34,7 +36,12 @@ export class DouyinBrowser {
   private profiles: ProfileManager;
   private views = new Map<
     string,
-    { view: BrowserView; session: Session; profile: ProfileKey }
+    {
+      view: BrowserView;
+      session: Session;
+      profile: ProfileKey;
+      platform: SocialPlatform;
+    }
   >();
   private detection: LoginDetectionService;
   active?: string;
@@ -53,21 +60,7 @@ export class DouyinBrowser {
     this.profiles = new ProfileManager(root);
     this.detection = new LoginDetectionService(
       (profile) =>
-        createDouyinLoginDetector({
-          profile,
-          ensureProfile: async () => this.profiles.exists(profile),
-          getCookies: (urls) =>
-            this.require(profile.accountId).view.getCookies(urls),
-          openOrReusePage: (url) =>
-            this.require(profile.accountId).view.openOrReusePage(url),
-          inspectDom: (input) =>
-            this.require(profile.accountId).view.inspectDom(input),
-          requestAccountApi: (request, timeout) =>
-            this.require(profile.accountId).view.requestAccountApi(
-              request,
-              timeout,
-            ),
-        }),
+        this.douyinDetector(profile, this.require(profile.accountId).view),
       () => this.changed(),
       () => {},
     );
@@ -82,10 +75,21 @@ export class DouyinBrowser {
     );
     this.timer.unref();
   }
+  private douyinDetector(profile: ProfileKey, view: BrowserView) {
+    return createDouyinLoginDetector({
+      profile,
+      ensureProfile: async () => this.profiles.exists(profile),
+      getCookies: (urls) => view.getCookies(urls),
+      openOrReusePage: (url) => view.openOrReusePage(url),
+      inspectDom: (input) => view.inspectDom(input),
+      requestAccountApi: (request, timeout) =>
+        view.requestAccountApi(request, timeout),
+    });
+  }
   tabs(): DouyinBrowserTab[] {
-    return [...this.views].map(([accountId, { view }]) => {
+    return [...this.views].map(([accountId, { view, platform }]) => {
       const { profile: _profile, ...state } = view.getState();
-      return { accountId, ...state };
+      return { accountId, platform, ...state };
     });
   }
   private require(accountId: string) {
@@ -123,8 +127,25 @@ export class DouyinBrowser {
       .digest("hex");
     return { workspaceId, accountId };
   }
+  async socialAccounts(identity: PublishingIdentity) {
+    const { items } = await this.cloud<{ items: DouyinAccount[] }>(
+      "accounts/list",
+    );
+    if (!samePublisher(identity, await this.identity()))
+      throw new PublishingError("SESSION_CHANGED", "登录已变更");
+    return items
+      .filter(
+        (a) =>
+          a.deviceId === identity.deviceId &&
+          !a.unboundAt &&
+          a.loginStatus === "logged_in" &&
+          a.platformUserId &&
+          this.profiles.isSaved(this.profileFor(identity, a.id)),
+      )
+      .map((a) => ({ ...a, platform: a.platform ?? "douyin" }));
+  }
   private async ensure(accountId: string) {
-    await this.owned(accountId);
+    const account = await this.owned(accountId);
     const existing = this.views.get(accountId);
     if (existing) return existing;
     const current = await this.identity();
@@ -150,8 +171,10 @@ export class DouyinBrowser {
       (url) => this.navigationChanged(accountId, url),
     );
     view.setViewport({ x: 0, y: 0, width: 0, height: 0 });
-    view.observeAccountApi(DOUYIN_LOGIN_CONFIG.accountApi);
-    const value = { view, session: opened.session, profile };
+    const platform = account.platform ?? "douyin";
+    if (platform === "douyin")
+      view.observeAccountApi(DOUYIN_LOGIN_CONFIG.accountApi);
+    const value = { view, session: opened.session, profile, platform };
     this.views.set(accountId, value);
     return value;
   }
@@ -191,10 +214,12 @@ export class DouyinBrowser {
   }
   open(accountId: string) {
     return this.run(accountId, true, async () => {
-      const { view } = await this.ensure(accountId);
+      const { view, platform } = await this.ensure(accountId);
       this.selectManual(accountId);
       this.changed();
-      await view.openOrReusePage(DOUYIN_LOGIN_CONFIG.homeUrl);
+      await view.openOrReusePage(
+        platform === "xhs" ? XHS_HOME : DOUYIN_LOGIN_CONFIG.homeUrl,
+      );
       this.changed();
     });
   }
@@ -205,6 +230,7 @@ export class DouyinBrowser {
   ) {
     return this.run(accountId, true, async () => {
       const account = await this.owned(accountId);
+      const platform = account.platform ?? "douyin";
       const profile = this.profileFor(identity, accountId);
       if (
         !account.platformUserId ||
@@ -218,23 +244,45 @@ export class DouyinBrowser {
       const { view } = await this.ensure(accountId);
       if (!samePublisher(identity, await this.identity()))
         throw new PublishingError("SESSION_CHANGED", "登录已变更");
-      await view.navigate(DOUYIN_LOGIN_CONFIG.homeUrl);
-      await confirmContactAccount(
-        view.createOpenCliPage(),
-        account.platformUserId,
+      if (platform === "xhs") {
+        await this.confirmXhsAccount(view, account.platformUserId);
+      } else {
+        await view.navigate(DOUYIN_LOGIN_CONFIG.homeUrl);
+        await confirmContactAccount(
+          view.createOpenCliPage(),
+          account.platformUserId,
+        );
+      }
+      const destination = publicCommenterProfile(
+        await resolveProfile(),
+        platform,
       );
-      const destination = publicCommenterProfile(await resolveProfile());
       if (!samePublisher(identity, await this.identity()))
         throw new PublishingError("SESSION_CHANGED", "登录已变更");
       const result = await view.navigate(destination);
       if (result.url.replace(/\/$/, "") !== destination)
         throw new PublishingError(
           "CONTACT_REDIRECTED",
-          "抖音未打开对应的评论者主页，请检查账号或访问限制",
+          "平台未打开对应的评论者主页，请检查账号或访问限制",
         );
+      if (!samePublisher(identity, await this.identity()))
+        throw new PublishingError("SESSION_CHANGED", "登录已变更");
       this.selectManual(accountId);
       this.changed();
     });
+  }
+  private async confirmXhsAccount(view: BrowserView, expected: string) {
+    const result = await checkXhsLogin(view);
+    if (result.status !== "logged_in")
+      throw new PublishingError(
+        "LOGIN_REQUIRED",
+        result.errorMessage || "请在小红书重新登录",
+      );
+    if (result.accountId !== expected)
+      throw new PublishingError(
+        "ACCOUNT_CHANGED",
+        "当前小红书账号与已保存账号不一致",
+      );
   }
   private selectManual(id?: string) {
     for (const [key, { view }] of this.views)
@@ -282,29 +330,59 @@ export class DouyinBrowser {
     save: boolean,
   ): Promise<DouyinAccount> {
     const account = await this.owned(accountId);
-    const { profile } = await this.ensure(accountId);
-    const result = await this.detection.check(
-      profile,
-      "douyin",
-      save ? "profile_save" : "manual",
-    );
+    const { profile, platform, view } = await this.ensure(accountId);
+    const result =
+      platform === "xhs"
+        ? await checkXhsLogin(view)
+        : await this.detection.check(
+            profile,
+            "douyin",
+            save ? "profile_save" : "manual",
+          );
     if (save && result.status !== "logged_in")
       throw new PublishingError(
         "LOGIN_REQUIRED",
         result.errorMessage || "请先在浏览器完成登录或验证",
       );
-    const apiIdentity = result.checks?.account_api;
+    const apiIdentity =
+      platform === "xhs" ? result : result.checks?.account_api;
     const platformUserId =
       apiIdentity?.status === "logged_in" ? apiIdentity.accountId : undefined;
     if (save && (!platformUserId || platformUserId === accountId))
       throw new PublishingError(
         "ACCOUNT_IDENTITY_UNAVAILABLE",
-        "无法确认抖音账号身份，请刷新创作者中心后重试",
+        "无法确认平台账号身份，请刷新账号首页后重试",
       );
+    if (save && !this.profiles.isSaved(profile)) {
+      const identity = await this.identity();
+      const { items } = await this.cloud<{ items: DouyinAccount[] }>(
+        "accounts/list",
+      );
+      if (
+        items.some(
+          (a) =>
+            a.id !== accountId &&
+            a.deviceId === identity.deviceId &&
+            !a.unboundAt &&
+            (a.platform ?? "douyin") === platform &&
+            a.platformUserId === platformUserId &&
+            this.profiles.isSaved(this.profileFor(identity, a.id)),
+        )
+      )
+        throw new PublishingError(
+          "ACCOUNT_ALREADY_BOUND",
+          "本机已保存这个平台账号，请直接使用已有账号",
+        );
+    }
     const saved = await this.cloud<DouyinAccount>("accounts/update", {
       id: accountId,
-      name: result.nickname || account.name,
+      name:
+        result.nickname ||
+        (platform === "xhs" && platformUserId
+          ? "小红书 · " + platformUserId.slice(-6)
+          : account.name),
       loginStatus: result.status,
+      ...(save ? { savedProfile: true } : {}),
       ...(platformUserId && platformUserId !== accountId
         ? { platformUserId }
         : {}),
@@ -324,7 +402,9 @@ export class DouyinBrowser {
   ): Promise<void> {
     return this.run(accountId, true, async () => {
       await this.owned(accountId);
-      const { view } = this.require(accountId);
+      const { view, platform } = this.require(accountId);
+      if ((action === "post" || action === "manage") && platform !== "douyin")
+        throw new PublishingError("INVALID_INPUT", "此入口仅支持抖音账号", 422);
       if (action === "back") view.goBack();
       else if (action === "forward") view.goForward();
       else if (action === "reload") await view.reload();
@@ -406,6 +486,12 @@ export class DouyinBrowser {
       false,
       async () => {
         const account = await this.owned(accountId);
+        if (account.platform === "xhs")
+          throw new PublishingError(
+            "INVALID_INPUT",
+            "视频发布只支持抖音账号",
+            422,
+          );
         const { view, profile } = await this.ensure(accountId);
         const login = await steps.run("check_login", "检查抖音登录", () =>
           this.detection.check(profile, "douyin", "task_execution"),
@@ -459,11 +545,45 @@ export class DouyinBrowser {
     signal: AbortSignal,
     work: (page: OpenCliPage, hasViewerSession: boolean) => Promise<T>,
   ) {
+    return this.withSavedPage(accountId, "douyin", signal, work);
+  }
+  observeSocial<T>(
+    identity: PublishingIdentity,
+    accountId: string,
+    platform: SocialPlatform,
+    signal: AbortSignal,
+    work: (page: OpenCliPage, platformUserId: string) => Promise<T>,
+  ) {
+    return this.withSavedPage(
+      accountId,
+      platform,
+      signal,
+      (page, _viewer, platformUserId) => work(page, platformUserId),
+      identity,
+    );
+  }
+  private withSavedPage<T>(
+    accountId: string,
+    platform: SocialPlatform,
+    signal: AbortSignal,
+    work: (
+      page: OpenCliPage,
+      hasViewerSession: boolean,
+      platformUserId: string,
+    ) => Promise<T>,
+    expectedIdentity?: PublishingIdentity,
+  ) {
+    signal = AbortSignal.any([signal, this.lifetime.signal]);
     return this.run(
       accountId,
       false,
       async () => {
         const account = await this.owned(accountId);
+        if ((account.platform ?? "douyin") !== platform)
+          throw new PublishingError(
+            "ACCOUNT_UNAVAILABLE",
+            "此账号不属于所选平台",
+          );
         if (account.loginStatus === "verification_required")
           throw new PublishingError(
             "VERIFICATION_REQUIRED",
@@ -480,6 +600,8 @@ export class DouyinBrowser {
             "请先在账号浏览器确认登录并保存账号",
           );
         const identity = await this.identity();
+        if (expectedIdentity && !samePublisher(expectedIdentity, identity))
+          throw new PublishingError("SESSION_CHANGED", "登录已变更");
         const profile = this.profileFor(identity, accountId);
         if (!this.profiles.isSaved(profile))
           throw new PublishingError(
@@ -510,15 +632,56 @@ export class DouyinBrowser {
         signal.addEventListener("abort", close, { once: true });
         try {
           const page = view.createOpenCliPage();
-          const metadata = await view.getCookies(["https://www.douyin.com/"]);
+          const metadata = await view.getCookies([
+            platform === "xhs" ? XHS_HOME : "https://www.douyin.com/",
+          ]);
           const hasViewerSession = metadata.some(
             (cookie) =>
-              DOUYIN_LOGIN_CONFIG.cookieNames.includes(cookie.name) &&
+              (platform === "xhs"
+                ? cookie.name === "web_session"
+                : DOUYIN_LOGIN_CONFIG.cookieNames.includes(cookie.name)) &&
               (cookie.expirationDate === undefined ||
                 cookie.expirationDate > Date.now() / 1000),
           );
           signal.throwIfAborted();
-          return await work(page, hasViewerSession);
+          if (expectedIdentity) {
+            if (!hasViewerSession || !account.platformUserId)
+              throw new PublishingError(
+                "LOGIN_REQUIRED",
+                "请在本机账号浏览器登录并保存该平台账号",
+              );
+            if (platform === "xhs") {
+              await this.confirmXhsAccount(view, account.platformUserId);
+            } else {
+              const result = await this.douyinDetector(
+                profile,
+                view,
+              ).checkAccountApi();
+              const currentId = result.accountId;
+              if (
+                result.status !== "logged_in" ||
+                !currentId ||
+                currentId === accountId
+              )
+                throw new PublishingError(
+                  "LOGIN_REQUIRED",
+                  "抖音登录已失效或无法核对账号，请在账号浏览器确认",
+                );
+              if (currentId !== account.platformUserId)
+                throw new PublishingError(
+                  "ACCOUNT_CHANGED",
+                  "当前抖音账号与已保存账号不一致",
+                );
+            }
+            signal.throwIfAborted();
+            if (!samePublisher(expectedIdentity, await this.identity()))
+              throw new PublishingError("SESSION_CHANGED", "登录已变更");
+          }
+          return await work(
+            page,
+            hasViewerSession,
+            account.platformUserId ?? "",
+          );
         } finally {
           signal.removeEventListener("abort", close);
           if (!signal.aborted) close();

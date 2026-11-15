@@ -1,8 +1,12 @@
 import { CommentObservationService } from "../comment-observation/service";
 import { CollectionRunService } from "../comment-observation/collection-runs";
-import { CreatorHubBridge } from "../creatorhub/bridge";
-import { CreatorHubOutreach } from "../creatorhub/outreach";
-import { CreatorHubClient } from "../creatorhub/client";
+import { DesktopOutreach } from "../social/outreach";
+import { WorkMonitor } from "../social/monitor";
+import {
+  sendSocialMessage,
+  verifyExistingSocialMessage,
+} from "../social/message";
+import { publicCommenterProfile } from "../comment-observation/comment-contact";
 import { ipcMain, app, dialog, type BrowserWindow } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -39,7 +43,7 @@ export function registerPublishing(
 ) {
   let resolver = dependencies.resolver;
   let recovering = false;
-  let startingDirect = false;
+  let lifetime = new AbortController();
   const files = new PublishingFiles(
     path.join(app.getPath("userData"), "douyin"),
     dependencies.identity,
@@ -90,15 +94,12 @@ export function registerPublishing(
     (identity) => files.directoryFor(identity),
     emit,
   );
-  const creatorHub = new CreatorHubBridge({
-    request: dependencies.request,
-    client: (baseUrl) => new CreatorHubClient(baseUrl),
-    identity: dependencies.identity,
-  });
-  const outreach = new CreatorHubOutreach({
-    request: dependencies.request,
-    client: (baseUrl) => new CreatorHubClient(baseUrl),
-  });
+  const monitor = new WorkMonitor(
+    browser,
+    dependencies.identity,
+    dependencies.request,
+    (identity) => files.directoryFor(identity),
+  );
   const publisher = new DirectPublisher({
     identity: dependencies.identity,
     exchange: dependencies.exchange,
@@ -122,8 +123,94 @@ export function registerPublishing(
   const queue = new PublishQueue({
     identity: dependencies.identity,
     directory: (identity) => files.directoryFor(identity),
-    record: (id) => cloud("records/get", { id }),
+    record: (id) =>
+      publisher.active?.id === id
+        ? Promise.resolve(publisher.active)
+        : cloud("records/get", { id }),
     changed: emit,
+    verifyMessage: async (
+      identity,
+      { accountId, workId, commentId, submittedAt },
+      matchesText,
+    ) => {
+      const signal = AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(45_000),
+      ]);
+      const contact = (await dependencies.request(
+        "/v1/collection/comments/contact",
+        {
+          accountId,
+          workId,
+          id: commentId,
+        },
+      )) as { profileUrl?: unknown };
+      const profileUrl = publicCommenterProfile(contact?.profileUrl, "douyin");
+      return browser.observeSocial(
+        identity,
+        accountId,
+        "douyin",
+        signal,
+        (page) =>
+          page.withMessagePopups(profileUrl, () =>
+            page.withPublishViewport(() =>
+              verifyExistingSocialMessage(
+                page,
+                {
+                  profileUrl,
+                  submittedAt,
+                  matchesText: (text) => matchesText(profileUrl, text),
+                },
+                signal,
+              ),
+            ),
+          ),
+      );
+    },
+    sendMessage: async (input, identity, beforeSubmit) => {
+      const signal = AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(120000),
+      ]);
+      await browser.observeSocial(
+        identity,
+        input.accountId,
+        input.platform,
+        signal,
+        (page, senderId) =>
+          page.withMessagePopups(input.profileUrl, () =>
+            page.withPublishViewport(() =>
+              sendSocialMessage(
+                page,
+                input,
+                signal,
+                async () => {
+                  if (!input.source)
+                    throw new PublishingError(
+                      "COMMENT_PURPOSE_DENIED",
+                      "无法确认评论来源授权",
+                    );
+                  const result = (await dependencies.request(
+                    "/v1/collection/comments/contact",
+                    {
+                      accountId: input.accountId,
+                      workId: input.source.workId,
+                      id: input.source.commentId,
+                    },
+                  )) as { profileUrl?: string };
+                  if (result?.profileUrl !== input.profileUrl)
+                    throw new PublishingError(
+                      "COMMENT_CHANGED",
+                      "评论来源或收件人已变化，请重新审核",
+                    );
+                  await beforeSubmit();
+                },
+                senderId,
+              ),
+            ),
+          ),
+      );
+    },
     execute: async (entry, _identity, assertCurrent, started) => {
       await publisher.idle();
       await assertCurrent();
@@ -131,14 +218,14 @@ export function registerPublishing(
       await assertCurrent();
       if (account.loginStatus !== "logged_in")
         throw new PublishingError("LOGIN_REQUIRED", "批次账号需要重新登录");
-      const handoff = await dependencies.exchange.createHandoff({
-        requestKey: entry.id,
-        artifactId: entry.artifactId,
-        expectedReviewRevision: entry.expectedReviewRevision,
-      });
-      await assertCurrent();
-      const record = await publisher.start(
-        {
+      let input = entry.direct;
+      if (!input) {
+        const handoff = await dependencies.exchange.createHandoff({
+          requestKey: entry.id,
+          artifactId: entry.artifactId,
+          expectedReviewRevision: entry.expectedReviewRevision,
+        });
+        input = {
           requestKey: entry.id,
           handoffId: handoff.id,
           accountId: entry.accountId,
@@ -146,9 +233,10 @@ export function registerPublishing(
           description: entry.description,
           hashtags: [],
           batch: true,
-        },
-        assertCurrent,
-      );
+        };
+      }
+      await assertCurrent();
+      const record = await publisher.start(input, assertCurrent);
       try {
         started(record);
       } catch {
@@ -162,6 +250,11 @@ export function registerPublishing(
       return publisher.active?.id === record.id ? publisher.active : record;
     },
   });
+  const outreach = new DesktopOutreach(
+    dependencies.request,
+    queue,
+    dependencies.identity,
+  );
   async function recover() {
     if (
       recovering ||
@@ -172,6 +265,12 @@ export function registerPublishing(
     recovering = true;
     try {
       const identity = await dependencies.identity();
+      void queue.recoverMessageReceipt(identity).catch((error: unknown) => {
+        console.warn(
+          "private message receipt check deferred",
+          error instanceof PublishingError ? error.code : "CHECK_UNAVAILABLE",
+        );
+      });
       const scope = files.directoryFor(identity);
       for (const saved of files.pending(scope)) {
         if (
@@ -202,6 +301,7 @@ export function registerPublishing(
   const recoveryTimer = setInterval(() => {
     void recover().catch(() => {});
     void collection.recover().catch(() => {});
+    void monitor.tick().catch(() => {});
   }, 30000);
   recoveryTimer.unref();
   async function state(): Promise<DouyinDesktopState> {
@@ -224,9 +324,13 @@ export function registerPublishing(
     "collection.start",
     "collection.cancel",
     "collection.contact",
-    "creatorhub.status",
-    "creatorhub.login",
-    "creatorhub.start",
+    "social.status",
+    "social.start",
+    "social.monitors",
+    "social.workHistory",
+    "social.remove",
+    "social.scan",
+    "social.reply",
     "outreach.submit",
     "outreach.refresh",
     "outreach.cancel",
@@ -283,7 +387,7 @@ export function registerPublishing(
           const { workId, id } = value;
           if (
             typeof workId !== "string" ||
-            !/^[0-9]{5,30}$/.test(workId) ||
+            !/^(?:[0-9]{5,30}|xhs-[0-9a-f]{24})$/.test(workId) ||
             typeof id !== "string" ||
             !/^[a-f0-9]{32}$/.test(id)
           )
@@ -300,13 +404,25 @@ export function registerPublishing(
             return (result as { profileUrl?: unknown } | null)?.profileUrl;
           });
           data = await state();
-        } else if (method === "creatorhub.status") {
-          data = await creatorHub.status();
-        } else if (method === "creatorhub.login") {
-          data = await creatorHub.login();
-        } else if (method === "creatorhub.start") {
-          data = await creatorHub.start(
-            value as Parameters<typeof creatorHub.start>[0],
+        } else if (method === "social.status") {
+          data = await monitor.status(requestIdentity);
+        } else if (method === "social.start") {
+          data = await monitor.start(
+            requestIdentity,
+            value as unknown as Parameters<typeof monitor.start>[1],
+          );
+        } else if (method === "social.monitors") {
+          data = await monitor.list(requestIdentity);
+        } else if (method === "social.workHistory") {
+          data = monitor.history(requestIdentity);
+        } else if (method === "social.remove") {
+          data = await monitor.remove(requestIdentity, String(value.id));
+        } else if (method === "social.scan") {
+          data = await monitor.scan(requestIdentity, String(value.id));
+        } else if (method === "social.reply") {
+          data = await outreach.reply(
+            requestIdentity,
+            value as unknown as Parameters<typeof outreach.reply>[1],
           );
         } else if (method === "outreach.submit") {
           data = await outreach.submit(
@@ -346,10 +462,14 @@ export function registerPublishing(
           await recover();
           data = await state();
         } else if (method === "account.add") {
+          const platform = value.platform ?? "douyin";
+          if (platform !== "douyin" && platform !== "xhs")
+            throw new PublishingError("INVALID_INPUT", "账号平台无效", 422);
           const id = randomBytes(16).toString("hex");
           await cloud("accounts/bind", {
             id,
-            name: "新的抖音账号",
+            platform,
+            name: platform === "xhs" ? "新的小红书账号" : "新的抖音账号",
             loginStatus: "logged_out",
           });
           await browser.open(id);
@@ -417,7 +537,7 @@ export function registerPublishing(
             );
           data = await files.preview(assets, resolver);
         } else if (method === "publish.batch") {
-          if (!resolver || startingDirect)
+          if (!resolver)
             throw new PublishingError(
               "DEVICE_BUSY",
               "请等待当前发布准备结束，并确认文件解析器可用",
@@ -427,37 +547,19 @@ export function registerPublishing(
             value as unknown as DouyinBatchInput,
           );
         } else if (method === "publish.queue") {
-          if (value.action === "resume" && startingDirect)
-            throw new PublishingError("DEVICE_BUSY", "请等待当前发布准备结束");
           data = await queue.control(requestIdentity, value.action, value.id);
         } else if (method === "publish.start") {
-          if (queue.busy || startingDirect)
-            throw new PublishingError(
-              "DEVICE_BUSY",
-              "当前设备已有队列任务正在执行",
-            );
-          // Recheck and persist the current login before the cloud accepts a direct execution.
-          startingDirect = true;
-          try {
-            await browser.check(accountId);
-            const assertCurrent = async () => {
-              if (
-                !samePublisher(requestIdentity, await dependencies.identity())
-              )
-                throw new PublishingError(
-                  "SESSION_CHANGED",
-                  "登录已变更，请重新操作",
-                  403,
-                );
-            };
-            await assertCurrent();
-            data = await publisher.start(
-              value as unknown as DouyinPublishInput,
-              assertCurrent,
-            );
-          } finally {
-            startingDirect = false;
-          }
+          const input = value as unknown as DouyinPublishInput;
+          const handoff = await dependencies.exchange.getHandoff(
+            input.handoffId,
+          );
+          if (!samePublisher(requestIdentity, await dependencies.identity()))
+            throw new PublishingError("SESSION_CHANGED", "登录已变更");
+          data = await queue.direct(
+            requestIdentity,
+            input,
+            handoff.artifact.id,
+          );
         }
         const responseIdentity = await dependencies.identity();
         if (
@@ -503,6 +605,9 @@ export function registerPublishing(
     }
   });
   function stop() {
+    lifetime.abort();
+    lifetime = new AbortController();
+    monitor.stop();
     collection.stop();
     observations.stop();
     queue.stop();

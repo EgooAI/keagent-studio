@@ -1,0 +1,123 @@
+.review-space {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.review-space .lead-review-layout {
+  grid-template-columns: minmax(225px, 31%) minmax(0, 1fr);
+  border-radius: 10px;
+}
+.review-space .lead-person[data-current="true"] {
+  box-shadow: inset 3px 0 var(--accent);
+}
+.review-space .lead-reader-head {
+  justify-content: space-between;
+}
+.review-space .lead-reader h4 {
+  margin: 20px 0 8px;
+}
+.review-space .lead-reader blockquote {
+  background: var(--canvas);
+  border-radius: 5px;
+  padding: 12px 15px;
+  margin: 0;
+}
+.review-space .lead-reason {
+  margin-top: 16px;
+}
+.review-space .lead-reader .lead-compose {
+  margin-bottom: 0;
+  display: grid;
+  gap: 10px;
+}
+.review-space .lead-compose label {
+  margin: 0;
+}
+.review-space
+  .lead-reader
+  :is(.ant-input-data-count, .ant-input-textarea-show-count) {
+  font-variant-numeric: tabular-nums;
+}
+.review-space .lead-people-scroll {
+  max-height: 62vh;
+}
+.review-filters {
+  display: flex;
+  gap: 8px;
+  padding: 0 18px 13px;
+  flex-wrap: wrap;
+}
+.review-filters .ant-input-search {
+  flex: 0 0 100%;
+}
+.review-filters .ant-select {
+  min-width: 95px;
+  max-width: 100%;
+}
+.review-source,
+.review-meta,
+.review-scope,
+.review-row-state,
+.review-job-title small {
+  font-size: 13px;
+  color: var(--muted);
+}
+.review-source {
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+.review-meta {
+  display: block;
+  margin: 8px 0 0;
+}
+.review-row-state,
+.review-job-title small {
+  display: block;
+  margin-top: 6px;
+}
+.review-actions,
+.review-scope,
+.review-job-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.review-actions {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  justify-content: space-between;
+}
+.review-job-panel {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.review-job-tools {
+  padding: 15px;
+}
+.review-empty {
+  align-self: center;
+  padding: 40px 10px;
+}
+.review-confirm-list {
+  max-height: 44vh;
+  overflow: auto;
+}
+.review-confirm-list p {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+.review-loading {
+  padding: 14px;
+}
+@media (max-width: 850px) {
+  .review-space .lead-review-layout {
+    grid-template-columns: 1fr;
+  }
+  .review-space .lead-people-scroll {
+    max-height: 180px;
+  }
+}

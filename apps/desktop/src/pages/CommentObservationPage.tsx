@@ -129,7 +129,9 @@ export default function CommentObservationPage() {
                   options={accounts.data?.items
                     .filter(
                       (a) =>
-                        !a.unboundAt && a.deviceId === desktop.data?.deviceId,
+                        a.platform !== "xhs" &&
+                        !a.unboundAt &&
+                        a.deviceId === desktop.data?.deviceId,
                     )
                     .map((a) => ({ value: a.id, label: a.name }))}
                 />

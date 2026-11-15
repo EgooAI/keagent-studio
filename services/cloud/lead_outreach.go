@@ -53,17 +53,17 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 		return nil, err
 	}
 	defer tx.Rollback()
-	var analysisID, owner, device, account, work, source, commentProfile, commenterName string
-	var qualified bool
+	var analysisID, owner, device, account, work, source, commentProfile, commenterName, commentID string
+	var qualified, skipped bool
 	var status string
 	err = tx.QueryRowContext(ctx, `SELECT a.id,a.owner_id,a.device_id,a.account_id,a.work_id,a.source_id,
-		a.qualified,a.status,coalesce(o.fields->>'commenter_profile',''),
-		coalesce(o.fields->>'commenter_name','')
+		a.qualified,a.review_skipped,a.status,coalesce(o.fields->>'commenter_profile',''),
+		coalesce(o.fields->>'commenter_name',''),o.id
 		FROM keagent_comment_analyses a JOIN keagent_comment_observations o ON o.id=a.comment_row_id
 		WHERE a.id=$1 AND a.owner_id=$2 AND a.device_id=$3
 			AND o.retain_until > clock_timestamp() FOR UPDATE`,
 		in.AnalysisID, a.UserID, a.DeviceID).Scan(&analysisID, &owner, &device, &account, &work,
-		&source, &qualified, &status, &commentProfile, &commenterName)
+		&source, &qualified, &skipped, &status, &commentProfile, &commenterName, &commentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, collectionMissing()
 	}
@@ -72,6 +72,9 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 	}
 	if status != "done" || !qualified {
 		return nil, exchangeFail(409, "COMMENT_NOT_QUALIFIED", "该评论尚未完成分析或未达标")
+	}
+	if skipped {
+		return nil, exchangeFail(409, "LEAD_SKIPPED", "已标记暂不联系，请先恢复待审核")
 	}
 	if commentProfile == "" {
 		return nil, exchangeFail(409, "COMMENT_PROFILE_UNAVAILABLE", "该来源没有提供可核对的评论者主页")
@@ -119,7 +122,7 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 			}
 			return object{"id": existingID, "analysisId": analysisID, "status": existingStatus,
 				"attempt": existingAttempt, "draft": draft,
-				"commenterProfile": commentProfile, "commenterName": commenterName}, nil
+				"commentId": commentID, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
 		}
 		if existingStatus != "failed" && existingStatus != "canceled" {
 			return nil, exchangeFail(409, "OUTREACH_EXISTS", "该评论已有私信任务")
@@ -137,7 +140,7 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 			return nil, err
 		}
 		return object{"id": existingID, "analysisId": analysisID, "status": "approved",
-			"attempt": attempt, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
+			"attempt": attempt, "commentId": commentID, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -154,7 +157,7 @@ func (s *server) outreachSubmit(ctx context.Context, a actor, body []byte) (any,
 		return nil, err
 	}
 	return object{"id": outreachID, "analysisId": analysisID, "status": "approved",
-		"attempt": 1, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
+		"attempt": 1, "commentId": commentID, "commenterProfile": commentProfile, "commenterName": commenterName}, nil
 }
 
 func (s *server) outreachResult(ctx context.Context, a actor, body []byte) (any, error) {
@@ -259,7 +262,7 @@ func (s *server) outreachList(ctx context.Context, a actor, body []byte) (any, e
 		add("account_id", in.AccountID)
 	}
 	if in.WorkID != "" {
-		if !douyinPostID.MatchString(in.WorkID) {
+		if !validLeadWork(in.WorkID) {
 			return nil, collectionInvalid()
 		}
 		add("work_id", in.WorkID)

@@ -1,7 +1,9 @@
 /** Publishing owns these records; the immutable artifact contract stays unchanged. */
 export type DouyinPublishState =
   "running" | "submitting" | "accepted" | "failed" | "unknown" | "canceled";
+export type SocialPlatform = "douyin" | "xhs";
 export interface DouyinAccount {
+  platform?: SocialPlatform;
   id: string;
   deviceId: string;
   name: string;
@@ -43,6 +45,7 @@ export interface DouyinPublishRecord extends DouyinPublishInput {
   logs: DouyinPublishLog[];
 }
 export interface DouyinBrowserTab {
+  platform?: SocialPlatform;
   accountId: string;
   title: string;
   url: string;
@@ -91,10 +94,17 @@ export interface DouyinBatchInput {
   accountId: string;
   entries: DouyinQueueEntry[];
 }
-export interface DouyinQueueRow extends Pick<
-  DouyinQueueEntry,
-  "artifactId" | "title"
-> {
+export interface DouyinQueueRow {
+  createdAt?: string;
+  checkedAt?: string;
+  sourceWorkId?: string;
+  sourceCommentId?: string;
+  kind?: "video" | "message";
+  eligibleAt?: number;
+  artifactId?: string;
+  title: string;
+  errorMessage?: string;
+  resultSource?: "platform" | "manual";
   id: string;
   batchId: string;
   accountId: string;

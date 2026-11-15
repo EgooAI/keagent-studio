@@ -49,6 +49,27 @@ CREATE TABLE IF NOT EXISTS keagent_comment_analyses (
  status text NOT NULL DEFAULT 'queued', error text NOT NULL DEFAULT '',
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(source_id,comment_row_id,criteria_hash));
+ALTER TABLE keagent_comment_analyses ADD COLUMN IF NOT EXISTS draft_error text NOT NULL DEFAULT '';
+ALTER TABLE keagent_comment_analyses ADD COLUMN IF NOT EXISTS manual_draft text;
+ALTER TABLE keagent_comment_analyses ADD COLUMN IF NOT EXISTS review_skipped boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS keagent_workspace_qualified ON keagent_comment_analyses(owner_id,device_id,account_id,created_at DESC,id DESC) WHERE qualified AND status='done';
+-- The old parser emitted this exact error only after accepting a qualified judgment.
+-- Its evidence was discarded, so recover the decision without inventing an explanation.
+DO $migration$
+DECLARE affected_jobs text[];
+BEGIN
+ WITH repaired AS (
+   UPDATE keagent_comment_analyses SET status='done', qualified=true, draft_error=error, error=''
+   WHERE status='failed' AND error='模型没有返回可核对的私信草稿'
+   RETURNING job_id)
+ SELECT array_agg(DISTINCT job_id) INTO affected_jobs FROM repaired;
+ UPDATE keagent_comment_analysis_jobs j SET qualified=c.qualified, failed=c.failed,
+   status=CASE WHEN j.status='partial' AND c.failed=0 AND c.queued=0 AND j.processed>=j.total THEN 'done' ELSE j.status END
+ FROM (SELECT job_id, count(*) FILTER (WHERE qualified) AS qualified,
+   count(*) FILTER (WHERE status='failed') AS failed,
+   count(*) FILTER (WHERE status='queued') AS queued FROM keagent_comment_analyses
+   WHERE job_id=ANY(affected_jobs) GROUP BY job_id) c WHERE j.id=c.job_id;
+END $migration$;
 CREATE INDEX IF NOT EXISTS keagent_comment_analysis_list
  ON keagent_comment_analyses(job_id,status,qualified);
 

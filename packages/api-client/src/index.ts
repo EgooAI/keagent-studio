@@ -1,6 +1,7 @@
 export { douyinApi, douyinDesktop } from "./douyin";
 export { collectionApi } from "./collection";
 export { creatorHubApi } from "./creatorhub";
+export { leadWorkspaceApi } from "./lead-workspace";
 export { searchBeikeHouses, getBeikeHouseDetail } from "./beike";
 import { serviceRequest } from "./transport";
 export {

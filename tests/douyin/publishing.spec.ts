@@ -31,8 +31,7 @@ test("AI 获客 opens the observation form and renders a controlled desktop resu
   page,
 }) => {
   await desktopFixture(page);
-  await page.goto("/#/leads");
-  await page.getByRole("button", { name: "评论观察", exact: true }).click();
+  await page.goto("/#/leads/comment-observation");
   await page.getByRole("combobox", { name: "本机抖音账号" }).click();
   await page.getByText(account.name, { exact: true }).last().click();
   await page

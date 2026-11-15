@@ -75,7 +75,12 @@ export default function DouyinBrowserWorkspace() {
   }, [tab?.accountId, locked]);
   if (!tab) return null;
   return (
-    <section className="douyin-browser-workspace" aria-label="抖音账号浏览器">
+    <section
+      className="douyin-browser-workspace"
+      aria-label={
+        tab.platform === "xhs" ? "小红书账号浏览器" : "抖音账号浏览器"
+      }
+    >
       <div className="douyin-browser-tabs">
         <Button onClick={() => void action("browser.hide", {})}>
           返回工作台
@@ -87,7 +92,8 @@ export default function DouyinBrowserWorkspace() {
             key: value.accountId,
             label: (
               <span>
-                {value.title || "抖音账号"}{" "}
+                {value.title ||
+                  (value.platform === "xhs" ? "小红书账号" : "抖音账号")}{" "}
                 <Button
                   type="text"
                   size="small"

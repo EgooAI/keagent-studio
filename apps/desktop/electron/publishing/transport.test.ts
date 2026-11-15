@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
+import type { HandlerDetails, WindowOpenHandlerResponse } from "electron";
 import {
   withUploadContext,
   allowedUploadUrl,
@@ -36,6 +39,138 @@ function context(transport: typeof fetch): UploadContext {
     assetHash: "1".repeat(64),
   };
 }
+
+it("uses a same-session IM popup only for an explicit chat entry and returns to the opener on reload", async () => {
+  const profile = "https://www.douyin.com/user/test";
+  const inbox = "https://www.douyin.com/chat";
+  let handle = (_details: HandlerDetails): WindowOpenHandlerResponse => ({
+    action: "deny",
+  });
+  const ask = (url: string) =>
+    handle({ url, referrer: { url: profile } } as HandlerDetails);
+  const child = Object.assign(new EventEmitter(), {
+    getURL: () => inbox,
+    focusedFrame: { origin: new URL(inbox).origin, detached: false },
+    isDestroyed: () => false,
+    executeJavaScriptInIsolatedWorld: vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true),
+    sendInputEvent: vi.fn(),
+    setWindowOpenHandler: vi.fn(),
+  });
+  const popup = {
+    webContents: child,
+    destroy: vi.fn(),
+    isDestroyed: () => false,
+  };
+  const opener = Object.assign(new EventEmitter(), {
+    getURL: () => profile,
+    session: {},
+    isDestroyed: () => false,
+    setWindowOpenHandler: (next: typeof handle) => {
+      handle = next;
+    },
+    executeJavaScriptInIsolatedWorld: vi.fn(async () => {
+      for (const url of [
+        inbox.replace("douyin.com", "douyin.com.example"),
+        "https://www.xiaohongshu.com/chat",
+        inbox.replace("https:", "http:"),
+        inbox.replace("//", "//user@"),
+        "blob:" + inbox,
+      ]) {
+        expect(ask(url).action).toBe("deny");
+      }
+      const result = ask(inbox);
+      expect(result.action).toBe("allow");
+      expect(result.overrideBrowserWindowOptions?.webPreferences?.session).toBe(
+        opener.session,
+      );
+      expect(ask(inbox).action).toBe("deny");
+      opener.emit("did-create-window", popup);
+    }),
+  });
+  const navigate = vi.fn(async () => {});
+  const page = new OpenCliPage(opener as never, navigate);
+  await page.withMessagePopups(profile, async () => {
+    expect(ask(inbox).action).toBe("deny");
+    await page.inspectDocument("openChat()", true);
+    expect(page.getUrl()).toBe(inbox);
+    const signal = new AbortController().signal;
+    expect(
+      await page.pressMessageEnter(
+        "https://www.xiaohongshu.com",
+        signal,
+        "true",
+      ),
+    ).toBe(false);
+    expect(
+      await page.pressMessageEnter(new URL(inbox).origin, signal, "false"),
+    ).toBe(false);
+    expect(child.sendInputEvent).not.toHaveBeenCalled();
+    expect(
+      await page.pressMessageEnter(new URL(inbox).origin, signal, "true"),
+    ).toBe(true);
+    expect(child.sendInputEvent.mock.calls).toEqual([
+      [{ type: "keyDown", keyCode: "Enter" }],
+      [{ type: "keyUp", keyCode: "Enter" }],
+    ]);
+    const preventDefault = vi.fn();
+    child.emit("will-redirect", {
+      url: "https://elsewhere.example",
+      preventDefault,
+    });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    await page.goto(profile, { waitUntil: "none" });
+    expect(navigate).toHaveBeenCalledWith(profile);
+    expect(page.getUrl()).toBe(profile);
+  });
+  expect(popup.destroy).toHaveBeenCalledOnce();
+  expect(ask(inbox).action).toBe("deny");
+});
+
+it("only inserts a private draft into the same verified recipient and focused frame", async () => {
+  const origin = "https://www.douyin.com";
+  const url = origin + "/user/test";
+  const editor = { tagName: "TEXTAREA", matches: () => true, select: vi.fn() };
+  const dom = {
+    location: { origin },
+    document: { activeElement: editor },
+    rightPeer: false,
+  };
+  const frame = { origin, detached: false };
+  const opener = Object.assign(new EventEmitter(), {
+    getURL: () => url,
+    isDestroyed: () => false,
+    focusedFrame: frame,
+    setWindowOpenHandler: vi.fn(),
+    executeJavaScriptInIsolatedWorld: async (
+      _world: number,
+      scripts: { code: string }[],
+    ) => runInNewContext(scripts[0].code, dom),
+    insertText: vi.fn(),
+  });
+  const page = new OpenCliPage(opener as never, async () => {});
+  const fill = () =>
+    page.replaceText("fixture", "textarea", {
+      origin,
+      signal: new AbortController().signal,
+      stillReady: "rightPeer",
+    });
+  await page.withMessagePopups(url, async () => {
+    await expect(fill()).rejects.toThrow();
+    expect(editor.select).not.toHaveBeenCalled();
+    dom.rightPeer = true;
+    editor.select.mockImplementationOnce(() => {
+      opener.focusedFrame = { origin, detached: false };
+    });
+    await expect(fill()).rejects.toThrow();
+    expect(opener.insertText).not.toHaveBeenCalled();
+    await fill();
+    expect(opener.insertText).toHaveBeenCalledExactlyOnceWith("fixture");
+  });
+});
+
 describe("migrated video adapter", () => {
   it("waits for click readiness but never replays the click after navigation", async () => {
     const executeJavaScript = vi

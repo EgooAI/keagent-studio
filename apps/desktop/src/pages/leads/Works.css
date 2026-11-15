@@ -1,0 +1,88 @@
+.work-page .page-heading {
+  margin-bottom: 12px;
+}
+.work-page .ant-tabs-nav {
+  margin-bottom: 18px;
+}
+.work-page > .ant-alert {
+  margin-bottom: 12px;
+}
+.work-table-panel {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.work-toolbar,
+.work-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px;
+}
+.work-toolbar > .ant-input-affix-wrapper {
+  width: min(280px, 100%);
+}
+.work-toolbar > .ant-select {
+  min-width: 150px;
+  max-width: min(400px, 100%);
+}
+.work-toolbar .ant-input-prefix {
+  color: var(--muted);
+  margin-inline-end: 7px;
+}
+.work-page .work-title-link {
+  padding: 0;
+  height: auto;
+  white-space: normal;
+  text-align: left;
+  justify-content: start;
+  overflow-wrap: anywhere;
+}
+.work-page .ant-table-cell {
+  overflow-wrap: anywhere;
+}
+.work-comment,
+.work-quote {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.work-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.work-more {
+  padding: 12px 15px;
+  text-align: center;
+}
+.work-account,
+.work-quote {
+  padding: 12px 16px;
+  background: var(--canvas);
+  border-radius: 6px;
+  margin: 0 0 20px;
+}
+.work-options summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.work-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 20px;
+  padding: 18px 0;
+  border-block: 1px solid var(--line);
+}
+.work-details dt {
+  color: var(--muted);
+}
+.work-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.work-actions {
+  padding-inline: 0;
+}

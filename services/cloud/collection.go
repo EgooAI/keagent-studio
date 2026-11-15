@@ -128,7 +128,7 @@ func cleanTarget(in *targetFields) error {
 		if path := collectionVideoPath.FindStringSubmatch(u.Path); path != nil && (len(modal) == 0 || (len(modal) == 1 && modal[0] == path[1])) {
 			video = path[1]
 		}
-		if collectionCreatorPath.MatchString(u.Path) && len(modal) == 1 && douyinPostID.MatchString(modal[0]) {
+		if (collectionCreatorPath.MatchString(u.Path) || strings.TrimSuffix(u.Path, "/") == "/jingxuan") && len(modal) == 1 && douyinPostID.MatchString(modal[0]) {
 			video = modal[0]
 		}
 		if video != "" {
@@ -143,7 +143,10 @@ func (s *server) collection(ctx context.Context, a actor, op string, body []byte
 	if a.DeviceID == "" {
 		return nil, exchangeFail(403, "DEVICE_REQUIRED", "请使用已绑定的桌面设备")
 	}
-	if strings.HasPrefix(op, "creatorhub/consent/") || strings.HasPrefix(op, "lead/settings/") {
+	if strings.HasPrefix(op, "lead/workspace/") {
+		return s.leadWorkspace(ctx, a, strings.TrimPrefix(op, "lead/workspace/"), body)
+	}
+	if strings.HasPrefix(op, "creatorhub/consent/") || strings.HasPrefix(op, "lead/consent/") || strings.HasPrefix(op, "lead/settings/") {
 		return s.leadConfig(ctx, a, op, body)
 	}
 	if op == "comments/import" {
@@ -457,7 +460,7 @@ const collectionVideoSource = `SELECT DISTINCT ON (v.work_id) r.seq,v.work_id AS
   'deviceId',r.device_id,'panelStatus',r.payload->'panelStatus')) AS payload
  FROM keagent_monitored_videos v JOIN keagent_collection_runs r ON r.owner_id=v.owner_id AND r.payload->>'verifiedWorkId'=v.work_id
  WHERE v.owner_id=$1 AND r.device_id=$2 AND r.observed_at IS NOT NULL AND ($3='' OR r.target_id=$3)
-  AND COALESCE(r.payload->>'source','') <> 'creatorhub'
+  AND COALESCE(r.payload->>'source','') NOT IN ('creatorhub','electron')
  ORDER BY v.work_id,r.observed_at DESC,r.seq DESC`
 
 func collectionRead(ctx context.Context, tx *sql.Tx, a actor, op string, body []byte) (any, error) {

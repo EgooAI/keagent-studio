@@ -1,5 +1,6 @@
 import type {
   AnalysisJob,
+  AnalysisJobSummary,
   CreatorHubConsent,
   CreatorHubStartInput,
   CreatorHubStartResult,
@@ -7,24 +8,46 @@ import type {
   LeadAnalysisPage,
   LeadIntent,
   LeadSettings,
+  WorkMonitorSummary,
+  CommentDetailPage,
   OutreachTask,
 } from "@keagent/shared-types";
 import { desktopCloud, douyinDesktop } from "./douyin";
 
 export const creatorHubApi = {
-  status: () => douyinDesktop<CreatorHubStatus>("creatorhub.status"),
-  login: () => douyinDesktop<CreatorHubStatus>("creatorhub.login"),
+  status: () => douyinDesktop<CreatorHubStatus>("social.status"),
+  reply: (input: {
+    accountId: string;
+    workId: string;
+    commentId: string;
+    text: string;
+    requestKey: string;
+  }) =>
+    douyinDesktop<import("@keagent/shared-types").DouyinQueueRow>(
+      "social.reply",
+      input,
+    ),
+  monitors: () => douyinDesktop<WorkMonitorSummary[]>("social.monitors"),
+  workHistory: () => douyinDesktop<WorkMonitorSummary[]>("social.workHistory"),
+  scan: (id: string) =>
+    douyinDesktop<CreatorHubStartResult>("social.scan", { id }),
+  remove: (id: string) => douyinDesktop("social.remove", { id }),
+  comments: (accountId: string, workId: string, cursor?: string) =>
+    desktopCloud<CommentDetailPage>("collection", "comments/list", {
+      accountId,
+      workId,
+      cursor,
+      limit: 50,
+    }),
   start: (input: CreatorHubStartInput) =>
-    douyinDesktop<CreatorHubStartResult>("creatorhub.start", input),
-  saveConsent: (input: unknown) =>
-    desktopCloud<unknown>("collection", "creatorhub/consent/save", input),
+    douyinDesktop<CreatorHubStartResult>("social.start", input),
   consent: (accountId: string, workId: string) =>
-    desktopCloud<CreatorHubConsent>("collection", "creatorhub/consent/get", {
+    desktopCloud<CreatorHubConsent>("collection", "lead/consent/get", {
       accountId,
       workId,
     }),
   revokeConsent: (accountId: string, workId: string) =>
-    desktopCloud<unknown>("collection", "creatorhub/consent/revoke", {
+    desktopCloud<unknown>("collection", "lead/consent/revoke", {
       accountId,
       workId,
     }),
@@ -42,11 +65,23 @@ export const creatorHubApi = {
     desktopCloud<AnalysisJob>("collection", "comments/analyze-batch", input),
   job: (jobId: string) =>
     desktopCloud<AnalysisJob>("collection", "comments/analysis/job", { jobId }),
+  jobs: (input: { accountId?: string; workId?: string; limit?: number } = {}) =>
+    desktopCloud<{ items: AnalysisJobSummary[] }>(
+      "collection",
+      "comments/analysis/jobs",
+      input,
+    ),
   retryAnalysis: (jobId: string, analysisIds?: string[]) =>
     desktopCloud<AnalysisJob>(
       "collection",
       "comments/analysis/retry",
       analysisIds ? { jobId, analysisIds } : { jobId },
+    ),
+  retryDraft: (analysisId: string) =>
+    desktopCloud<{ draft: string }>(
+      "collection",
+      "comments/analysis/retry-draft",
+      { analysisId },
     ),
   analyses: (input: {
     jobId: string;

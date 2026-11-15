@@ -69,6 +69,7 @@ const CommentObservationPage = lazy(
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
 const CollectionPage = lazy(() => import("./pages/CollectionPage"));
 const CommentLeadPage = lazy(() => import("./pages/CommentLeadPage"));
+const LeadWorkspace = lazy(() => import("./pages/leads/LeadWorkspace"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const navigation = [
@@ -152,6 +153,31 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
               )}
             </NavLink>
           ))}
+          {isLive && location.pathname.startsWith("/leads") && (
+            <div className="lead-subnav">
+              {[
+                ["/leads", "我的待办"],
+                ["/leads/works", "作品与评论"],
+                ["/leads/review", "线索审核"],
+                ["/leads/queue", "账号队列"],
+              ].map(([path, label]) => {
+                const scope = new URLSearchParams(location.search);
+                const search = new URLSearchParams();
+                for (const key of ["platform", "accountId"])
+                  if (scope.get(key)) search.set(key, scope.get(key)!);
+                return (
+                  <NavLink
+                    key={path}
+                    end
+                    to={{ pathname: path, search: search.toString() }}
+                    title={label}
+                  >
+                    {label}
+                  </NavLink>
+                );
+              })}
+            </div>
+          )}
         </nav>
         <div className="sidebar-bottom">
           <NavLink
@@ -287,8 +313,11 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                 />
                 <Route
                   path="/leads"
-                  element={isLive ? <CollectionPage /> : <LeadsPage />}
+                  element={isLive ? <LeadWorkspace /> : <LeadsPage />}
                 />
+                {isLive && (
+                  <Route path="/leads/:area" element={<LeadWorkspace />} />
+                )}
                 <Route path="/leads/collection" element={<CollectionPage />} />
                 <Route
                   path="/leads/comment-lead"

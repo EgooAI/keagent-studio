@@ -670,7 +670,9 @@ function ArtifactPublishDetail({
                 placeholder="选择当前设备的抖音账号"
                 options={accounts.data?.items
                   .filter(
-                    (account) => account.deviceId === desktop.data?.deviceId,
+                    (account) =>
+                      account.platform !== "xhs" &&
+                      account.deviceId === desktop.data?.deviceId,
                   )
                   .map((account) => ({
                     value: account.id,

@@ -1,5 +1,6 @@
 import { PublishingError } from "../publishing/core";
 import type { OpenCliPage } from "../publishing/runtime/browser/opencli-page";
+import type { SocialPlatform } from "@keagent/shared-types";
 
 /** Read the creator dashboard's own visible account marker in the isolated world. */
 export async function confirmContactAccount(
@@ -42,16 +43,23 @@ export async function confirmContactAccount(
   );
 }
 
-export function publicCommenterProfile(value: unknown): string {
+export function publicCommenterProfile(
+  value: unknown,
+  platform: SocialPlatform,
+): string {
+  const allowed =
+    platform === "xhs"
+      ? /^https:\/\/www\.xiaohongshu\.com\/user\/profile\/[0-9a-f]{24}\/?$/
+      : /^https:\/\/www\.douyin\.com\/user\/[A-Za-z0-9_-]+\/?$/;
   if (
     typeof value !== "string" ||
     value.length > 2048 ||
-    !/^https:\/\/www\.douyin\.com\/user\/[A-Za-z0-9_-]+\/?$/.test(value) ||
+    !allowed.test(value) ||
     value !== value.trim()
   ) {
     throw new PublishingError(
       "INVALID_CONTACT_PROFILE",
-      "来源未提供有效的抖音公开主页",
+      "来源未提供当前平台的有效用户主页",
     );
   }
   return value.replace(/\/$/, "");

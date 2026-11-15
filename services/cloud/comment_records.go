@@ -134,7 +134,7 @@ func parseCommentInput(op string, body []byte) (commentInput, error) {
 	default:
 		return in, collectionMissing()
 	}
-	if !exchangeID.MatchString(in.AccountID) || !douyinPostID.MatchString(in.WorkID) {
+	if !exchangeID.MatchString(in.AccountID) || !validLeadWork(in.WorkID) {
 		return in, collectionInvalid()
 	}
 	return in, nil
@@ -433,15 +433,19 @@ func readCommentDetail(ctx context.Context, tx *sql.Tx, in commentInput, sourceI
 	}
 	return d, err
 }
-func readCommentPage(ctx context.Context, tx *sql.Tx, in commentInput, sourceID string, g *commentGrant) (commentPage, error) {
+func commentAnalysisAllowed(ctx context.Context, g *commentGrant) bool {
 	endpoint := ""
 	configured := false
 	if services := aiServicesFor(ctx); len(services) > 0 {
 		endpoint = services[0].Endpoint
 		configured = services[0].State == "configured"
 	}
-	canAnalyze := g.AnalyzeWithAI && configured &&
+	return g.AnalyzeWithAI && configured &&
 		(g.AIEndpoint == "" || strings.TrimRight(g.AIEndpoint, "/") == endpoint)
+}
+
+func readCommentPage(ctx context.Context, tx *sql.Tx, in commentInput, sourceID string, g *commentGrant) (commentPage, error) {
+	canAnalyze := commentAnalysisAllowed(ctx, g)
 	page := commentPage{Items: []commentDetail{}, SourceState: "active", SourceLabel: g.Label, Coverage: "unknown", CanAnalyze: canAnalyze, CanContact: g.ManualContact}
 	var raw []byte
 	err := tx.QueryRowContext(ctx, `SELECT result FROM keagent_comment_snapshots WHERE source_id=$1 AND retain_until>clock_timestamp() ORDER BY observed_at DESC LIMIT 1`, sourceID).Scan(&raw)
@@ -620,7 +624,7 @@ func mergeCommentRows(ctx context.Context, tx *sql.Tx, sourceID, snapshot string
 // Load a single row only for an explicitly granted use, with the same checks as the list/detail API.
 func (s *server) authorizedComment(ctx context.Context, a actor, in commentInput, purpose string) (commentDetail, *commentGrant, error) {
 	var zero commentDetail
-	if !exchangeID.MatchString(in.ID) || !exchangeID.MatchString(in.AccountID) || !douyinPostID.MatchString(in.WorkID) {
+	if !exchangeID.MatchString(in.ID) || !exchangeID.MatchString(in.AccountID) || !validLeadWork(in.WorkID) {
 		return zero, nil, collectionInvalid()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

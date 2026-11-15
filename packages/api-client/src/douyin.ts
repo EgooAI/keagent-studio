@@ -96,7 +96,13 @@ export const douyinApi = {
   batch: (input: DouyinBatchInput) =>
     douyinDesktop<DouyinQueue>("publish.batch", input),
   queue: (
-    action: "pause" | "resume" | "cancel" | "clear-interrupted",
+    action:
+      | "pause"
+      | "resume"
+      | "cancel"
+      | "clear-interrupted"
+      | "confirm-sent"
+      | "confirm-failed",
     id?: string,
   ) => douyinDesktop<DouyinQueue>("publish.queue", { action, id }),
 };

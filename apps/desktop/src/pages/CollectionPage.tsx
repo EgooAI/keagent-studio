@@ -102,7 +102,11 @@ export default function CollectionPage() {
             <Button onClick={() => navigate("/leads/comment-observation")}>
               评论观察
             </Button>
-            <Button onClick={() => navigate("/leads/comment-lead")}>
+            <Button
+              onClick={() =>
+                navigate(isLive ? "/leads/works" : "/leads/comment-lead")
+              }
+            >
               评论获客
             </Button>
           </Space>
@@ -136,7 +140,10 @@ function CollectionWorkspace() {
     queryFn: douyinApi.accounts,
   });
   const localAccounts = (accounts.data?.items ?? []).filter(
-    (a) => !a.unboundAt && a.deviceId === desktop.data?.deviceId,
+    (a) =>
+      a.platform !== "xhs" &&
+      !a.unboundAt &&
+      a.deviceId === desktop.data?.deviceId,
   );
   const accountName = (id: string) =>
     accounts.data?.items.find((a) => a.id === id)?.name ?? id;

@@ -35,11 +35,13 @@ func (s *server) leadConfig(ctx context.Context, a actor, op string, body []byte
 		return s.leadSettingsGet(ctx, a)
 	case "lead/settings/save":
 		return s.leadSettingsSave(ctx, a, body)
+	case "lead/consent/save":
+		return s.saveLeadConsent(ctx, a, body, true)
 	case "creatorhub/consent/save":
 		return s.creatorHubConsentSave(ctx, a, body)
-	case "creatorhub/consent/get":
+	case "creatorhub/consent/get", "lead/consent/get":
 		return s.creatorHubConsentGet(ctx, a, body)
-	case "creatorhub/consent/revoke":
+	case "creatorhub/consent/revoke", "lead/consent/revoke":
 		return s.creatorHubConsentRevoke(ctx, a, body)
 	default:
 		return nil, collectionMissing()
@@ -140,6 +142,14 @@ func loopbackBaseURL(raw string) bool {
 }
 
 func (s *server) creatorHubConsentSave(ctx context.Context, a actor, body []byte) (any, error) {
+	return s.saveLeadConsent(ctx, a, body, false)
+}
+
+var xhsWorkID = regexp.MustCompile(`^xhs-[0-9a-f]{24}$`)
+
+func validLeadWork(id string) bool { return douyinPostID.MatchString(id) || xhsWorkID.MatchString(id) }
+
+func (s *server) saveLeadConsent(ctx context.Context, a actor, body []byte, desktop bool) (any, error) {
 	var in struct {
 		AccountID           string    `json:"accountId"`
 		WorkID              string    `json:"workId"`
@@ -150,18 +160,34 @@ func (s *server) creatorHubConsentSave(ctx context.Context, a actor, body []byte
 		CreatorHubAccountID string    `json:"creatorhubAccountId"`
 	}
 	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) ||
-		!douyinPostID.MatchString(in.WorkID) || !validExchangeText(in.Label, 100) ||
-		in.RetentionDays < 1 || in.RetentionDays > 90 || !loopbackBaseURL(in.BaseURL) ||
-		!validCreatorHubAccountID(in.CreatorHubAccountID) ||
+		!validLeadWork(in.WorkID) || !validExchangeText(in.Label, 100) ||
+		in.RetentionDays < 1 || in.RetentionDays > 90 ||
+		(!desktop && (!loopbackBaseURL(in.BaseURL) || !validCreatorHubAccountID(in.CreatorHubAccountID) || !douyinPostID.MatchString(in.WorkID))) ||
+		(desktop && (in.BaseURL != "" || in.CreatorHubAccountID != "")) ||
 		in.ExpiresAt.Before(time.Now()) || in.ExpiresAt.After(time.Now().AddDate(1, 0, 0)) {
 		return nil, collectionInvalid()
+	}
+	if desktop {
+		want := "douyin"
+		if xhsWorkID.MatchString(in.WorkID) {
+			want = "xhs"
+		}
+		var platform string
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(payload->>'platform','douyin') FROM keagent_douyin_account
+			WHERE owner_id=$1 AND device_id=$2 AND id=$3 AND NOT(payload ? 'unboundAt')`, a.UserID, a.DeviceID, in.AccountID).Scan(&platform)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && platform != want) {
+			return nil, collectionMissing()
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	providerCtx, err := s.activeAI(ctx)
 	if err != nil {
 		return nil, err
 	}
 	service := aiServicesFor(providerCtx)[0]
-	if service.State != "configured" || service.Endpoint == "" {
+	if !desktop && (service.State != "configured" || service.Endpoint == "") {
 		return nil, exchangeFail(503, "COMMENT_AI_UNAVAILABLE", "请先在服务设置中配置文案模型")
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO keagent_comment_consents(
@@ -186,7 +212,7 @@ func (s *server) creatorHubConsentGet(ctx context.Context, a actor, body []byte)
 		AccountID string `json:"accountId"`
 		WorkID    string `json:"workId"`
 	}
-	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) || !douyinPostID.MatchString(in.WorkID) {
+	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) || !validLeadWork(in.WorkID) {
 		return nil, collectionInvalid()
 	}
 	var label, baseURL, creatorHubAccountID, aiEndpoint string
@@ -221,7 +247,7 @@ func (s *server) creatorHubConsentRevoke(ctx context.Context, a actor, body []by
 		AccountID string `json:"accountId"`
 		WorkID    string `json:"workId"`
 	}
-	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) || !douyinPostID.MatchString(in.WorkID) {
+	if decodeExchange(body, &in) != nil || !exchangeID.MatchString(in.AccountID) || !validLeadWork(in.WorkID) {
 		return nil, collectionInvalid()
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE keagent_comment_consents SET revoked=true
@@ -249,6 +275,10 @@ func loadCreatorHubConsent(ctx context.Context, tx *sql.Tx, a actor, scope comme
 	if err != nil {
 		return nil, err
 	}
+	return consentGrant(a, scope, label, baseURL, creatorHubAccountID, aiEndpoint, purposes, expires, retention, revoked), nil
+}
+
+func consentGrant(a actor, scope commentScope, label, baseURL, creatorHubAccountID, aiEndpoint string, purposes []byte, expires time.Time, retention int, revoked bool) *commentGrant {
 	var grant struct {
 		AnalyzeWithAI bool `json:"analyzeWithAI"`
 		ManualContact bool `json:"manualContact"`
@@ -256,16 +286,20 @@ func loadCreatorHubConsent(ctx context.Context, tx *sql.Tx, a actor, scope comme
 	// Malformed purposes deny both uses.
 	_ = json.Unmarshal(purposes, &grant)
 	// Expiry refreshes must not rotate the source policy key; identity and purposes only.
+	kind, ref := "creatorhub", "creatorhub:"+creatorHubAccountID
+	if baseURL == "" && creatorHubAccountID == "" {
+		kind, ref = "electron", "electron:"+scope.AccountID
+	}
 	stableKey := exchangeFingerprint([]any{
-		"creatorhub-consent", a.UserID, a.DeviceID, scope.AccountID, scope.WorkID,
-		"creatorhub:" + creatorHubAccountID, grant.AnalyzeWithAI, grant.ManualContact,
+		kind + "-consent", a.UserID, a.DeviceID, scope.AccountID, scope.WorkID,
+		ref, grant.AnalyzeWithAI, grant.ManualContact,
 	})
 	return &commentGrant{
 		OwnerID: a.UserID, DeviceID: a.DeviceID, AccountID: scope.AccountID,
-		WorkID: scope.WorkID, Ref: "creatorhub:" + creatorHubAccountID, Label: label,
-		Kind: "creatorhub", ExpiresAt: expires, RetentionDays: retention,
+		WorkID: scope.WorkID, Ref: ref, Label: label,
+		Kind: kind, ExpiresAt: expires, RetentionDays: retention,
 		Fields: append([]string{}, allowedCommentFields...), AnalyzeWithAI: grant.AnalyzeWithAI,
 		ManualContact: grant.ManualContact, AIEndpoint: aiEndpoint, Revoked: revoked,
 		PolicyKey: stableKey,
-	}, nil
+	}
 }

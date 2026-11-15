@@ -60,7 +60,10 @@ func analysisRun(t *testing.T, f *commentScenario, jobID string) {
 	f.server.runAnalysisJob(context.Background(), jobID)
 }
 
-func analysisOK(context.Context, any, string) (string, error) {
+func analysisOK(_ context.Context, _ any, prompt string) (string, error) {
+	if prompt == leadDraftPrompt {
+		return `{"draft":"您好，想了解哪个区域？"}`, nil
+	}
 	return `{"intent":"buy","evidence":"想在上海买房","qualified":true,"reason":"明确购房需求","draft":"您好，想了解哪个区域？"}`, nil
 }
 
@@ -165,7 +168,13 @@ func TestAnalysisJobSuppressesDraftWithoutManualContact(t *testing.T) {
 	analysisImport(t, f, []object{
 		{"comment_id": "c1", "comment_text": "想在上海买房", "commenter_name": "甲"},
 	})
-	f.server.leadComplete = analysisOK
+	f.server.leadComplete = func(ctx context.Context, content any, prompt string) (string, error) {
+		var payload object
+		if err := json.Unmarshal([]byte(content.(string)), &payload); err != nil || payload["manual_contact_allowed"] != false || payload["ai_analysis_allowed"] != true || prompt != leadAnalysisPrompt {
+			t.Errorf("unexpected model call, payload=%v", payload)
+		}
+		return analysisOK(ctx, content, prompt)
+	}
 	jobID := analysisStart(t, f)
 	analysisRun(t, f, jobID)
 	var status, draft string
@@ -259,7 +268,7 @@ func TestAnalysisFailureDoesNotOverwriteDoneRow(t *testing.T) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.server.saveAnalysis(jobID, f.actor, f.scope.AccountID, f.scope.WorkID, sourceID,
+	if _, err := f.server.saveAnalysis(jobID, f.actor, f.scope.AccountID, f.scope.WorkID, sourceID,
 		version, criteria, rowID, fields, leadAnalysisResult{}, false, errors.New("retry failed")); err != nil {
 		t.Fatal(err)
 	}
@@ -447,6 +456,34 @@ func TestAnalysisRetryRejectsUnknownSelection(t *testing.T) {
 	}
 }
 
+func TestAnalysisJobsListReturnsRecentJobs(t *testing.T) {
+	f := analysisScenario(t)
+	analysisImport(t, f, []object{{
+		"comment_id": "c-list-1", "comment_text": "想在上海买房",
+		"commenter_name": "列表用户", "commenter_profile": "https://www.douyin.com/user/u-list",
+	}})
+	jobID := analysisStart(t, f)
+	out := mustCollection(t, f.server, f.actor, "comments/analysis/jobs", object{
+		"accountId": f.scope.AccountID, "workId": f.scope.WorkID, "limit": 5,
+	})
+	items, _ := out["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one job, got %#v", out)
+	}
+	item, _ := items[0].(map[string]any)
+	if item["id"] != jobID || item["accountId"] != f.scope.AccountID ||
+		item["workId"] != f.scope.WorkID || item["status"] == "" {
+		t.Fatalf("unexpected job summary: %#v", item)
+	}
+	other := f.actor
+	other.UserID = "another-owner"
+	other.DeviceID = "another-device"
+	hidden := mustCollection(t, f.server, other, "comments/analysis/jobs", object{"limit": 5})
+	if hiddenItems, _ := hidden["items"].([]any); len(hiddenItems) != 0 {
+		t.Fatalf("jobs leaked across owners: %#v", hiddenItems)
+	}
+}
+
 func TestAnalysisListFiltersByIntent(t *testing.T) {
 	f := analysisScenario(t)
 	analysisImport(t, f, []object{
@@ -579,7 +616,10 @@ func TestAnalysisRetryRunsOnlySelectedFailure(t *testing.T) {
 	selected := analysisCommentText(t, f, ids[0])
 	var mu sync.Mutex
 	var analyzed []string
-	f.server.leadComplete = func(_ context.Context, content any, _ string) (string, error) {
+	f.server.leadComplete = func(ctx context.Context, content any, prompt string) (string, error) {
+		if prompt == leadDraftPrompt {
+			return analysisOK(ctx, content, prompt)
+		}
 		var payload struct {
 			CommentText string `json:"comment_text"`
 		}
@@ -621,7 +661,10 @@ func TestAnalysisRetryAllRunsEveryFailure(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var analyzed []string
-	f.server.leadComplete = func(_ context.Context, content any, _ string) (string, error) {
+	f.server.leadComplete = func(ctx context.Context, content any, prompt string) (string, error) {
+		if prompt == leadDraftPrompt {
+			return analysisOK(ctx, content, prompt)
+		}
 		var payload struct {
 			CommentText string `json:"comment_text"`
 		}

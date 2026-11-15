@@ -70,10 +70,22 @@ const selectable = (row: DouyinWorkspaceRow) =>
   (row.status === "unpublished" || row.status === "failed");
 const queueStatus = (row: DouyinQueueRow) =>
   row.state === "queued"
-    ? "排队中"
+    ? row.eligibleAt
+      ? "等候私信间隔"
+      : "排队中"
     : row.state === "interrupted"
       ? "已中断"
-      : douyinStateLabels[row.state];
+      : row.kind === "message"
+        ? {
+            running: "准备私信",
+            submitting: "正在发送",
+            accepted:
+              row.resultSource === "manual" ? "人工确认已发送" : "发送成功",
+            failed: "发送失败",
+            unknown: "结果待核对",
+            canceled: "已取消",
+          }[row.state]
+        : douyinStateLabels[row.state];
 
 export type PublishDetailSurface = (
   content: ReactNode,
@@ -125,7 +137,9 @@ export function PublishWorkbench({
   const active = desktop.data?.activeRecord;
   const localAccounts = (accounts.data?.items || []).filter(
     (account) =>
-      account.deviceId === desktop.data?.deviceId && !account.unboundAt,
+      account.platform !== "xhs" &&
+      account.deviceId === desktop.data?.deviceId &&
+      !account.unboundAt,
   );
   const accountName = (id: string) =>
     localAccounts.find((account) => account.id === id)?.name || "原发布账号";
@@ -179,7 +193,13 @@ export function PublishWorkbench({
       );
   }
   async function queueAction(
-    action: "pause" | "resume" | "cancel" | "clear-interrupted",
+    action:
+      | "pause"
+      | "resume"
+      | "cancel"
+      | "clear-interrupted"
+      | "confirm-sent"
+      | "confirm-failed",
     id?: string,
   ) {
     if (busy) return;
@@ -251,8 +271,8 @@ export function PublishWorkbench({
         <Alert
           showIcon
           type="warning"
-          title="发布结果待核对，队列已暂停"
-          description="在对应成片的发布记录中核对结果，再恢复队列。"
+          title="有任务的结果待核对，队列已暂停"
+          description="视频请在成片详情核对，私信请在平台会话核对后确认，再恢复队列。"
         />
       )}
       {queue.rows.some((row) => row.state === "interrupted") && (
@@ -508,19 +528,22 @@ export function PublishWorkbench({
               }}
               columns={[
                 {
-                  title: "发布标题",
+                  title: "任务内容",
                   ellipsis: true,
-                  render: (_, row) => (
-                    <button
-                      className="publish-row-title"
-                      onClick={(event) =>
-                        openDetail(row.artifactId, event.currentTarget)
-                      }
-                      title={row.title}
-                    >
-                      {row.title}
-                    </button>
-                  ),
+                  render: (_, row) =>
+                    !row.artifactId ? (
+                      row.title
+                    ) : (
+                      <button
+                        className="publish-row-title"
+                        onClick={(event) =>
+                          openDetail(row.artifactId!, event.currentTarget)
+                        }
+                        title={row.title}
+                      >
+                        {row.title}
+                      </button>
+                    ),
                 },
                 {
                   title: "账号",
@@ -553,8 +576,14 @@ export function PublishWorkbench({
                   ellipsis: true,
                   render: (_, row) =>
                     row.errorCode ? (
-                      <span title={publishingFailureText(row.errorCode)}>
-                        {publishingFailureText(row.errorCode)}
+                      <span
+                        title={
+                          row.errorMessage ||
+                          publishingFailureText(row.errorCode)
+                        }
+                      >
+                        {row.errorMessage ||
+                          publishingFailureText(row.errorCode)}
                       </span>
                     ) : (
                       "—"
@@ -565,15 +594,48 @@ export function PublishWorkbench({
                   width: 120,
                   render: (_, row) => (
                     <Space size={4}>
-                      <Button
-                        size="small"
-                        type="link"
-                        onClick={(event) =>
-                          openDetail(row.artifactId, event.currentTarget)
-                        }
-                      >
-                        详情
-                      </Button>
+                      {row.artifactId && (
+                        <Button
+                          size="small"
+                          type="link"
+                          onClick={(event) =>
+                            openDetail(row.artifactId!, event.currentTarget)
+                          }
+                        >
+                          详情
+                        </Button>
+                      )}
+                      {row.kind === "message" &&
+                        ["interrupted", "unknown"].includes(row.state) && (
+                          <Space size={0}>
+                            {(["sent", "failed"] as const).map((result) => (
+                              <Button
+                                key={result}
+                                type="link"
+                                size="small"
+                                onClick={() =>
+                                  modal.confirm({
+                                    title:
+                                      result === "sent"
+                                        ? "确认在平台会话看到了这条私信？"
+                                        : "确认平台未发出这条私信？",
+                                    okText: "保存核对结果",
+                                    cancelText: "返回",
+                                    onOk: () =>
+                                      queueAction(
+                                        result === "sent"
+                                          ? "confirm-sent"
+                                          : "confirm-failed",
+                                        row.id,
+                                      ),
+                                  })
+                                }
+                              >
+                                {result === "sent" ? "已发出" : "未发出"}
+                              </Button>
+                            ))}
+                          </Space>
+                        )}
                       {row.state === "queued" && (
                         <Button
                           size="small"
@@ -585,24 +647,25 @@ export function PublishWorkbench({
                           取消
                         </Button>
                       )}
-                      {row.state === "interrupted" && (
-                        <Button
-                          size="small"
-                          type="link"
-                          disabled={busy}
-                          onClick={() =>
-                            modal.confirm({
-                              title: "清除这条中断记录？",
-                              content:
-                                "清除本机队列标记，抖音发布记录仍可在成片详情核对。",
-                              onOk: () =>
-                                queueAction("clear-interrupted", row.id),
-                            })
-                          }
-                        >
-                          清除
-                        </Button>
-                      )}
+                      {row.kind !== "message" &&
+                        row.state === "interrupted" && (
+                          <Button
+                            size="small"
+                            type="link"
+                            disabled={busy}
+                            onClick={() =>
+                              modal.confirm({
+                                title: "清除这条中断记录？",
+                                content:
+                                  "清除本机队列标记，抖音发布记录仍可在成片详情核对。",
+                                onOk: () =>
+                                  queueAction("clear-interrupted", row.id),
+                              })
+                            }
+                          >
+                            清除
+                          </Button>
+                        )}
                     </Space>
                   ),
                 },

@@ -207,6 +207,22 @@ it("forwards authenticated credit usage and property deletion through Electron",
       headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
     }),
   ]);
+  const retryDraftInput = { analysisId: "6".repeat(32) };
+  fetch.mockResolvedValueOnce(Response.json({ draft: "新的草稿" }));
+  await expect(
+    handler(event, "collection.cloud", [
+      "comments/analysis/retry-draft",
+      retryDraftInput,
+    ]),
+  ).resolves.toEqual({ ok: true, data: { draft: "新的草稿" } });
+  expect(fetch).toHaveBeenLastCalledWith(
+    "http://127.0.0.1:18081/v1/collection/comments/analysis/retry-draft",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(retryDraftInput),
+      headers: expect.objectContaining({ "X-Keagent-Device": "test-device" }),
+    }),
+  );
   const scope = { workId: "12345", accountId: "4".repeat(32) };
   for (const [operation, extra] of [
     ["comments/list", { limit: 10 }],

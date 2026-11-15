@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { WebContents } from "electron";
+import type { BrowserWindow, WebContents } from "electron";
 import type { ExecutionStepReporter } from "../task-executor/execution-log";
 
 export interface OpenCliGotoOptions {
@@ -43,14 +43,112 @@ const installedInitScripts = new WeakMap<WebContents, Set<string>>();
  * WebContents or Session to platform plugins.
  */
 export class OpenCliPage {
+  private messagePopup?: BrowserWindow;
+  private openingMessageEntry = false;
+  private messageOrigin?: string;
+
   constructor(
-    private readonly contents: WebContents,
+    private readonly opener: WebContents,
     private readonly navigate: (url: string) => Promise<void>,
     private readonly debugRoot?: string,
     private readonly steps?: ExecutionStepReporter,
   ) {}
 
+  private get contents(): WebContents {
+    if (this.messagePopup?.isDestroyed()) throw new Error("私信窗口已关闭");
+    return this.messagePopup?.webContents ?? this.opener;
+  }
+  get inMessagePopup(): boolean {
+    return !!this.messagePopup;
+  }
+
+  private closeMessagePopup(): void {
+    const popup = this.messagePopup;
+    this.messagePopup = undefined;
+    if (popup && !popup.isDestroyed()) popup.destroy();
+  }
+
+  async withMessagePopups<T>(profileUrl: string, work: () => Promise<T>) {
+    const profile = new URL(profileUrl);
+    const origin = profile.origin;
+    if (
+      profile.protocol !== "https:" ||
+      profile.username ||
+      profile.password ||
+      !["https://www.douyin.com", "https://www.xiaohongshu.com"].includes(
+        origin,
+      )
+    )
+      throw new Error("私信收件人平台无效");
+    const allowed = (value: string) => {
+      try {
+        const url = new URL(value);
+        return (
+          url.protocol === "https:" &&
+          url.origin === origin &&
+          !url.username &&
+          !url.password
+        );
+      } catch {
+        return false;
+      }
+    };
+    const onPopup = (popup: BrowserWindow) => {
+      this.messagePopup = popup;
+      const contents = popup.webContents;
+      const guard = (event: { url: string; preventDefault(): void }) => {
+        if (!allowed(event.url)) event.preventDefault();
+      };
+      contents.on("will-navigate", guard);
+      contents.on("will-redirect", guard);
+      contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    };
+    this.messageOrigin = origin;
+    this.opener.on("did-create-window", onPopup);
+    this.opener.setWindowOpenHandler(({ url, referrer, postBody }) => {
+      if (
+        !this.openingMessageEntry ||
+        this.messagePopup ||
+        postBody ||
+        !allowed(this.opener.getURL()) ||
+        !allowed(url) ||
+        (referrer.url && !allowed(referrer.url))
+      )
+        return { action: "deny" };
+      this.openingMessageEntry = false;
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          show: false,
+          width: 1280,
+          height: 900,
+          webPreferences: {
+            session: this.opener.session,
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+            nodeIntegrationInSubFrames: false,
+            webSecurity: true,
+            devTools: false,
+            offscreen: true,
+          },
+        },
+      };
+    });
+    try {
+      return await work();
+    } finally {
+      this.messageOrigin = undefined;
+      this.openingMessageEntry = false;
+      this.closeMessagePopup();
+      this.opener.off("did-create-window", onPopup);
+      if (!this.opener.isDestroyed())
+        this.opener.setWindowOpenHandler(() => ({ action: "deny" }));
+    }
+  }
+
   async goto(url: string, options: OpenCliGotoOptions = {}): Promise<void> {
+    this.closeMessagePopup();
     await this.runStep("open_platform_page", "打开平台页面", async () => {
       await this.navigate(url);
       if (options.waitUntil !== "none") {
@@ -69,10 +167,21 @@ export class OpenCliPage {
   }
 
   // Keep the observer independent of scripts installed by the remote page.
-  inspectDocument<T>(source: string): Promise<T> {
-    return this.contents.executeJavaScriptInIsolatedWorld(1001, [
-      { code: source },
-    ]);
+  async inspectDocument<T>(
+    source: string,
+    openMessageEntry = false,
+  ): Promise<T> {
+    const open = openMessageEntry && !!this.messageOrigin && !this.messagePopup;
+    this.openingMessageEntry = open;
+    try {
+      return await this.contents.executeJavaScriptInIsolatedWorld(
+        1001,
+        [{ code: source }],
+        open,
+      );
+    } finally {
+      this.openingMessageEntry = false;
+    }
   }
 
   async evaluate<T = unknown>(source: string): Promise<T> {
@@ -232,6 +341,9 @@ export class OpenCliPage {
   }
 
   async withPublishViewport<T>(action: () => Promise<T>): Promise<T> {
+    // Offscreen WebContentsViews start without a document. Chromium cannot
+    // install an emulation viewport on that target until it has a renderer.
+    if (!this.contents.getURL()) await this.contents.loadURL("about:blank");
     return this.withDebugger(async (debuggerApi) => {
       // Hidden WebContentsViews can otherwise have a zero-sized DOM viewport.
       await debuggerApi.sendCommand("Emulation.setDeviceMetricsOverride", {
@@ -383,24 +495,103 @@ export class OpenCliPage {
   async replaceText(
     text: string,
     selector: string,
-    { origin, signal }: { origin: string; signal: AbortSignal },
+    {
+      origin,
+      signal,
+      stillReady,
+    }: { origin: string; signal: AbortSignal; stillReady?: string },
   ): Promise<void> {
     await this.runStep("input_text", `输入 ${text.length} 个字符`, async () => {
       signal.throwIfAborted();
-      const ready = await this.contents.executeJavaScript(`(() => {
-        const field = document.activeElement;
-        if (location.origin !== ${JSON.stringify(origin)} ||
-            !field?.matches(${JSON.stringify(selector)})) return false;
-        if (field instanceof HTMLInputElement) field.select();
-        else window.getSelection().selectAllChildren(field);
-        if (!${Boolean(text)}) document.execCommand('delete');
-        return true;
-      })()`);
+      const contents = this.contents;
+      const frame = this.messageOrigin && contents.focusedFrame;
+      const sameMessageFrame = () =>
+        !this.messageOrigin ||
+        (this.messageOrigin === origin &&
+          !!frame &&
+          !frame.detached &&
+          frame.origin === origin &&
+          contents.focusedFrame === frame &&
+          !!stillReady);
+      if (!sameMessageFrame()) throw new Error("收件人的私信输入框已改变");
+      const checkEditor = `(() => {
+        if (location.origin !== ${JSON.stringify(origin)}) return false;
+        const correctEditor = () => ${this.messageOrigin ? `(${stillReady}) === true` : "true"};
+        if (!correctEditor()) return false;
+        let doc = document, field = doc.activeElement;
+        while (${Boolean(this.messageOrigin)} && field?.tagName === "IFRAME") {
+          doc = field.contentDocument;
+          if (!doc || doc.location.origin !== location.origin) return false;
+          field = doc.activeElement;
+        }
+        if (!field?.matches(${JSON.stringify(selector)})) return false;
+        if (field.tagName === "INPUT" || (${Boolean(this.messageOrigin)} && field.tagName === "TEXTAREA")) field.select();
+        else doc.getSelection().selectAllChildren(field);
+        if (!${Boolean(text)}) doc.execCommand('delete');
+        return correctEditor();
+      })()`;
+      const ready = this.messageOrigin
+        ? await contents.executeJavaScriptInIsolatedWorld(1001, [
+            { code: checkEditor },
+          ])
+        : await contents.executeJavaScript(checkEditor);
       signal.throwIfAborted();
-      if (!ready || new URL(this.contents.getURL()).origin !== origin)
+      if (
+        !ready ||
+        !sameMessageFrame() ||
+        contents !== this.contents ||
+        new URL(contents.getURL()).origin !== origin
+      )
         throw new Error("The platform editor did not accept the input");
-      if (text) await this.contents.insertText(text);
+      if (text) await contents.insertText(text);
     });
+  }
+
+  async pressMessageEnter(
+    origin: string,
+    signal: AbortSignal,
+    stillReady: string,
+  ): Promise<boolean> {
+    signal.throwIfAborted();
+    if (
+      this.messageOrigin !== origin ||
+      this.messagePopup?.isDestroyed() ||
+      this.opener.isDestroyed()
+    )
+      return false;
+    const contents = this.contents;
+    const frame = contents.focusedFrame;
+    if (!frame || frame.detached || frame.origin !== origin) return false;
+    const ready = await contents.executeJavaScriptInIsolatedWorld(1001, [
+      {
+        code: `(() => {
+        if (location.origin !== ${JSON.stringify(origin)}) return false;
+        let field = document.activeElement;
+        while (field?.tagName === "IFRAME") {
+          const doc = field.contentDocument;
+          if (!doc || doc.location.origin !== location.origin) return false;
+          field = doc.activeElement;
+        }
+        return !!field?.matches('textarea:not(:disabled):not([readonly]),input[type=text]:not(:disabled):not([readonly]),[contenteditable=true],[contenteditable="plaintext-only"]') &&
+          !field.closest('[aria-disabled=true]') && (${stillReady}) === true;
+      })()`,
+      },
+    ]);
+    signal.throwIfAborted();
+    if (
+      !ready ||
+      contents.isDestroyed() ||
+      this.messagePopup?.isDestroyed() ||
+      contents !== this.contents ||
+      frame.detached ||
+      contents.focusedFrame !== frame ||
+      frame.origin !== origin ||
+      new URL(contents.getURL()).origin !== origin
+    )
+      return false;
+    contents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    contents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+    return true;
   }
 
   async capturePostResponse(
@@ -490,20 +681,87 @@ export class OpenCliPage {
     });
   }
 
+  async observeJsonResponses(
+    matches: (url: URL) => boolean,
+    consume: (url: URL, data: unknown) => void,
+    readPage: () => Promise<void>,
+  ): Promise<void> {
+    const observed = this.contents;
+    return this.withDebugger(async (debuggerApi) => {
+      const requests = new Map<string, URL>();
+      const reads = new Set<Promise<void>>();
+      let failure: Error | undefined;
+      const listener = (
+        _event: unknown,
+        method: string,
+        params: {
+          requestId: string;
+          response?: { url: string; status: number };
+        },
+      ) => {
+        const { requestId, response } = params;
+        if (method === "Network.responseReceived" && response) {
+          const url = URL.canParse(response.url) ? new URL(response.url) : null;
+          if (!url || !matches(url)) return;
+          if (response.status !== 200) {
+            failure = new Error(
+              "平台未能返回作品评论，请检查账号登录和作品访问权限",
+            );
+          } else requests.set(requestId, url);
+          return;
+        }
+        const url = requests.get(requestId);
+        if (!url) return;
+        if (method === "Network.loadingFailed") {
+          requests.delete(requestId);
+          failure = new Error("评论加载中断，请稍后重试");
+        }
+        if (method !== "Network.loadingFinished") return;
+        requests.delete(requestId);
+        const read = debuggerApi
+          .sendCommand("Network.getResponseBody", { requestId })
+          .then(({ body, base64Encoded }) => {
+            const json = base64Encoded
+              ? Buffer.from(body, "base64").toString("utf8")
+              : body;
+            consume(url, JSON.parse(json));
+          })
+          .catch((error: unknown) => {
+            failure =
+              error instanceof Error ? error : new Error("评论响应无法读取");
+          });
+        reads.add(read);
+        void read.finally(() => reads.delete(read));
+      };
+      await debuggerApi.sendCommand("Network.enable", {
+        maxResourceBufferSize: 2 * 1024 * 1024,
+        maxTotalBufferSize: 8 * 1024 * 1024,
+        maxPostDataSize: 0,
+      });
+      debuggerApi.on("message", listener);
+      try {
+        await readPage();
+      } finally {
+        debuggerApi.off("message", listener);
+        await Promise.all(reads);
+        if (!observed.isDestroyed() && debuggerApi.isAttached())
+          await debuggerApi.sendCommand("Network.disable").catch(() => {});
+      }
+      if (failure) throw failure;
+    });
+  }
+
   private async withDebugger<T>(
     action: (debuggerApi: Electron.Debugger) => Promise<T>,
   ): Promise<T> {
-    const debuggerApi = this.contents.debugger;
+    const contents = this.contents;
+    const debuggerApi = contents.debugger;
     const attachedHere = !debuggerApi.isAttached();
     if (attachedHere) debuggerApi.attach("1.3");
     try {
       return await action(debuggerApi);
     } finally {
-      if (
-        attachedHere &&
-        !this.contents.isDestroyed() &&
-        debuggerApi.isAttached()
-      )
+      if (attachedHere && !contents.isDestroyed() && debuggerApi.isAttached())
         debuggerApi.detach();
     }
   }
@@ -758,7 +1016,7 @@ export function urlMatchesPattern(url: string, pattern: string): boolean {
   return new RegExp(`^${escaped}$`).test(url);
 }
 
-function isNavigationEvaluationError(error: unknown): boolean {
+export function isNavigationEvaluationError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /execution context.*destroyed|cannot find context|frame was detached/i.test(
     message,

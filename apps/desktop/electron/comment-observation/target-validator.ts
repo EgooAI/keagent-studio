@@ -12,7 +12,7 @@ export function standardTarget(input: unknown) {
   )
     throw new PublishingError(
       "INVALID_TARGET",
-      "请复制抖音作品详情页地址，或作者主页中已打开作品的地址。短链接和分享文案请先在浏览器打开。",
+      "请复制抖音作品详情页地址，或在作者主页、精选页点开作品后复制地址。短链接和分享文案请先在浏览器打开。",
       422,
     );
   const directId = /^\/video\/(\d{5,30})\/?$/.exec(url.pathname)?.[1];
@@ -28,7 +28,9 @@ export function standardTarget(input: unknown) {
     );
   const id =
     directId ??
-    (/^\/user\/[\w-]+\/?$/.test(url.pathname) ? modalIds[0] : undefined);
+    (/^\/(?:user\/[\w-]+|jingxuan)\/?$/.test(url.pathname)
+      ? modalIds[0]
+      : undefined);
   if (!id || !/^\d{5,30}$/.test(id))
     throw new PublishingError(
       "INVALID_TARGET",

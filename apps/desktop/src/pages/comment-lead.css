@@ -1,0 +1,244 @@
+.lead-setup {
+  padding: clamp(20px, 3vw, 36px);
+  max-width: 880px;
+}
+.lead-setup h2,
+.lead-review-heading h2 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.4;
+}
+.lead-fields {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  margin: 24px 0 0;
+}
+.lead-fields label:not(.ant-checkbox-wrapper),
+.lead-compose label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.lead-source-fields {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr);
+}
+.lead-source-fields .ant-select {
+  width: 100%;
+}
+.lead-presets,
+.lead-options-fields,
+.lead-reader-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.lead-field-title {
+  display: block;
+  font-weight: 600;
+}
+.lead-presets {
+  margin: 8px 0;
+}
+.lead-presets .ant-btn[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.lead-list-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.lead-options-fields {
+  margin: 14px 0 0;
+  gap: 20px;
+}
+.lead-options-fields .ant-input-number {
+  display: block;
+  margin-top: 6px;
+}
+.lead-options summary,
+.lead-source-details summary {
+  color: var(--muted);
+  cursor: pointer;
+  width: fit-content;
+}
+.lead-source-details {
+  margin: 12px 0 18px;
+}
+.lead-source-body {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.lead-source-body p {
+  margin: 0;
+}
+.lead-review-heading,
+.lead-list-tools,
+.lead-person-top,
+.lead-batch-tools,
+.lead-reader-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.lead-review-heading {
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.lead-review-heading p {
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+.lead-review-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.75fr);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.lead-people {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+}
+.lead-list-tools {
+  padding: 18px 18px 10px;
+}
+.lead-list-tools h3,
+.lead-reader-head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+.lead-list-tools h3 span {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.lead-list-options {
+  padding: 0 18px 12px;
+}
+.lead-batch-tools {
+  padding: 8px 18px;
+  border-block: 1px solid var(--line);
+  min-height: 44px;
+}
+.lead-people-scroll {
+  max-height: 58vh;
+  overflow-y: auto;
+}
+.lead-person {
+  display: flex;
+  align-items: center;
+  padding-inline: 18px;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.lead-person:hover {
+  background: var(--canvas);
+}
+.lead-person[data-current="true"] {
+  background: var(--accent-soft);
+}
+.lead-pick {
+  background: transparent;
+  border: 0;
+  padding: 14px 0;
+  text-align: left;
+  color: var(--ink);
+  min-width: 0;
+  flex: 1;
+}
+.lead-person-top strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lead-person-top span {
+  color: var(--muted);
+  font-size: 12px;
+  flex: none;
+}
+.lead-excerpt {
+  margin-top: 5px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.lead-reader {
+  padding: clamp(18px, 3vw, 32px);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.lead-reader-head {
+  justify-content: flex-start;
+}
+.lead-reader-head h3 {
+  font-size: 26px;
+}
+.lead-comment-meta,
+.lead-queue-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+.lead-comment-meta {
+  margin-top: 16px;
+}
+.lead-reader blockquote {
+  margin: 8px 0 12px;
+  font-size: 17px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.lead-reader mark {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+.lead-reason {
+  margin: 0;
+  color: var(--muted);
+}
+.lead-reason strong {
+  color: var(--ink);
+  margin-right: 6px;
+}
+.lead-compose {
+  margin: 22px 0 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.lead-queue-note {
+  margin: 22px 0 0;
+}
+.lead-reader-actions {
+  margin-top: 14px;
+}
+@media (max-width: 850px) {
+  .lead-review-layout,
+  .lead-source-fields {
+    grid-template-columns: 1fr;
+  }
+  .lead-people {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .lead-people-scroll {
+    max-height: 210px;
+  }
+}

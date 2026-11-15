@@ -8,7 +8,7 @@ import {
   publishingMessage,
   useDouyinDesktop,
 } from "../lib/douyin";
-import type { DouyinAccount } from "@keagent/shared-types";
+import type { DouyinAccount, SocialPlatform } from "@keagent/shared-types";
 const labels: Record<string, string> = {
   logged_in: "已登录",
   logged_out: "未登录",
@@ -28,10 +28,14 @@ export default function DouyinAccounts() {
   const { message } = App.useApp();
   const [busy, setBusy] = useState("");
   const [removing, setRemoving] = useState<DouyinAccount>();
-  async function run(method: string, accountId = "") {
+  async function run(
+    method: string,
+    accountId = "",
+    platform?: SocialPlatform,
+  ) {
     setBusy(method + accountId);
     try {
-      await douyinDesktop(method, { accountId });
+      await douyinDesktop(method, { accountId, platform });
       void client.invalidateQueries({ queryKey: ["douyin"] });
     } catch (error) {
       message.error(publishingMessage(error));
@@ -43,21 +47,29 @@ export default function DouyinAccounts() {
     <section className="douyin-accounts">
       <div className="section-heading">
         <div>
-          <h2>抖音账号</h2>
+          <h2>平台账号</h2>
           <p className="muted">
             登录资料按当前用户、设备和账号独立保存在本机，网络跟随系统配置。
           </p>
         </div>
-        <Button
-          type="primary"
-          disabled={!desktopPublishingAvailable() || !!busy}
-          onClick={() => void run("account.add")}
-        >
-          添加抖音账号
-        </Button>
+        <Space>
+          <Button
+            type="primary"
+            disabled={!desktopPublishingAvailable() || !!busy}
+            onClick={() => void run("account.add", "", "douyin")}
+          >
+            添加抖音账号
+          </Button>
+          <Button
+            disabled={!desktopPublishingAvailable() || !!busy}
+            onClick={() => void run("account.add", "", "xhs")}
+          >
+            添加小红书账号
+          </Button>
+        </Space>
       </div>
       {!desktopPublishingAvailable() && (
-        <Alert type="info" title="请在桌面客户端登录和管理抖音账号。" />
+        <Alert type="info" title="请在桌面客户端登录和管理平台账号。" />
       )}
       {query.error && (
         <Alert
@@ -67,13 +79,14 @@ export default function DouyinAccounts() {
         />
       )}
       {!query.isPending && !query.data?.items.length && (
-        <Empty description="尚未保存抖音账号" />
+        <Empty description="尚未保存平台账号" />
       )}
       {query.data?.items.map((account) => {
         const local = desktop.data?.deviceId === account.deviceId;
         return (
           <div className="douyin-account-row" key={account.id}>
             <div>
+              <Tag>{account.platform === "xhs" ? "小红书" : "抖音"}</Tag>
               <strong>{account.name}</strong>{" "}
               <Tag
                 color={
@@ -85,7 +98,7 @@ export default function DouyinAccounts() {
               {!local && <Tag>其他设备</Tag>}
               <p className="muted">
                 {account.platformUserId
-                  ? `抖音号：${account.platformUserId} · `
+                  ? `${account.platform === "xhs" ? "小红书用户 ID" : "抖音号"}：${account.platformUserId} · `
                   : ""}
                 最近检查：
                 {new Date(account.lastCheckedAt).toLocaleString("zh-CN")}
@@ -116,7 +129,11 @@ export default function DouyinAccounts() {
         );
       })}
       <Modal
-        title="解绑这个抖音账号？"
+        title={
+          removing?.platform === "xhs"
+            ? "解绑这个小红书账号？"
+            : "解绑这个抖音账号？"
+        }
         open={!!removing}
         okText="解绑并清除本机登录资料"
         okButtonProps={{ danger: true }}

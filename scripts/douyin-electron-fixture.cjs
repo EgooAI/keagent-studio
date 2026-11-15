@@ -246,6 +246,9 @@ app.whenReady().then(async () => {
     let dropTerminal = true;
     let dropLeaseRenewal = false;
     const sessions = [];
+    const commentImports = [];
+    const noteId = "67b32410000000001100aaaa";
+    const xhsUserId = "61b32410000000001100aaaa";
     let contactProfile = "https://www.douyin.com/user/fixture-commenter";
     let contactAccountMarker = "controlled-public-id";
     let contactChecks = 0;
@@ -301,6 +304,17 @@ app.whenReady().then(async () => {
           structuredClone(fixture.assets.find((asset) => asset.id === id)),
       },
       request: async (route, input = {}) => {
+        if (route === "/v1/collection/lead/consent/save")
+          return { state: "active" };
+        if (route === "/v1/collection/comments/import") {
+          commentImports.push(input);
+          return {
+            readCount: input.items.length,
+            addedCount: input.items.length,
+            updatedCount: 0,
+            coverage: input.coverage,
+          };
+        }
         if (route === "/v1/collection/comments/contact") {
           assert.deepEqual(input, {
             accountId: [...accounts.keys()][0],
@@ -360,6 +374,12 @@ app.whenReady().then(async () => {
           value: "explicit-test-cookie",
           expirationDate: Date.now() / 1000 + 3600,
         });
+        await session.cookies.set({
+          url: "https://www.xiaohongshu.com/",
+          name: "web_session",
+          value: "xhs-fixture-session",
+          expirationDate: Date.now() / 1000 + 3600,
+        });
         session.protocol.handle("https", async (request) => {
           const url = new URL(request.url);
           requests.push(url.pathname + url.search);
@@ -371,6 +391,78 @@ app.whenReady().then(async () => {
                 "Access-Control-Allow-Credentials": "true",
               },
             });
+          const html = (body) =>
+            new Response(body, {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          if (
+            url.hostname === "www.douyin.com" &&
+            url.pathname === "/video/12345"
+          )
+            return html(`<div data-e2e="comment-list" style="height:90px;width:300px;overflow:auto"><p style="height:500px">分页夹具</p></div>
+            <script>
+            fetch('/aweme/v1/web/comment/list/?aweme_id=99999&cursor=0');
+            fetch('/aweme/v1/web/comment/list/?aweme_id=12345&cursor=0');
+            document.querySelector('div').addEventListener('scroll', () => fetch('/aweme/v1/web/comment/list/?aweme_id=12345&cursor=20'),{once:true});
+            </script>`);
+          if (
+            url.hostname === "www.douyin.com" &&
+            url.pathname === "/aweme/v1/web/comment/list/"
+          ) {
+            assert.equal(
+              session,
+              sessions[0],
+              "Douyin responses must come from the chosen saved Profile",
+            );
+            const work = url.searchParams.get("aweme_id");
+            const last = url.searchParams.get("cursor") === "20";
+            const row = (id) => ({
+              cid: id,
+              aweme_id: work,
+              text: "抖音-" + id,
+              user: { sec_uid: "fixture-user", nickname: "评论者" },
+            });
+            return json({
+              status_code: 0,
+              comments: last
+                ? [row("first"), row("second")]
+                : [row(work === "12345" ? "first" : "other-work")],
+              has_more: last ? 0 : 1,
+            });
+          }
+          if (url.hostname === "www.xiaohongshu.com") {
+            if (url.pathname === "/explore")
+              return html(
+                `<nav><a href="/user/profile/${xhsUserId}">我</a></nav>`,
+              );
+            if (url.pathname === "/explore/" + noteId)
+              return html(`<section class="comments-container">小红书</section><script>
+                window.__INITIAL_STATE__={note:{noteDetailMap:{${JSON.stringify(noteId)}:{comments:{list:[{id:'ssr',noteId:${JSON.stringify(noteId)},content:'首屏',userInfo:{userId:${JSON.stringify(xhsUserId)}}}]}}}}};
+                fetch('/api/sns/web/v2/comment/page?note_id=${noteId}&cursor=0');
+                </script>`);
+            if (url.pathname === "/api/sns/web/v2/comment/page") {
+              assert.notEqual(
+                session,
+                sessions[0],
+                "XHS uses its own saved Profile",
+              );
+              return json({
+                code: 0,
+                success: true,
+                data: {
+                  comments: [
+                    {
+                      id: "page",
+                      note_id: noteId,
+                      content: "小红书分页",
+                      user_info: { user_id: xhsUserId },
+                    },
+                  ],
+                  has_more: false,
+                },
+              });
+            }
+          }
           if (url.hostname === "www.douyin.com") {
             const id = url.pathname.split("/").pop();
             const rootId = id === "10007" ? "99999" : id;
@@ -860,6 +952,45 @@ app.whenReady().then(async () => {
       contactAccountMarker = "controlled-public-id";
       console.log(
         "Manual contact verified in the original Electron Profile; wrong account and non-profile URL rejected.",
+      );
+    }
+    if (!testBase) {
+      const read = (accountId, url) =>
+        call("social.start", {
+          accountId,
+          url,
+          requestKey: crypto.randomUUID(),
+          consent: { accepted: true },
+        });
+      const dy = await read(accountId, "https://www.douyin.com/video/12345");
+      assert.equal(dy.ok, true, JSON.stringify(dy));
+      assert.equal(commentImports[0].accountId, accountId);
+      assert.deepEqual(
+        commentImports[0].items.map((c) => c.comment_id),
+        ["first", "second"],
+      );
+      const xhs = await call("account.add", { platform: "xhs" });
+      assert.ok(xhs.ok, JSON.stringify(xhs));
+      const xhsSaved = await call("account.save", { accountId: xhs.data.id });
+      assert.equal(
+        xhsSaved.data?.platformUserId,
+        xhsUserId,
+        JSON.stringify(xhsSaved),
+      );
+      await call("browser.hide");
+      const xhsResult = await read(
+        xhs.data.id,
+        "https://www.xiaohongshu.com/explore/" + noteId,
+      );
+      assert.ok(xhsResult.ok, JSON.stringify(xhsResult));
+      assert.equal(commentImports[1].accountId, xhs.data.id);
+      assert.equal(commentImports[1].workId, "xhs-" + noteId);
+      assert.deepEqual(
+        commentImports[1].items.map((c) => c.comment_id).sort(),
+        ["page", "ssr"],
+      );
+      console.log(
+        "Native comment collection verified for both saved profiles, first-page SSR, pagination, deduplication, and work isolation.",
       );
     }
     const input = {

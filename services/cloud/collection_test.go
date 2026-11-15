@@ -12,6 +12,9 @@ func TestCollectionTargetCanonicalization(t *testing.T) {
 	account := id()
 	for _, test := range []struct{ kind, value, want string }{
 		{"video", "https://www.douyin.com/user/someone?vid=99999&modal_id=12345", "https://www.douyin.com/video/12345"},
+		{"video", "https://www.douyin.com/jingxuan?modal_id=7705373735628393770", "https://www.douyin.com/video/7705373735628393770"},
+		{"video", "https://www.douyin.com/jingxuan?modal_id=12345&modal_id=67890", ""},
+		{"video", "https://www.douyin.com/jingxuan", ""},
 		{"video", "https://www.douyin.com/video/12345?utm=a", "https://www.douyin.com/video/12345"},
 		{"creator", "https://www.douyin.com/user/someone/?modal_id=12345", "https://www.douyin.com/user/someone"},
 		{"keyword", "  房产  ", "房产"},

@@ -160,6 +160,9 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			if err = json.Unmarshal(raw, &v); err != nil {
 				return nil, err
 			}
+			if v["platform"] == nil {
+				v["platform"] = "douyin"
+			}
 			items = append(items, v)
 		}
 		return object{"items": items}, rr.Err()
@@ -232,13 +235,15 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		var in struct {
 			ID             string `json:"id"`
 			Name           string `json:"name"`
+			Platform       string `json:"platform,omitempty"`
+			SavedProfile   bool   `json:"savedProfile,omitempty"`
 			PlatformUserID string `json:"platformUserId,omitempty"`
 			LoginStatus    string `json:"loginStatus"`
 		}
 		if err = decodeExchange(body, &in); err != nil {
 			return nil, err
 		}
-		if !exchangeID.MatchString(in.ID) || len([]rune(in.Name)) > 100 || len(in.PlatformUserID) > 150 {
+		if (in.Platform != "" && in.Platform != "douyin" && in.Platform != "xhs") || !exchangeID.MatchString(in.ID) || len([]rune(in.Name)) > 100 || len(in.PlatformUserID) > 150 {
 			return nil, exchangeFail(422, "INVALID_INPUT", "账号参数无效")
 		}
 		if !strings.Contains(",logged_in,logged_out,expired,verification_required,risk_controlled,profile_unavailable,unknown,", ","+in.LoginStatus+",") {
@@ -248,7 +253,11 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		var account object
 		err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_douyin_account WHERE id=$1 AND owner_id=$2 AND device_id=$3 FOR UPDATE`, in.ID, a.UserID, a.DeviceID).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) && operation == "accounts/bind" {
-			account = object{"id": in.ID, "deviceId": a.DeviceID}
+			platform := in.Platform
+			if platform == "" {
+				platform = "douyin"
+			}
+			account = object{"id": in.ID, "deviceId": a.DeviceID, "platform": platform}
 			err = nil
 		} else if errors.Is(err, sql.ErrNoRows) {
 			return nil, exchangeFail(404, "NOT_FOUND", "账号不存在或不属于当前设备")
@@ -257,6 +266,12 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		}
 		if err != nil {
 			return nil, err
+		}
+		if account["platform"] == nil {
+			account["platform"] = "douyin"
+		}
+		if in.Platform != "" && in.Platform != account["platform"] {
+			return nil, exchangeFail(409, "ACCOUNT_CHANGED", "已绑定的账号不能切换平台")
 		}
 		if account["unboundAt"] != nil {
 			return nil, exchangeFail(409, "ACCOUNT_UNAVAILABLE", "账号已解绑")
@@ -272,12 +287,26 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			}
 			account["unboundAt"] = now()
 		} else {
+			if in.SavedProfile {
+				if operation != "accounts/update" || in.PlatformUserID == "" || in.LoginStatus != "logged_in" {
+					return nil, exchangeFail(422, "INVALID_INPUT", "请先确认平台账号身份")
+				}
+				// The device advisory lock above serializes concurrent profile saves.
+				var duplicate bool
+				if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_account WHERE owner_id=$1 AND device_id=$2 AND id<>$3 AND NOT(payload ? 'unboundAt') AND COALESCE(payload->>'platform','douyin')=$4 AND payload->>'platformUserId'=$5 AND payload->>'savedProfile'='true')`, a.UserID, a.DeviceID, in.ID, account["platform"], in.PlatformUserID).Scan(&duplicate); err != nil {
+					return nil, err
+				}
+				if duplicate {
+					return nil, exchangeFail(409, "ACCOUNT_ALREADY_BOUND", "本机已保存这个平台账号，请直接使用已有账号")
+				}
+				account["savedProfile"] = true
+			}
 			account["name"] = in.Name
 			account["loginStatus"] = in.LoginStatus
 			account["lastCheckedAt"] = now()
 			if in.PlatformUserID != "" {
 				if prior := str(account["platformUserId"]); prior != "" && prior != in.PlatformUserID {
-					return nil, exchangeFail(409, "ACCOUNT_CHANGED", "该Profile已绑定另一抖音账号，请新增账号")
+					return nil, exchangeFail(409, "ACCOUNT_CHANGED", "该浏览器资料已绑定其他平台账号，请新增账号")
 				}
 				account["platformUserId"] = in.PlatformUserID
 			}
@@ -363,7 +392,7 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			return nil, e
 		}
 		var accountOK bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_account WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND NOT(payload ? 'unboundAt') AND payload->>'loginStatus'='logged_in')`, in.AccountID, a.UserID, a.DeviceID).Scan(&accountOK); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_account WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND NOT(payload ? 'unboundAt') AND COALESCE(payload->>'platform','douyin')='douyin' AND payload->>'loginStatus'='logged_in')`, in.AccountID, a.UserID, a.DeviceID).Scan(&accountOK); err != nil {
 			return nil, err
 		}
 		if !accountOK {

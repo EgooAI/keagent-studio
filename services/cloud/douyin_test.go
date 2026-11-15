@@ -82,6 +82,29 @@ func TestDouyinValidationAndTransitions(t *testing.T) {
 		t.Fatal("admin leaked local content")
 	}
 }
+func TestPlatformAccountIsolation(t *testing.T) {
+	s, a, input := douyinFixture(t)
+	var accounts = mustDouyin(t, s, a, "accounts/list", object{}).(object)["items"].([]object)
+	if len(accounts) != 1 || accounts[0]["platform"] != "douyin" {
+		t.Fatal("legacy account must remain on Douyin")
+	}
+	profile := object{"id": id(), "name": "小红书", "platform": "xhs", "loginStatus": "logged_in", "platformUserId": "0123456789abcdef01234567"}
+	mustDouyin(t, s, a, "accounts/bind", profile)
+	profile["savedProfile"] = true
+	mustDouyin(t, s, a, "accounts/update", profile)
+	input.AccountID = profile["id"].(string)
+	_, err := douyinCall(s, a, "records/create", input)
+	expectExchangeStatus(t, err, 409)
+	profile["platform"] = "douyin"
+	_, err = douyinCall(s, a, "accounts/update", profile)
+	expectExchangeStatus(t, err, 409)
+	profile["id"], profile["platform"], profile["savedProfile"] = id(), "xhs", false
+	mustDouyin(t, s, a, "accounts/bind", profile)
+	profile["savedProfile"] = true
+	_, err = douyinCall(s, a, "accounts/update", profile)
+	expectExchangeStatus(t, err, 409)
+}
+
 func TestDouyinIdempotencyOwnershipAndUnknownRecovery(t *testing.T) {
 	s, a, input := douyinFixture(t)
 	record := createdDouyin(t, s, a, input)

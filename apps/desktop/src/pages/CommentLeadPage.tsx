@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { WorkMonitors } from "./WorkMonitors";
+import { useEffect, useState } from "react";
 import {
   Alert,
   App,
   Button,
   Card,
   Checkbox,
+  Empty,
   Input,
   InputNumber,
   Modal,
@@ -12,14 +14,15 @@ import {
   Select,
   Space,
   Spin,
-  Steps,
+  Progress,
   Table,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
-import type { TableColumnsType, TableProps } from "antd";
+import "./comment-lead.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   creatorHubApi,
   isLive,
@@ -27,12 +30,12 @@ import {
 } from "@keagent/api-client";
 import type {
   CreatorHubConsent,
-  CreatorHubStartResult,
   LeadAnalysisRow,
   OutreachStatus,
   OutreachTask,
 } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
+import { useCommentLeadStore } from "../lib/commentLeadStore";
 import { desktopPublishingAvailable } from "../lib/douyin";
 
 const intentLabels: Record<string, string> = {
@@ -57,21 +60,12 @@ const intentColors: Record<string, string> = {
 };
 const outreachLabels: Record<OutreachStatus, string> = {
   approved: "待发送",
-  submitted: "已提交",
+  submitted: "排队中",
   sending: "发送中",
   sent: "已发送",
   uncertain: "结果待确认",
   failed: "失败",
   canceled: "已取消",
-};
-const outreachColors: Record<OutreachStatus, string> = {
-  approved: "blue",
-  submitted: "processing",
-  sending: "processing",
-  sent: "success",
-  uncertain: "warning",
-  failed: "error",
-  canceled: "default",
 };
 const consentLabels: Record<CreatorHubConsent["state"], string> = {
   active: "有效",
@@ -92,7 +86,8 @@ const coverageLabels: Record<string, string> = {
 };
 const definitiveSubmitCodes = new Set([
   "CREATORHUB_URL_INVALID",
-  "CREATORHUB_ACCOUNT_UNAVAILABLE",
+  "ACCOUNT_UNAVAILABLE",
+  "QUEUE_FULL",
   "COMMENT_PROFILE_UNAVAILABLE",
   "COMMENT_PURPOSE_DENIED",
   "COMMENT_NOT_QUALIFIED",
@@ -139,7 +134,9 @@ function isOutreachExists(error: unknown) {
   );
 }
 function outreachRefreshable(status: OutreachStatus) {
-  return status === "submitted" || status === "sending";
+  return (
+    status === "submitted" || status === "sending" || status === "uncertain"
+  );
 }
 function outreachDraftEditable(task: OutreachTask | undefined) {
   return (
@@ -153,8 +150,20 @@ function boundedError(value: string, limit = 120) {
   const chars = Array.from(value);
   return chars.length > limit ? `${chars.slice(0, limit).join("")}…` : value;
 }
+function commentWithEvidence(row: LeadAnalysisRow) {
+  const { commentText, evidence } = row;
+  const index = evidence ? commentText.indexOf(evidence) : -1;
+  if (index < 0) return commentText;
+  return (
+    <>
+      {commentText.slice(0, index)}
+      <mark>{evidence}</mark>
+      {commentText.slice(index + evidence.length)}
+    </>
+  );
+}
 const rateLimitNote =
-  "CreatorHub 私信默认限速：2 次/小时、8 次/天、最短 900 秒；发送可能持续多天。";
+  "私信与视频发布共用本机队列。同一账号两条私信至少间隔 15 分钟，每小时最多 2 条，24 小时最多 8 条。";
 
 export default function CommentLeadPage() {
   if (!isLive || !desktopPublishingAvailable()) {
@@ -162,7 +171,7 @@ export default function CommentLeadPage() {
       <>
         <PageHeader
           title="评论获客"
-          description="从抖音视频抓取评论，分析后人工审核私信草稿。"
+          description="从抖音作品或小红书笔记抓取评论，分析后人工审核私信草稿。"
         />
         <Alert
           showIcon
@@ -179,65 +188,102 @@ export default function CommentLeadPage() {
 function CommentLeadWorkspace() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
-  const [step, setStep] = useState(0);
-  const [url, setUrl] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [accepted, setAccepted] = useState(false);
-  const [retentionDays, setRetentionDays] = useState(7);
-  const [consentDays, setConsentDays] = useState(30);
-  const [criteria, setCriteria] = useState("");
-  const [maxComments, setMaxComments] = useState(200);
-  const [showAll, setShowAll] = useState(false);
+  const navigate = useNavigate();
+  const [monitorsOpen, setMonitorsOpen] = useState(false);
+  const [monitor, setMonitor] = useState(false);
+  const lead = useCommentLeadStore();
+  const update = lead.update;
+  const {
+    step,
+    url,
+    accountId,
+    accepted,
+    retentionDays,
+    consentDays,
+    criteria,
+    maxComments,
+    showAll,
+    started,
+    jobId,
+    drafts,
+    submitted,
+  } = lead;
+  const [batchSelect, setBatchSelect] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [reviewFilter, setReviewFilter] = useState("all");
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
-  const [started, setStarted] = useState<{
-    workId: string;
-    accountId: string;
-    result: CreatorHubStartResult;
-    observedAt: string;
-  }>();
-  const [jobId, setJobId] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [submitted, setSubmitted] = useState<Record<string, OutreachTask>>({});
-  const settingsHydrated = useRef(false);
-  const startKey = useRef("");
-  const analyzeKey = useRef("");
-  const submitKeys = useRef<Record<string, string>>({});
-  const login = useMutation({
-    mutationFn: creatorHubApi.login,
-    onSuccess: (result) =>
-      queryClient.setQueryData(["creatorhub", "status"], result),
-    retry: false,
-  });
+  const submitKeyFor = (analysisId: string) => {
+    const current = useCommentLeadStore.getState();
+    const existing = current.submitKeys[analysisId];
+    if (existing) return existing;
+    const key = crypto.randomUUID();
+    current.update({
+      submitKeys: { ...current.submitKeys, [analysisId]: key },
+    });
+    return key;
+  };
+  const clearSubmitKey = (analysisId: string) => {
+    const current = useCommentLeadStore.getState();
+    if (!current.submitKeys[analysisId]) return;
+    const next = { ...current.submitKeys };
+    delete next[analysisId];
+    current.update({ submitKeys: next });
+  };
+  const saveSubmitted = (analysisId: string, task: OutreachTask) => {
+    const current = useCommentLeadStore.getState();
+    current.update({ submitted: { ...current.submitted, [analysisId]: task } });
+  };
+  const resetLead = () => {
+    useCommentLeadStore.getState().reset();
+    setSelectedKeys([]);
+    setReviewFilter("all");
+    setBatchSelect(false);
+    setBatchOpen(false);
+    setBatchRunning(false);
+    setBatchProgress("");
+    queryClient.removeQueries({ queryKey: ["creatorhub", "job"] });
+    queryClient.removeQueries({ queryKey: ["creatorhub", "analyses"] });
+    queryClient.removeQueries({ queryKey: ["creatorhub", "outreach"] });
+    queryClient.removeQueries({ queryKey: ["creatorhub", "consent"] });
+  };
   const start = useMutation({
-    mutationFn: () => {
-      startKey.current ||= crypto.randomUUID();
-      return creatorHubApi.start({
-        url,
-        accountId,
-        requestKey: startKey.current,
+    mutationFn: async (analyzeAfterRead: boolean) => {
+      const current = useCommentLeadStore.getState();
+      const requestKey = current.startKey || crypto.randomUUID();
+      if (!current.startKey) current.update({ startKey: requestKey });
+      const result = await creatorHubApi.start({
+        url: current.url,
+        monitor,
+        accountId: current.accountId,
+        requestKey,
         consent: {
-          accepted,
-          retentionDays,
+          accepted: current.accepted,
+          retentionDays: current.retentionDays,
           expiresAt: new Date(
-            Date.now() + consentDays * 86400000,
+            Date.now() + current.consentDays * 86400000,
           ).toISOString(),
         },
       });
+      return { result, requestKey, analyzeAfterRead };
     },
-    onSuccess: (result) => {
-      startKey.current = "";
-      setStarted({
-        workId: result.awemeId,
-        accountId: result.accountId,
-        result,
-        observedAt: new Date().toISOString(),
+    onSuccess: ({ result, requestKey, analyzeAfterRead }) => {
+      const current = useCommentLeadStore.getState();
+      if (current.startKey !== requestKey) return;
+      current.update({
+        startKey: "",
+        started: {
+          workId: result.awemeId,
+          accountId: result.accountId,
+          result,
+          observedAt: new Date().toISOString(),
+        },
+        step: 1,
       });
-      setStep(1);
-      void message.success(`已导入 ${result.addedCount} 条评论`);
-      if (result.warning) void message.warning(result.warning);
+      void queryClient.invalidateQueries({ queryKey: ["work-monitors"] });
+      if (analyzeAfterRead && result.readCount > 0) analyze.mutate();
+      else setMonitorsOpen(true);
     },
     onError: () => {
       void queryClient.invalidateQueries({
@@ -261,25 +307,39 @@ function CommentLeadWorkspace() {
     retry: false,
   });
   useEffect(() => {
-    if (!settings.data || settingsHydrated.current) return;
-    settingsHydrated.current = true;
-    setCriteria(settings.data.criteria);
-    setMaxComments(settings.data.maxComments);
-  }, [settings.data]);
+    if (!settings.data || lead.settingsHydrated) return;
+    update({
+      settingsHydrated: true,
+      criteria: settings.data.criteria,
+      maxComments: settings.data.maxComments,
+    });
+  }, [settings.data, lead.settingsHydrated, update]);
+  const presets = [
+    {
+      label: "有明确房产需求的人",
+      value: settings.data?.defaultCriteria ?? "",
+    },
+    { label: "想约看房源的人", value: "想约看房源的人" },
+    { label: "询问租金或售价的人", value: "询问租金或售价的人" },
+  ];
+  const customCriteria =
+    lead.settingsHydrated &&
+    !presets.some((option) => option.value === criteria);
   const accounts = status.data?.accounts ?? [];
   useEffect(() => {
     if (accountId) return;
     const preferred = status.data?.selectedAccountId;
     if (preferred && accounts.some((account) => account.id === preferred)) {
-      setAccountId(preferred);
+      update({ accountId: preferred });
       return;
     }
-    if (accounts.length === 1) setAccountId(accounts[0].id);
-  }, [status.data, accounts, accountId]);
+    if (accounts.length === 1) update({ accountId: accounts[0].id });
+  }, [status.data, accounts, accountId, update]);
   useEffect(() => {
     if (!status.data || !accountId) return;
-    if (!accounts.some((account) => account.id === accountId)) setAccountId("");
-  }, [accounts, accountId, status.data]);
+    if (!accounts.some((account) => account.id === accountId))
+      update({ accountId: "" });
+  }, [accounts, accountId, status.data, update]);
   const consentKey = [
     "creatorhub",
     "consent",
@@ -296,27 +356,55 @@ function CommentLeadWorkspace() {
     mutationFn: () =>
       creatorHubApi.revokeConsent(started!.accountId, started!.workId),
     onSuccess: () => {
+      queryClient.setQueryData<CreatorHubConsent>(consentKey, (current) => ({
+        ...current,
+        state: "revoked",
+      }));
+      setBatchOpen(false);
+      setSelectedKeys([]);
       void queryClient.invalidateQueries({ queryKey: consentKey });
       void message.warning("已撤销来源授权");
     },
     retry: false,
   });
-  const consentActive = consent.data?.state === "active";
+  const consentActive = consent.data?.state === "active" && !consent.isError;
   const analyze = useMutation({
-    mutationFn: () => {
-      analyzeKey.current ||= crypto.randomUUID();
-      return creatorHubApi.analyze({
-        accountId: started!.accountId,
-        workId: started!.workId,
-        criteria,
-        maxComments,
-        requestKey: analyzeKey.current,
+    mutationFn: async () => {
+      const current = useCommentLeadStore.getState();
+      if (!current.started) throw new Error("请先完成评论抓取");
+      const requestKey = current.analyzeKey || crypto.randomUUID();
+      if (!current.analyzeKey) current.update({ analyzeKey: requestKey });
+      const grant = await queryClient.fetchQuery({
+        queryKey: [
+          "creatorhub",
+          "consent",
+          current.started.accountId,
+          current.started.workId,
+        ],
+        queryFn: () =>
+          creatorHubApi.consent(
+            current.started!.accountId,
+            current.started!.workId,
+          ),
+        staleTime: 0,
       });
+      if (grant.state !== "active")
+        throw new Error("来源授权已失效，请重新抓取评论。");
+      if (useCommentLeadStore.getState().analyzeKey !== requestKey)
+        throw new Error("当前任务已切换");
+      const job = await creatorHubApi.analyze({
+        accountId: current.started.accountId,
+        workId: current.started.workId,
+        criteria: current.criteria,
+        maxComments: current.maxComments,
+        requestKey,
+      });
+      return { job, requestKey };
     },
-    onSuccess: (job) => {
-      analyzeKey.current = "";
-      setJobId(job.id);
-      setStep(2);
+    onSuccess: ({ job, requestKey }) => {
+      const current = useCommentLeadStore.getState();
+      if (current.analyzeKey === requestKey)
+        current.update({ analyzeKey: "", jobId: job.id, step: 2 });
     },
     retry: false,
   });
@@ -329,6 +417,9 @@ function CommentLeadWorkspace() {
         ? 2000
         : false,
   });
+  useEffect(() => {
+    if (step === 2 && job.data?.status === "done") update({ step: 3 });
+  }, [step, job.data?.status, update]);
   const cancel = useMutation({
     mutationFn: () => creatorHubApi.cancelAnalysis(jobId),
     onSuccess: () =>
@@ -350,6 +441,7 @@ function CommentLeadWorkspace() {
     queryFn: () =>
       creatorHubApi.analyses({ jobId, status: "failed", limit: 500 }),
     enabled:
+      consentActive &&
       step === 2 &&
       !!jobId &&
       ["partial", "failed"].includes(job.data?.status || ""),
@@ -377,8 +469,19 @@ function CommentLeadWorkspace() {
         qualified: showAll ? undefined : true,
         limit: 500,
       }),
-    enabled: !!jobId && ["done", "partial"].includes(job.data?.status || ""),
+    enabled:
+      consentActive &&
+      !!jobId &&
+      ["done", "partial"].includes(job.data?.status || ""),
   });
+  const retryDraft = useMutation({
+    mutationFn: creatorHubApi.retryDraft,
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["creatorhub", "analyses"] }),
+    retry: false,
+  });
+  const canContact =
+    consentActive && consent.data?.purposes?.manualContact === true;
   const outreachKey = [
     "creatorhub",
     "outreach",
@@ -419,11 +522,8 @@ function CommentLeadWorkspace() {
         input.status,
       ),
     onSuccess: (task) => {
-      delete submitKeys.current[task.analysisId];
-      setSubmitted((current) => ({
-        ...current,
-        [task.analysisId]: task,
-      }));
+      clearSubmitKey(task.analysisId);
+      saveSubmitted(task.analysisId, task);
       updateOutreachCache(task);
       void queryClient.invalidateQueries({ queryKey: outreachKey });
       void message.success(
@@ -436,10 +536,7 @@ function CommentLeadWorkspace() {
     mutationFn: (task: OutreachTask) =>
       creatorHubApi.refreshOutreach(task.id, task.attempt),
     onSuccess: (task, previous) => {
-      setSubmitted((current) => ({
-        ...current,
-        [task.analysisId || previous.analysisId]: task,
-      }));
+      saveSubmitted(task.analysisId || previous.analysisId, task);
       updateOutreachCache(task);
       void queryClient.invalidateQueries({ queryKey: outreachKey });
       if (
@@ -455,10 +552,7 @@ function CommentLeadWorkspace() {
     mutationFn: (task: OutreachTask) =>
       creatorHubApi.cancelOutreach(task.id, task.attempt),
     onSuccess: (task) => {
-      setSubmitted((current) => ({
-        ...current,
-        [task.analysisId]: task,
-      }));
+      saveSubmitted(task.analysisId, task);
       updateOutreachCache(task);
       void queryClient.invalidateQueries({ queryKey: outreachKey });
       void message.success("已取消发送");
@@ -482,27 +576,56 @@ function CommentLeadWorkspace() {
     });
   }, [results.data]);
   const selectableRow = (row: LeadAnalysisRow) => {
-    if (row.status === "failed") return false;
+    if (
+      !row.qualified ||
+      row.status === "failed" ||
+      lead.deferredIds.includes(row.id)
+    )
+      return false;
     const task = tasksByAnalysis.get(row.id);
     if (task && task.status !== "failed" && task.status !== "canceled")
       return false;
     const draft = (drafts[row.id] ?? task?.draft ?? row.draft).trim();
     return !!draft && !!row.commenterProfile;
   };
-  const rowsById = new Map(
-    (results.data?.items ?? []).map((row) => [row.id, row]),
+  const reviewState = (row: LeadAnalysisRow) => {
+    const task = tasksByAnalysis.get(row.id);
+    if (task) return outreachLabels[task.status];
+    if (row.status === "failed") return "分析失败";
+    if (!row.qualified) return "未达标";
+    if (lead.deferredIds.includes(row.id)) return "暂不联系";
+    return row.draftError ? "待补草稿" : "待审核";
+  };
+  const rows = results.data?.items ?? [];
+  const visibleRows = rows.filter(
+    (row) => reviewFilter === "all" || reviewState(row) === reviewFilter,
   );
-  const selectedRows = selectedKeys
-    .map((key) => rowsById.get(key))
-    .filter((row): row is LeadAnalysisRow => !!row && selectableRow(row));
-  const rowSelection: TableProps<LeadAnalysisRow>["rowSelection"] = {
-    selectedRowKeys: selectedKeys,
-    onChange: (keys) => setSelectedKeys(keys.map(String)),
-    getCheckboxProps: (row) => ({ disabled: !selectableRow(row) }),
+  const active =
+    visibleRows.find((row) => row.id === lead.activeId) ?? visibleRows[0];
+  const activeTask = active && tasksByAnalysis.get(active.id);
+  const editable =
+    !!active &&
+    active.qualified &&
+    canContact &&
+    active.status !== "failed" &&
+    outreachDraftEditable(activeTask);
+  const activeDraft = active
+    ? ((editable ? drafts[active.id] : undefined) ??
+      activeTask?.draft ??
+      active.draft)
+    : "";
+  const selectedIds = new Set(selectedKeys);
+  const selectable = visibleRows.filter(selectableRow);
+  const selectableIds = selectable.map((row) => row.id);
+  const selectedRows = selectable.filter((row) => selectedIds.has(row.id));
+  const checkedIds = new Set(selectedRows.map((row) => row.id));
+  const switchFilter = (value: string) => {
+    setReviewFilter(value);
+    setSelectedKeys([]);
   };
   const runBatchSubmit = async () => {
     const rows = selectedRows;
-    if (rows.length === 0 || batchRunning) return;
+    if (rows.length === 0 || actionsDisabled) return;
     setBatchRunning(true);
     const processed: string[] = [];
     const nextSubmitted: Record<string, OutreachTask> = {};
@@ -515,7 +638,7 @@ function CommentLeadWorkspace() {
         setBatchProgress(`正在提交 ${index + 1}/${rows.length}`);
         const task = tasksByAnalysis.get(row.id);
         const draft = (drafts[row.id] ?? task?.draft ?? row.draft).trim();
-        const requestKey = (submitKeys.current[row.id] ||= crypto.randomUUID());
+        const requestKey = submitKeyFor(row.id);
         try {
           const result = await creatorHubApi.submitOutreach({
             analysisId: row.id,
@@ -528,7 +651,7 @@ function CommentLeadWorkspace() {
             result.status === "sending" ||
             result.status === "sent"
           ) {
-            delete submitKeys.current[row.id];
+            clearSubmitKey(row.id);
             nextSubmitted[row.id] = result;
             success++;
           } else if (result.status === "uncertain") {
@@ -536,7 +659,7 @@ function CommentLeadWorkspace() {
             nextSubmitted[row.id] = result;
             uncertain++;
           } else {
-            delete submitKeys.current[row.id];
+            clearSubmitKey(row.id);
             failed++;
           }
         } catch (error) {
@@ -548,13 +671,16 @@ function CommentLeadWorkspace() {
             // Keep the key; the list refresh below surfaces the uncertain task.
             uncertain++;
           } else {
-            if (definitiveSubmitError(error)) delete submitKeys.current[row.id];
+            if (definitiveSubmitError(error)) clearSubmitKey(row.id);
             if (isOutreachExists(error)) skipped++;
             else failed++;
           }
         }
       }
-      setSubmitted((current) => ({ ...current, ...nextSubmitted }));
+      const current = useCommentLeadStore.getState();
+      current.update({
+        submitted: { ...current.submitted, ...nextSubmitted },
+      });
     } finally {
       setBatchRunning(false);
       setBatchProgress("");
@@ -564,7 +690,11 @@ function CommentLeadWorkspace() {
       );
       void queryClient.invalidateQueries({ queryKey: outreachKey });
     }
-    const parts = [`成功 ${success}`, `待确认 ${uncertain}`, `失败 ${failed}`];
+    const parts = [
+      `已受理 ${success}`,
+      `待确认 ${uncertain}`,
+      `失败 ${failed}`,
+    ];
     if (skipped) parts.push(`跳过 ${skipped}`);
     void message.info(`批量提交：${parts.join("，")}`);
   };
@@ -574,9 +704,7 @@ function CommentLeadWorkspace() {
       draft: string;
       requestKey?: string;
     }) => {
-      const requestKey =
-        input.requestKey ||
-        (submitKeys.current[input.row.id] ||= crypto.randomUUID());
+      const requestKey = input.requestKey || submitKeyFor(input.row.id);
       return creatorHubApi.submitOutreach({
         analysisId: input.row.id,
         draft: input.draft.trim(),
@@ -589,18 +717,16 @@ function CommentLeadWorkspace() {
         task.status === "sending" ||
         task.status === "sent"
       ) {
-        delete submitKeys.current[row.id];
-        setSubmitted((current) => ({ ...current, [row.id]: task }));
-        void message.success("已提交 CreatorHub 私信队列");
+        clearSubmitKey(row.id);
+        saveSubmitted(row.id, task);
+        void message.success("已加入本机账号执行队列");
       } else if (task.status === "uncertain") {
         // Keep the key: the same key must not trigger a new send.
-        setSubmitted((current) => ({ ...current, [row.id]: task }));
-        void message.warning(
-          "结果待确认，请到 CreatorHub 任务队列核对后再确认",
-        );
+        saveSubmitted(row.id, task);
+        void message.warning("结果待确认，请到平台会话核对后再确认");
       } else {
         // failed/canceled (or an unexpected non-approved status)
-        delete submitKeys.current[row.id];
+        clearSubmitKey(row.id);
         void message.error("上次提交未完成，请重试");
       }
       void queryClient.invalidateQueries({ queryKey: outreachKey });
@@ -608,7 +734,7 @@ function CommentLeadWorkspace() {
     onError: (error, { row }) => {
       // Definitive failures leave Go in `failed`; a new attempt needs a new key.
       if (definitiveSubmitError(error)) {
-        delete submitKeys.current[row.id];
+        clearSubmitKey(row.id);
         void queryClient.invalidateQueries({ queryKey: outreachKey });
       }
       if (isOutreachExists(error)) {
@@ -617,252 +743,200 @@ function CommentLeadWorkspace() {
     },
     retry: false,
   });
-  const actionsDisabled = !consentActive;
-  const columns: TableColumnsType<LeadAnalysisRow> = [
-    { title: "评论", dataIndex: "commentText", width: 220, ellipsis: true },
-    { title: "用户", dataIndex: "commenterName", width: 120 },
-    {
-      title: "意图",
-      dataIndex: "intent",
-      width: 90,
-      render: (intent: LeadAnalysisRow["intent"]) =>
-        intent ? (
-          <Tag color={intentColors[intent]}>{intentLabels[intent]}</Tag>
-        ) : (
-          <Tag>未识别</Tag>
-        ),
-    },
-    {
-      title: "点赞数",
-      dataIndex: "likeCount",
-      width: 90,
-      render: (value: LeadAnalysisRow["likeCount"]) => value ?? "-",
-    },
-    {
-      title: "评论时间",
-      dataIndex: "commentTime",
-      width: 170,
-      render: (value: LeadAnalysisRow["commentTime"]) =>
-        value ? new Date(value).toLocaleString() : "-",
-    },
-    { title: "依据", dataIndex: "evidence", width: 180, ellipsis: true },
-    { title: "原因", dataIndex: "reason", width: 160, ellipsis: true },
-    {
-      title: "私信草稿",
-      dataIndex: "draft",
-      width: 260,
-      render: (_: string, row) => {
-        const task = tasksByAnalysis.get(row.id);
-        return (
-          <Input.TextArea
-            aria-label={`私信草稿-${row.commenterName}`}
-            value={drafts[row.id] ?? task?.draft ?? row.draft}
-            readOnly={!!task && !outreachDraftEditable(task)}
-            maxLength={320}
-            showCount
-            onChange={(event) =>
-              setDrafts((current) => ({
-                ...current,
-                [row.id]: event.target.value,
-              }))
-            }
-            autoSize={{ minRows: 2, maxRows: 6 }}
-          />
-        );
-      },
-    },
-    {
-      title: "操作",
-      key: "action",
-      width: 170,
-      render: (_: unknown, row) => {
-        if (row.status === "failed") {
-          const error = row.error || "分析失败";
-          return (
-            <Tooltip title={error}>
-              <Typography.Text
-                type="danger"
-                style={{ display: "inline-block", maxWidth: 150 }}
-                ellipsis
+  const actionsDisabled =
+    !canContact || !outreach.data || outreach.isError || batchRunning;
+  const renderActions = (row: LeadAnalysisRow) => {
+    if (row.status === "failed") {
+      const error = row.error || "分析失败";
+      return (
+        <Tooltip title={error}>
+          <Typography.Text
+            type="danger"
+            style={{ display: "inline-block", maxWidth: 150 }}
+            ellipsis
+          >
+            分析失败：{error}
+          </Typography.Text>
+        </Tooltip>
+      );
+    }
+    const task = tasksByAnalysis.get(row.id);
+    if (task) {
+      const draft = (drafts[row.id] ?? task.draft ?? row.draft).trim();
+      return (
+        <Space orientation="vertical" size={4}>
+          {(task.status === "uncertain" || task.status === "failed") &&
+            task.error && (
+              <Tooltip title={boundedError(task.error)}>
+                <Typography.Text
+                  type="danger"
+                  style={{ display: "inline-block", maxWidth: 150 }}
+                  ellipsis
+                >
+                  {boundedError(task.error)}
+                </Typography.Text>
+              </Tooltip>
+            )}
+          {["approved", "submitted", "sending"].includes(task.status) &&
+            task.creatorhubTaskId && (
+              <Popconfirm
+                title="取消发送？"
+                description="将取消本机队列中的这条私信，取消后可在本页重新提交。"
+                okText="确认"
+                cancelText="取消"
+                onConfirm={() => cancelTask.mutate(task)}
               >
-                分析失败：{error}
-              </Typography.Text>
-            </Tooltip>
-          );
-        }
-        const task = tasksByAnalysis.get(row.id);
-        if (task) {
-          const draft = (drafts[row.id] ?? task.draft ?? row.draft).trim();
-          return (
-            <Space orientation="vertical" size={4}>
-              <Tag color={outreachColors[task.status] ?? "default"}>
-                {outreachLabels[task.status] ?? task.status}
-              </Tag>
-              {(task.status === "uncertain" || task.status === "failed") &&
-                task.error && (
-                  <Tooltip title={boundedError(task.error)}>
-                    <Typography.Text
-                      type="danger"
-                      style={{ display: "inline-block", maxWidth: 150 }}
-                      ellipsis
-                    >
-                      {boundedError(task.error)}
-                    </Typography.Text>
-                  </Tooltip>
-                )}
-              {["approved", "submitted", "sending"].includes(task.status) &&
-                task.creatorhubTaskId && (
-                  <Popconfirm
-                    title="取消发送？"
-                    description="CreatorHub 将取消该排队中的私信任务，取消后可在本页重新提交。"
-                    okText="确认"
-                    cancelText="取消"
-                    onConfirm={() => cancelTask.mutate(task)}
-                  >
-                    <Button
-                      size="small"
-                      danger
-                      disabled={actionsDisabled}
-                      loading={
-                        cancelTask.isPending &&
-                        cancelTask.variables?.id === task.id
-                      }
-                    >
-                      取消发送
-                    </Button>
-                  </Popconfirm>
-                )}
-              {outreachRefreshable(task.status) && (
+                <Button
+                  size="small"
+                  danger
+                  disabled={actionsDisabled}
+                  loading={
+                    cancelTask.isPending && cancelTask.variables?.id === task.id
+                  }
+                >
+                  取消发送
+                </Button>
+              </Popconfirm>
+            )}
+          {outreachRefreshable(task.status) && (
+            <Button
+              size="small"
+              disabled={actionsDisabled}
+              loading={
+                refreshTask.isPending && refreshTask.variables?.id === task.id
+              }
+              onClick={() => refreshTask.mutate(task)}
+            >
+              刷新状态
+            </Button>
+          )}
+          {task.status === "uncertain" && (
+            <Space size={4} wrap>
+              <Popconfirm
+                title="确认私信已发送？"
+                description="确认后任务将标记为已发送，且无法撤销。"
+                okText="确认"
+                cancelText="取消"
+                onConfirm={() => confirm.mutate({ task, status: "sent" })}
+              >
+                <Button
+                  size="small"
+                  type="primary"
+                  disabled={actionsDisabled}
+                  loading={
+                    confirm.isPending && confirm.variables?.task.id === task.id
+                  }
+                >
+                  确认已发送
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title="确认私信发送失败？"
+                description="确认后任务将标记为失败，且无法撤销。"
+                okText="确认"
+                cancelText="取消"
+                onConfirm={() => confirm.mutate({ task, status: "failed" })}
+              >
                 <Button
                   size="small"
                   disabled={actionsDisabled}
                   loading={
-                    refreshTask.isPending &&
-                    refreshTask.variables?.id === task.id
-                  }
-                  onClick={() => refreshTask.mutate(task)}
-                >
-                  刷新状态
-                </Button>
-              )}
-              {task.status === "uncertain" && (
-                <Space size={4} wrap>
-                  <Popconfirm
-                    title="确认私信已发送？"
-                    description="确认后任务将标记为已发送，且无法撤销。"
-                    okText="确认"
-                    cancelText="取消"
-                    onConfirm={() => confirm.mutate({ task, status: "sent" })}
-                  >
-                    <Button
-                      size="small"
-                      type="primary"
-                      disabled={actionsDisabled}
-                      loading={
-                        confirm.isPending &&
-                        confirm.variables?.task.id === task.id
-                      }
-                    >
-                      确认已发送
-                    </Button>
-                  </Popconfirm>
-                  <Popconfirm
-                    title="确认私信发送失败？"
-                    description="确认后任务将标记为失败，且无法撤销。"
-                    okText="确认"
-                    cancelText="取消"
-                    onConfirm={() => confirm.mutate({ task, status: "failed" })}
-                  >
-                    <Button
-                      size="small"
-                      disabled={actionsDisabled}
-                      loading={
-                        confirm.isPending &&
-                        confirm.variables?.task.id === task.id
-                      }
-                    >
-                      确认失败
-                    </Button>
-                  </Popconfirm>
-                </Space>
-              )}
-              {task.status === "approved" && task.requestKey && (
-                <Button
-                  size="small"
-                  type="primary"
-                  loading={
-                    submit.isPending && submit.variables?.row.id === row.id
-                  }
-                  disabled={actionsDisabled || !row.commenterProfile || !draft}
-                  onClick={() =>
-                    submit.mutate({ row, draft, requestKey: task.requestKey })
+                    confirm.isPending && confirm.variables?.task.id === task.id
                   }
                 >
-                  继续发送
+                  确认失败
                 </Button>
-              )}
-              {task.status === "approved" && !task.requestKey && (
-                <Typography.Text type="warning">
-                  缺少请求标识，无法继续发送，请重新分析后再提交
-                </Typography.Text>
-              )}
-              {(task.status === "failed" || task.status === "canceled") && (
-                <Button
-                  size="small"
-                  type="primary"
-                  loading={
-                    submit.isPending && submit.variables?.row.id === row.id
-                  }
-                  disabled={actionsDisabled || !row.commenterProfile || !draft}
-                  onClick={() => submit.mutate({ row, draft })}
-                >
-                  重新提交
-                </Button>
-              )}
+              </Popconfirm>
             </Space>
-          );
-        }
-        const noProfile = !row.commenterProfile;
-        const draft = (drafts[row.id] ?? row.draft).trim();
-        return (
-          <Space orientation="vertical" size={4}>
+          )}
+          {task.status === "approved" && task.requestKey && (
             <Button
+              size="small"
               type="primary"
-              disabled={actionsDisabled || noProfile || !draft}
               loading={submit.isPending && submit.variables?.row.id === row.id}
+              disabled={actionsDisabled || !row.commenterProfile || !draft}
+              onClick={() =>
+                submit.mutate({ row, draft, requestKey: task.requestKey })
+              }
+            >
+              继续发送
+            </Button>
+          )}
+          {task.status === "approved" && !task.requestKey && (
+            <Typography.Text type="warning">
+              缺少请求标识，无法继续发送，请重新分析后再提交
+            </Typography.Text>
+          )}
+          {(task.status === "failed" || task.status === "canceled") && (
+            <Button
+              size="small"
+              type="primary"
+              loading={submit.isPending && submit.variables?.row.id === row.id}
+              disabled={actionsDisabled || !row.commenterProfile || !draft}
               onClick={() => submit.mutate({ row, draft })}
             >
-              确认发送
+              重新提交
             </Button>
-            {noProfile && (
-              <Typography.Text type="danger">
-                缺少抖音主页，无法私信
-              </Typography.Text>
-            )}
-          </Space>
-        );
-      },
-    },
-  ];
+          )}
+        </Space>
+      );
+    }
+    if (!row.qualified || lead.deferredIds.includes(row.id)) return null;
+    const noProfile = !row.commenterProfile;
+    const draft = (drafts[row.id] ?? row.draft).trim();
+    return (
+      <Space orientation="vertical" size={4}>
+        <Button
+          type="primary"
+          disabled={actionsDisabled || noProfile || !draft}
+          loading={submit.isPending && submit.variables?.row.id === row.id}
+          onClick={() => submit.mutate({ row, draft })}
+        >
+          确认加入发送队列
+        </Button>
+        {noProfile && (
+          <Typography.Text type="danger">
+            缺少评论者主页，无法私信
+          </Typography.Text>
+        )}
+      </Space>
+    );
+  };
   return (
     <>
       <PageHeader
         title="评论获客"
-        description="从抖音视频抓取评论，分析后人工审核私信草稿。"
-      />
-      <Steps
-        current={step}
-        items={[
-          { title: "抓取" },
-          { title: "分析设置" },
-          { title: "分析进度" },
-          { title: "审核与提交" },
-        ]}
-        style={{ marginBottom: 24 }}
+        description={
+          step === 0
+            ? "从抖音作品或小红书笔记的评论里发现有明确房产需求的人。"
+            : undefined
+        }
+        actions={
+          <Space>
+            <Button onClick={() => setMonitorsOpen(true)}>作品评论监控</Button>
+            {step > 0 && (
+              <Popconfirm
+                title="开始新的任务？"
+                description="当前抓取结果、分析进度和草稿将被清空。"
+                okText="开始新任务"
+                cancelText="取消"
+                onConfirm={resetLead}
+              >
+                <Button
+                  disabled={
+                    analyze.isPending || batchRunning || submit.isPending
+                  }
+                >
+                  开始新任务
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        }
       />
       {status.isPending && (
         <Typography.Paragraph type="secondary">
-          <Spin size="small" /> 正在连接 CreatorHub…
+          <Spin size="small" /> 正在读取本机平台账号…
         </Typography.Paragraph>
       )}
       {status.error && (
@@ -883,66 +957,158 @@ function CommentLeadWorkspace() {
           style={{ marginBottom: 16 }}
         />
       )}
-      {step === 0 && (
-        <Card title="抓取评论">
-          <Space orientation="vertical" style={{ width: "100%" }}>
-            <label htmlFor="lead-url">视频链接</label>
-            <Input
-              id="lead-url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://v.douyin.com/..."
-            />
-            <label htmlFor="lead-account">CreatorHub 账号</label>
-            <Select
-              id="lead-account"
-              value={accountId || undefined}
-              onChange={setAccountId}
-              options={accounts.map((account) => ({
-                value: account.id,
-                label: account.nickname,
-              }))}
-            />
-            <Checkbox
-              aria-label="来源授权"
-              checked={accepted}
-              onChange={(event) => setAccepted(event.target.checked)}
-            >
-              我确认已获得读取和使用这些评论的授权（来源授权）
-            </Checkbox>
-            <Space size="large" wrap>
-              <Space orientation="vertical" size={2}>
-                <label htmlFor="lead-retention">默认留存天数</label>
-                <InputNumber
-                  id="lead-retention"
-                  min={1}
-                  max={90}
-                  value={retentionDays}
-                  onChange={(value) => setRetentionDays(value || 7)}
+      {(step === 0 || step === 1) && (
+        <section className="lead-setup panel">
+          <h2>{step === 0 ? "从视频评论中找客户" : "继续筛选这条视频"}</h2>
+          <fieldset
+            disabled={start.isPending || analyze.isPending}
+            className="lead-fields"
+          >
+            {step === 0 && (
+              <>
+                <div className="lead-source-fields">
+                  <div>
+                    <label htmlFor="lead-url">作品详情页链接</label>
+                    <Input
+                      id="lead-url"
+                      size="large"
+                      value={url}
+                      onChange={(e) =>
+                        update({ url: e.target.value, startKey: "" })
+                      }
+                      placeholder="粘贴作品详情页链接"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="lead-account">本机平台账号</label>
+                    <Select
+                      id="lead-account"
+                      size="large"
+                      value={accountId || undefined}
+                      placeholder="选择账号"
+                      disabled={start.isPending}
+                      onChange={(value) =>
+                        update({ accountId: value, startKey: "" })
+                      }
+                      options={accounts.map((a) => ({
+                        value: a.id,
+                        label:
+                          (a.platform === "xhs" ? "小红书" : "抖音") +
+                          " · " +
+                          a.nickname,
+                      }))}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            {step === 1 && started && (
+              <p>
+                已读取 {started.result.readCount} 条评论，可以直接继续分析。
+              </p>
+            )}
+            <div>
+              <span className="lead-field-title" id="lead-criteria-label">
+                这次想找什么客户？
+              </span>
+              <div
+                className="lead-presets"
+                role="group"
+                aria-labelledby="lead-criteria-label"
+              >
+                {presets.map((option) => (
+                  <Button
+                    key={option.label}
+                    aria-pressed={criteria === option.value}
+                    disabled={!lead.settingsHydrated}
+                    onClick={() =>
+                      update({ criteria: option.value, analyzeKey: "" })
+                    }
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+                <Button
+                  aria-pressed={customCriteria}
+                  disabled={!lead.settingsHydrated}
+                  onClick={() => {
+                    if (!customCriteria)
+                      update({ criteria: "", analyzeKey: "" });
+                  }}
+                >
+                  自定义条件
+                </Button>
+              </div>
+              {customCriteria && (
+                <Input.TextArea
+                  id="lead-criteria"
+                  aria-label="自定义筛选条件"
+                  value={criteria}
+                  disabled={start.isPending || analyze.isPending}
+                  placeholder="例如：问到这套房的学区或约看时间的人"
+                  onChange={(e) =>
+                    update({ criteria: e.target.value, analyzeKey: "" })
+                  }
+                  autoSize={{ minRows: 2, maxRows: 6 }}
                 />
-                <Typography.Text type="secondary">
-                  评论与来源数据的默认留存时间（1–90 天）。
-                </Typography.Text>
-              </Space>
-              <Space orientation="vertical" size={2}>
-                <label htmlFor="lead-consent-days">授权有效期（天）</label>
-                <InputNumber
-                  id="lead-consent-days"
-                  min={1}
-                  max={365}
-                  value={consentDays}
-                  onChange={(value) => setConsentDays(value || 30)}
-                />
-                <Typography.Text type="secondary">
-                  来源授权到期后需重新确认（1–365 天）。
-                </Typography.Text>
-              </Space>
-            </Space>
+              )}
+            </div>
+            <details className="lead-options">
+              <summary>更多设置 · 最多分析 {maxComments} 条</summary>
+              <div className="lead-options-fields">
+                <label htmlFor="lead-max">
+                  最多分析条数
+                  <InputNumber
+                    id="lead-max"
+                    min={1}
+                    max={500}
+                    value={maxComments}
+                    onChange={(v) =>
+                      update({ maxComments: v || 200, analyzeKey: "" })
+                    }
+                  />
+                </label>
+                {step === 0 && (
+                  <>
+                    <label htmlFor="lead-retention">
+                      默认留存天数
+                      <InputNumber
+                        id="lead-retention"
+                        min={1}
+                        max={90}
+                        value={retentionDays}
+                        onChange={(v) => update({ retentionDays: v || 7 })}
+                      />
+                    </label>
+                    <label htmlFor="lead-consent-days">
+                      授权有效期（天）
+                      <InputNumber
+                        id="lead-consent-days"
+                        min={1}
+                        max={365}
+                        value={consentDays}
+                        onChange={(v) => update({ consentDays: v || 30 })}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            </details>
+            {step === 0 && (
+              <Checkbox
+                aria-label="来源授权"
+                checked={accepted}
+                onChange={(e) => update({ accepted: e.target.checked })}
+              >
+                我已获准读取评论、用 AI 筛选并在人工审核后联系评论者。评论留存{" "}
+                {retentionDays} 天，授权有效 {consentDays} 天。
+              </Checkbox>
+            )}
             {status.data?.health === "offline" && (
               <Alert
                 type="warning"
                 showIcon
-                title="CreatorHub 未启动或未登录"
+                title="无法读取本机平台账号"
                 action={
                   <Button onClick={() => void status.refetch()}>
                     刷新状态
@@ -950,94 +1116,111 @@ function CommentLeadWorkspace() {
                 }
               />
             )}
-            {status.data?.health === "ready" && accounts.length === 0 && (
-              <Button loading={login.isPending} onClick={() => login.mutate()}>
-                登录抖音
-              </Button>
-            )}
-            {login.error && (
-              <Alert type="error" showIcon title={login.error.message} />
+            {step === 0 &&
+              status.data?.health === "ready" &&
+              !accounts.length && (
+                <Button onClick={() => navigate("/settings/platforms")}>
+                  登录并保存平台账号
+                </Button>
+              )}
+            {step === 0 && (
+              <Checkbox
+                checked={monitor}
+                onChange={(e) => setMonitor(e.target.checked)}
+              >
+                持续监控这条作品（每 15 分钟检查一次）
+              </Checkbox>
             )}
             {start.isPending && status.data?.progress && (
               <Typography.Text type="secondary">
                 抓取进度：{status.data.progress}
               </Typography.Text>
             )}
-            <Button
-              type="primary"
-              disabled={!url || !accountId || !accepted}
-              loading={start.isPending}
-              onClick={() => start.mutate()}
-            >
-              开始抓取
-            </Button>
-            {start.error && (
-              <Alert type="error" showIcon title={start.error.message} />
+            <div>
+              <Button
+                type="primary"
+                size="large"
+                disabled={
+                  !lead.settingsHydrated ||
+                  !criteria.trim() ||
+                  (step === 0
+                    ? !url.trim() ||
+                      !accountId ||
+                      !accepted ||
+                      status.data?.health !== "ready"
+                    : !consentActive)
+                }
+                loading={start.isPending || analyze.isPending}
+                onClick={() =>
+                  step === 0 ? start.mutate(true) : analyze.mutate()
+                }
+              >
+                {start.isPending
+                  ? "正在读取评论"
+                  : analyze.isPending
+                    ? "正在开始分析"
+                    : step === 0
+                      ? "从评论中找客户"
+                      : "开始分析"}
+              </Button>
+            </div>
+            {step === 0 && (
+              <Button
+                disabled={
+                  !accountId || !url.trim() || !accepted || start.isPending
+                }
+                onClick={() => start.mutate(false)}
+              >
+                只读取评论
+              </Button>
             )}
-          </Space>
-        </Card>
+            {(start.error || analyze.error) && (
+              <Alert
+                showIcon
+                type="error"
+                title={(start.error || analyze.error)?.message}
+              />
+            )}
+          </fieldset>
+        </section>
       )}
-      {step === 1 && (
-        <Card title="分析设置">
-          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            {started && (
-              <Card size="small" title="抓取结果">
-                <Space orientation="vertical" size={4}>
-                  <Typography.Text>
-                    作品 ID：
-                    <Typography.Link
-                      href={`https://www.douyin.com/video/${started.workId}`}
-                      target="_blank"
-                    >
-                      {started.workId}
-                    </Typography.Link>
-                  </Typography.Text>
-                  <Typography.Text>
-                    抓取时间：
-                    {new Date(started.observedAt).toLocaleString()}
-                  </Typography.Text>
-                  <Typography.Text>
-                    读取评论：{started.result.readCount} 条
-                  </Typography.Text>
-                  <Typography.Text>
-                    新增：{started.result.addedCount} 条
-                  </Typography.Text>
-                  <Typography.Text>
-                    已存在：{started.result.updatedCount} 条
-                  </Typography.Text>
-                  <Typography.Text>
-                    覆盖范围：
-                    {coverageLabels[started.result.coverage] ??
-                      started.result.coverage}
-                  </Typography.Text>
-                  {started.result.warning && (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      title={started.result.warning}
-                    />
-                  )}
-                </Space>
-              </Card>
-            )}
-            <Card size="small" title="来源授权">
+      {started && (
+        <>
+          {started.result.warning && (
+            <Alert type="warning" showIcon title={started.result.warning} />
+          )}
+          <details className="lead-source-details" key={started.workId}>
+            <summary>
+              作品与来源授权 ·{" "}
+              {consent.data ? consentLabels[consent.data.state] : "查看详情"}
+            </summary>
+            <div className="lead-source-body">
+              <Typography.Link
+                href={
+                  started.workId.startsWith("xhs-")
+                    ? "https://www.xiaohongshu.com/explore/" +
+                      started.workId.slice(4)
+                    : "https://www.douyin.com/video/" + started.workId
+                }
+                target="_blank"
+                rel="noreferrer"
+              >
+                查看原作品
+              </Typography.Link>
+              {started.result.coverage !== "unknown" && (
+                <p>
+                  读取 {started.result.readCount} 条 · 新增{" "}
+                  {started.result.addedCount} 条 · 已存在{" "}
+                  {started.result.updatedCount} 条 ·{" "}
+                  {coverageLabels[started.result.coverage]} ·{" "}
+                  {new Date(started.observedAt).toLocaleString()}
+                </p>
+              )}
               <Space orientation="vertical" size={4}>
                 {consent.isPending && (
                   <Typography.Text type="secondary">
                     <Spin size="small" /> 正在加载授权状态…
                   </Typography.Text>
-                )}
-                {consent.error && (
-                  <Alert
-                    type="error"
-                    showIcon
-                    title={consent.error.message}
-                    action={
-                      <Button onClick={() => void consent.refetch()}>
-                        重试
-                      </Button>
-                    }
-                  />
                 )}
                 {consent.data && (
                   <>
@@ -1100,67 +1283,37 @@ function CommentLeadWorkspace() {
                   />
                 )}
               </Space>
-            </Card>
-            {settings.isPending && (
-              <Typography.Text type="secondary">
-                <Spin size="small" /> 正在加载分析设置…
-              </Typography.Text>
-            )}
-            <label htmlFor="lead-criteria">筛选提示词</label>
-            {settings.data && (
-              <Typography.Text type="secondary">
-                已保存的提示词版本：
-                {settings.data.criteriaHash.slice(0, 8) || "默认"}
-              </Typography.Text>
-            )}
-            <Input.TextArea
-              id="lead-criteria"
-              value={criteria}
-              onChange={(event) => setCriteria(event.target.value)}
-              autoSize={{ minRows: 3, maxRows: 8 }}
-            />
-            <Button
-              onClick={() =>
-                setCriteria(
-                  settings.data?.defaultCriteria ??
-                    settings.data?.criteria ??
-                    "",
-                )
+            </div>
+          </details>
+          {consent.error && (
+            <Alert
+              type="error"
+              showIcon
+              title={consent.error.message}
+              action={
+                <Button onClick={() => void consent.refetch()}>
+                  重新读取授权
+                </Button>
               }
-            >
-              恢复默认
-            </Button>
-            <label htmlFor="lead-max">最多分析条数</label>
-            <InputNumber
-              id="lead-max"
-              min={1}
-              max={500}
-              value={maxComments}
-              onChange={(value) => setMaxComments(value || 200)}
             />
-            <Typography.Text type="secondary">
-              最多分析 {maxComments} 条评论
-            </Typography.Text>
-            <Typography.Text type="secondary">
-              预计调用 {Math.min(started?.result.readCount ?? 0, maxComments)}{" "}
-              条
-            </Typography.Text>
-            <Button
-              type="primary"
-              disabled={!consentActive}
-              loading={analyze.isPending}
-              onClick={() => analyze.mutate()}
-            >
-              开始分析
-            </Button>
-            {analyze.error && (
-              <Alert type="error" showIcon title={analyze.error.message} />
-            )}
-          </Space>
-        </Card>
+          )}
+          {consent.data && !consentActive && (
+            <Alert
+              showIcon
+              type="warning"
+              title="来源授权已失效，请重新抓取评论后再操作。"
+            />
+          )}
+        </>
       )}
       {step === 2 && (
-        <Card title="分析进度">
+        <Card
+          title={
+            job.data?.status === "running" || job.data?.status === "queued"
+              ? "正在从评论中筛选客户"
+              : "评论分析进度"
+          }
+        >
           <Space orientation="vertical" style={{ width: "100%" }}>
             {job.isPending && <Spin />}
             {job.error && (
@@ -1182,10 +1335,15 @@ function CommentLeadWorkspace() {
                 {job.data.qualified}，失败 {job.data.failed}
               </Typography.Text>
             )}
-            {job.data?.criteriaHash && (
-              <Typography.Text type="secondary">
-                当前提示词哈希：{job.data.criteriaHash.slice(0, 8)}
-              </Typography.Text>
+            {job.data && (
+              <Progress
+                percent={
+                  job.data.total
+                    ? Math.round((job.data.processed * 100) / job.data.total)
+                    : 0
+                }
+                showInfo={false}
+              />
             )}
             {job.data && ["queued", "running"].includes(job.data.status) && (
               <Button
@@ -1222,66 +1380,68 @@ function CommentLeadWorkspace() {
                 }
               />
             )}
-            {failedItems.data && failedItems.data.items.length > 0 && (
-              <Card size="small" title="失败条目">
-                <Table<LeadAnalysisRow>
-                  rowKey="id"
-                  size="small"
-                  pagination={false}
-                  dataSource={failedItems.data.items}
-                  columns={[
-                    {
-                      title: "评论",
-                      dataIndex: "commentText",
-                      ellipsis: true,
-                    },
-                    {
-                      title: "用户",
-                      dataIndex: "commenterName",
-                      width: 120,
-                    },
-                    {
-                      title: "错误",
-                      dataIndex: "error",
-                      render: (value: string) => (
-                        <Tooltip title={value || "分析失败"}>
-                          <Typography.Text
-                            type="danger"
-                            style={{ display: "inline-block", maxWidth: 220 }}
-                            ellipsis
+            {consentActive &&
+              failedItems.data &&
+              failedItems.data.items.length > 0 && (
+                <Card size="small" title="失败条目">
+                  <Table<LeadAnalysisRow>
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                    dataSource={failedItems.data.items}
+                    columns={[
+                      {
+                        title: "评论",
+                        dataIndex: "commentText",
+                        ellipsis: true,
+                      },
+                      {
+                        title: "用户",
+                        dataIndex: "commenterName",
+                        width: 120,
+                      },
+                      {
+                        title: "错误",
+                        dataIndex: "error",
+                        render: (value: string) => (
+                          <Tooltip title={value || "分析失败"}>
+                            <Typography.Text
+                              type="danger"
+                              style={{ display: "inline-block", maxWidth: 220 }}
+                              ellipsis
+                            >
+                              {value || "分析失败"}
+                            </Typography.Text>
+                          </Tooltip>
+                        ),
+                      },
+                      {
+                        title: "操作",
+                        key: "action",
+                        width: 90,
+                        render: (_: unknown, row) => (
+                          <Button
+                            size="small"
+                            loading={
+                              retryItem.isPending &&
+                              retryItem.variables === row.id
+                            }
+                            disabled={!consentActive}
+                            onClick={() => retryItem.mutate(row.id)}
                           >
-                            {value || "分析失败"}
-                          </Typography.Text>
-                        </Tooltip>
-                      ),
-                    },
-                    {
-                      title: "操作",
-                      key: "action",
-                      width: 90,
-                      render: (_: unknown, row) => (
-                        <Button
-                          size="small"
-                          loading={
-                            retryItem.isPending &&
-                            retryItem.variables === row.id
-                          }
-                          disabled={!consentActive}
-                          onClick={() => retryItem.mutate(row.id)}
-                        >
-                          重试
-                        </Button>
-                      ),
-                    },
-                  ]}
-                />
-              </Card>
-            )}
+                            重试
+                          </Button>
+                        ),
+                      },
+                    ]}
+                  />
+                </Card>
+              )}
             {retryItem.error && (
               <Alert type="error" showIcon title={retryItem.error.message} />
             )}
             {job.data && ["done", "partial"].includes(job.data.status) && (
-              <Button type="primary" onClick={() => setStep(3)}>
+              <Button type="primary" onClick={() => update({ step: 3 })}>
                 查看达标评论
               </Button>
             )}
@@ -1289,12 +1449,7 @@ function CommentLeadWorkspace() {
               ["done", "partial", "failed", "canceled"].includes(
                 job.data.status,
               ) && (
-                <Button
-                  onClick={() => {
-                    setStep(1);
-                    setJobId("");
-                  }}
-                >
+                <Button onClick={() => update({ step: 1, jobId: "" })}>
                   重新分析
                 </Button>
               )}
@@ -1302,134 +1457,432 @@ function CommentLeadWorkspace() {
         </Card>
       )}
       {step === 3 && (
-        <Card title="审核与提交">
-          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-            <Alert type="info" showIcon title={rateLimitNote} />
-            <Space>
-              <Checkbox
-                checked={showAll}
-                onChange={(event) => setShowAll(event.target.checked)}
-              >
-                显示全部
-              </Checkbox>
-              <Typography.Text type="secondary">
-                包含未达标与失败的评论
-              </Typography.Text>
-            </Space>
-            <Space>
+        <section className="lead-review">
+          <div className="lead-review-heading">
+            <div>
+              <h2>线索审核</h2>
+              <p>
+                {job.data
+                  ? `已处理 ${job.data.processed} 条评论，找到 ${job.data.qualified} 位符合条件的评论者。${job.data.failed ? `另有 ${job.data.failed} 条判断失败。` : ""}`
+                  : "选择评论者后可核对原话、编辑私信。"}
+              </p>
+            </div>
+            <Space wrap>
+              {job.data?.status === "partial" && (
+                <Button onClick={() => update({ step: 2 })}>
+                  查看失败条目
+                </Button>
+              )}
               <Button
-                type="primary"
-                disabled={
-                  actionsDisabled || selectedKeys.length === 0 || batchRunning
-                }
-                loading={batchRunning}
-                onClick={() => setBatchOpen(true)}
+                disabled={batchRunning}
+                onClick={() => {
+                  switchFilter("all");
+                  setBatchSelect(false);
+                  update({ step: 1, jobId: "", analyzeKey: "", activeId: "" });
+                }}
               >
-                {batchRunning
-                  ? batchProgress || "批量提交中…"
-                  : `批量提交 (${selectedKeys.length})`}
+                调整筛选条件
               </Button>
             </Space>
-            {results.isPending && <Spin />}
-            {results.error && (
-              <Alert
-                type="error"
-                showIcon
-                title={results.error.message}
-                action={
-                  <Button onClick={() => void results.refetch()}>重试</Button>
-                }
-              />
-            )}
-            {outreach.error && (
-              <Alert
-                type="error"
-                showIcon
-                title={outreach.error.message}
-                action={
-                  <Button onClick={() => void outreach.refetch()}>重试</Button>
-                }
-              />
-            )}
-            {submit.error && !isOutreachExists(submit.error) && (
-              <Alert type="error" showIcon title={submit.error.message} />
-            )}
-            {confirm.error && (
-              <Alert type="error" showIcon title={confirm.error.message} />
-            )}
-            {cancelTask.error && (
-              <Alert type="error" showIcon title={cancelTask.error.message} />
-            )}
-            {results.data && (
-              <>
-                <Typography.Text>
-                  已加载 {results.data.items.length} 条
-                  {showAll ? "全部" : "达标"}评论。
-                </Typography.Text>
-                <Table<LeadAnalysisRow>
-                  rowKey="id"
-                  rowSelection={rowSelection}
-                  columns={columns}
-                  dataSource={results.data.items}
-                  pagination={{ pageSize: 50 }}
-                  scroll={{ x: 1200 }}
-                />
-              </>
-            )}
-            <Modal
-              open={batchOpen}
-              title="批量提交私信"
-              okText="确认提交"
-              cancelText="取消"
-              confirmLoading={batchRunning}
-              okButtonProps={{ disabled: batchRunning }}
-              cancelButtonProps={{ disabled: batchRunning }}
-              closable={!batchRunning}
-              mask={{ closable: !batchRunning }}
-              onOk={() => void runBatchSubmit()}
-              onCancel={() => {
-                if (!batchRunning) setBatchOpen(false);
-              }}
-            >
-              <Space
-                orientation="vertical"
-                size="middle"
-                style={{ width: "100%" }}
-              >
-                <Typography.Text>
-                  将向 {selectedRows.length} 位评论者发送私信：
-                </Typography.Text>
-                <div>
-                  {selectedRows.map((row) => {
-                    const task = tasksByAnalysis.get(row.id);
-                    const draft = (
-                      drafts[row.id] ??
-                      task?.draft ??
-                      row.draft
-                    ).trim();
-                    return (
-                      <div key={row.id}>
-                        <Typography.Text strong>
-                          {row.commenterName}
-                        </Typography.Text>
-                        <Typography.Text type="secondary">
-                          ：{draft.slice(0, 60)}
-                          {draft.length > 60 ? "…" : ""}
-                        </Typography.Text>
-                      </div>
-                    );
-                  })}
+          </div>
+          {job.error && (
+            <Alert
+              type="error"
+              showIcon
+              title={job.error.message}
+              action={
+                <Button onClick={() => void job.refetch()}>重新读取任务</Button>
+              }
+            />
+          )}
+          {results.isPending && consentActive && !job.error && <Spin />}
+          {results.error && (
+            <Alert
+              type="error"
+              showIcon
+              title={results.error.message}
+              action={
+                <Button onClick={() => void results.refetch()}>重试</Button>
+              }
+            />
+          )}
+          {outreach.error && (
+            <Alert
+              type="error"
+              showIcon
+              title={outreach.error.message}
+              action={
+                <Button onClick={() => void outreach.refetch()}>重试</Button>
+              }
+            />
+          )}
+          {submit.error && !isOutreachExists(submit.error) && (
+            <Alert type="error" showIcon title={submit.error.message} />
+          )}
+          {confirm.error && (
+            <Alert type="error" showIcon title={confirm.error.message} />
+          )}
+          {cancelTask.error && (
+            <Alert type="error" showIcon title={cancelTask.error.message} />
+          )}
+          {results.data && consentActive && (
+            <div className="lead-review-layout">
+              <section aria-label="评论者列表" className="lead-people">
+                <div className="lead-list-tools">
+                  <h3>
+                    评论者 <span>{visibleRows.length}</span>
+                  </h3>
+                  <Select
+                    size="small"
+                    aria-label="按处理状态筛选"
+                    value={reviewFilter}
+                    onChange={switchFilter}
+                    options={[
+                      { value: "all", label: "全部状态" },
+                      ...Array.from(
+                        new Set([
+                          "待审核",
+                          "暂不联系",
+                          ...rows.map(reviewState),
+                        ]),
+                      ).map((value) => ({ value, label: value })),
+                    ]}
+                  />
                 </div>
-                <Alert type="info" showIcon title={rateLimitNote} />
-                {batchRunning && (
-                  <Typography.Text type="secondary">
-                    {batchProgress}
-                  </Typography.Text>
+                <div className="lead-list-options">
+                  <Checkbox
+                    checked={showAll}
+                    onChange={(e) => {
+                      switchFilter("all");
+                      update({ showAll: e.target.checked });
+                    }}
+                  >
+                    显示未达标评论
+                  </Checkbox>
+                  <Button
+                    type="text"
+                    size="small"
+                    disabled={batchRunning}
+                    aria-pressed={batchSelect}
+                    onClick={() => {
+                      setBatchSelect(!batchSelect);
+                      setSelectedKeys([]);
+                    }}
+                  >
+                    {batchSelect ? "退出批量" : "批量选择"}
+                  </Button>
+                </div>
+                {batchSelect && visibleRows.length > 0 && (
+                  <div className="lead-batch-tools">
+                    <Checkbox
+                      aria-label="选择全部可提交的线索"
+                      disabled={actionsDisabled || !selectableIds.length}
+                      checked={
+                        !!selectableIds.length &&
+                        selectedRows.length === selectableIds.length
+                      }
+                      indeterminate={
+                        selectedRows.length > 0 &&
+                        selectedRows.length < selectableIds.length
+                      }
+                      onChange={(e) =>
+                        setSelectedKeys(e.target.checked ? selectableIds : [])
+                      }
+                    >
+                      全选
+                    </Checkbox>
+                    {selectedRows.length > 0 && (
+                      <Button
+                        size="small"
+                        disabled={actionsDisabled}
+                        onClick={() => setBatchOpen(true)}
+                      >
+                        批量提交 ({selectedRows.length})
+                      </Button>
+                    )}
+                  </div>
                 )}
-              </Space>
-            </Modal>
-          </Space>
-        </Card>
+                <div className="lead-people-scroll">
+                  {visibleRows.map((row) => (
+                    <div
+                      className="lead-person"
+                      key={row.id}
+                      data-current={active?.id === row.id}
+                    >
+                      {batchSelect && (
+                        <Checkbox
+                          aria-label={`批量选择 ${row.commenterName || "匿名用户"}`}
+                          disabled={actionsDisabled || !selectableRow(row)}
+                          checked={checkedIds.has(row.id)}
+                          onChange={(e) =>
+                            setSelectedKeys((keys) =>
+                              e.target.checked
+                                ? [...keys, row.id]
+                                : keys.filter((id) => id !== row.id),
+                            )
+                          }
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className="lead-pick"
+                        aria-label={`查看 ${row.commenterName || "匿名用户"} 的评论`}
+                        aria-pressed={row.id === active?.id}
+                        onClick={() => update({ activeId: row.id })}
+                      >
+                        <span className="lead-person-top">
+                          <strong>{row.commenterName || "匿名用户"}</strong>
+                          <span>{reviewState(row)}</span>
+                        </span>
+                        <span className="lead-excerpt">
+                          {row.commentText || "无评论正文"}
+                        </span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section className="lead-reader" aria-label="线索详情">
+                {active ? (
+                  <>
+                    <div className="lead-reader-head">
+                      <h3>{active.commenterName || "匿名用户"}</h3>
+                      {active.intent && (
+                        <Tag color={intentColors[active.intent]}>
+                          {intentLabels[active.intent]}
+                        </Tag>
+                      )}
+                    </div>
+                    <div className="lead-comment-meta">
+                      平台原评论
+                      {active.commentTime &&
+                        ` · ${new Date(active.commentTime).toLocaleString()}`}
+                      {active.likeCount != null && ` · ${active.likeCount} 赞`}
+                    </div>
+                    <blockquote>
+                      {commentWithEvidence(active) || "无评论正文"}
+                    </blockquote>
+                    {active.qualified && !active.reason && (
+                      <p className="lead-reason">
+                        旧版已判为达标，未保存判断理由，请核对原评论。
+                      </p>
+                    )}
+                    {active.reason && (
+                      <p className="lead-reason">
+                        <strong>AI 判断</strong> {active.reason}
+                      </p>
+                    )}
+                    {active.qualified && !canContact && (
+                      <Typography.Paragraph type="secondary">
+                        已保留这条线索，当前来源未授权人工联系。
+                      </Typography.Paragraph>
+                    )}
+                    {((active.qualified && canContact) || activeTask) && (
+                      <div className="lead-compose">
+                        <label htmlFor="lead-draft">
+                          {editable ? "编辑私信" : "私信内容"}
+                        </label>
+                        {active.draftError && !activeTask && canContact && (
+                          <Alert
+                            showIcon
+                            type="warning"
+                            title="已识别为线索，AI 草稿尚未生成"
+                            description={
+                              retryDraft.isError &&
+                              retryDraft.variables === active.id
+                                ? retryDraft.error.message
+                                : active.draftError
+                            }
+                            action={
+                              <Button
+                                size="small"
+                                disabled={
+                                  actionsDisabled || retryDraft.isPending
+                                }
+                                loading={
+                                  retryDraft.isPending &&
+                                  retryDraft.variables === active.id
+                                }
+                                onClick={() => {
+                                  const current =
+                                    useCommentLeadStore.getState();
+                                  if (current.drafts[active.id] === "") {
+                                    const next = { ...current.drafts };
+                                    delete next[active.id];
+                                    current.update({ drafts: next });
+                                  }
+                                  retryDraft.mutate(active.id);
+                                }}
+                              >
+                                重试 AI 草稿
+                              </Button>
+                            }
+                          />
+                        )}
+                        <Input.TextArea
+                          placeholder="写一条回应这位评论者的私信"
+                          id="lead-draft"
+                          aria-label={`私信草稿-${active.commenterName}`}
+                          value={activeDraft}
+                          readOnly={!editable || batchRunning}
+                          maxLength={320}
+                          showCount
+                          autoSize={{ minRows: 3, maxRows: 8 }}
+                          onChange={(e) => {
+                            const current = useCommentLeadStore.getState();
+                            current.update({
+                              drafts: {
+                                ...current.drafts,
+                                [active.id]: e.target.value,
+                              },
+                            });
+                          }}
+                        />
+                        <p className="lead-queue-note">{rateLimitNote}</p>
+                      </div>
+                    )}
+                    <div className="lead-reader-actions">
+                      {renderActions(active)}
+                      {active.qualified && !activeTask && !actionsDisabled && (
+                        <Button
+                          type="text"
+                          disabled={submit.isPending}
+                          onClick={() => {
+                            const deferred = lead.deferredIds.includes(
+                              active.id,
+                            );
+                            const next = visibleRows.find(
+                              (row) =>
+                                row.id !== active.id &&
+                                reviewState(row) === "待审核",
+                            );
+                            setSelectedKeys((keys) =>
+                              keys.filter((id) => id !== active.id),
+                            );
+                            update({
+                              deferredIds: deferred
+                                ? lead.deferredIds.filter(
+                                    (id) => id !== active.id,
+                                  )
+                                : [...lead.deferredIds, active.id],
+                              activeId: !deferred && next ? next.id : active.id,
+                            });
+                          }}
+                        >
+                          {lead.deferredIds.includes(active.id)
+                            ? "恢复审核"
+                            : "暂不联系"}
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={
+                      reviewFilter !== "all"
+                        ? "当前状态下暂无线索"
+                        : showAll
+                          ? "没有可查看的分析结果"
+                          : "这次没有找到符合条件的客户"
+                    }
+                  >
+                    <Button
+                      onClick={() =>
+                        reviewFilter !== "all"
+                          ? switchFilter("all")
+                          : update({ step: 1, jobId: "", analyzeKey: "" })
+                      }
+                    >
+                      {reviewFilter !== "all" ? "查看全部状态" : "调整筛选条件"}
+                    </Button>
+                  </Empty>
+                )}
+              </section>
+            </div>
+          )}
+          <Modal
+            open={batchOpen}
+            title="批量提交私信"
+            okText="确认提交"
+            cancelText="取消"
+            confirmLoading={batchRunning}
+            okButtonProps={{
+              disabled: actionsDisabled || !selectedRows.length,
+            }}
+            cancelButtonProps={{ disabled: batchRunning }}
+            closable={!batchRunning}
+            mask={{ closable: !batchRunning }}
+            onOk={() => void runBatchSubmit()}
+            onCancel={() => {
+              if (!batchRunning) setBatchOpen(false);
+            }}
+          >
+            <Space
+              orientation="vertical"
+              size="middle"
+              style={{ width: "100%" }}
+            >
+              <Typography.Text>
+                将为 {selectedRows.length} 位评论者加入私信发送队列：
+              </Typography.Text>
+              <div>
+                {selectedRows.map((row) => {
+                  const task = tasksByAnalysis.get(row.id);
+                  const draft = (
+                    drafts[row.id] ??
+                    task?.draft ??
+                    row.draft
+                  ).trim();
+                  return (
+                    <div key={row.id}>
+                      <Typography.Text strong>
+                        {row.commenterName}
+                      </Typography.Text>
+                      <Typography.Text type="secondary">
+                        ：{draft}
+                      </Typography.Text>
+                    </div>
+                  );
+                })}
+              </div>
+              <Alert type="info" showIcon title={rateLimitNote} />
+              {batchRunning && (
+                <Typography.Text type="secondary">
+                  {batchProgress}
+                </Typography.Text>
+              )}
+            </Space>
+          </Modal>
+        </section>
+      )}
+      {monitorsOpen && (
+        <WorkMonitors
+          open
+          accounts={accounts}
+          initialWork={started}
+          onClose={() => setMonitorsOpen(false)}
+          onAnalyze={(row) => {
+            resetLead();
+            update({
+              step: 1,
+              started: {
+                workId: row.workId,
+                accountId: row.accountId,
+                observedAt: row.lastScan ?? "",
+                result: {
+                  awemeId: row.workId,
+                  accountId: row.accountId,
+                  readCount: row.readCount,
+                  addedCount: row.addedCount,
+                  updatedCount: 0,
+                  coverage: "partial",
+                },
+              },
+            });
+            setMonitorsOpen(false);
+          }}
+        />
       )}
     </>
   );

@@ -129,7 +129,21 @@ export type LeadIntent =
   | "question"
   | "unrelated"
   | "unclear";
+export interface WorkMonitorSummary {
+  mode?: "once" | "monitor" | "stopped";
+  id: string;
+  accountId: string;
+  workId: string;
+  platform: "douyin" | "xhs";
+  lastScan?: string;
+  readCount: number;
+  addedCount: number;
+  error: string;
+  nextScan: number;
+}
+
 export interface CreatorHubAccountSummary {
+  platform?: "douyin" | "xhs";
   id: string;
   nickname: string;
   status: string;
@@ -142,13 +156,14 @@ export interface CreatorHubStatus {
   progress?: string;
 }
 export interface CreatorHubStartInput {
+  monitor?: boolean;
   url: string;
   accountId: string;
   requestKey: string;
   consent: { accepted: boolean; retentionDays?: number; expiresAt?: string };
 }
 export interface CreatorHubStartResult {
-  watchId: number;
+  watchId?: number;
   awemeId: string;
   accountId: string;
   readCount: number;
@@ -171,6 +186,7 @@ export interface LeadAnalysisRow extends Omit<LeadAnalysisResult, "intent"> {
   commentText: string;
   commenterName: string;
   commenterProfile: string | null;
+  draftError?: string;
   likeCount: number | null;
   commentTime: string | null;
   status: string;
@@ -206,6 +222,13 @@ export interface AnalysisJob {
   failed: number;
   error: string;
   criteriaHash: string;
+  criteriaVersion?: string;
+  createdAt?: string;
+}
+export interface AnalysisJobSummary extends AnalysisJob {
+  accountId: string;
+  workId: string;
+  createdAt: string;
 }
 export type OutreachStatus =
   | "approved"

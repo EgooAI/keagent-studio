@@ -239,7 +239,7 @@ test("目标建改启停、单作品观察、重新进入后的历史及已核�
   page,
 }) => {
   const fixture = await collectionFixture(page);
-  await page.goto("/#/leads");
+  await page.goto("/#/leads/collection");
   await page.getByRole("button", { name: "从视频获取评论" }).click();
   const initialForm = page.getByRole("dialog", { name: "从视频获取评论" });
   await expect(
@@ -371,7 +371,7 @@ test("快捷入口仅需作品与账号，复用目标和运行，刷新后自�
       },
     };
   });
-  await page.goto("/#/leads");
+  await page.goto("/#/leads/collection");
   const shortcut = page.getByRole("button", { name: "从视频获取评论" });
   async function submit(url: string) {
     await shortcut.click();
@@ -535,7 +535,7 @@ test("获准来源的评论明细可同步、重试、分页和重开，撤回�
     lastObservedAt: time,
     panelStatus: "visible",
   });
-  await page.goto("/#/leads");
+  await page.goto("/#/leads/collection");
   await page.getByRole("tab", { name: "已核验作品" }).click();
   await page
     .getByRole("row")

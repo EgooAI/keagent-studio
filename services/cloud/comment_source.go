@@ -244,7 +244,11 @@ func projectCommentFields(f commentFields, fields []string) commentFields {
 	return f
 }
 
-func validCommentFields(f *commentFields) bool {
+func validCommentFields(f *commentFields) bool { return validPlatformCommentFields(f, false) }
+
+var xhsProfile = regexp.MustCompile(`^/user/profile/[0-9a-f]{24}$`)
+
+func validPlatformCommentFields(f *commentFields, xhs bool) bool {
 	for _, p := range []struct {
 		v     *string
 		limit int
@@ -258,7 +262,7 @@ func validCommentFields(f *commentFields) bool {
 	}
 	if f.CommenterProfile != nil {
 		u, err := url.Parse(*f.CommenterProfile)
-		if err != nil || u.Scheme != "https" || u.Host != "www.douyin.com" || u.User != nil || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" || len(*f.CommenterProfile) > 2048 || !collectionCreatorPath.MatchString(u.Path) {
+		if err != nil || u.Scheme != "https" || u.User != nil || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" || len(*f.CommenterProfile) > 2048 || (xhs && (u.Host != "www.xiaohongshu.com" || !xhsProfile.MatchString(u.Path))) || (!xhs && (u.Host != "www.douyin.com" || !collectionCreatorPath.MatchString(u.Path))) {
 			return false
 		}
 	}
