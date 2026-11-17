@@ -92,9 +92,22 @@ export function WorkMonitors({
       void client.invalidateQueries({ queryKey: ["monitor-comments"] });
     },
   });
+  const replyComment =
+    reply &&
+    comments.data?.pages
+      .flatMap((page) => page.items)
+      .find((comment) => comment.id === reply.commentId);
   return (
-    <Drawer title="作品评论监控" open={open} onClose={onClose} size="large">
-      <p>KeAgent 运行期间，每 15 分钟用对应账号检查一次新评论。</p>
+    <Drawer
+      rootClassName="lead-monitor-sheet"
+      title="作品评论监控"
+      open={open}
+      onClose={onClose}
+      size="large"
+    >
+      <p className="monitor-cadence">
+        KeAgent 运行期间，每 15 分钟用对应账号检查一次新评论。
+      </p>
       {list.isPending && <Spin />}
       {list.error && <Alert type="error" title={list.error.message} />}
       {action.error && <Alert type="error" title={action.error.message} />}
@@ -103,13 +116,19 @@ export function WorkMonitors({
           dataSource={list.data}
           locale={{ emptyText: "暂无持续监控的作品" }}
           renderItem={(row) => (
-            <List.Item>
+            <List.Item
+              className={
+                work?.workId === row.workId && work?.accountId === row.accountId
+                  ? "monitor-selected"
+                  : undefined
+              }
+            >
               <Space orientation="vertical">
                 <strong>
                   {row.platform === "xhs" ? "小红书" : "抖音"} ·{" "}
                   {row.workId.replace(/^xhs-/, "")}
                 </strong>
-                <span>
+                <span className="monitor-metadata">
                   {accounts.find((a) => a.id === row.accountId)?.nickname ??
                     "账号未登录"}{" "}
                   ·{" "}
@@ -202,6 +221,8 @@ export function WorkMonitors({
       )}
       {receipt && <Alert type="info" title={receipt} />}
       <Modal
+        centered
+        className="lead-form-modal lead-monitor-reply"
         open={!!reply}
         title={"给 " + (reply?.name ?? "") + " 写私信"}
         okText="加入账号队列"
@@ -213,7 +234,13 @@ export function WorkMonitors({
         }}
         onOk={() => send.mutate()}
       >
+        {replyComment?.comment_text && (
+          <blockquote>{replyComment.comment_text}</blockquote>
+        )}
         <Input.TextArea
+          aria-label="私信内容"
+          placeholder="请输入要发送的私信内容"
+          autoSize={{ minRows: 4, maxRows: 8 }}
           maxLength={320}
           showCount
           value={reply?.text ?? ""}

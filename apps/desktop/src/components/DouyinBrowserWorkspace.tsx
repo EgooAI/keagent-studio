@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Space, Tabs, Alert } from "antd";
-import { ArrowLeft, ArrowRight, RotateCw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, RotateCw, X } from "lucide-react";
 import {
   douyinDesktop,
   publishingMessage,
@@ -82,7 +82,11 @@ export default function DouyinBrowserWorkspace() {
       }
     >
       <div className="douyin-browser-tabs">
-        <Button onClick={() => void action("browser.hide", {})}>
+        <Button
+          type="text"
+          icon={<ChevronLeft size={17} />}
+          onClick={() => void action("browser.hide", {})}
+        >
           返回工作台
         </Button>
         <Tabs
@@ -91,9 +95,11 @@ export default function DouyinBrowserWorkspace() {
           items={data!.tabs.map((value) => ({
             key: value.accountId,
             label: (
-              <span>
-                {value.title ||
-                  (value.platform === "xhs" ? "小红书账号" : "抖音账号")}{" "}
+              <span className="account-browser-tab">
+                <span className="account-browser-tab-name" title={value.title}>
+                  {value.title ||
+                    (value.platform === "xhs" ? "小红书账号" : "抖音账号")}
+                </span>
                 <Button
                   type="text"
                   size="small"
@@ -152,7 +158,7 @@ export default function DouyinBrowserWorkspace() {
             }
           />
         </Space>
-        <output>
+        <output aria-label="当前页面地址" title={tab.url}>
           {tab.loading ? "正在加载… " : ""}
           {tab.url}
         </output>

@@ -26,7 +26,7 @@ export function estimateBatchCost(
   const { prices } = pricing;
   const script = prices.script ?? 0;
   const tts = (prices.tts_per_kilo_char ?? 0) * ceilKilo(estimatedChars);
-  const opening = options.withOpening ? prices.opening ?? 0 : 0;
+  const opening = options.withOpening ? (prices.opening ?? 0) : 0;
   if (script + tts + opening <= 0) return undefined;
   const items = [
     { label: "文案", amount: script },
@@ -37,9 +37,12 @@ export function estimateBatchCost(
   return { perTask, total: perTask * options.tasks, items };
 }
 
-export function estimateSummaryText(estimate: BatchCostEstimate) {
-  const breakdown = estimate.items
+export function estimateBreakdownText(estimate: BatchCostEstimate) {
+  return estimate.items
     .map((item) => `${item.label} ${item.amount}`)
     .join(" + ");
-  return `预计消耗约 ${estimate.total} 积分（每条 ${estimate.perTask}：${breakdown}）`;
+}
+
+export function estimateSummaryText(estimate: BatchCostEstimate) {
+  return `预计消耗约 ${estimate.total} 积分（每条 ${estimate.perTask}：${estimateBreakdownText(estimate)}）`;
 }

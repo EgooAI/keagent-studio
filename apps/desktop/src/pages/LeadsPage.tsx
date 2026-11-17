@@ -1,3 +1,4 @@
+import "./leads/lead-utilities.css";
 import { useState } from "react";
 import {
   Alert,
@@ -108,7 +109,7 @@ export default function LeadsPage() {
   }
 
   return (
-    <>
+    <div className="lead-utility-page lead-demo-page">
       <PageHeader
         title="AI 获客"
         description={
@@ -143,7 +144,7 @@ export default function LeadsPage() {
         />
       )}
       <div className="leads-workspace">
-        <section className="panel" style={{ padding: 18 }}>
+        <section className="panel lead-demo-list">
           <Input
             prefix={<Search size={16} />}
             placeholder="搜索评论、区域或客户"
@@ -232,19 +233,12 @@ export default function LeadsPage() {
             </details>
           )}
         </section>
-        <section className="panel" style={{ padding: 24 }}>
+        <section className="panel lead-demo-reader">
           {!selected ? (
             <Empty description="选择一条线索查看详情" />
           ) : (
             <>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "start",
-                  gap: 16,
-                }}
-              >
+              <div className="lead-demo-identity">
                 <div>
                   <h2 style={{ margin: "0 0 8px", fontSize: 20 }}>
                     {selected.name}
@@ -475,6 +469,8 @@ export default function LeadsPage() {
         </section>
       </div>
       <Modal
+        centered
+        className="lead-form-modal"
         title="新建评论分析任务"
         open={open}
         onCancel={() => setOpen(false)}
@@ -528,6 +524,8 @@ export default function LeadsPage() {
         </Form>
       </Modal>
       <Modal
+        centered
+        className="lead-form-modal"
         title="可匹配的示例房源"
         open={matchesOpen}
         onCancel={() => setMatchesOpen(false)}
@@ -582,6 +580,6 @@ export default function LeadsPage() {
             <Empty description="暂无区域完全匹配的房源，可前往房源中心补充" />
           )}
       </Modal>
-    </>
+    </div>
   );
 }

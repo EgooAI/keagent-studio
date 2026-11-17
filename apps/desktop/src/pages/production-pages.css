@@ -1,0 +1,175 @@
+.production-workspace {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.production-workspace .back-link {
+  min-height: 36px;
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.production-workspace .panel {
+  min-width: 0;
+  border-radius: 12px;
+}
+
+.production-workspace .section-heading h2,
+.production-context-title {
+  font-size: 19px;
+  line-height: 1.4;
+}
+
+.production-batch .batch-overview dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px 0;
+}
+
+.production-batch .batch-overview dl > div {
+  padding: 0 8px;
+  text-align: center;
+}
+
+.production-batch .batch-overview dl > div + div {
+  border-inline-start: 1px solid var(--line);
+}
+
+.production-batch .batch-overview dt {
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.production-batch .batch-overview dd {
+  font-size: 28px;
+}
+
+.production-batch .batch-overview dl > :nth-child(2) dd {
+  color: #347338;
+}
+
+.production-batch .batch-overview dl > :nth-child(3) dd {
+  color: var(--accent);
+}
+
+.production-batch .batch-overview dl > :nth-child(4) dd {
+  color: #955600;
+}
+
+.production-batch .batch-overview dl > :last-child dd {
+  color: #b23739;
+}
+
+.production-batch-tasks {
+  padding-inline: clamp(10px, 1.5vw, 22px);
+  padding-bottom: 12px;
+}
+
+.production-batch-tasks .section-heading {
+  padding-inline: 0;
+}
+
+.production-batch-tasks .ant-table-thead th.ant-table-cell {
+  background: var(--canvas);
+}
+
+.production-batch-tasks .table-property small {
+  font-size: 13px;
+}
+
+.production-task-compact {
+  display: none;
+}
+
+.production-task .section-heading > .muted,
+.production-task .form-hint {
+  font-size: 13px;
+}
+
+.production-task .form-label {
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.production-task #script-editor {
+  padding: 14px;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.production-context-title {
+  margin: 0 0 14px;
+}
+
+.production-task .task-property-image {
+  height: auto;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 12px;
+  border-radius: 8px;
+}
+
+.production-task .task-config-details {
+  margin-block: 16px;
+  border-block: 1px solid var(--line);
+  padding-block: 12px;
+}
+
+.production-task .task-result-action {
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+
+@media (max-width: 767px) {
+  .production-task-compact {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 5px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .production-batch .batch-overview dl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .production-batch .batch-overview dl > :nth-child(4) {
+    border: 0;
+  }
+
+  .production-batch-tasks .ant-table-wrapper table {
+    table-layout: fixed;
+  }
+
+  .production-batch-tasks .ant-table-wrapper tr > .ant-table-cell {
+    padding: 8px;
+  }
+
+  .production-batch-tasks .table-property img {
+    width: 48px;
+    height: 40px;
+  }
+
+  .production-batch-tasks .ant-table-wrapper tr > .ant-table-cell:last-child {
+    width: 80px;
+  }
+
+  .production-batch-tasks .button-row .ant-btn {
+    padding-inline: 2px;
+  }
+
+  .production-batch-tasks .button-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .production-workspace .script-panel,
+  .production-workspace .task-context,
+  .production-workspace .production-progress {
+    padding-inline: 14px;
+  }
+}

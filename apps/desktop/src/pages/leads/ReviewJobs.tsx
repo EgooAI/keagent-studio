@@ -1,3 +1,4 @@
+import LeadTable from "../../components/LeadTable";
 import { useState } from "react";
 import {
   Alert,
@@ -12,7 +13,6 @@ import {
   Radio,
   Select,
   Space,
-  Table,
   Tag,
 } from "antd";
 import {
@@ -235,7 +235,7 @@ export default function ReviewJobs({
             action={<Button onClick={() => void jobs.refetch()}>重试</Button>}
           />
         )}
-        <Table<WorkspaceJob>
+        <LeadTable<WorkspaceJob>
           loading={jobs.isPending}
           rowKey="id"
           pagination={false}
@@ -356,6 +356,7 @@ export default function ReviewJobs({
         )}
       </section>
       <Drawer
+        rootClassName="lead-sheet"
         title="分析任务明细"
         size="large"
         open={!!detail}

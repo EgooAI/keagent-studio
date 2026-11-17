@@ -100,11 +100,14 @@ export function FactoryTaskDetail({
       <div className="factory-detail-heading">
         <div>
           <h2>{row.propertyTitle}</h2>
-          <p>
-            {row.templateName}{" "}
-            {row.templateVersion && "· " + row.templateVersion}
-          </p>
+          {reviewing && (
+            <p>
+              {row.templateName}{" "}
+              {row.templateVersion && "· " + row.templateVersion}
+            </p>
+          )}
         </div>
+        {reviewing && <FactoryPhaseTag phase={row.phase} />}
         {onClose && (
           <Button
             type="text"
@@ -115,22 +118,56 @@ export function FactoryTaskDetail({
           />
         )}
       </div>
-      <div className="factory-detail-meta">
-        <FactoryPhaseTag phase={row.phase} />
-        <span>
-          {config?.aspectRatio} · {config?.resolution} ·{" "}
-          {config?.openingPhoto
-            ? "MiniMax 开场"
-            : config?.videoMode === "avatar" && !config.roomOpening
-              ? "露脸"
-              : "配音"}
-        </span>
-        {finished && config?.openingPhoto && <Tag>AI 生成开场</Tag>}
-        <span>{formatDate(row.createdAt)}</span>
-      </div>
+      <dl
+        className={
+          reviewing ? "factory-detail-facts compact" : "factory-detail-facts"
+        }
+      >
+        {!reviewing && (
+          <>
+            <div>
+              <dt>视频模板</dt>
+              <dd>
+                {row.templateName}{" "}
+                {row.templateVersion && "· " + row.templateVersion}
+              </dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>
+                <FactoryPhaseTag phase={row.phase} />
+              </dd>
+            </div>
+          </>
+        )}
+        {effectiveConfig && (
+          <div>
+            <dt>制作规格</dt>
+            <dd>
+              {[
+                effectiveConfig.aspectRatio,
+                effectiveConfig.resolution,
+                effectiveConfig.openingPhoto
+                  ? "MiniMax 开场"
+                  : effectiveConfig.videoMode === "avatar" &&
+                      !effectiveConfig.roomOpening
+                    ? "露脸"
+                    : "配音",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </dd>
+          </div>
+        )}
+        <div>
+          <dt>创建时间</dt>
+          <dd>{formatDate(row.createdAt)}</dd>
+        </div>
+      </dl>
+      {finished && config?.openingPhoto && <Tag>AI 生成开场</Tag>}
       {row.error && <Alert showIcon type="error" title={row.error} />}
       {editable && draft ? (
-        <div>
+        <div className="factory-detail-parameters">
           <strong>任务制作参数</strong>
           <FactoryRenderSettings
             scope="任务"
@@ -170,7 +207,7 @@ export function FactoryTaskDetail({
         </div>
       ) : (
         effectiveConfig && (
-          <p className="muted" aria-label="任务制作参数">
+          <p className="factory-detail-parameters" aria-label="任务制作参数">
             配音语速 {effectiveConfig.rate} 倍
             {!spatial &&
               ` · 镜头速度 ${effectiveConfig.speed}°/秒 · 最大转角 ${effectiveConfig.maxSweep}°`}
@@ -183,7 +220,7 @@ export function FactoryTaskDetail({
         </p>
       )}
       {editable && draft?.config.design === "short-tour" && (
-        <div style={{ marginBottom: 12 }}>
+        <div className="factory-detail-cover">
           <label>
             <span>开场／封面标题</span>
             <Input.TextArea
@@ -207,7 +244,7 @@ export function FactoryTaskDetail({
         </p>
       )}
       {!finished && location && (
-        <div className="factory-review-segment" style={{ marginBottom: 12 }}>
+        <div className="factory-review-segment">
           {row.openingLocationUrl && (
             <img src={row.openingLocationUrl} alt="开场地点图" />
           )}

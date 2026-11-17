@@ -1,3 +1,5 @@
+import "./leads/lead-utilities.css";
+import LeadTable from "../components/LeadTable";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -12,7 +14,6 @@ import {
   Input,
   Select,
   Space,
-  Table,
   Tag,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
@@ -91,7 +92,7 @@ export default function CommentObservationPage() {
   }
   const queryError = accounts.error ?? history.error ?? desktop.error;
   return (
-    <>
+    <div className="lead-utility-page lead-observation-page">
       <PageHeader
         title="评论观察"
         description="使用本机已保存的抖音账号，核验作品和作者后记录评论区的可见状态。"
@@ -117,7 +118,8 @@ export default function CommentObservationPage() {
               title={publishingMessage(queryError)}
             />
           )}
-          <section className="panel" style={{ padding: 20 }}>
+          <section className="panel lead-observation-form">
+            <h2>核验作品评论区状态</h2>
             <Form layout="vertical" onFinish={start}>
               <Form.Item label="本机抖音账号" htmlFor="observation-account">
                 <Select
@@ -168,7 +170,7 @@ export default function CommentObservationPage() {
             </Form>
           </section>
           {current && (
-            <section className="panel" style={{ padding: 20 }}>
+            <section className="panel">
               <Descriptions title="观察结果" bordered size="small" column={2}>
                 <Descriptions.Item label="执行状态">
                   {states[current.state]}
@@ -230,9 +232,9 @@ export default function CommentObservationPage() {
               )}
             </section>
           )}
-          <section className="panel" style={{ padding: 20 }}>
+          <section className="panel">
             <h2>本机观察记录</h2>
-            <Table<CommentObservation>
+            <LeadTable<CommentObservation>
               size="small"
               rowKey="id"
               dataSource={records}
@@ -268,6 +270,6 @@ export default function CommentObservationPage() {
           </section>
         </Space>
       )}
-    </>
+    </div>
   );
 }

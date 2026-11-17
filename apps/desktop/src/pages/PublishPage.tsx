@@ -16,7 +16,15 @@ import {
   Tag,
   Timeline,
 } from "antd";
-import { Film } from "lucide-react";
+import {
+  ArrowLeft,
+  Film,
+  FolderCheck,
+  Play,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+} from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { artifactExchange, isLive } from "@keagent/api-client";
 import {
@@ -126,6 +134,8 @@ function ArtifactPublishDetail({
   useEffect(() => {
     if (blocker.state !== "blocked") return;
     const dialog = modal.confirm({
+      className: "publish-dialog publish-confirm-dialog",
+      centered: true,
       title: "本次发布文案尚未提交",
       okText: "放弃并离开",
       cancelText: "继续编辑",
@@ -145,6 +155,8 @@ function ArtifactPublishDetail({
     if (inFlight.current) return;
     if (dirty)
       modal.confirm({
+        className: "publish-dialog publish-confirm-dialog",
+        centered: true,
         title: "放弃本次发布修改？",
         okText: "放弃修改",
         cancelText: "继续编辑",
@@ -219,6 +231,8 @@ function ArtifactPublishDetail({
   }
   function review(state: ArtifactReviewState) {
     modal.confirm({
+      className: "publish-dialog publish-confirm-dialog",
+      centered: true,
       title: state === "approved" ? "确认成片验收通过？" : "撤回成片验收？",
       content:
         state === "approved"
@@ -279,7 +293,9 @@ function ArtifactPublishDetail({
     !!local &&
     current.review.state === "approved";
   const content = (
-    <>
+    <div
+      className={embedded ? "publish-artifact is-embedded" : "publish-artifact"}
+    >
       {embedded ? (
         <div className="publish-detail-heading">
           <h2>{current.content.title}</h2>
@@ -290,7 +306,9 @@ function ArtifactPublishDetail({
         </div>
       ) : (
         <>
-          <Link to="/publish">← 返回成片列表</Link>
+          <Link className="back-link" to="/publish">
+            <ArrowLeft size={16} aria-hidden="true" /> 返回成片列表
+          </Link>
           <PageHeader
             title={current.content.title}
             description={`成片版本 ${current.source.revision} · 验收修订 ${current.review.revision}`}
@@ -332,120 +350,144 @@ function ArtifactPublishDetail({
         ]}
       />
       <div className="douyin-publish-layout" hidden={detailTab === "records"}>
-        <section className="panel" hidden={detailTab !== "preview"}>
+        <section
+          className="panel publish-preview-card"
+          hidden={detailTab !== "preview"}
+        >
           <div className="douyin-video-preview">
             {preview ? (
               <video src={preview.video} poster={preview.cover} controls />
             ) : (
-              <Film size={64} />
+              <span className="publish-preview-placeholder">
+                <Film size={34} aria-hidden="true" />
+                <span>尚未验证预览</span>
+              </span>
             )}
           </div>
-          <Space wrap>
-            <Tag
-              color={current.review.state === "approved" ? "green" : "default"}
-            >
-              {reviewLabels[current.review.state]}
-            </Tag>
-            <Tag>
-              {assets.isPending
-                ? "检查资产状态中"
-                : local
-                  ? "当前设备文件已登记"
-                  : "需在原设备恢复文件"}
-            </Tag>
-            <Button
-              disabled={!desktop.data?.resolverAvailable || !local || busy}
-              onClick={() =>
-                void act(async () =>
-                  setPreview(await douyinDesktop("preview", { artifactId })),
-                )
-              }
-            >
-              验证文件并预览
-            </Button>
-          </Space>
-          <p className="muted">发布前会重新检查验收状态和本机文件。</p>
-          <Space wrap className="douyin-file-actions">
-            {window.desktop?.artifactMedia &&
-              assets.data?.map((asset) => (
+          <div className="publish-preview-actions">
+            <section className="publish-action-group">
+              <h3>
+                <FolderCheck size={18} aria-hidden="true" /> 本机文件
+              </h3>
+              <Tag>
+                {assets.isPending
+                  ? "检查资产状态中"
+                  : local
+                    ? "当前设备文件已登记"
+                    : "需在原设备恢复文件"}
+              </Tag>
+              <p className="muted">发布前会重新检查验收状态和本机文件。</p>
+              <Space wrap>
                 <Button
-                  key={asset.id}
-                  size="small"
-                  disabled={
-                    busy ||
-                    running ||
-                    asset.location.deviceId !== desktop.data?.deviceId
-                  }
+                  icon={<Play size={15} aria-hidden="true" />}
+                  disabled={!desktop.data?.resolverAvailable || !local || busy}
                   onClick={() =>
-                    void act(async () => {
-                      await artifactMedia.restore(asset.id);
-                      setPreview(undefined);
-                      message.success("文件已验证并恢复登记");
-                    })
+                    void act(async () =>
+                      setPreview(
+                        await douyinDesktop("preview", { artifactId }),
+                      ),
+                    )
                   }
                 >
-                  {asset.kind === "video"
-                    ? "恢复视频文件"
-                    : asset.kind === "cover"
-                      ? "恢复封面文件"
-                      : "恢复字幕文件"}
+                  验证文件并预览
                 </Button>
-              ))}
-            {current.review.state !== "approved" && (
-              <Button
-                type="primary"
-                disabled={!preview || busy || running}
-                onClick={() => review("approved")}
+                {window.desktop?.artifactMedia &&
+                  assets.data?.map((asset) => (
+                    <Button
+                      key={asset.id}
+                      size="small"
+                      icon={<RotateCcw size={14} aria-hidden="true" />}
+                      disabled={
+                        busy ||
+                        running ||
+                        asset.location.deviceId !== desktop.data?.deviceId
+                      }
+                      onClick={() =>
+                        void act(async () => {
+                          await artifactMedia.restore(asset.id);
+                          setPreview(undefined);
+                          message.success("文件已验证并恢复登记");
+                        })
+                      }
+                    >
+                      {asset.kind === "video"
+                        ? "恢复视频文件"
+                        : asset.kind === "cover"
+                          ? "恢复封面文件"
+                          : "恢复字幕文件"}
+                    </Button>
+                  ))}
+              </Space>
+            </section>
+            <section className="publish-action-group">
+              <h3>
+                <ShieldCheck size={18} aria-hidden="true" /> 成片验收
+              </h3>
+              <Tag
+                color={
+                  current.review.state === "approved" ? "green" : "default"
+                }
               >
-                验收通过
-              </Button>
-            )}
-            {current.review.state === "approved" && (
-              <Button
-                disabled={busy || running}
-                onClick={() => review("pending")}
-              >
-                撤回验收
-              </Button>
-            )}
-          </Space>
-          {current.review.state !== "approved" && (
-            <p className="muted">先验证文件并预览，再确认成片验收。</p>
-          )}
+                {reviewLabels[current.review.state]}
+              </Tag>
+              <div className="publish-review-actions">
+                {current.review.state !== "approved" && (
+                  <Button
+                    type="primary"
+                    disabled={!preview || busy || running}
+                    onClick={() => review("approved")}
+                  >
+                    验收通过
+                  </Button>
+                )}
+                {current.review.state === "approved" && (
+                  <Button
+                    disabled={busy || running}
+                    onClick={() => review("pending")}
+                  >
+                    撤回验收
+                  </Button>
+                )}
+                {current.review.state !== "approved" && (
+                  <p className="muted">先验证文件并预览，再确认成片验收。</p>
+                )}
 
-          <Button
-            disabled={
-              !desktopPublishingAvailable() ||
-              busy ||
-              current.review.state !== "approved" ||
-              !local
-            }
-            onClick={() => void act(receive)}
-          >
-            {handoff ? "已接收该版本" : "接收这份成片"}
-          </Button>
-          {handoff && (
-            <>
-              <p className="muted">交接号：{handoff.id}</p>
-              <Button
-                ref={returnFocus}
-                type="primary"
-                disabled={!canConfigure || busy || running}
-                onClick={() => {
-                  form.resetFields();
-                  form.setFieldsValue({
-                    title: current.content.title,
-                    description: current.content.script,
-                    hashtags: [],
-                  });
-                  setError("");
-                  setConfiguring(true);
-                }}
-              >
-                配置发布
-              </Button>
-            </>
-          )}
+                <Button
+                  disabled={
+                    !desktopPublishingAvailable() ||
+                    busy ||
+                    current.review.state !== "approved" ||
+                    !local
+                  }
+                  onClick={() => void act(receive)}
+                >
+                  {handoff ? "已接收该版本" : "接收这份成片"}
+                </Button>
+                {handoff && (
+                  <>
+                    <p className="muted">交接号：{handoff.id}</p>
+                    <Button
+                      ref={returnFocus}
+                      type="primary"
+                      disabled={!canConfigure || busy || running}
+                      onClick={() => {
+                        form.resetFields();
+                        form.setFieldsValue({
+                          title: current.content.title,
+                          description: current.content.script,
+                          hashtags: [],
+                        });
+                        setError("");
+                        setConfiguring(true);
+                      }}
+                    >
+                      配置发布
+                    </Button>
+                  </>
+                )}
+              </div>
+            </section>
+          </div>
         </section>
       </div>
       {active?.artifactId === artifactId && (
@@ -476,7 +518,7 @@ function ArtifactPublishDetail({
       <section
         ref={resultFocus}
         tabIndex={-1}
-        className="panel douyin-result"
+        className="panel douyin-result publish-record-panel"
         hidden={detailTab !== "records"}
       >
         <h2>这份成片的发布记录</h2>
@@ -489,7 +531,7 @@ function ArtifactPublishDetail({
         {!records.data?.items.length && <Empty description="暂无发布记录" />}
         {records.data?.items.map((record) => (
           <article className="douyin-record" key={record.id}>
-            <Space wrap>
+            <Space wrap className="publish-record-heading">
               <Tag
                 color={
                   record.state === "accepted"
@@ -589,7 +631,7 @@ function ArtifactPublishDetail({
           />
         )}
       </section>
-    </>
+    </div>
   );
   return (
     <>
@@ -599,6 +641,7 @@ function ArtifactPublishDetail({
         forceRender
         width={880}
         classNames={{ body: "workbench-form-body" }}
+        className="publish-dialog"
         title="配置发布"
         open={configuring}
         closable={!busy}
@@ -624,6 +667,7 @@ function ArtifactPublishDetail({
         }}
       >
         <p className="muted publish-config-notice">
+          <Send size={17} aria-hidden="true" />
           立即公开发布，关闭下载，不同步头条。封面由抖音页面处理。
         </p>
         <Form
@@ -698,6 +742,8 @@ function ArtifactPublishDetail({
         </Form>
       </Modal>
       <Modal
+        className="publish-dialog publish-reconcile-dialog"
+        centered
         title={confirmAbsent ? "确认未发布后允许重新操作" : "记录人工核对结果"}
         open={!!reconciling}
         onCancel={() => setReconciling(undefined)}
@@ -738,12 +784,15 @@ function ArtifactPublishDetail({
         <p>
           请先在创作者中心核对。仅凭网络错误不能判断未发布，错误判断后再次操作可能产生重复作品。
         </p>
-        <Input
-          aria-label="已发布的抖音作品链接"
-          placeholder="https://www.douyin.com/video/作品ID"
-          value={resultUrl}
-          onChange={(event) => setResultUrl(event.target.value)}
-        />
+        <label className="publish-reconcile-field">
+          已发布的抖音作品链接
+          <Input
+            aria-label="已发布的抖音作品链接"
+            placeholder="https://www.douyin.com/video/作品ID"
+            value={resultUrl}
+            onChange={(event) => setResultUrl(event.target.value)}
+          />
+        </label>
       </Modal>
     </>
   );

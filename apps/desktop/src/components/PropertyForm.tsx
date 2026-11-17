@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { demoApi } from "@keagent/api-client";
 import type { Property } from "@keagent/shared-types";
 import { request as productionRequest } from "./panoramaClient";
+import "./property-form.css";
 
 type PropertyInput = Pick<
   Property,
@@ -136,7 +137,12 @@ export function PropertyForm({
       title={property ? "编辑房源资料" : "手动添加房源"}
       open
       width={700}
-      styles={{ body: { maxHeight: "66vh", overflowY: "auto" } }}
+      centered
+      className={
+        property
+          ? "property-form-modal property-edit-modal"
+          : "property-form-modal"
+      }
       onCancel={() => {
         if (!busy) onClose();
       }}
@@ -156,6 +162,7 @@ export function PropertyForm({
         form={form}
         layout="vertical"
         disabled={busy}
+        scrollToFirstError={{ block: "nearest", focus: true }}
         onFinish={save}
         initialValues={
           property && {
@@ -168,7 +175,7 @@ export function PropertyForm({
         <Form.Item name="title" label="房源标题" rules={requiredText}>
           <Input />
         </Form.Item>
-        <div className="form-two">
+        <div className="property-form-grid">
           <Form.Item name="propertyNumber" label="房源号" rules={requiredText}>
             <Input />
           </Form.Item>
@@ -201,6 +208,7 @@ export function PropertyForm({
           <Form.Item name={["details", "listingStatus"]} label="挂牌状态">
             <Select
               allowClear
+              placeholder="请选择"
               options={["在售", "已成交", "已下架"].map((value) => ({ value }))}
             />
           </Form.Item>
@@ -236,7 +244,7 @@ export function PropertyForm({
         <Form.Item name="sellingPoints" label="房源卖点">
           <Input.TextArea rows={2} placeholder="每行填写一个卖点" />
         </Form.Item>
-        <div className="form-two">
+        <div className="property-form-grid">
           <Form.Item
             name={["details", "listingUrl"]}
             label="房源详情链接"

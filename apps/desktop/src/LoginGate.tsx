@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Form, Input, Spin } from "antd";
+import { Alert, Button, Form, Input, Spin } from "antd";
+import { House } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { authRequest, type SessionUser } from "@keagent/api-client";
 import App from "./App";
+import "./login.css";
 
 export default function LoginGate() {
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -40,10 +42,12 @@ export default function LoginGate() {
   }, [lock]);
   if (checking)
     return (
-      <div style={{ padding: 80, textAlign: "center" }}>
-        <Spin />
-        <p>正在验证登录身份…</p>
-      </div>
+      <main className="login-page login-gate">
+        <div role="status" className="login-checking">
+          <Spin />
+          <p>正在验证登录身份…</p>
+        </div>
+      </main>
     );
   if (user)
     return (
@@ -58,9 +62,13 @@ export default function LoginGate() {
       />
     );
   return (
-    <main className="login-page">
-      <Card className="login-panel" title={<h1>登录 KeAgent Studio</h1>}>
-        <p>使用管理员开通的账号登录。</p>
+    <main className="login-page login-gate">
+      <section className="login-panel" aria-labelledby="login-title">
+        <header>
+          <House aria-hidden="true" size={48} strokeWidth={1.9} />
+          <h1 id="login-title">登录 KeAgent Studio</h1>
+          <p>使用管理员开通的账号登录。</p>
+        </header>
         {error && (
           <Alert type="error" title={error} style={{ marginBottom: 16 }} />
         )}
@@ -85,7 +93,12 @@ export default function LoginGate() {
             label="邮箱"
             rules={[{ required: true, type: "email" }]}
           >
-            <Input autoComplete="username" />
+            <Input
+              type="email"
+              autoComplete="username"
+              spellCheck={false}
+              autoCapitalize="none"
+            />
           </Form.Item>
           <Form.Item name="password" label="密码" rules={[{ required: true }]}>
             <Input.Password autoComplete="current-password" />
@@ -94,7 +107,7 @@ export default function LoginGate() {
             登录
           </Button>
         </Form>
-      </Card>
+      </section>
     </main>
   );
 }

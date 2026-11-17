@@ -5,6 +5,7 @@ import {
   Button,
   Drawer,
   Empty,
+  Grid,
   Input,
   Modal,
   Segmented,
@@ -18,7 +19,15 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { ListChecks, Pause, Play, RefreshCw, Search, X } from "lucide-react";
+import {
+  ListChecks,
+  Pause,
+  Play,
+  RefreshCw,
+  Search,
+  Users,
+  X,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { artifactExchange } from "@keagent/api-client";
 import {
@@ -100,6 +109,7 @@ export function PublishWorkbench({
   const { message, modal } = App.useApp();
   const client = useQueryClient();
   const desktop = useDouyinDesktop();
+  const compact = Grid.useBreakpoint().md === false;
   const accounts = useQuery({
     queryKey: ["douyin", "accounts"],
     queryFn: douyinApi.accounts,
@@ -158,6 +168,28 @@ export function PublishWorkbench({
   const current = new Map(query.data?.items.map((row) => [row.id, row]));
   const canQueue = (row: DouyinWorkspaceRow) =>
     selectable(row) && !outstanding.has(row.id);
+  function artifactStatus(row: DouyinWorkspaceRow) {
+    const task = outstanding.get(row.id);
+    return (
+      <Tag color={colors[task?.state || row.status]}>
+        {task
+          ? queueStatus(task)
+          : row.recordState
+            ? douyinStateLabels[row.recordState]
+            : "未发布"}
+      </Tag>
+    );
+  }
+  function queueTag(row: DouyinQueueRow) {
+    const record = active?.requestKey === row.id ? active : undefined;
+    return (
+      <Tag color={colors[record?.state || row.state]}>
+        {record && ["running", "submitting"].includes(record.state)
+          ? douyinStateLabels[record.state] + " " + record.progress + "%"
+          : queueStatus(row)}
+      </Tag>
+    );
+  }
   const selectedReady = selected
     .map((row) => current.get(row.id) || row)
     .filter(canQueue);
@@ -227,7 +259,9 @@ export function PublishWorkbench({
         description="先预览验收成片，再配置发布；发布进度在本机队列中查看。"
         actions={
           <Space>
-            <Link to="/settings/platforms">管理抖音账号</Link>
+            <Link className="publish-account-link" to="/settings/platforms">
+              <Users size={16} aria-hidden="true" /> 管理抖音账号
+            </Link>
             <Button
               icon={<RefreshCw size={15} />}
               onClick={() => {
@@ -298,6 +332,12 @@ export function PublishWorkbench({
         className="panel publish-bench-table"
         aria-label={mode === "artifacts" ? "成片列表" : "本机发布队列"}
       >
+        {mode === "queue" && (
+          <div className="publish-queue-heading">
+            <h2>本机队列</h2>
+            <span>共 {queue.rows.length} 条任务</span>
+          </div>
+        )}
         {mode === "artifacts" && (
           <>
             <div className="publish-bench-status" aria-label="按发布状态筛选">
@@ -394,11 +434,15 @@ export function PublishWorkbench({
               rowKey="id"
               loading={query.isPending}
               dataSource={query.data?.items}
-              scroll={{ x: 700, y: "max(260px, calc(100vh - 335px))" }}
+              scroll={{
+                x: compact ? undefined : 700,
+                y: "max(260px, calc(100vh - 335px))",
+              }}
               pagination={{
                 current: page,
                 pageSize: 50,
                 total: query.data?.total || 0,
+                showTotal: (total) => "共 " + total + " 条",
                 showSizeChanger: false,
                 onChange: setPage,
               }}
@@ -444,11 +488,22 @@ export function PublishWorkbench({
                       <small title={row.propertyTitle || undefined}>
                         {row.propertyTitle || "版本 " + row.sourceRevision}
                       </small>
+                      {compact && (
+                        <div className="publish-mobile-facts">
+                          <span>{reviewLabels[row.review.state]}</span>
+                          {artifactStatus(row)}
+                          <small>
+                            {row.deviceReady ? "本机就绪" : "需原设备"} ·{" "}
+                            {formatDate(row.createdAt)}
+                          </small>
+                        </div>
+                      )}
                     </div>
                   ),
                 },
                 {
                   title: "验收",
+                  responsive: ["md"],
                   width: 102,
                   render: (_, row) => (
                     <Tag
@@ -466,33 +521,25 @@ export function PublishWorkbench({
                 },
                 {
                   title: "发布",
+                  responsive: ["md"],
                   width: 122,
-                  render: (_, row) => {
-                    const task = outstanding.get(row.id);
-                    return (
-                      <Tag color={colors[task?.state || row.status]}>
-                        {task
-                          ? queueStatus(task)
-                          : row.recordState
-                            ? douyinStateLabels[row.recordState]
-                            : "未发布"}
-                      </Tag>
-                    );
-                  },
+                  render: (_, row) => artifactStatus(row),
                 },
                 {
                   title: "文件",
+                  responsive: ["md"],
                   width: 84,
                   render: (_, row) =>
                     row.deviceReady ? "本机就绪" : "需原设备",
                 },
                 {
                   title: "登记时间",
+                  responsive: ["md"],
                   width: 114,
                   render: (_, row) => formatDate(row.createdAt),
                 },
                 {
-                  title: "",
+                  title: "操作",
                   width: 66,
                   render: (_, row) => (
                     <Button
@@ -513,7 +560,10 @@ export function PublishWorkbench({
               size="small"
               rowKey="id"
               dataSource={queue.rows}
-              scroll={{ x: 700, y: "max(260px, calc(100vh - 280px))" }}
+              scroll={{
+                x: compact ? undefined : 700,
+                y: "max(260px, calc(100vh - 280px))",
+              }}
               pagination={{ pageSize: 30, showSizeChanger: false }}
               rowClassName={(row) =>
                 row.artifactId === selectedId ? "publish-row-active" : ""
@@ -530,48 +580,52 @@ export function PublishWorkbench({
                 {
                   title: "任务内容",
                   ellipsis: true,
-                  render: (_, row) =>
-                    !row.artifactId ? (
-                      row.title
-                    ) : (
-                      <button
-                        className="publish-row-title"
-                        onClick={(event) =>
-                          openDetail(row.artifactId!, event.currentTarget)
-                        }
-                        title={row.title}
-                      >
-                        {row.title}
-                      </button>
-                    ),
+                  render: (_, row) => (
+                    <div className="publish-title-cell">
+                      {!row.artifactId ? (
+                        row.title
+                      ) : (
+                        <button
+                          className="publish-row-title"
+                          onClick={(event) =>
+                            openDetail(row.artifactId!, event.currentTarget)
+                          }
+                          title={row.title}
+                        >
+                          {row.title}
+                        </button>
+                      )}
+                      {compact && (
+                        <div className="publish-mobile-facts">
+                          {queueTag(row)}
+                          <small>{accountName(row.accountId)}</small>
+                          {row.errorCode && (
+                            <small>
+                              {row.errorMessage ||
+                                publishingFailureText(row.errorCode)}
+                            </small>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ),
                 },
                 {
                   title: "账号",
+                  responsive: ["md"],
                   width: 120,
                   ellipsis: true,
                   render: (_, row) => accountName(row.accountId),
                 },
                 {
                   title: "状态",
+                  responsive: ["md"],
                   width: 120,
-                  render: (_, row) => {
-                    const record =
-                      active?.requestKey === row.id ? active : undefined;
-                    return (
-                      <Tag color={colors[record?.state || row.state]}>
-                        {record &&
-                        ["running", "submitting"].includes(record.state)
-                          ? douyinStateLabels[record.state] +
-                            " " +
-                            record.progress +
-                            "%"
-                          : queueStatus(row)}
-                      </Tag>
-                    );
-                  },
+                  render: (_, row) => queueTag(row),
                 },
                 {
                   title: "处理结果",
+                  responsive: ["md"],
                   width: 162,
                   ellipsis: true,
                   render: (_, row) =>
@@ -590,8 +644,8 @@ export function PublishWorkbench({
                     ),
                 },
                 {
-                  title: "",
-                  width: 120,
+                  title: "操作",
+                  width: compact ? 82 : 120,
                   render: (_, row) => (
                     <Space size={4}>
                       {row.artifactId && (
@@ -615,6 +669,8 @@ export function PublishWorkbench({
                                 size="small"
                                 onClick={() =>
                                   modal.confirm({
+                                    className:
+                                      "publish-dialog publish-confirm-dialog",
                                     title:
                                       result === "sent"
                                         ? "确认在平台会话看到了这条私信？"
@@ -655,6 +711,8 @@ export function PublishWorkbench({
                             disabled={busy}
                             onClick={() =>
                               modal.confirm({
+                                className:
+                                  "publish-dialog publish-confirm-dialog",
                                 title: "清除这条中断记录？",
                                 content:
                                   "清除本机队列标记，抖音发布记录仍可在成片详情核对。",
@@ -804,6 +862,8 @@ function PublishBatch({
   }
   return (
     <Modal
+      className="publish-dialog publish-batch-dialog"
+      centered
       title={"配置批量发布 · " + rows.length + " 条"}
       open
       width={760}
@@ -830,7 +890,9 @@ function PublishBatch({
         description="封面由抖音页面处理。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
       />
       <div className="publish-batch-account">
+        <label htmlFor="publish-batch-account-id">发布账号</label>
         <Select
+          id="publish-batch-account-id"
           aria-label="批次发布账号"
           placeholder="选择已登录的本机抖音账号"
           value={accountId}

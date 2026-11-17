@@ -22,13 +22,12 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
-  Clapperboard,
-  FolderOpen,
   House,
-  LayoutDashboard,
   LogOut,
+  Send,
   Settings,
-  Users,
+  SquarePlay,
+  UsersRound,
 } from "lucide-react";
 import { demoApi, isLive } from "@keagent/api-client";
 import { useWorkspace } from "./lib/workspace";
@@ -73,11 +72,11 @@ const LeadWorkspace = lazy(() => import("./pages/leads/LeadWorkspace"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 
 const navigation = [
-  { path: "/dashboard", label: "工作台", icon: LayoutDashboard },
+  { path: "/dashboard", label: "工作台", icon: House },
   { path: "/properties", label: "房源中心", icon: Building2 },
-  { path: "/studio", label: "AI 视频工厂", icon: Clapperboard },
-  { path: "/publish", label: "发布中心", icon: FolderOpen },
-  { path: "/leads", label: "AI 获客", icon: Users },
+  { path: "/studio", label: "AI 视频工厂", icon: SquarePlay },
+  { path: "/publish", label: "发布中心", icon: Send },
+  { path: "/leads", label: "AI 获客", icon: UsersRound },
 ];
 
 export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
@@ -118,20 +117,24 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     data?.tasks.filter((t) =>
       ["queued", "running", "awaiting_review"].includes(t.status),
     ).length ?? 0;
+  const profileName =
+    data?.profile.name.trim() || (isLive ? "用户" : "演示经纪人");
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
         跳至主要内容
       </a>
       <aside className="sidebar">
-        <Link to="/dashboard" className="brand">
+        <Link
+          to="/dashboard"
+          className="brand"
+          aria-label="KeAgent Studio 工作台"
+        >
           <span className="brand-mark">
-            <House size={23} strokeWidth={2.2} />
+            <House size={38} strokeWidth={2.1} aria-hidden="true" />
           </span>
           <span>
-            <strong>
-              KeAgent<span> Studio</span>
-            </strong>
+            <strong>KeAgent Studio</strong>
             <small>房产创作工作台</small>
           </span>
         </Link>
@@ -146,7 +149,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
                 `nav-item${isActive ? " active" : ""}`
               }
             >
-              <Icon size={19} />
+              <Icon size={23} strokeWidth={1.9} aria-hidden="true" />
               <span>{label}</span>
               {path === "/studio" && activeTasks > 0 && (
                 <span className="nav-count">{activeTasks}</span>
@@ -186,7 +189,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             title="设置"
             className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
           >
-            <Settings size={19} />
+            <Settings size={23} strokeWidth={1.9} aria-hidden="true" />
             <span>设置</span>
           </NavLink>
           <Dropdown
@@ -214,22 +217,15 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             <button
               type="button"
               className="sidebar-profile"
+              title={profileName}
               aria-label="用户菜单"
               aria-haspopup="menu"
               aria-expanded={userMenuOpen}
               disabled={!onLogout}
             >
-              <Avatar
-                size={34}
-                style={{
-                  background: "var(--accent-soft)",
-                  color: "var(--accent)",
-                }}
-              >
-                林
-              </Avatar>
+              <Avatar size={44}>{Array.from(profileName)[0]}</Avatar>
               <span>
-                <strong>{data?.profile.name ?? "演示经纪人"}</strong>
+                <strong>{profileName}</strong>
                 <small>{isLive ? "云端工作区" : "演示工作区"}</small>
               </span>
             </button>

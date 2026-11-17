@@ -1,3 +1,5 @@
+import "./leads/lead-utilities.css";
+import LeadTable from "../components/LeadTable";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -16,7 +18,6 @@ import {
   Modal,
   Select,
   Space,
-  Table,
   Tabs,
   Tag,
   Typography,
@@ -85,7 +86,7 @@ function errorText(error: unknown) {
 export default function CollectionPage() {
   const navigate = useNavigate();
   return (
-    <>
+    <div className="lead-utility-page lead-collection-page">
       <PageHeader
         title="AI 获客"
         description="用本机账号核验作品，查看评论区状态和获准来源的评论明细。"
@@ -126,7 +127,7 @@ export default function CollectionPage() {
           description="目标管理与手动观察需要已登录的桌面客户端。"
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -438,7 +439,7 @@ function CollectionWorkspace() {
             key: "targets",
             label: "目标管理",
             children: (
-              <Table<CollectionTarget>
+              <LeadTable<CollectionTarget>
                 rowKey="id"
                 size="small"
                 pagination={false}
@@ -566,7 +567,7 @@ function CollectionWorkspace() {
                     </Button>
                   </p>
                 )}
-                <Table<CollectionRun>
+                <LeadTable<CollectionRun>
                   rowKey="id"
                   size="small"
                   pagination={false}
@@ -702,7 +703,7 @@ function CollectionWorkspace() {
             key: "videos",
             label: "已核验作品",
             children: (
-              <Table<MonitoredVideo>
+              <LeadTable<MonitoredVideo>
                 rowKey="id"
                 size="small"
                 pagination={false}
@@ -798,6 +799,8 @@ function CollectionWorkspace() {
         />
       )}
       <Modal
+        centered
+        className="lead-form-modal"
         title={
           editor === "quick"
             ? "从视频获取评论"

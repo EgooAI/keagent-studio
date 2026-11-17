@@ -44,6 +44,7 @@ import { ThemeSettings } from "@keagent/theme";
 import { platformLabels } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
 import { useWorkspace } from "../lib/workspace";
+import "./settings.css";
 
 function systemPreview() {
   if (!("speechSynthesis" in window)) {
@@ -117,20 +118,10 @@ export default function SettingsPage() {
   }
   const voiceList = (
     <>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 20,
-        }}
-      >
+      <div className="settings-section-head">
         <div>
-          <h2 style={{ fontSize: 18, margin: "0 0 6px" }}>我的声音</h2>
-          <span style={{ color: "#667085" }}>
-            创建本人的专属音色，在视频中保持一致的表达。
-          </span>
+          <h2>我的声音</h2>
+          <p>创建本人的专属音色，在视频中保持一致的表达。</p>
         </div>
         <Button
           type="primary"
@@ -146,17 +137,7 @@ export default function SettingsPage() {
         style={{ marginBottom: 20 }}
       />
       {data.voices.map((voice) => (
-        <div
-          key={voice.id}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 16,
-            padding: "20px 0",
-            borderBottom: "1px solid #edf0f4",
-          }}
-        >
+        <div key={voice.id} className="settings-row">
           <Space size={15}>
             <Avatar
               style={{
@@ -228,8 +209,8 @@ export default function SettingsPage() {
   );
   const accountSettings = (
     <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>账号信息</h2>
-      <Space size={20} style={{ margin: "12px 0 28px" }}>
+      <h2>账号信息</h2>
+      <div className="settings-profile">
         <Avatar
           size={64}
           style={{
@@ -238,15 +219,20 @@ export default function SettingsPage() {
             fontSize: 25,
           }}
         >
-          {data.profile.name.slice(-2)}
+          {Array.from(data.profile.name.trim())[0] || <UserRound size={24} />}
         </Avatar>
         <div>
-          <strong style={{ fontSize: 18 }}>{data.profile.name}</strong>
-          <p style={{ margin: "8px 0 0", color: "#667085" }}>
+          <strong>{data.profile.name}</strong>
+          <p>
             {isLive ? (
               <>
-                {account.data?.email || "正在读取账号"}{" "}
-                <Tag color="green">已登录</Tag>
+                {account.data?.email ||
+                  (account.isError
+                    ? "未能读取账号"
+                    : account.isPending
+                      ? "正在读取账号"
+                      : "未提供邮箱")}{" "}
+                {account.data && <Tag color="green">已登录</Tag>}
               </>
             ) : (
               <>
@@ -255,7 +241,7 @@ export default function SettingsPage() {
             )}
           </p>
         </div>
-      </Space>
+      </div>
       <Descriptions
         column={1}
         items={[
@@ -300,26 +286,14 @@ export default function SettingsPage() {
   );
   const demoConnections = (
     <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>平台账号</h2>
-      <p style={{ color: "#667085" }}>
-        当前连接仅用于演示，不会打开平台登录或读取真实会话。
-      </p>
+      <h2>平台账号</h2>
+      <p>当前连接仅用于演示，不会打开平台登录或读取真实会话。</p>
       {(["douyin", "xiaohongshu"] as const).map((platform) => {
         const account = data.accounts.find(
           (item) => item.platform === platform,
         );
         return (
-          <div
-            key={platform}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 15,
-              padding: "24px 0",
-              borderBottom: "1px solid #edf0f4",
-            }}
-          >
+          <div key={platform} className="settings-row">
             <div>
               <h3 style={{ fontSize: 16, margin: "0 0 7px" }}>
                 {platformLabels[platform]}{" "}
@@ -339,7 +313,7 @@ export default function SettingsPage() {
                 </small>
               )}
             </div>
-            <Space>
+            <Space wrap>
               <Button
                 onClick={() =>
                   void act(
@@ -374,7 +348,7 @@ export default function SettingsPage() {
   );
   const storage = (
     <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>本地存储与下载</h2>
+      <h2>本地存储与下载</h2>
       <Descriptions
         column={1}
         items={[
@@ -423,18 +397,18 @@ export default function SettingsPage() {
   );
   const privacy = (
     <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>隐私和授权</h2>
-      <Space align="start" size={15}>
+      <h2>隐私和授权</h2>
+      <div className="settings-notice">
         <ShieldCheck color="var(--accent)" size={24} />
         <div>
           <strong>使用本人素材，保留明确授权</strong>
-          <p style={{ lineHeight: 1.8, color: "#667085", maxWidth: 640 }}>
+          <p>
             {isLive
               ? "本人声音须确认授权后才提交复刻；移除本应用音色不会自动释放供应商槽位。选择 MiniMax 开场时，已授权的参考素材和开场解说会发送给 MiniMax。平台账号由本人在客户端连接，发布前确认目标账号和成片。"
               : "使用本人声音素材需要确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
           </p>
         </div>
-      </Space>
+      </div>
       <Descriptions
         column={1}
         items={[
@@ -465,16 +439,18 @@ export default function SettingsPage() {
   );
   const about = (
     <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>关于 KeAgent Studio</h2>
-      <Space size={18} style={{ margin: "18px 0" }}>
-        <Monitor size={34} color="var(--accent)" />
+      <h2>关于 KeAgent Studio</h2>
+      <div className="settings-profile">
+        <span className="settings-symbol">
+          <Monitor size={30} aria-hidden="true" />
+        </span>
         <div>
           <strong style={{ fontSize: 20 }}>KeAgent Studio</strong>
           <p style={{ color: "#667085", margin: "8px 0" }}>
             v0.1.0 · {isLive ? "开发测试版" : "前端演示版"}
           </p>
         </div>
-      </Space>
+      </div>
       <p style={{ color: "#667085", maxWidth: 640, lineHeight: 1.8 }}>
         {isLive
           ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原始 VR 全景素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在“制作服务状态”中查看。"
@@ -504,14 +480,12 @@ export default function SettingsPage() {
     {
       key: "service-status",
       label: "制作服务状态",
-      children: (
+      children: isLive ? (
+        <ProductionServiceStatus />
+      ) : (
         <>
-          <h2 style={{ fontSize: 18, marginTop: 0 }}>制作服务状态</h2>
-          {isLive ? (
-            <ProductionServiceStatus />
-          ) : (
-            <p className="muted">演示模式未连接制作服务。</p>
-          )}
+          <h2>制作服务状态</h2>
+          <p className="muted">演示模式未连接制作服务。</p>
         </>
       ),
     },
@@ -522,7 +496,7 @@ export default function SettingsPage() {
         <CreditsPanel />
       ) : (
         <>
-          <h2 style={{ fontSize: 18, marginTop: 0 }}>我的积分</h2>
+          <h2>我的积分</h2>
           <p className="muted">
             演示模式未接入积分；正式版按 AI 服务调用消耗积分。
           </p>
@@ -535,32 +509,33 @@ export default function SettingsPage() {
     { key: "about", label: "软件更新与关于", children: about },
   ];
   return (
-    <>
+    <div className="settings-page">
       <PageHeader
         title="设置"
         description="管理账号和工作环境，查看制作服务状态。"
       />
-      <section className="panel settings-workspace">
+      <section className="settings-workspace" aria-label="工作区设置">
         <Tabs
           tabPosition={screens.lg ? "left" : "top"}
           activeKey={
             items.some((item) => item.key === section) ? section : "account"
           }
           onChange={(key) => navigate(`/settings/${key}`)}
-          items={items.map((item) => ({
-            ...item,
-            label: (
-              <span className="settings-nav-label">
-                {item.key === "account" && <small>个人账号</small>}
-                {item.key === "appearance" && <small>视频创作</small>}
-                {item.key === "theme" && <small>应用设置</small>}
-                {item.label}
-              </span>
+          items={items.map(({ key, label, children }) => ({
+            key,
+            label,
+            children: (
+              <div className={`settings-content settings-${key}`}>
+                {children}
+              </div>
             ),
           }))}
         />
       </section>
       <Modal
+        className="settings-action-modal"
+        centered
+        width={540}
         title="创建我的音色"
         open={!!creator}
         onCancel={() => setCreator(false)}
@@ -571,20 +546,29 @@ export default function SettingsPage() {
       >
         <Alert
           type="info"
+          showIcon
           title="仅演示资料提交过程，文件不会离开你的设备。"
           style={{ marginBottom: 20 }}
         />
         <Form layout="vertical">
-          <Form.Item label="名称" required>
+          <Form.Item label="名称" htmlFor="settings-demo-voice-name" required>
             <Input
+              id="settings-demo-voice-name"
+              aria-required="true"
               value={assetName}
               maxLength={40}
               onChange={(event) => setAssetName(event.target.value)}
               placeholder="例如：我的日常口播音色"
             />
           </Form.Item>
-          <Form.Item label="本人声音样本" required>
+          <Form.Item
+            label="本人声音样本"
+            htmlFor="settings-demo-voice-file"
+            required
+          >
             <Upload
+              id="settings-demo-voice-file"
+              className="settings-voice-upload"
               accept="audio/*"
               showUploadList={false}
               beforeUpload={(file) => {
@@ -599,7 +583,7 @@ export default function SettingsPage() {
                 return false;
               }}
             >
-              <Button icon={<UploadCloud size={16} />}>
+              <Button icon={<UploadCloud aria-hidden="true" size={24} />}>
                 {fileName || "选择本人素材"}
               </Button>
             </Upload>
@@ -613,6 +597,9 @@ export default function SettingsPage() {
         </Form>
       </Modal>
       <Modal
+        className="settings-action-modal"
+        centered
+        width={460}
         title="重命名"
         open={!!renaming}
         onCancel={() => setRenaming(null)}
@@ -630,8 +617,15 @@ export default function SettingsPage() {
         }}
         okText="保存"
       >
+        <label
+          className="settings-rename-label"
+          htmlFor="settings-rename-input"
+        >
+          新的名称
+        </label>
         <Input
-          aria-label="新的名称"
+          id="settings-rename-input"
+          aria-required="true"
           value={renaming?.name}
           maxLength={40}
           onChange={(event) =>
@@ -641,6 +635,6 @@ export default function SettingsPage() {
           }
         />
       </Modal>
-    </>
+    </div>
   );
 }

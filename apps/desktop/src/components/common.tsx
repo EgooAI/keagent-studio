@@ -45,10 +45,16 @@ const labels: Record<string, string> = {
   ready: "可用",
   processing: "处理中",
 };
-export function StatusTag({ status }: { status: string }) {
+export function StatusTag({
+  status,
+  label,
+}: {
+  status: string;
+  label?: string;
+}) {
   return (
     <Tag color={colors[status]} variant="filled">
-      {labels[status] ?? status}
+      {label ?? labels[status] ?? status}
     </Tag>
   );
 }

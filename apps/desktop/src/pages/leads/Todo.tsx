@@ -1,6 +1,13 @@
 import { Alert, Button, Empty, Skeleton } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Plus } from "lucide-react";
+import {
+  ArrowRight,
+  FilePenLine,
+  Film,
+  MessageCircle,
+  Plus,
+  UserRound,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { leadWorkspaceApi } from "@keagent/api-client";
 import { leadUrl, type LeadScope } from "./navigation";
@@ -39,16 +46,19 @@ export default function Todo(
   const metrics = [
     {
       label: "待审核线索",
+      icon: UserRound,
       n: counts.data?.pending,
       link: leadUrl("review", props, { filter: "pending" }),
     },
     {
       label: "待补私信草稿",
+      icon: FilePenLine,
       n: counts.data?.missingDraft,
       link: leadUrl("review", props, { filter: "missingDraft" }),
     },
     {
       label: "私信待核实",
+      icon: MessageCircle,
       n: queue.loading || queue.error ? undefined : unverified.length,
       link: leadUrl("queue", props, { filter: "uncertain", kind: "message" }),
     },
@@ -124,11 +134,18 @@ export default function Todo(
       <div className="lead-metrics">
         {metrics.map((m) => (
           <Link key={m.label} to={m.link}>
-            <span>
-              {m.label}
-              <ArrowRight size={15} />
+            <span className="lead-metric-icon">
+              <m.icon aria-hidden="true" size={24} />
             </span>
-            <strong>{m.n ?? "—"}</strong>
+            <span className="lead-metric-text">
+              {m.label}
+              <strong>{m.n ?? "—"}</strong>
+            </span>
+            <ArrowRight
+              className="lead-metric-arrow"
+              size={16}
+              aria-hidden="true"
+            />
           </Link>
         ))}
       </div>
@@ -170,13 +187,14 @@ export default function Todo(
           ) : recent.data?.items.length ? (
             recent.data.items.map((w) => (
               <Link
-                className="lead-todo-row"
+                className="lead-todo-row lead-recent-row"
                 key={w.workId}
                 to={leadUrl("works", props, {
                   tab: "comments",
                   workId: w.workId,
                 })}
               >
+                <Film size={18} aria-hidden="true" />
                 <span>
                   <strong>{w.title || "作品 " + w.workId}</strong>
                   <small>已保存 {w.commentCount} 条评论</small>

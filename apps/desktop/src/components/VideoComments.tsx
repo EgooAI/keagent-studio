@@ -1,3 +1,4 @@
+import LeadTable from "./LeadTable";
 import { useRef } from "react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -10,7 +11,6 @@ import {
   Select,
   Space,
   Spin,
-  Table,
   Tag,
   Typography,
 } from "antd";
@@ -99,9 +99,15 @@ export function VideoComments({
   });
 
   return (
-    <Drawer title="评论明细" open size="min(860px, 100vw)" onClose={onClose}>
+    <Drawer
+      rootClassName="lead-comment-sheet"
+      title="评论明细"
+      open
+      size="min(860px, 100vw)"
+      onClose={onClose}
+    >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        <div>
+        <div className="comment-work-identity">
           <strong>{selected?.title || "抖音作品"}</strong>
           <div className="muted">
             作品 ID {workId}
@@ -175,7 +181,7 @@ export function VideoComments({
               {sync.error && (
                 <Alert type="error" showIcon title={sync.error.message} />
               )}
-              <Table<CommentDetail>
+              <LeadTable<CommentDetail>
                 size="small"
                 pagination={false}
                 rowKey="id"

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
+import type { BeikeSearchResult } from "../../packages/shared-types/src/beike";
 
 async function fixture(page: Page, large = false, miniMax = false) {
   const catalog = JSON.parse(
@@ -74,6 +75,8 @@ async function fixture(page: Page, large = false, miniMax = false) {
         workspace,
         catalog,
         aiConfigured: false,
+        beikeResult: undefined as BeikeSearchResult | undefined,
+        failNextPropertyNumber: "",
         spatialImports: new Set<string>(),
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
@@ -157,16 +160,26 @@ async function fixture(page: Page, large = false, miniMax = false) {
             state.calls.push({ method, input: args[0] });
             if (method === "beikeCli.status")
               return {
-                available: false,
-                configured: false,
-                reason: "not_configured",
+                available: !!state.beikeResult,
+                configured: !!state.beikeResult,
+                reason: state.beikeResult ? "ready" : "not_configured",
               };
+            if (method === "beikeCli.search") return state.beikeResult;
             const input = args[0] || {};
             if (method === "createProperty") {
+              if (
+                state.failNextPropertyNumber &&
+                input.propertyNumber === state.failNextPropertyNumber
+              ) {
+                state.failNextPropertyNumber = "";
+                throw new Error("模拟保存失败");
+              }
               const saved = {
                 ...property,
                 ...input,
-                id: "new-property",
+                id: state.beikeResult
+                  ? "beike-" + input.propertyNumber
+                  : "new-property",
                 sample: false,
               };
               workspace.properties.push(saved);
@@ -1090,6 +1103,66 @@ test("贝壳未配置时可从正式房源导入切换到手动添加", async ({
   await expect(
     page.getByRole("dialog", { name: "手动添加房源", exact: true }),
   ).toBeVisible();
+});
+
+test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/properties");
+  await page.evaluate(() => {
+    const house = {
+      id: "BJ-01",
+      community: "望京西园",
+      title: "两居",
+      layout: "2室1厅",
+      totalPriceWan: 480,
+      unitPrice: 60000,
+      areaSqm: 80,
+      orientation: "南",
+      district: "朝阳",
+    };
+    const beikeResult: BeikeSearchResult = {
+      city: "北京市",
+      query: "两居 500万以内",
+      strictBudgetWan: 500,
+      totalRecalled: 2,
+      returned: 2,
+      conditions: [],
+      houses: [house],
+      overBudget: [
+        { ...house, id: "BJ-02", community: "望京新城", totalPriceWan: 520 },
+      ],
+    };
+    Object.assign((window as any).factorySettingsTest, {
+      beikeResult,
+      failNextPropertyNumber: "BJ-02",
+    });
+  });
+  await page.getByRole("button", { name: "导入房源" }).click();
+  const dialog = page.getByRole("dialog", { name: "从贝壳找房" });
+  const query = dialog.getByRole("textbox", { name: "搜索条件" });
+  await query.fill("两居 500万以内");
+  await query.press("Enter");
+  const withinBudget = dialog.getByRole("checkbox", { name: /望京西园/ });
+  const overBudget = dialog.getByRole("checkbox", { name: /望京新城/ });
+  await withinBudget.check();
+  await overBudget.check();
+  await expect(withinBudget).toBeChecked();
+  await dialog.getByRole("textbox", { name: "城市" }).fill("上海");
+  await dialog.getByRole("button", { name: "导入选中（2）" }).click();
+  await expect(withinBudget).not.toBeChecked();
+  await expect(overBudget).toBeChecked();
+  await dialog.getByRole("button", { name: "导入选中（1）" }).click();
+  await expect(dialog.getByRole("checkbox")).toHaveCount(0);
+  const attempts = await page.evaluate(() =>
+    (window as any).factorySettingsTest.calls
+      .filter((call: any) => call.method === "createProperty")
+      .map(({ input }: any) => [input.propertyNumber, input.city]),
+  );
+  expect(attempts).toEqual([
+    ["BJ-01", "北京市"],
+    ["BJ-02", "北京市"],
+    ["BJ-02", "北京市"],
+  ]);
 });
 
 test("新视频继续使用已保存的制作偏好", async ({ page }) => {

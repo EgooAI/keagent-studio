@@ -1,5 +1,6 @@
 import { Alert, Button, Empty, Segmented, Skeleton, Space, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
+import { UserRound } from "lucide-react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { creatorHubApi } from "@keagent/api-client";
 import { desktopPublishingAvailable } from "../../lib/douyin";
@@ -73,6 +74,7 @@ function AccountWorkspace() {
         />
         {account && (
           <Space className="lead-account-field" wrap>
+            <UserRound size={17} aria-hidden="true" />
             <strong>{account.nickname}</strong>
             <Tag color={canOperate ? "green" : "default"}>
               {canOperate ? "已登录" : "登录状态待确认"}
@@ -80,7 +82,7 @@ function AccountWorkspace() {
           </Space>
         )}
       </header>
-      <div className="lead-mobile-nav">
+      <nav className="lead-mobile-nav" aria-label="AI 获客子页面">
         {(["todo", "works", "review", "queue"] as const).map((a, i) => (
           <Link
             key={a}
@@ -90,7 +92,7 @@ function AccountWorkspace() {
             {["我的待办", "作品与评论", "线索审核", "账号队列"][i]}
           </Link>
         ))}
-      </div>
+      </nav>
       {logged.error && (
         <Alert
           showIcon
@@ -106,7 +108,10 @@ function AccountWorkspace() {
         <>
           <h1>{title}</h1>
           {!logged.isError && (
-            <Empty description="当前平台暂无已登录的账号">
+            <Empty
+              className="lead-account-empty"
+              description="当前平台暂无已登录的账号"
+            >
               <Link to="/settings/platforms">前往平台账号</Link>
             </Empty>
           )}

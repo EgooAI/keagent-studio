@@ -44,11 +44,13 @@ import type {
 import { authRequest, isLive } from "@keagent/api-client";
 import {
   estimateBatchCost,
+  estimateBreakdownText,
   estimateSummaryText,
   ESTIMATED_CHARS_PER_VIDEO,
   type CreditPricing,
 } from "../lib/creditEstimate";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
+import { useWorkspace } from "../lib/workspace";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryImagePicker } from "./FactoryImagePicker";
@@ -91,6 +93,38 @@ const tabs = [
   ["failed", "失败"],
   ["canceled", "取消"],
 ];
+
+function TaskStep({ row }: { row: FactoryRow }) {
+  if (row.phase !== "running") {
+    return row.error ? (
+      <Tooltip title={row.error}>
+        <span>{row.error}</span>
+      </Tooltip>
+    ) : (
+      "—"
+    );
+  }
+
+  const stage = (row.stage && stageNames[row.stage]) || "检查配置";
+  const progress = Number.isFinite(row.progress)
+    ? Math.max(0, Math.min(100, row.progress))
+    : undefined;
+  return (
+    <div className="factory-task-step">
+      <span>
+        {stage}
+        {progress !== undefined && ` ${progress}%`}
+      </span>
+      <progress
+        className="factory-task-progress"
+        aria-label={`${row.propertyTitle}的制作进度`}
+        max={100}
+        value={progress}
+      />
+    </div>
+  );
+}
+
 const actions: {
   action: FactoryAction;
   label: string;
@@ -140,6 +174,7 @@ export function PanoramaStudio() {
   const client = useQueryClient();
   const desktop = !!window.desktop;
   const voices = useVoiceLibrary();
+  const { data: workspace } = useWorkspace();
   const [propertyIds, setPropertyIds] = useState<string[]>(() =>
     initialProperty ? [initialProperty] : [],
   );
@@ -269,6 +304,30 @@ export function PanoramaStudio() {
     }));
   }, [defaults.data, catalog.data]);
   const templates = catalog.data?.templates || [];
+  const firstProperty = propertyIds.length
+    ? workspace?.properties.find((property) => property.id === propertyIds[0])
+    : undefined;
+  const propertyName =
+    firstProperty?.community ||
+    knownProperties[propertyIds[0]] ||
+    firstProperty?.title;
+  const templateName = templates.find(
+    (t) => templateKey(t) === templateIds[0],
+  )?.name;
+  const voiceOptions = catalog.data?.managedVoices
+    ? [
+        ...(voices.data?.publicVoices || []),
+        ...(voices.data?.voices || []).filter(
+          (voice) => voice.status === "ready" && voices.data?.cloneEnabled,
+        ),
+      ].map((voice) => ({
+        value: voice.id,
+        label: voice.name + " · " + voice.language,
+      }))
+    : (catalog.data?.voices || []).map((voice) => ({
+        value: voice.name,
+        label: voice.name + " · " + voice.language,
+      }));
   const pairs = useMemo(
     () =>
       propertyIds.flatMap((propertyId) =>
@@ -281,6 +340,13 @@ export function PanoramaStudio() {
       ),
     [propertyIds, templateIds, excluded],
   );
+  const hasExcludedPairs =
+    pairs.length < propertyIds.length * templateIds.length;
+  const voiceSummary = voiceId
+    ? voiceOptions.find((voice) => voice.value === voiceId)?.label || voiceId
+    : hasExcludedPairs
+      ? "已调整组合"
+      : "沿用默认配置";
   const activeTemplateKeys = new Set(
     pairs.map((pair) =>
       templateKey({ id: pair.templateId, version: pair.version }),
@@ -315,7 +381,7 @@ export function PanoramaStudio() {
   );
   const imageProperties = [
     ...new Set(pairs.map((pair) => pair.propertyId)),
-  ].map((id) => ({ id, title: knownProperties[id] || id }));
+  ].map((id) => ({ id, title: propertyTitle(id) }));
   const selectedPropertyCount = imageProperties.filter(
     ({ id }) =>
       sceneIdsByProperty[id]?.length >= 2 && sceneIdsByProperty[id].length <= 7,
@@ -467,9 +533,16 @@ export function PanoramaStudio() {
       ...Object.fromEntries(rows.map((p) => [p.id, p.title])),
     }));
   }
+  function propertyTitle(id: string) {
+    return (
+      knownProperties[id] ||
+      (firstProperty?.id === id && firstProperty.title) ||
+      id
+    );
+  }
   function pairTitle(pair: FactoryPair) {
     return (
-      (knownProperties[pair.propertyId] || pair.propertyId) +
+      propertyTitle(pair.propertyId) +
       " · " +
       (templates.find(
         (t) => t.id === pair.templateId && t.version === pair.version,
@@ -792,8 +865,15 @@ export function PanoramaStudio() {
     </p>
   );
 
+  const inlineDetail = wide && !!detailId && !reviewing;
   return (
-    <div className="video-factory">
+    <div
+      className={
+        desktop
+          ? `video-factory factory-desktop-view ${creating ? "factory-create-view" : "factory-tasks-view"}`
+          : "video-factory"
+      }
+    >
       <PageHeader
         title="AI 视频工厂"
         description="选择房源、模板和图片生成文案，审核后进入视频制作队列。"
@@ -886,11 +966,10 @@ export function PanoramaStudio() {
                 张图片生成文案，确认后再制作视频。
               </p>
             </div>
-            <div className="factory-compose-main">
-              <div className="factory-compose-picks">
-                <div className="compose-field">
-                  <h3>房源</h3>
-                  <p className="muted">选择本次要制作视频的房源。</p>
+            <div className="factory-compose-picks">
+              <div className="compose-field">
+                <h3>房源</h3>
+                <div className="compose-field-controls">
                   <Button
                     icon={<House size={16} />}
                     disabled={busy}
@@ -900,10 +979,20 @@ export function PanoramaStudio() {
                       ? "房源 " + propertyIds.length + " 套"
                       : "选择房源"}
                   </Button>
+                  {propertyName && (
+                    <span
+                      className="compose-selection-summary"
+                      title={propertyName}
+                    >
+                      {propertyName}
+                      {propertyIds.length > 1 && " 等"}
+                    </span>
+                  )}
                 </div>
-                <div className="compose-field">
-                  <h3>视频模板</h3>
-                  <p className="muted">模板决定视频结构和画面风格。</p>
+              </div>
+              <div className="compose-field">
+                <h3>视频模板</h3>
+                <div className="compose-field-controls">
                   <Button
                     icon={<Clapperboard size={16} />}
                     disabled={busy || catalog.isPending}
@@ -913,10 +1002,26 @@ export function PanoramaStudio() {
                       ? "模板 " + templateIds.length + " 个"
                       : "选择视频模板"}
                   </Button>
+                  {templateName && (
+                    <span
+                      className="compose-selection-summary"
+                      title={templateName}
+                    >
+                      {templateName}
+                      {templateIds.length > 1 && " 等"}
+                    </span>
+                  )}
                 </div>
-                <div className="compose-field">
-                  <h3>音色与组合</h3>
-                  <p className="muted">可沿用默认配置，或逐条检查组合。</p>
+              </div>
+              <div className="compose-field">
+                <h3>音色与组合</h3>
+                <div className="compose-field-controls">
+                  <span
+                    className="compose-selection-summary"
+                    title={voiceSummary}
+                  >
+                    {voiceSummary}
+                  </span>
                   <Button
                     type="text"
                     aria-expanded={expanded}
@@ -934,49 +1039,10 @@ export function PanoramaStudio() {
                   </Button>
                 </div>
               </div>
-              <div className="factory-compose-submit">
-                <span className="factory-equation">
-                  {propertyIds.length} 套 × {templateIds.length} 个
-                  {pairs.length === propertyIds.length * templateIds.length
-                    ? " ="
-                    : " · 保留"}{" "}
-                  <strong>{pairs.length}</strong> 条
-                </span>
-                {costEstimate && (
-                  <Tooltip
-                    title={`按每条约 ${ESTIMATED_CHARS_PER_VIDEO} 字估算；实际按生成文案的千字数计费，供应商失败会退回。`}
-                  >
-                    <span
-                      className="factory-cost-estimate"
-                      style={{ color: "var(--muted, #667085)", fontSize: 13 }}
-                    >
-                      {estimateSummaryText(costEstimate)}
-                    </span>
-                  </Tooltip>
-                )}
-                <Button
-                  type="primary"
-                  loading={busy && !!submission.current}
-                  disabled={
-                    busy ||
-                    !pairs.length ||
-                    !!renderSettingsError(batchRenderEdits, spatialBatch) ||
-                    pairs.length > 200 ||
-                    selectedPropertyCount !== imageProperties.length ||
-                    (needsOpeningForBatch && !openingClip) ||
-                    (useMiniMax && !miniMaxReady) ||
-                    !!catalog.error ||
-                    !catalog.data
-                  }
-                  onClick={() => void run(create)}
-                >
-                  生成 {pairs.length} 条文案
-                </Button>
-              </div>
             </div>
             {selectedTemplates.length > 0 && (
-              <div className="factory-compose-note">
-                <strong>本批制作参数</strong>
+              <div className="factory-compose-note factory-compose-parameters">
+                <h3>本批制作参数</h3>
                 <p className="muted">
                   {selectedTemplates.length === 1
                     ? `未修改项沿用「${selectedTemplates[0].name} · ${selectedTemplates[0].version}」，调整仅用于本批任务。`
@@ -1004,7 +1070,7 @@ export function PanoramaStudio() {
               </div>
             )}
             {imageProperties.length > 0 && (
-              <div className="factory-compose-note">
+              <div className="factory-compose-note factory-compose-images">
                 <Space wrap>
                   <Button disabled={busy} onClick={() => setImagePicker(true)}>
                     选择视频图片
@@ -1130,24 +1196,7 @@ export function PanoramaStudio() {
                         setVoiceId(value);
                         setIssues([]);
                       }}
-                      options={
-                        catalog.data?.managedVoices
-                          ? [
-                              ...(voices.data?.publicVoices || []),
-                              ...(voices.data?.voices || []).filter(
-                                (v) =>
-                                  v.status === "ready" &&
-                                  voices.data?.cloneEnabled,
-                              ),
-                            ].map((v) => ({
-                              value: v.id,
-                              label: v.name + " · " + v.language,
-                            }))
-                          : (catalog.data?.voices || []).map((v) => ({
-                              value: v.name,
-                              label: v.name + " · " + v.language,
-                            }))
-                      }
+                      options={voiceOptions}
                     />
                   </label>
                   <Link to="/properties">管理房源素材</Link>
@@ -1199,6 +1248,44 @@ export function PanoramaStudio() {
                 )}
               </div>
             )}
+            <div className="factory-compose-submit">
+              <span className="factory-equation">
+                {propertyIds.length} 套 × {templateIds.length} 个
+                {hasExcludedPairs ? " · 保留" : " ="}{" "}
+                <strong>{pairs.length}</strong> 条
+              </span>
+              {costEstimate && (
+                <Tooltip
+                  title={`${estimateSummaryText(costEstimate)}。按每条约 ${ESTIMATED_CHARS_PER_VIDEO} 字估算；实际按生成文案的千字数计费，供应商失败会退回。`}
+                >
+                  <span className="factory-cost-estimate">
+                    <strong>预计消耗约 {costEstimate.total} 积分</strong>
+                    <small>
+                      {pairs.length > 1 && `每条 ${costEstimate.perTask}：`}
+                      {estimateBreakdownText(costEstimate)}
+                    </small>
+                  </span>
+                </Tooltip>
+              )}
+              <Button
+                type="primary"
+                loading={busy && !!submission.current}
+                disabled={
+                  busy ||
+                  !pairs.length ||
+                  !!renderSettingsError(batchRenderEdits, spatialBatch) ||
+                  pairs.length > 200 ||
+                  selectedPropertyCount !== imageProperties.length ||
+                  (needsOpeningForBatch && !openingClip) ||
+                  (useMiniMax && !miniMaxReady) ||
+                  !!catalog.error ||
+                  !catalog.data
+                }
+                onClick={() => void run(create)}
+              >
+                生成 {pairs.length} 条文案
+              </Button>
+            </div>
           </section>
           <section
             ref={taskList}
@@ -1207,7 +1294,11 @@ export function PanoramaStudio() {
             aria-label="视频任务"
             hidden={creating}
           >
-            <div className="factory-queue-tabs" aria-label="按状态筛选">
+            <div
+              className="factory-queue-tabs"
+              role="group"
+              aria-label="按状态筛选"
+            >
               {tabs.map(([id, label]) => (
                 <button
                   type="button"
@@ -1221,7 +1312,7 @@ export function PanoramaStudio() {
               ))}
             </div>
             <div className="factory-queue-toolbar">
-              <Space wrap>
+              <div className="factory-queue-filters">
                 <Input
                   aria-label="搜索视频任务"
                   placeholder="搜索房源号、标题或模板"
@@ -1246,7 +1337,7 @@ export function PanoramaStudio() {
                       formatDate(batch.createdAt) + " · " + batch.count + " 条",
                   }))}
                 />
-              </Space>
+              </div>
               {!!selection.length && (
                 <Space wrap>
                   <span>已选 {selection.length} 条</span>
@@ -1278,7 +1369,7 @@ export function PanoramaStudio() {
             </div>
             <div
               className={
-                wide && detailId && !reviewing
+                inlineDetail
                   ? "factory-workbench has-detail"
                   : "factory-workbench"
               }
@@ -1289,7 +1380,10 @@ export function PanoramaStudio() {
                 rowKey="id"
                 dataSource={currentRows}
                 loading={list.isPending}
-                scroll={{ x: 660, y: "max(240px, calc(100vh - 340px))" }}
+                scroll={{
+                  x: inlineDetail ? 610 : 850,
+                  y: "max(240px, calc(100vh - 340px))",
+                }}
                 rowClassName={(value) =>
                   value.id === detailId ? "factory-active-row" : ""
                 }
@@ -1327,35 +1421,42 @@ export function PanoramaStudio() {
                     title: "房源",
                     ellipsis: true,
                     render: (_, value) => (
-                      <Tooltip
-                        title={[
-                          value.propertyTitle,
-                          value.propertyNumber,
-                          formatDate(value.createdAt),
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      >
-                        <button
-                          type="button"
-                          className="factory-row-title"
-                          onClick={(event) =>
-                            switchDetail(
-                              value.id,
-                              value.phase === "review",
-                              event.currentTarget,
-                            )
-                          }
+                      <div className="factory-task-identity">
+                        <Tooltip
+                          title={[
+                            value.propertyTitle,
+                            value.propertyNumber,
+                            formatDate(value.createdAt),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         >
-                          {value.propertyTitle}
-                        </button>
-                      </Tooltip>
+                          <button
+                            type="button"
+                            className="factory-row-title"
+                            onClick={(event) =>
+                              switchDetail(
+                                value.id,
+                                value.phase === "review",
+                                event.currentTarget,
+                              )
+                            }
+                          >
+                            {value.propertyTitle}
+                          </button>
+                        </Tooltip>
+                        {value.propertyNumber && (
+                          <small className="factory-task-number">
+                            房源号：{value.propertyNumber}
+                          </small>
+                        )}
+                      </div>
                     ),
                   },
                   {
                     title: "模板",
                     ellipsis: true,
-                    width: wide && detailId && !reviewing ? 130 : "22%",
+                    width: inlineDetail ? 104 : "16%",
                     render: (_, value) => (
                       <Tooltip
                         title={
@@ -1370,30 +1471,20 @@ export function PanoramaStudio() {
                   },
                   {
                     title: "状态",
-                    width: 142,
+                    width: inlineDetail ? 108 : "16%",
                     render: (_, value) => (
                       <FactoryPhaseTag phase={value.phase} />
                     ),
                   },
                   {
                     title: "当前步骤",
-                    width: 146,
+                    width: inlineDetail ? 116 : "19%",
                     ellipsis: true,
-                    render: (_, value) =>
-                      value.phase === "running" ? (
-                        (value.stage ? stageNames[value.stage] : "检查配置") +
-                        " " +
-                        value.progress +
-                        "%"
-                      ) : value.error ? (
-                        <Tooltip title={value.error}>{value.error}</Tooltip>
-                      ) : (
-                        "—"
-                      ),
+                    render: (_, value) => <TaskStep row={value} />,
                   },
                   {
                     title: "操作",
-                    width: 84,
+                    width: inlineDetail ? 70 : 94,
                     render: (_, value) => (
                       <Button
                         type="link"
@@ -1421,7 +1512,7 @@ export function PanoramaStudio() {
                   },
                 ]}
               />
-              {wide && detailId && !reviewing && (
+              {inlineDetail && (
                 <aside
                   ref={detailPane}
                   className="factory-detail-pane"
@@ -1436,6 +1527,7 @@ export function PanoramaStudio() {
           {!wide && !reviewing && (
             <Drawer
               title="任务详情"
+              classNames={{ body: "factory-task-drawer" }}
               open={!!detailId}
               onClose={() => switchDetail()}
               size={460}
@@ -1449,6 +1541,7 @@ export function PanoramaStudio() {
             width={880}
             title="审核文案"
             open={reviewing && !!detailId}
+            className="factory-review-modal"
             classNames={{ body: "workbench-form-body factory-review-body" }}
             closable={!busy}
             keyboard={!busy}

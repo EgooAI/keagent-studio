@@ -13,6 +13,41 @@
   background: var(--surface);
   overflow: hidden;
 }
+.work-table-panel .work-toolbar {
+  border-bottom: 1px solid var(--line);
+}
+.work-identity {
+  display: grid;
+  gap: 4px;
+}
+.work-identity small {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.work-identity .work-title-link {
+  color: var(--ink);
+  font-weight: 600;
+}
+.work-identity .work-title-link:hover {
+  color: var(--accent);
+}
+.work-commenter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.work-commenter > span {
+  display: grid;
+  flex: 0 0 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 13px;
+}
 .work-toolbar,
 .work-actions {
   display: flex;
@@ -85,4 +120,15 @@
 }
 .work-actions {
   padding-inline: 0;
+}
+@media (max-width: 760px) {
+  .work-toolbar {
+    padding: 12px;
+    gap: 8px;
+  }
+  .work-toolbar > :is(.ant-select, .ant-input-affix-wrapper) {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
 }

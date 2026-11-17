@@ -1,0 +1,109 @@
+.lead-table .ant-table-thead > tr > th {
+  background: var(--canvas);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lead-table .ant-table-tbody > tr > td {
+  overflow-wrap: anywhere;
+}
+.lead-table .ant-table-row > .ant-table-cell:first-child {
+  color: var(--ink);
+  font-weight: 600;
+}
+.lead-table .ant-btn-link {
+  height: auto;
+  padding-inline: 4px;
+  white-space: normal;
+}
+.lead-table .ant-table-row > td:first-child small {
+  font-weight: 400;
+}
+@media (max-width: 900px) {
+  .lead-table .ant-table-content > table {
+    /* Ant uses the desktop scroll width inline on wide data tables. */
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+    display: block;
+  }
+  .lead-table .ant-table-tbody,
+  .lead-table .ant-table-expanded-row,
+  .lead-table .ant-table-expanded-row > td,
+  .lead-table .ant-table-placeholder,
+  .lead-table .ant-table-placeholder > td {
+    display: block;
+    width: 100%;
+  }
+  .lead-table .ant-table-content > table > colgroup {
+    display: none;
+  }
+  .lead-table .ant-table-thead,
+  .lead-table .ant-table-measure-row {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    overflow: hidden;
+  }
+  .lead-table .ant-table-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 7px 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lead-table .ant-table-row > .ant-table-row-expand-icon-cell {
+    position: absolute;
+    top: 13px;
+    right: 14px;
+    z-index: 1;
+  }
+  .lead-table .ant-table-row > .ant-table-row-expand-icon-cell + td {
+    grid-column: 1 / -1;
+    padding-inline-end: 28px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .lead-table .ant-table-tbody > .ant-table-row > td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .lead-table .ant-table-row > td[data-label]::before {
+    display: block;
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+  .lead-table .ant-table-row > td:first-child,
+  .lead-table .ant-table-row > td:last-child,
+  .lead-table .ant-table-row > td[data-label="评论原文"],
+  .lead-table .ant-table-row > td[data-label="评论正文"],
+  .lead-table .ant-table-row > td[data-label="说明"] {
+    grid-column: 1 / -1;
+  }
+  .lead-table .ant-table-row > td:first-child {
+    font-size: 15px;
+  }
+  .lead-table .ant-table-row > td:first-child::before,
+  .lead-table .ant-table-row > td[data-label="操作"]::before,
+  .lead-table
+    .ant-table-row
+    > .ant-table-row-expand-icon-cell
+    + td[data-label]::before {
+    display: none;
+  }
+  .lead-table .ant-table-row > td:last-child .ant-btn {
+    min-height: 30px;
+  }
+  .lead-table .ant-table-expanded-row > td {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}

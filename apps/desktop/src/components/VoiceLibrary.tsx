@@ -16,6 +16,7 @@ import {
   Upload,
 } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
+import { UploadCloud } from "lucide-react";
 import { authRequest } from "@keagent/api-client";
 import type { PersonalVoice } from "@keagent/shared-types";
 import {
@@ -120,21 +121,24 @@ export function VoiceLibraryPanel() {
   }
   return (
     <>
-      <h2>声音与音色</h2>
+      <header className="settings-section-head">
+        <h2>声音与音色</h2>
+        <Button
+          type="primary"
+          onClick={resetUpload}
+          disabled={!library.data?.cloneEnabled || busy}
+        >
+          上传本人声音
+        </Button>
+      </header>
       <p>选择管理员提供的公共音色，或上传录音创建本人的专属声音。</p>
-      <section
-        style={{
-          borderBottom: "1px solid #edf0f4",
-          paddingBottom: 24,
-          marginBottom: 24,
-        }}
-      >
+      <section className="settings-public-voices">
         <h3>公共音色</h3>
         <p>由管理员配置并上架。制作时可选择公共音色或自己的专属音色。</p>
         <Space wrap>
           <Select
             aria-label="公共音色"
-            style={{ minWidth: 260 }}
+            className="settings-voice-select"
             placeholder="请选择已上架的公共音色"
             value={publicVoice}
             options={(library.data?.publicVoices || []).map((voice) => ({
@@ -165,25 +169,10 @@ export function VoiceLibraryPanel() {
           <p>公共音色合成服务尚未配置。</p>
         )}
       </section>
-      <Space
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: 16,
-        }}
-      >
-        <h3 style={{ margin: 0 }}>我的专属音色</h3>
-        <Space>
-          <Button onClick={() => void library.refetch()}>刷新列表</Button>
-          <Button
-            type="primary"
-            onClick={resetUpload}
-            disabled={!library.data?.cloneEnabled || busy}
-          >
-            上传本人声音
-          </Button>
-        </Space>
-      </Space>
+      <div className="settings-section-head">
+        <h3>我的专属音色</h3>
+        <Button onClick={() => void library.refetch()}>刷新列表</Button>
+      </div>
       {library.isPending ? (
         <Spin />
       ) : library.isError ? (
@@ -207,16 +196,7 @@ export function VoiceLibraryPanel() {
             <Empty description="尚未创建专属音色" />
           )}
           {library.data?.voices.map((voice) => (
-            <div
-              key={voice.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 16,
-                padding: "18px 0",
-                borderBottom: "1px solid #edf0f4",
-              }}
-            >
+            <div key={voice.id} className="settings-row">
               <div>
                 <strong>{voice.name}</strong>{" "}
                 <Tag
@@ -288,6 +268,9 @@ export function VoiceLibraryPanel() {
         </div>
       )}
       <Modal
+        className="settings-action-modal"
+        centered
+        width={590}
         title="上传本人声音"
         open={open}
         onCancel={() => !busy && setOpen(false)}
@@ -306,31 +289,39 @@ export function VoiceLibraryPanel() {
           style={{ marginBottom: 20 }}
         />
         <Form layout="vertical" disabled={busy}>
-          <Form.Item label="音色名称" required>
-            <Input
-              value={name}
-              maxLength={40}
-              onChange={(e) => {
-                setName(e.target.value);
-                requestKey.current = crypto.randomUUID();
-              }}
-            />
-          </Form.Item>
-          <Form.Item label="录音语言">
-            <Select
-              value={language}
-              options={[
-                { value: "zh-CN", label: "中文" },
-                { value: "en-US", label: "英语" },
-              ]}
-              onChange={(value) => {
-                setLanguage(value);
-                requestKey.current = crypto.randomUUID();
-              }}
-            />
-          </Form.Item>
-          <Form.Item label="本人录音" required>
+          <div className="settings-voice-fields">
+            <Form.Item label="音色名称" htmlFor="settings-voice-name" required>
+              <Input
+                id="settings-voice-name"
+                aria-required="true"
+                placeholder="请输入音色名称"
+                value={name}
+                maxLength={40}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  requestKey.current = crypto.randomUUID();
+                }}
+              />
+            </Form.Item>
+            <Form.Item label="录音语言" htmlFor="settings-voice-language">
+              <Select
+                id="settings-voice-language"
+                value={language}
+                options={[
+                  { value: "zh-CN", label: "中文" },
+                  { value: "en-US", label: "英语" },
+                ]}
+                onChange={(value) => {
+                  setLanguage(value);
+                  requestKey.current = crypto.randomUUID();
+                }}
+              />
+            </Form.Item>
+          </div>
+          <Form.Item label="本人录音" htmlFor="settings-voice-file" required>
             <Upload
+              className="settings-voice-upload"
+              id="settings-voice-file"
               accept=".wav,.mp3,.m4a"
               showUploadList={false}
               beforeUpload={async (selected) => {
@@ -346,7 +337,7 @@ export function VoiceLibraryPanel() {
                 return false;
               }}
             >
-              <Button>
+              <Button icon={<UploadCloud aria-hidden="true" size={24} />}>
                 {file?.name || "选择 WAV / MP3 / M4A（不超过10 MB）"}
               </Button>
             </Upload>

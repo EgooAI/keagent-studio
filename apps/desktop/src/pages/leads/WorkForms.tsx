@@ -85,8 +85,9 @@ export function WorkAdd({
   });
   return (
     <Drawer
+      rootClassName="lead-sheet"
       open
-      size="default"
+      size={464}
       title="添加作品"
       onClose={() => {
         if (!start.isPending) onClose();
@@ -211,8 +212,9 @@ export function WorkAnalyze({
   });
   return (
     <Drawer
+      rootClassName="lead-sheet"
       open
-      size="default"
+      size={464}
       title="筛选线索"
       closable={!analyze.isPending}
       onClose={() => {
@@ -312,8 +314,9 @@ export function WorkReply({
   });
   return (
     <Drawer
+      rootClassName="lead-sheet"
       open
-      size="default"
+      size={464}
       title={"给 " + (comment.commenter_name || "评论者") + " 写私信"}
       closable={!send.isPending}
       onClose={() => {

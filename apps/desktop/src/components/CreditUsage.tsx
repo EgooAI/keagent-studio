@@ -35,16 +35,15 @@ export default function CreditUsage({
     retry: false,
   });
   return (
-    <section aria-label="服务消耗" style={{ marginBottom: 28 }}>
-      <h3 style={{ fontSize: 16, margin: "0 0 10px" }}>服务消耗</h3>
+    <section aria-label="服务消耗" className="settings-credit-usage">
+      <h3>服务消耗</h3>
       <p className="muted">
         仅统计你的实际消耗，按结算时间（北京时间）统计，包含起止日期全天。冻结、退回、发放和过期不计入消耗。
       </p>
-      <Space wrap style={{ marginBottom: 16 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <Space wrap className="settings-usage-filter">
+        <label>
           开始日期
           <Input
-            style={{ width: 160 }}
             type="date"
             aria-label="开始日期"
             value={range.from}
@@ -54,10 +53,9 @@ export default function CreditUsage({
             }
           />
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <label>
           结束日期
           <Input
-            style={{ width: 160 }}
             type="date"
             aria-label="结束日期"
             value={range.to}

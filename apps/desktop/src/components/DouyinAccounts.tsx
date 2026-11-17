@@ -52,7 +52,7 @@ export default function DouyinAccounts() {
             登录资料按当前用户、设备和账号独立保存在本机，网络跟随系统配置。
           </p>
         </div>
-        <Space>
+        <Space wrap>
           <Button
             type="primary"
             disabled={!desktopPublishingAvailable() || !!busy}
@@ -86,7 +86,15 @@ export default function DouyinAccounts() {
         return (
           <div className="douyin-account-row" key={account.id}>
             <div>
-              <Tag>{account.platform === "xhs" ? "小红书" : "抖音"}</Tag>
+              <Tag
+                className={
+                  account.platform === "xhs"
+                    ? "settings-platform-xhs"
+                    : "settings-platform-douyin"
+                }
+              >
+                {account.platform === "xhs" ? "小红书" : "抖音"}
+              </Tag>
               <strong>{account.name}</strong>{" "}
               <Tag
                 color={
@@ -104,7 +112,7 @@ export default function DouyinAccounts() {
                 {new Date(account.lastCheckedAt).toLocaleString("zh-CN")}
               </p>
             </div>
-            <Space>
+            <Space wrap>
               <Button
                 disabled={!local || !!busy}
                 onClick={() => void run("account.open", account.id)}
@@ -129,6 +137,9 @@ export default function DouyinAccounts() {
         );
       })}
       <Modal
+        className="settings-action-modal"
+        centered
+        width={500}
         title={
           removing?.platform === "xhs"
             ? "解绑这个小红书账号？"
@@ -136,6 +147,7 @@ export default function DouyinAccounts() {
         }
         open={!!removing}
         okText="解绑并清除本机登录资料"
+        confirmLoading={!!busy}
         okButtonProps={{ danger: true }}
         onCancel={() => setRemoving(undefined)}
         onOk={async () => {

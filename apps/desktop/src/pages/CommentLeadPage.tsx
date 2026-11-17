@@ -1,3 +1,4 @@
+import "./leads/lead-utilities.css";
 import { WorkMonitors } from "./WorkMonitors";
 import { useEffect, useState } from "react";
 import {
@@ -903,7 +904,7 @@ function CommentLeadWorkspace() {
     );
   };
   return (
-    <>
+    <div className="lead-utility-page lead-comment-page">
       <PageHeader
         title="评论获客"
         description={
@@ -1802,6 +1803,8 @@ function CommentLeadWorkspace() {
             </div>
           )}
           <Modal
+            centered
+            className="lead-form-modal"
             open={batchOpen}
             title="批量提交私信"
             okText="确认提交"
@@ -1884,6 +1887,6 @@ function CommentLeadWorkspace() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }

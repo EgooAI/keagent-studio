@@ -37,6 +37,7 @@ import {
   formatDate,
   formatPrice,
 } from "../components/common";
+import "./production-pages.css";
 
 export function BatchDetailPage() {
   const { batchId } = useParams();
@@ -70,7 +71,7 @@ export function BatchDetailPage() {
   };
 
   return (
-    <>
+    <div className="production-workspace production-batch">
       <Button
         type="text"
         className="back-link"
@@ -83,7 +84,9 @@ export function BatchDetailPage() {
         title="批次生成进度"
         description={`${batch.id} · ${formatDate(batch.createdAt)}创建 · ${tasks.length} 套房源独立生成`}
         actions={
-          <Button onClick={() => navigate("/studio/create")}>继续创作</Button>
+          <Button type="primary" onClick={() => navigate("/studio/create")}>
+            继续创作
+          </Button>
         }
       />
       <section className="panel batch-overview">
@@ -134,7 +137,7 @@ export function BatchDetailPage() {
           style={{ marginBottom: 20 }}
         />
       )}
-      <section className="panel">
+      <section className="panel production-batch-tasks">
         <div className="section-heading">
           <h2>房源视频任务</h2>
           <Tag>
@@ -147,7 +150,6 @@ export function BatchDetailPage() {
           rowKey="id"
           dataSource={tasks}
           pagination={false}
-          scroll={{ x: 760 }}
           className="task-list"
           columns={[
             {
@@ -162,6 +164,10 @@ export function BatchDetailPage() {
                       {task.propertySnapshot.layout} ·{" "}
                       {task.propertySnapshot.areaSqm} ㎡
                     </small>
+                    <span className="production-task-compact">
+                      <StatusTag status={task.status} />
+                      {stageLabels[task.stage]} · {task.progress}%
+                    </span>
                   </span>
                 </div>
               ),
@@ -169,6 +175,7 @@ export function BatchDetailPage() {
             {
               title: "当前阶段",
               key: "stage",
+              responsive: ["md"],
               render: (_, task) => (
                 <span>
                   {stageLabels[task.stage]}
@@ -181,11 +188,13 @@ export function BatchDetailPage() {
             {
               title: "状态",
               key: "status",
+              responsive: ["md"],
               render: (_, task) => <StatusTag status={task.status} />,
             },
             {
               title: "进度",
               key: "progress",
+              responsive: ["md"],
               width: 160,
               render: (_, task) => (
                 <Progress
@@ -242,7 +251,7 @@ export function BatchDetailPage() {
       <p className="form-hint">
         本页进度与任务结果均为本地模拟，不会调用真实 AI 或第三方平台。
       </p>
-    </>
+    </div>
   );
 }
 
@@ -376,7 +385,7 @@ export function ProductionTaskPage() {
   };
 
   return (
-    <>
+    <div className="production-workspace production-task">
       <Button
         type="text"
         className="back-link"
@@ -600,6 +609,7 @@ export function ProductionTaskPage() {
           )}
         </section>
         <aside className="task-context panel">
+          <h2 className="production-context-title">房源信息</h2>
           <img
             className="task-property-image"
             src={property.image}
@@ -686,6 +696,6 @@ export function ProductionTaskPage() {
           </Link>
         </aside>
       </div>
-    </>
+    </div>
   );
 }

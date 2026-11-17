@@ -33,6 +33,7 @@ import {
 import { PageHeader, StatusTag, formatDate } from "../components/common";
 import { useWorkspace } from "../lib/workspace";
 import { productionResults } from "../lib/productionResults";
+import "../components/publish-workbench.css";
 
 export default function PublishPage() {
   const { data } = useWorkspace();
@@ -61,7 +62,7 @@ export default function PublishPage() {
     );
   });
   return (
-    <>
+    <div className="publish-demo publish-demo-list">
       <PageHeader
         title="发布中心"
         description="检查每一份成片，再把合适的内容带到合适的平台。"
@@ -180,7 +181,7 @@ export default function PublishPage() {
           </Empty>
         </section>
       )}
-    </>
+    </div>
   );
 }
 
@@ -193,6 +194,8 @@ export function PublishDetailPage() {
   useEffect(() => {
     if (blocker.state !== "blocked") return;
     const dialog = modal.confirm({
+      className: "publish-dialog publish-confirm-dialog",
+      centered: true,
       title: "放弃未提交的模拟发布配置？",
       okText: "放弃并离开",
       cancelText: "继续编辑",
@@ -258,7 +261,7 @@ export function PublishDetailPage() {
     ["成果修订", `第 ${task.productionRevision} 版`],
   ];
   return (
-    <>
+    <div className="publish-demo publish-demo-detail">
       <Link className="back-link" to="/publish">
         <ArrowLeft size={16} /> 发布中心
       </Link>
@@ -373,7 +376,7 @@ export function PublishDetailPage() {
           />
         </aside>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -417,6 +420,8 @@ function PlatformPublishForm({
     if (inFlight.current) return;
     if (dirty)
       modal.confirm({
+        className: "publish-dialog publish-confirm-dialog",
+        centered: true,
         title: "放弃未提交的模拟发布配置？",
         okText: "放弃修改",
         cancelText: "继续编辑",
@@ -466,6 +471,7 @@ function PlatformPublishForm({
         centered
         width={640}
         classNames={{ body: "workbench-form-body" }}
+        className="publish-dialog publish-demo-config"
         title={`配置模拟发布 · ${platformLabels[platform]}`}
         open={open}
         forceRender

@@ -1,3 +1,4 @@
+import LeadTable from "../../components/LeadTable";
 import { useState } from "react";
 import {
   Alert,
@@ -9,7 +10,6 @@ import {
   Input,
   Select,
   Space,
-  Table,
   Tag,
 } from "antd";
 import { Link, useSearchParams } from "react-router-dom";
@@ -162,6 +162,7 @@ export default function AccountQueue(
         {stages.map(([value, label]) => (
           <Button
             key={value}
+            aria-pressed={stage === value}
             type={stage === value ? "primary" : "default"}
             onClick={() => update("filter", value)}
           >
@@ -197,7 +198,7 @@ export default function AccountQueue(
             }}
           />
         </div>
-        <Table<AccountTask>
+        <LeadTable<AccountTask>
           size="middle"
           rowKey="id"
           loading={queue.loading}
@@ -222,12 +223,15 @@ export default function AccountQueue(
             {
               title: "任务内容",
               render: (_, r) => (
-                <button
-                  className="lead-row-link"
-                  onClick={() => update("taskId", r.id)}
-                >
-                  {r.title}
-                </button>
+                <div className="lead-queue-identity">
+                  <button
+                    className="lead-row-link"
+                    onClick={() => update("taskId", r.id)}
+                  >
+                    {r.title}
+                  </button>
+                  <small>{r.kind === "message" ? "私信" : "视频发布"}</small>
+                </div>
               ),
             },
             { title: "账号", render: () => props.accountName },
@@ -255,6 +259,7 @@ export default function AccountQueue(
         />
       </div>
       <Drawer
+        rootClassName="lead-sheet"
         open={!!id}
         title="任务详情"
         onClose={() => update("taskId", "")}

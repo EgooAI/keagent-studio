@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
@@ -10,18 +10,16 @@ import {
   App,
   Alert,
   Button,
-  Checkbox,
-  Descriptions,
   Empty,
   Form,
   Input,
   Modal,
   Segmented,
   Select,
+  Skeleton,
   Table,
   Tabs,
   Tag,
-  Typography,
   Upload,
 } from "antd";
 import {
@@ -31,38 +29,28 @@ import {
   FileUp,
   LayoutGrid,
   List,
-  MapPin,
+  Pencil,
   Play,
   Plus,
   Search,
   Upload as UploadIcon,
 } from "lucide-react";
-import {
-  demoApi,
-  isLive,
-  searchBeikeHouses,
-  serviceRequest,
-} from "@keagent/api-client";
-import type {
-  BeikeHouse,
-  BeikeSearchResult,
-  ImportResult,
-  Property,
-} from "@keagent/shared-types";
+import { demoApi, isLive } from "@keagent/api-client";
+import type { ImportResult, Property } from "@keagent/shared-types";
 import { useWorkspace } from "../lib/workspace";
-import { beikeHouseToPropertyInput } from "../lib/beike";
-import {
-  PageHeader,
-  PropertyPhoto,
-  StatusTag,
-  formatDate,
-  formatPrice,
-} from "../components/common";
+import { PageHeader, PropertyPhoto, formatPrice } from "../components/common";
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
 import { request as productionRequest } from "../components/panoramaClient";
 import { PropertyForm } from "../components/PropertyForm";
+import { BeikeImportModal } from "../components/BeikeImportModal";
+import { PropertyInfoTab } from "../components/PropertyInfoTab";
+import { PropertyMaterialsTab } from "../components/PropertyMaterialsTab";
+import { PropertyRelatedTasks } from "../components/PropertyRelatedTasks";
 import { DeletePropertyButton } from "../components/DeletePropertyButton";
 import type { PanoramaScene } from "@keagent/shared-types";
+import "./property-library.css";
+import "./property-cards.css";
+import "./property-detail.css";
 
 export default function PropertiesPage() {
   const { data } = useWorkspace();
@@ -95,7 +83,7 @@ export default function PropertiesPage() {
           : !publishedIds.has(p.id))),
   );
   return (
-    <>
+    <div className="studio-index-page property-library">
       <PageHeader
         title="房源中心"
         description="查找房源、补充素材，再选择房源制作视频。"
@@ -117,15 +105,15 @@ export default function PropertiesPage() {
           </>
         }
       />
-      <div className="property-toolbar">
-        <div className="filter-pills" role="group" aria-label="房源发布分类">
+      <div className="panel library-toolbar">
+        <div className="library-filters" role="group" aria-label="房源发布分类">
           {[
             ["all", "全部房源"],
             ["unpublished", "未发布过"],
             ["published", "已发布过"],
           ].map(([key, label]) => (
             <button
-              className={filter === key ? "active" : ""}
+              type="button"
               aria-pressed={filter === key}
               key={key}
               onClick={() => setFilter(key)}
@@ -141,7 +129,7 @@ export default function PropertiesPage() {
             </button>
           ))}
         </div>
-        <div className="toolbar-right">
+        <div className="library-tools">
           <Input
             aria-label="搜索房源"
             placeholder="搜索房源号、小区、城市或区域"
@@ -151,25 +139,36 @@ export default function PropertiesPage() {
             allowClear
           />
           <Segmented
+            aria-label="房源显示方式"
             value={view}
             onChange={(v) => setView(String(v))}
             options={[
               {
                 value: "grid",
-                icon: <LayoutGrid size={16} />,
-                label: <span className="sr-only">卡片视图</span>,
+                title: "卡片视图",
+                label: (
+                  <>
+                    <LayoutGrid size={18} aria-hidden="true" />
+                    <span className="sr-only">卡片视图</span>
+                  </>
+                ),
               },
               {
                 value: "table",
-                icon: <List size={16} />,
-                label: <span className="sr-only">表格视图</span>,
+                title: "表格视图",
+                label: (
+                  <>
+                    <List size={18} aria-hidden="true" />
+                    <span className="sr-only">表格视图</span>
+                  </>
+                ),
               },
             ]}
           />
         </div>
       </div>
-      <div className="list-caption">
-        <span>共 {filtered.length} 套房源</span>
+      <div className="library-results">
+        <strong role="status">共 {filtered.length} 套房源</strong>
         {!isLive && <span>房源资料为演示内容，不构成真实交易信息</span>}
       </div>
       {!filtered.length ? (
@@ -189,75 +188,95 @@ export default function PropertiesPage() {
         <div className="property-grid">
           {filtered.map((property) => (
             <article className="property-card" key={property.id}>
-              <Link
-                to={`/properties/${property.id}`}
-                className="property-image-link"
-              >
-                <PropertyPhoto property={property} />
-                <span
-                  className={`photo-state ${publishedIds.has(property.id) ? "published" : ""}`}
-                >
+              <Link to={`/properties/${property.id}`} className="card-cover">
+                <span className="sr-only">{property.community}房源详情</span>
+                <span className="card-cover-placeholder" aria-hidden="true">
+                  <Building2 size={28} strokeWidth={1.5} />
+                  暂无房源封面
+                </span>
+                {property.image && (
+                  <img
+                    key={property.image}
+                    src={property.image}
+                    alt=""
+                    loading="lazy"
+                    onError={(event) => {
+                      event.currentTarget.hidden = true;
+                    }}
+                  />
+                )}
+                <span className="card-cover-state">
                   {property.sample
                     ? "测试素材"
                     : publishedIds.has(property.id)
                       ? "已发布过"
                       : "未发布过"}
                 </span>
-                <span className="media-count">
-                  <Play size={11} fill="currentColor" /> {property.videoCount}{" "}
-                  段视频
+                <span className="card-cover-videos">
+                  <Play size={12} fill="currentColor" aria-hidden="true" />
+                  {property.videoCount} 段视频
                 </span>
               </Link>
-              <div className="property-card-body">
-                <div className="property-title">
-                  <Link to={`/properties/${property.id}`}>
-                    {property.community}
-                  </Link>
+              <div className="card-property-info">
+                <div className="card-property-title">
+                  <h2>
+                    <Link to={`/properties/${property.id}`}>
+                      {property.community}
+                    </Link>
+                  </h2>
                   <strong>
                     {property.sample
                       ? "测试样例"
                       : formatPrice(property.priceCents)}
                   </strong>
                 </div>
-                <p className="property-summary">
-                  {property.layout}
-                  <span />
-                  {property.sample ? "两张原全景图" : `${property.areaSqm} m²`}
-                  <span />
-                  {property.district}
+                <p className="card-property-summary">
+                  {[
+                    property.layout,
+                    property.sample ? "两张原全景图" : `${property.areaSqm} m²`,
+                    property.district,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </p>
-                <p className="property-description">{property.title}</p>
-                <p className="muted property-number">
+                <p className="card-property-description">{property.title}</p>
+                <p className="card-property-number">
                   房源号 {property.propertyNumber}
                 </p>
-                <div className="property-tags">
-                  {property.sellingPoints.slice(0, 3).map((point) => (
-                    <span key={point}>{point}</span>
-                  ))}
-                </div>
-                <div className="property-card-footer">
-                  <span>
-                    {property.importStatus === "ready"
-                      ? "素材已就绪"
-                      : "待补充素材"}
-                  </span>
-                  <DeletePropertyButton property={property} compact />
-                  <Link
-                    to={`/studio/create?propertyId=${property.id}`}
-                    className="text-link"
-                  >
-                    创建视频 <ArrowUpRight size={14} />
-                  </Link>
-                </div>
+                {property.sellingPoints.length > 0 && (
+                  <ul className="card-property-tags" aria-label="房源卖点">
+                    {property.sellingPoints.slice(0, 3).map((point, index) => (
+                      <li key={index}>{point}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
+              <footer className="card-property-footer">
+                <span
+                  className="card-material-state"
+                  data-status={property.importStatus}
+                >
+                  {property.importStatus === "ready"
+                    ? "素材已就绪"
+                    : "待补充素材"}
+                </span>
+                <DeletePropertyButton property={property} compact iconOnly />
+                <Link
+                  to={`/studio/create?propertyId=${property.id}`}
+                  className="card-create-link"
+                >
+                  创建视频 <ArrowUpRight size={15} aria-hidden="true" />
+                </Link>
+              </footer>
             </article>
           ))}
         </div>
       ) : (
-        <div className="panel">
+        <div className="panel library-table">
           <Table
             rowKey="id"
             dataSource={filtered}
+            scroll={{ x: 720 }}
             pagination={{ pageSize: 8 }}
             columns={[
               {
@@ -280,6 +299,7 @@ export default function PropertiesPage() {
               },
               {
                 title: "总价",
+                className: "library-table-price",
                 render: (_, p: Property) =>
                   p.sample ? "测试样例" : formatPrice(p.priceCents),
               },
@@ -291,13 +311,14 @@ export default function PropertiesPage() {
               },
               {
                 title: "操作",
+                align: "right",
                 render: (_, p: Property) => (
-                  <>
+                  <div className="library-table-actions">
+                    <DeletePropertyButton property={p} compact iconOnly />
                     <Link to={`/studio/create?propertyId=${p.id}`}>
-                      创建视频
+                      创建视频 <ArrowUpRight size={14} aria-hidden="true" />
                     </Link>
-                    <DeletePropertyButton property={p} compact />
-                  </>
+                  </div>
                 ),
               },
             ]}
@@ -305,7 +326,7 @@ export default function PropertiesPage() {
         </div>
       )}
       {isLive ? (
-        <LiveImportModal
+        <BeikeImportModal
           open={importOpen}
           onClose={() => setImportOpen(false)}
           onManual={() => {
@@ -322,224 +343,6 @@ export default function PropertiesPage() {
           onSaved={(property) => navigate(`/properties/${property.id}`)}
         />
       )}
-    </>
-  );
-}
-
-type BeikeCliStatus = {
-  available: boolean;
-  configured: boolean;
-  reason: "not_configured" | "ready";
-};
-
-function LiveImportModal({
-  open,
-  onClose,
-  onManual,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onManual: () => void;
-}) {
-  const { message } = App.useApp();
-  const queryClient = useQueryClient();
-  const [city, setCity] = useState("北京");
-  const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<BeikeSearchResult>();
-  const [selected, setSelected] = useState<string[]>([]);
-  const status = useQuery({
-    queryKey: ["beike-cli-status"],
-    enabled: open,
-    retry: false,
-    queryFn: async () =>
-      window.desktop
-        ? ((await window.desktop.request("beikeCli.status")) as BeikeCliStatus)
-        : serviceRequest<BeikeCliStatus>("/v1/beike-cli/status", {}),
-  });
-  const configured = status.data?.reason === "ready";
-
-  async function runSearch() {
-    if (!query.trim()) {
-      message.warning("请输入搜索条件");
-      return;
-    }
-    setSearching(true);
-    try {
-      const next = await searchBeikeHouses(city.trim(), query.trim());
-      setResult(next);
-      setSelected([]);
-    } catch (error) {
-      message.error((error as Error).message);
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function importSelected() {
-    const chosen = [
-      ...(result?.houses ?? []),
-      ...(result?.overBudget ?? []),
-    ].filter((house) => selected.includes(house.id));
-    if (!chosen.length) return;
-    setImporting(true);
-    let imported = 0;
-    let failed = 0;
-    try {
-      for (const house of chosen) {
-        try {
-          await demoApi.createProperty(
-            beikeHouseToPropertyInput(house, city.trim()),
-          );
-          imported += 1;
-        } catch {
-          failed += 1;
-        }
-      }
-      await queryClient.invalidateQueries(
-        { queryKey: ["workspace"] },
-        { cancelRefetch: false },
-      );
-      if (imported) message.success(`已导入 ${imported} 套贝壳房源`);
-      if (failed) message.warning(`${failed} 套未导入（可能已存在）`);
-      if (imported) {
-        setResult(undefined);
-        setSelected([]);
-      }
-    } catch (error) {
-      message.error((error as Error).message);
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  if (!configured) {
-    return (
-      <Modal
-        title="从贝壳找房"
-        open={open}
-        onCancel={onClose}
-        onOk={onManual}
-        cancelText="关闭"
-        okText="手动添加房源"
-      >
-        <p role="status">
-          {status.isFetching
-            ? "正在检查贝壳 CLI 状态…"
-            : "云端尚未配置贝壳 CLI，暂不能自动找房。"}
-        </p>
-      </Modal>
-    );
-  }
-
-  const houses = result?.houses ?? [];
-  const overBudget = result?.overBudget ?? [];
-
-  return (
-    <Modal
-      title="从贝壳找房"
-      open={open}
-      onCancel={onClose}
-      width={680}
-      footer={
-        <>
-          <Button onClick={onClose}>关闭</Button>
-          <Button
-            type="primary"
-            loading={importing}
-            disabled={!selected.length}
-            onClick={importSelected}
-          >
-            导入选中（{selected.length}）
-          </Button>
-        </>
-      }
-    >
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <Input
-          aria-label="城市"
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          style={{ width: 110 }}
-        />
-        <Input
-          aria-label="搜索条件"
-          placeholder="例如：望京 两居 500万以内"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onPressEnter={runSearch}
-          style={{ flex: 1 }}
-        />
-        <Button type="primary" loading={searching} onClick={runSearch}>
-          搜索
-        </Button>
-      </div>
-      {result && (
-        <p className="muted" role="status">
-          召回 {result.totalRecalled} 套，展示 {result.returned} 套
-          {result.strictBudgetWan != null
-            ? `（已按 ${result.strictBudgetWan} 万严格过滤）`
-            : ""}
-        </p>
-      )}
-      {houses.length > 0 && (
-        <Checkbox.Group
-          style={{ display: "block", maxHeight: 320, overflow: "auto" }}
-          value={selected}
-          onChange={(values) => setSelected(values as string[])}
-        >
-          {houses.map((house) => (
-            <HouseRow key={house.id} house={house} />
-          ))}
-        </Checkbox.Group>
-      )}
-      {overBudget.length > 0 && (
-        <>
-          <Alert
-            style={{ marginTop: 8 }}
-            type="warning"
-            showIcon
-            message={`${overBudget.length} 套超过预算，已单独列出`}
-          />
-          <Checkbox.Group
-            style={{ display: "block", maxHeight: 200, overflow: "auto" }}
-            value={selected}
-            onChange={(values) => setSelected(values as string[])}
-          >
-            {overBudget.map((house) => (
-              <HouseRow key={house.id} house={house} overBudget />
-            ))}
-          </Checkbox.Group>
-        </>
-      )}
-      {result && !houses.length && !overBudget.length && (
-        <p className="muted">没有符合条件的结果，请调整搜索条件。</p>
-      )}
-    </Modal>
-  );
-}
-
-function HouseRow({
-  house,
-  overBudget,
-}: {
-  house: BeikeHouse;
-  overBudget?: boolean;
-}) {
-  return (
-    <div style={{ padding: "6px 0", borderBottom: "1px solid #f0f0f0" }}>
-      <Checkbox value={house.id}>
-        <strong>{house.community}</strong>
-        <span className="muted">
-          {" "}
-          {house.layout} · {house.areaSqm}㎡ · 总价 {house.totalPriceWan}万
-        </span>
-        {overBudget && <Tag color="orange">超预算</Tag>}
-        <div className="muted" style={{ fontSize: 12 }}>
-          {house.title}
-        </div>
-      </Checkbox>
     </div>
   );
 }
@@ -655,6 +458,8 @@ function ImportModal({
   );
 }
 
+type MaterialImportKind = "panorama" | "reference" | "spatial";
+
 export function PropertyDetailPage() {
   const { propertyId } = useParams();
   const { data } = useWorkspace();
@@ -662,7 +467,9 @@ export function PropertyDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [activeImport, setActiveImport] = useState<MaterialImportKind | null>(
+    null,
+  );
   const material = useQuery({
     queryKey: ["property-production-material", propertyId],
     enabled: !!window.desktop && !!propertyId,
@@ -676,8 +483,8 @@ export function PropertyDetailPage() {
       }),
   });
   const property = data?.properties.find((p) => p.id === propertyId);
-  const addMaterial = async (kind: "panorama" | "reference" | "spatial") => {
-    setImporting(true);
+  const addMaterial = async (kind: MaterialImportKind) => {
+    setActiveImport(kind);
     try {
       const value = await productionRequest<{ count: number }>(
         kind === "spatial" ? "property-vr-import" : "property-import",
@@ -693,7 +500,7 @@ export function PropertyDetailPage() {
         error instanceof Error ? error.message : "导入素材失败",
       );
     } finally {
-      setImporting(false);
+      setActiveImport(null);
     }
   };
   if (!data) return null;
@@ -704,19 +511,105 @@ export function PropertyDetailPage() {
       </Empty>
     );
   const tasks = data.tasks.filter((t) => t.propertyId === property.id);
-  const details = property.details;
-  const extraFacts = [
-    ["挂牌状态", details?.listingStatus],
-    ["楼层", details?.floor],
-    ["朝向", details?.orientation],
-    ["电梯", details?.elevator],
-    ["建成年份／楼龄", details?.buildingAge],
-    ["交易属性", details?.transactionAttributes],
-  ].filter(([, value]) => value);
+  const panoramas = material.data?.scenes.length
+    ? material.data.scenes.map((scene) => scene.url)
+    : (property.panoramas ?? []);
+  let materialReadFeedback: ReactNode;
+  if (material.isLoading && !panoramas.length) {
+    materialReadFeedback = (
+      <Skeleton
+        active
+        title={false}
+        paragraph={{ rows: 2 }}
+        aria-label="正在读取房源素材"
+      />
+    );
+  } else if (
+    material.isError &&
+    !material.error.message.includes("没有这套房源的本机素材记录")
+  ) {
+    materialReadFeedback = (
+      <Alert
+        type="warning"
+        showIcon
+        title="本机素材暂时无法读取"
+        description={material.error.message}
+        action={
+          <Button size="small" onClick={() => void material.refetch()}>
+            重新读取
+          </Button>
+        }
+      />
+    );
+  }
+  let materialNote: string | undefined;
+  let materialActions: ReactNode;
+  if (property.sample) {
+    if (panoramas.length) materialNote = "内置素材已就绪，可直接创建视频任务。";
+  } else if (window.desktop) {
+    materialNote = property.details?.vrUrl
+      ? "保存新的如视看房链接后会自动导入。可用「导入 VR 空间」重试，成功后会替换全景图，保留参考图。"
+      : "在「编辑房源」中保存如视看房链接后会自动导入全景图，也可以直接添加本机图片。";
+    materialActions = (
+      <>
+        <Button
+          loading={activeImport === "spatial"}
+          disabled={!property.details?.vrUrl || activeImport !== null}
+          onClick={() => void addMaterial("spatial")}
+        >
+          导入 VR 空间
+        </Button>
+        <Button
+          loading={activeImport === "panorama"}
+          disabled={activeImport !== null}
+          onClick={() => void addMaterial("panorama")}
+        >
+          添加 VR 全景图
+        </Button>
+        <Button
+          loading={activeImport === "reference"}
+          disabled={activeImport !== null}
+          onClick={() => void addMaterial("reference")}
+        >
+          添加户型图／参考图
+        </Button>
+        <Button
+          type="primary"
+          onClick={() => navigate(`/studio?propertyId=${property.id}`)}
+        >
+          制作视频
+        </Button>
+      </>
+    );
+  } else if (isLive) {
+    materialNote = "请在桌面端添加 VR 全景原图和户型参考图。";
+  } else {
+    materialActions = (
+      <Upload
+        accept="image/*,video/*"
+        showUploadList={false}
+        beforeUpload={async (file) => {
+          if (file.size > 100 * 1024 * 1024) {
+            message.error("单个演示文件最大100 MB");
+            return false;
+          }
+          await demoApi.updateProperty(property.id, {
+            videoCount:
+              property.videoCount + (file.type.startsWith("video/") ? 1 : 0),
+            importStatus: "ready",
+          });
+          message.info(`已登记 ${file.name} 的演示素材信息，文件未上传或保存`);
+          return false;
+        }}
+      >
+        <Button icon={<Plus size={16} />}>添加演示素材</Button>
+      </Upload>
+    );
+  }
   return (
-    <>
+    <div className="studio-index-page property-detail-page">
       <Link className="back-link" to="/properties">
-        <ArrowLeft size={16} /> 房源中心
+        <ArrowLeft size={18} aria-hidden="true" /> 房源中心
       </Link>
       <PageHeader
         title={property.community}
@@ -728,7 +621,8 @@ export function PropertyDetailPage() {
               onDeleted={() => navigate("/properties", { replace: true })}
             />
             <Button
-              disabled={property.sample || importing}
+              disabled={property.sample || activeImport !== null}
+              icon={<Pencil size={16} aria-hidden="true" />}
               onClick={() => setEditing(true)}
             >
               {property.sample ? "内置测试资料" : "编辑房源"}
@@ -739,7 +633,7 @@ export function PropertyDetailPage() {
                 navigate(`/studio/create?propertyId=${property.id}`)
               }
             >
-              创建视频任务 <ArrowUpRight size={16} />
+              创建视频任务 <ArrowUpRight size={16} aria-hidden="true" />
             </Button>
           </>
         }
@@ -759,236 +653,31 @@ export function PropertyDetailPage() {
           {
             key: "info",
             label: "房源资料",
-            children: (
-              <div className="property-overview">
-                {" "}
-                <div className="property-hero">
-                  <PropertyPhoto property={property} />
-                </div>
-                <div className="panel detail-info">
-                  <h2>{property.title}</h2>
-                  <div className="property-facts">
-                    <div>
-                      <strong>
-                        {property.sample
-                          ? "未提供"
-                          : formatPrice(property.priceCents)}
-                      </strong>
-                      <span>总价</span>
-                    </div>
-                    <div>
-                      <strong>{property.layout || "未提供"}</strong>
-                      <span>户型</span>
-                    </div>
-                    <div>
-                      <strong>
-                        {property.sample ? "未提供" : `${property.areaSqm} m²`}
-                      </strong>
-                      <span>建筑面积</span>
-                    </div>
-                  </div>
-                  {property.priceCents > 0 && property.areaSqm > 0 && (
-                    <p className="muted">
-                      单价约{" "}
-                      {Math.round(
-                        property.priceCents / 100 / property.areaSqm,
-                      ).toLocaleString("zh-CN")}{" "}
-                      元／平方米
-                    </p>
-                  )}
-                  {extraFacts.length > 0 && (
-                    <Descriptions
-                      size="small"
-                      column={2}
-                      items={extraFacts.map(([label, value]) => ({
-                        key: label,
-                        label,
-                        children: value,
-                      }))}
-                    />
-                  )}
-                  <p>{property.description}</p>
-                  {(
-                    [
-                      ["房源详情链接", details?.listingUrl],
-                      ["VR 看房链接", details?.vrUrl],
-                    ] as const
-                  ).map(
-                    ([label, url]) =>
-                      url && (
-                        <p key={label}>
-                          <Typography.Text copyable={{ text: url }}>
-                            {label}
-                          </Typography.Text>
-                        </p>
-                      ),
-                  )}
-                  <div className="property-tags">
-                    {property.sellingPoints.map((p) => (
-                      <span key={p}>{p}</span>
-                    ))}
-                  </div>
-                  <p className="muted">
-                    <MapPin size={14} /> {property.city} {property.district} ·
-                    资料核验 {formatDate(property.lastVerifiedAt)}
-                  </p>
-                </div>
-              </div>
-            ),
+            children: <PropertyInfoTab property={property} />,
           },
           {
             key: "materials",
             label: "制作素材",
             children: (
-              <>
-                {" "}
-                <section className="panel detail-info">
-                  <h2>房源素材</h2>
-                  <p className="muted">
-                    {material.data?.scenes.length ||
-                      property.panoramas?.length ||
-                      0}{" "}
-                    张 VR 全景图
-                  </p>
-                  <div className="asset-grid">
-                    {(material.data?.scenes.length
-                      ? material.data.scenes.map((s) => s.url)
-                      : property.panoramas || []
-                    ).map((image, i) => (
-                      <img
-                        key={`${image}-${i}`}
-                        src={image}
-                        alt={`房源图片 ${i + 1}`}
-                      />
-                    ))}
-                  </div>
-                  {!!material.data?.references?.length && (
-                    <>
-                      <p className="muted">仅供文案参考的图片</p>
-                      <div className="asset-grid">
-                        {material.data.references.map((reference) => (
-                          <img
-                            key={reference.id}
-                            src={reference.url}
-                            alt={reference.room}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  {property.sample ? (
-                    <p className="muted">
-                      内置素材已就绪，可直接创建视频任务。
-                    </p>
-                  ) : window.desktop ? (
-                    <>
-                      <p className="muted">
-                        保存新的如视看房链接后，会自动导入该空间的全部全景图。
-                        如需重试，可使用「导入 VR 空间」。
-                      </p>
-                      <div
-                        style={{ display: "flex", gap: 12, flexWrap: "wrap" }}
-                      >
-                        <Button
-                          loading={importing}
-                          disabled={!details?.vrUrl}
-                          onClick={() => void addMaterial("spatial")}
-                        >
-                          导入 VR 空间
-                        </Button>
-                        <Button
-                          loading={importing}
-                          onClick={() => void addMaterial("panorama")}
-                        >
-                          添加 VR 全景图
-                        </Button>
-                        <Button
-                          loading={importing}
-                          onClick={() => void addMaterial("reference")}
-                        >
-                          添加户型图／参考图
-                        </Button>
-                        <Button
-                          type="primary"
-                          onClick={() =>
-                            navigate(`/studio?propertyId=${property.id}`)
-                          }
-                        >
-                          制作视频
-                        </Button>
-                      </div>
-                    </>
-                  ) : isLive ? (
-                    <p className="muted">
-                      请在桌面端添加 VR 全景原图和户型参考图。
-                    </p>
-                  ) : (
-                    <Upload
-                      accept="image/*,video/*"
-                      showUploadList={false}
-                      beforeUpload={async (file) => {
-                        if (file.size > 100 * 1024 * 1024) {
-                          message.error("单个演示文件最大100 MB");
-                          return false;
-                        }
-                        await demoApi.updateProperty(property.id, {
-                          videoCount:
-                            property.videoCount +
-                            (file.type.startsWith("video/") ? 1 : 0),
-                          importStatus: "ready",
-                        });
-                        message.info(
-                          `已登记 ${file.name} 的演示素材信息，文件未上传或保存`,
-                        );
-                        return false;
-                      }}
-                    >
-                      <Button icon={<Plus size={16} />}>添加演示素材</Button>
-                    </Upload>
-                  )}
-                </section>
-              </>
+              <PropertyMaterialsTab
+                panoramas={panoramas}
+                references={material.data?.references ?? []}
+                readFeedback={materialReadFeedback}
+                note={materialNote}
+                actions={materialActions}
+              />
             ),
           },
           {
             key: "tasks",
             label: "关联任务",
-            children: (
-              <>
-                {" "}
-                <section className="panel detail-info">
-                  <h2>关联生成任务</h2>
-                  {tasks.length ? (
-                    tasks.map((task) => (
-                      <Link
-                        to={`/studio/tasks/${task.id}`}
-                        className="related-task"
-                        key={task.id}
-                      >
-                        <span>
-                          {task.configSnapshot.videoMode === "avatar"
-                            ? "经纪人露脸"
-                            : "纯口播"}
-                          <small>{formatDate(task.createdAt)}</small>
-                        </span>
-                        <StatusTag status={task.status} />
-                      </Link>
-                    ))
-                  ) : (
-                    <Empty
-                      image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description="还没有生成任务"
-                    />
-                  )}
-                </section>
-              </>
-            ),
+            children: <PropertyRelatedTasks tasks={tasks} />,
           },
         ]}
       />
       {editing && (
         <PropertyForm property={property} onClose={() => setEditing(false)} />
       )}
-    </>
+    </div>
   );
 }

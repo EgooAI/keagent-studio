@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Alert, App, Button, Image, Space } from "antd";
+import { Alert, App, Button, Image } from "antd";
+import { Image as ImageIcon, UserRound } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { request } from "./panoramaClient";
 
@@ -36,8 +37,8 @@ export function OpeningMaterials() {
     }
   }
   return (
-    <div style={{ maxWidth: 720 }}>
-      <h2 style={{ marginTop: 0 }}>形象与背景</h2>
+    <>
+      <h2>形象与背景</h2>
       <p className="muted">
         MiniMax
         将经纪人照片、开场背景图、模板提示词和生成的配音组合成露脸开场。人物在背景场景中边走边介绍。
@@ -56,46 +57,52 @@ export function OpeningMaterials() {
           }
         />
       )}
-      {(["photo", "background"] as const).map((kind) => {
-        const item = materials.data?.[kind];
-        const label = kind === "photo" ? "经纪人照片" : "开场背景图";
-        return (
-          <section key={kind} style={{ marginTop: 28 }} aria-label={label}>
-            <h3>{label}</h3>
-            <p className="muted">
-              {kind === "photo"
-                ? "上传清晰的本人正面照片，脸部无遮挡，最多 3 MB。"
-                : "上传希望人物出镜的场景，例如小区入口、园区步道或室内，最多 15 MB。"}
-              支持 JPG / PNG，宽高 256–4096 像素，宽高比 0.4–2.5。
-            </p>
-            <Space align="start" wrap size={16}>
-              {item && (
-                <Image
-                  width={180}
-                  height={120}
-                  style={{ objectFit: "contain" }}
-                  src={item.url}
-                  alt={label}
-                />
-              )}
-              <div>
-                <p>{item?.name || "尚未上传"}</p>
-                <Button
-                  disabled={!window.desktop || busy || materials.isFetching}
-                  onClick={() => void upload(kind)}
-                >
-                  {item ? "更换" : "上传"}
-                  {label}
-                </Button>
+      <div className="settings-materials">
+        {(["photo", "background"] as const).map((kind) => {
+          const item = materials.data?.[kind];
+          const label = kind === "photo" ? "经纪人照片" : "开场背景图";
+          return (
+            <section
+              key={kind}
+              className="settings-material"
+              aria-label={label}
+            >
+              <h3>{label}</h3>
+              <div className="settings-material-preview">
+                {item ? (
+                  <Image src={item.url} alt={label} />
+                ) : kind === "photo" ? (
+                  <UserRound size={44} aria-hidden="true" />
+                ) : (
+                  <ImageIcon size={44} aria-hidden="true" />
+                )}
               </div>
-            </Space>
-          </section>
-        );
-      })}
-      <p className="muted" style={{ marginTop: 28 }}>
+              <p className="muted">
+                {kind === "photo"
+                  ? "上传清晰的本人正面照片，脸部无遮挡，最多 3 MB。"
+                  : "上传希望人物出镜的场景，例如小区入口、园区步道或室内，最多 15 MB。"}
+                支持 JPG / PNG，宽高 256–4096 像素，宽高比 0.4–2.5。
+              </p>
+              <p className="settings-material-name">
+                {item?.name ||
+                  (materials.isFetching ? "正在读取…" : "尚未上传")}
+              </p>
+              <Button
+                type="primary"
+                disabled={!window.desktop || busy || materials.isFetching}
+                onClick={() => void upload(kind)}
+              >
+                {item ? "更换" : "上传"}
+                {label}
+              </Button>
+            </section>
+          );
+        })}
+      </div>
+      <p className="settings-material-notice">
         图片保存在本机当前账号下，替换后用于新任务。请上传有权使用的素材，制作前确认授权后，图片与配音会发送给
         MiniMax。
       </p>
-    </div>
+    </>
   );
 }

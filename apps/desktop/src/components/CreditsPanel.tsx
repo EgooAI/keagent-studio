@@ -1,7 +1,7 @@
-import { Alert, Button, Input, Space, Table, Tag, message } from "antd";
+import { Alert, Button, Input, Table, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Coins } from "lucide-react";
+import { Coins, Gift, RefreshCw } from "lucide-react";
 import { authRequest, ServiceRequestError } from "@keagent/api-client";
 import CreditUsage from "./CreditUsage";
 
@@ -71,8 +71,18 @@ export function CreditsPanel() {
   const granted = summary.data?.granted;
   return (
     <>
-      <h2 style={{ fontSize: 18, marginTop: 0 }}>我的积分</h2>
-      <p style={{ color: "#667085" }}>
+      <header className="settings-section-head">
+        <h2>我的积分</h2>
+        <Button
+          aria-label="刷新积分余额"
+          icon={<RefreshCw size={16} />}
+          onClick={() => void summary.refetch()}
+          loading={summary.isFetching}
+        >
+          刷新
+        </Button>
+      </header>
+      <p>
         AI 文案、配音、声音复刻和 MiniMax
         开场按实际调用消耗积分；本机视频合成与平台发布不消耗。
       </p>
@@ -85,42 +95,48 @@ export function CreditsPanel() {
           style={{ marginBottom: 20 }}
         />
       )}
-      <Space size={16} style={{ marginBottom: 24 }} wrap>
-        <Tag
-          icon={<Coins size={13} />}
-          color="gold"
-          style={{ fontSize: 14, padding: "4px 12px" }}
-        >
-          充值积分 {purchased?.available ?? 0}
-        </Tag>
-        <Tag color="blue" style={{ fontSize: 14, padding: "4px 12px" }}>
-          赠送积分 {granted?.available ?? 0}
-          {granted?.nextExpiry
-            ? ` · ${new Date(granted.nextExpiry).toLocaleDateString("zh-CN")} 过期`
-            : ""}
-        </Tag>
+      <div className="settings-credit-balances" aria-busy={summary.isPending}>
+        <div>
+          <span>
+            <Coins size={17} aria-hidden="true" />
+            充值积分
+          </span>
+          <strong>
+            {summary.data
+              ? (purchased?.available ?? 0).toLocaleString("zh-CN")
+              : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>
+            <Gift size={17} aria-hidden="true" />
+            赠送积分
+          </span>
+          <strong>
+            {summary.data
+              ? (granted?.available ?? 0).toLocaleString("zh-CN")
+              : "—"}
+          </strong>
+          {granted?.nextExpiry && (
+            <small>
+              {new Date(granted.nextExpiry).toLocaleDateString("zh-CN")} 过期
+            </small>
+          )}
+        </div>
         {(purchased?.held ?? 0) + (granted?.held ?? 0) > 0 && (
-          <Tag style={{ fontSize: 14, padding: "4px 12px" }}>
-            处理中 {(purchased?.held ?? 0) + (granted?.held ?? 0)}
-          </Tag>
+          <div>
+            <span>处理中</span>
+            <strong>
+              {((purchased?.held ?? 0) + (granted?.held ?? 0)).toLocaleString(
+                "zh-CN",
+              )}
+            </strong>
+          </div>
         )}
-        <Button
-          onClick={() => void summary.refetch()}
-          loading={summary.isFetching}
-        >
-          刷新
-        </Button>
-      </Space>
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "center",
-          marginBottom: 28,
-          maxWidth: 460,
-        }}
-      >
+      </div>
+      <div className="settings-redemption">
         <Input
+          aria-label="兑换码"
           placeholder="输入兑换码"
           value={code}
           maxLength={64}
@@ -137,7 +153,7 @@ export function CreditsPanel() {
         </Button>
       </div>
       <CreditUsage opLabels={opLabels} />
-      <h3 style={{ fontSize: 16, margin: "0 0 10px" }}>最近流水</h3>
+      <h3>最近流水</h3>
       <p className="muted">余额在冻结时扣减，结算时的实际消耗单独列示。</p>
       <Table
         size="small"

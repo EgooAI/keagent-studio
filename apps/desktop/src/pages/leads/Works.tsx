@@ -1,3 +1,4 @@
+import LeadTable from "../../components/LeadTable";
 import { useDeferredValue, useState } from "react";
 import {
   Alert,
@@ -9,7 +10,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tabs,
   Tag,
 } from "antd";
@@ -301,7 +301,7 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
                 ]}
               />
             </div>
-            <Table<Work>
+            <LeadTable<Work>
               rowKey="workId"
               pagination={false}
               loading={works.isLoading}
@@ -323,16 +323,19 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
                   title: "作品",
                   key: "title",
                   render: (_, w) => (
-                    <Button
-                      className="work-title-link"
-                      type="link"
-                      onClick={() => {
-                        action.reset();
-                        setDetailId(w.workId);
-                      }}
-                    >
-                      {workTitle(w)}
-                    </Button>
+                    <div className="work-identity">
+                      <Button
+                        className="work-title-link"
+                        type="link"
+                        onClick={() => {
+                          action.reset();
+                          setDetailId(w.workId);
+                        }}
+                      >
+                        {workTitle(w)}
+                      </Button>
+                      <small>{w.workId}</small>
+                    </div>
                   ),
                 },
                 {
@@ -471,7 +474,7 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
               }
             />
           )}
-          <Table<WorkspaceComment>
+          <LeadTable<WorkspaceComment>
             rowKey="id"
             pagination={false}
             scroll={{ x: 700 }}
@@ -491,7 +494,12 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
                 title: "评论者",
                 dataIndex: "commenter_name",
                 width: 140,
-                render: (v: string | null) => v || "匿名用户",
+                render: (v: string | null) => (
+                  <span className="work-commenter">
+                    <span aria-hidden="true">{Array.from(v || "匿")[0]}</span>
+                    {v || "匿名用户"}
+                  </span>
+                ),
               },
               {
                 title: "评论原文",
@@ -564,9 +572,10 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
       )}
       {detailId && selected && (
         <Drawer
+          rootClassName="lead-sheet"
           open
           title="作品详情"
-          size="default"
+          size={464}
           onClose={() => setDetailId("")}
         >
           <h3>{workTitle(selected)}</h3>

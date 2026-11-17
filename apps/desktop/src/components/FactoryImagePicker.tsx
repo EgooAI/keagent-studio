@@ -55,8 +55,9 @@ export function FactoryImagePicker({
   return (
     <Modal
       open
+      centered
       title="选择视频图片"
-      width={880}
+      width={920}
       onCancel={onClose}
       className="factory-image-modal"
       classNames={{ body: "factory-image-picker" }}
@@ -88,7 +89,7 @@ export function FactoryImagePicker({
         </div>
       }
     >
-      <p>
+      <p className="factory-image-intro">
         每套房源选择 2–7 张 VR
         全景图，按素材原顺序生成文案和视频。同一房源的不同模板共用所选图片。
       </p>
@@ -151,7 +152,24 @@ export function FactoryImagePicker({
           {!scenes.length ? (
             <Empty description="暂无 VR 全景图" />
           ) : (
-            <Image.PreviewGroup>
+            <Image.PreviewGroup
+              classNames={{
+                popup: {
+                  root: "factory-scene-preview",
+                  mask: "factory-scene-preview-mask",
+                },
+              }}
+              preview={{
+                countRender: (current, total) => (
+                  <span className="factory-scene-caption">
+                    <span>{scenes[current - 1]?.room}</span>
+                    <bdi>
+                      {current} / {total}
+                    </bdi>
+                  </span>
+                ),
+              }}
+            >
               <div className="factory-image-grid">
                 {scenes.map((scene, i) => (
                   <div

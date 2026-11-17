@@ -61,7 +61,7 @@ export function FactoryRenderSettings({
   const error = renderSettingsError(edits, spatial);
   return (
     <div aria-label={`${scope}制作参数`} style={{ marginBlock: 12 }}>
-      <Space wrap align="end" size={16}>
+      <Space className="factory-render-fields" wrap align="end" size={16}>
         {renderKeys
           .filter((key) => !spatial || key === "rate")
           .map((key) => {
@@ -77,7 +77,7 @@ export function FactoryRenderSettings({
                   aria-label={`${scope}${field.label}`}
                   aria-invalid={invalid}
                   status={invalid ? "error" : undefined}
-                  style={{ width: 160 }}
+                  style={{ width: "var(--factory-render-input-width, 160px)" }}
                   min={field.min}
                   max={field.max}
                   step={field.step}
@@ -102,7 +102,9 @@ export function FactoryRenderSettings({
         )}
       </Space>
       <p className="muted" style={{ marginTop: 8 }}>
-        语速影响配音和镜头时长；调整语速后重新制作可能需要重新生成配音和人物开场。
+        {scope === "批次"
+          ? "语速会影响配音和镜头时长。"
+          : "语速影响配音和镜头时长；调整语速后重新制作可能需要重新生成配音和人物开场。"}
       </p>
       {error && (
         <Alert showIcon type="error" title={error} style={{ marginTop: 8 }} />

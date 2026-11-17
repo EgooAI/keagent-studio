@@ -699,6 +699,8 @@ function LeadList({
         )}
       </section>
       <Modal
+        centered
+        className="lead-review-confirm"
         title="批量提交私信"
         open={!!confirmRows.length}
         okText={"确认加入队列 (" + confirmRows.length + ")"}

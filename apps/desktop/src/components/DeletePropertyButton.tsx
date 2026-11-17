@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { App, Button, Modal } from "antd";
+import { Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { demoApi } from "@keagent/api-client";
 import type { Property } from "@keagent/shared-types";
@@ -7,10 +8,12 @@ import type { Property } from "@keagent/shared-types";
 export function DeletePropertyButton({
   property,
   compact = false,
+  iconOnly = false,
   onDeleted,
 }: {
   property: Property;
   compact?: boolean;
+  iconOnly?: boolean;
   onDeleted?: () => void;
 }) {
   const { message } = App.useApp();
@@ -39,12 +42,15 @@ export function DeletePropertyButton({
   return (
     <>
       <Button
-        danger
+        danger={!iconOnly}
         type={compact ? "text" : "default"}
         size={compact ? "small" : "middle"}
+        icon={<Trash2 size={16} aria-hidden="true" />}
+        aria-label={iconOnly ? "删除房源" : undefined}
+        title={iconOnly ? "删除房源" : undefined}
         onClick={() => setOpen(true)}
       >
-        删除房源
+        {iconOnly ? null : "删除房源"}
       </Button>
       <Modal
         title="删除房源？"

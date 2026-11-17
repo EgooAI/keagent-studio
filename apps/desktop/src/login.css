@@ -1,0 +1,50 @@
+.login-page.login-gate {
+  min-height: 100dvh;
+  padding: 20px;
+  background: var(--canvas);
+}
+.login-gate .login-panel {
+  width: min(100%, 450px);
+  padding: clamp(20px, 3vw, 34px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.login-panel header,
+.login-checking {
+  text-align: center;
+}
+.login-panel header > svg {
+  color: var(--accent);
+}
+.login-gate .login-panel h1 {
+  margin: 12px 0 6px;
+  color: var(--ink);
+  font-size: clamp(22px, 2vw, 28px);
+  line-height: 1.35;
+}
+.login-panel header p {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.login-panel .ant-form-item-label label {
+  font-size: 15px;
+  font-weight: 600;
+}
+.login-panel .ant-form-item {
+  margin-bottom: 18px;
+}
+.login-panel input.ant-input[type="email"],
+.login-panel .ant-input-password,
+.login-panel .ant-btn {
+  min-height: 44px;
+}
+.login-panel .ant-btn {
+  font-size: 16px;
+  font-weight: 600;
+}
+.login-checking p {
+  margin-top: 12px;
+  color: var(--muted);
+}

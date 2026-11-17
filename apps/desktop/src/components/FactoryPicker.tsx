@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Alert,
   App,
@@ -11,8 +11,9 @@ import {
   Table,
   Tag,
 } from "antd";
+import type { TableRef } from "antd/es/table";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Building2, Search } from "lucide-react";
 import {
   factoryRequest,
   templateKey,
@@ -20,10 +21,82 @@ import {
   type FactoryProperty,
   type FactoryTemplate,
 } from "./factoryClient";
+import "./factory-picker.css";
 
 const PAGE_SIZE = 20;
 const options = (values: string[]) =>
   values.map((value) => ({ value, label: value }));
+
+function propertySize(row: FactoryProperty) {
+  return [row.layout, row.areaSqm ? row.areaSqm + " ㎡" : ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function MaterialStatus({ row }: { row: FactoryProperty }) {
+  if (row.importStatus !== "ready") return <Tag color="warning">缺少素材</Tag>;
+  return <Tag color="success">{row.sample ? "测试素材" : "素材就绪"}</Tag>;
+}
+
+function templateSpecs(template: FactoryTemplate) {
+  return [
+    template.config.language === "en-US" ? "英文" : "中文",
+    template.opening
+      ? "MiniMax H3"
+      : template.config.videoMode === "avatar"
+        ? "露脸"
+        : "配音",
+    template.config.aspectRatio,
+    template.config.resolution,
+  ].join(" · ");
+}
+
+function TemplateDetail({
+  template,
+  onClose,
+}: {
+  template: FactoryTemplate;
+  onClose: () => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const close = () => setOpen(false);
+  return (
+    <Modal
+      open={open}
+      centered
+      width={520}
+      title={template.name}
+      className="factory-template-detail"
+      classNames={{ mask: "factory-template-detail-mask" }}
+      closable={{ "aria-label": "关闭模板详情" }}
+      onCancel={close}
+      afterClose={onClose}
+      footer={
+        <Button type="primary" onClick={close}>
+          返回选择
+        </Button>
+      }
+    >
+      <p className="factory-template-detail-description">
+        {template.description || "按房源图片顺序组织讲解。"}
+      </p>
+      <dl className="factory-template-detail-specs">
+        <div>
+          <dt>版本</dt>
+          <dd>{template.version}</dd>
+        </div>
+        <div>
+          <dt>画面比例</dt>
+          <dd>{template.config.aspectRatio}</dd>
+        </div>
+        <div>
+          <dt>分辨率</dt>
+          <dd>{template.config.resolution}</dd>
+        </div>
+      </dl>
+    </Modal>
+  );
+}
 
 export function FactoryPicker({
   kind,
@@ -41,6 +114,10 @@ export function FactoryPicker({
   onProperties: (rows: Pick<FactoryProperty, "id" | "title">[]) => void;
 }) {
   const { message } = App.useApp();
+  const checkboxPrefix = useId();
+  const checkboxId = (id: string) =>
+    `${checkboxPrefix}-${encodeURIComponent(id)}`;
+  const templateTable = useRef<TableRef>(null);
   const [selected, setSelected] = useState(() => new Set(value));
   const [selectedOnly, setSelectedOnly] = useState(false);
   const [search, setSearch] = useState("");
@@ -86,7 +163,11 @@ export function FactoryPicker({
     (templatePage - 1) * PAGE_SIZE,
     templatePage * PAGE_SIZE,
   );
+  useEffect(() => {
+    templateTable.current?.scrollTo({ top: 0 });
+  }, [templatePage, search, language, mode, ratio, selectedOnly]);
   const propertyRows = properties.data?.rows || [];
+  const matchCount = property ? properties.data?.total : templateRows.length;
   const toggle = (ids: string[], checked: boolean) =>
     setSelected((current) => {
       const next = new Set(current);
@@ -98,7 +179,7 @@ export function FactoryPicker({
     });
   const pageIds = property
     ? propertyRows
-        .filter((row) => row.importStatus === "ready")
+        .filter((row) => row.importStatus === "ready" || selected.has(row.id))
         .map((row) => row.id)
     : shownTemplates.map(templateKey);
   const paginate = {
@@ -134,9 +215,10 @@ export function FactoryPicker({
   };
   const check = (id: string, label: string, disabled = false) => (
     <Checkbox
+      id={checkboxId(id)}
       aria-label={"选择" + label}
       checked={selected.has(id)}
-      disabled={disabled && !selected.has(id)}
+      disabled={selecting || (disabled && !selected.has(id))}
       onChange={(event) => {
         if (property) onProperties(propertyRows);
         toggle([id], event.target.checked);
@@ -147,10 +229,13 @@ export function FactoryPicker({
     <Modal
       title={property ? "选择房源" : "选择视频模板"}
       open
+      centered
+      className={`factory-picker-modal ${property ? "factory-property-picker-modal" : "factory-template-picker-modal"}`}
       width={960}
       onCancel={onClose}
       okText={"确认选择（" + selected.size + "）"}
       cancelText="取消"
+      okButtonProps={{ disabled: selecting }}
       onOk={() => {
         if (property) onProperties(propertyRows);
         onConfirm([...selected]);
@@ -162,7 +247,11 @@ export function FactoryPicker({
             {property ? "套房源" : "个模板"}
           </span>
           <Space>
-            <Button type="text" onClick={() => setSelected(new Set())}>
+            <Button
+              type="text"
+              disabled={selecting}
+              onClick={() => setSelected(new Set())}
+            >
               清空选择
             </Button>
             <CancelBtn />
@@ -171,7 +260,7 @@ export function FactoryPicker({
         </div>
       )}
     >
-      <Space wrap className="factory-tools">
+      <Space wrap className="factory-tools factory-picker-filters">
         <Input
           aria-label={property ? "搜索房源" : "搜索模板"}
           allowClear
@@ -179,6 +268,7 @@ export function FactoryPicker({
           placeholder={property ? "房源号、小区或标题" : "搜索名称、描述或版本"}
           value={search}
           maxLength={120}
+          disabled={selecting}
           onChange={(e) => {
             setSearch(e.target.value);
             setPage(1);
@@ -189,6 +279,7 @@ export function FactoryPicker({
             <Select
               aria-label="区域"
               placeholder="全部区域"
+              disabled={selecting}
               className="factory-filter"
               allowClear
               showSearch
@@ -202,6 +293,7 @@ export function FactoryPicker({
             <Select
               aria-label="素材状态"
               placeholder="全部素材状态"
+              disabled={selecting}
               className="factory-filter"
               allowClear
               options={[
@@ -262,9 +354,10 @@ export function FactoryPicker({
           </>
         )}
       </Space>
-      <Space wrap className="factory-tools">
+      <Space wrap className="factory-tools factory-picker-selection">
         <Checkbox
           checked={selectedOnly}
+          disabled={selecting}
           onChange={(e) => {
             setSelectedOnly(e.target.checked);
             setPage(1);
@@ -280,7 +373,7 @@ export function FactoryPicker({
             pageIds.some((id) => selected.has(id)) &&
             !pageIds.every((id) => selected.has(id))
           }
-          disabled={!pageIds.length}
+          disabled={selecting || !pageIds.length}
           onChange={(e) => {
             if (property) onProperties(propertyRows);
             toggle(pageIds, e.target.checked);
@@ -298,9 +391,10 @@ export function FactoryPicker({
         >
           全选筛选结果
         </Button>
-        <span className="muted">
-          符合条件{" "}
-          {property ? properties.data?.total || 0 : templateRows.length} 项
+        <span className="muted factory-picker-match-count" role="status">
+          {matchCount !== undefined
+            ? `符合条件 ${matchCount} 项`
+            : properties.isPending && "正在读取房源…"}
         </span>
       </Space>
       {properties.isError && property && (
@@ -315,8 +409,16 @@ export function FactoryPicker({
       )}
       {property ? (
         <Table
+          className="factory-picker-table factory-property-table"
           size="small"
           rowKey="id"
+          rowClassName={(row) =>
+            selected.has(row.id)
+              ? "is-selected"
+              : row.importStatus !== "ready"
+                ? "is-unavailable"
+                : ""
+          }
           dataSource={propertyRows}
           loading={properties.isFetching}
           pagination={{
@@ -324,106 +426,132 @@ export function FactoryPicker({
             current: properties.data?.page || 1,
             total: properties.data?.total || 0,
           }}
-          scroll={{ y: 390 }}
-          locale={{ emptyText: "没有符合条件的房源" }}
+          scroll={{ y: "var(--factory-property-list-height, 390px)" }}
+          locale={{
+            emptyText: properties.isError
+              ? "暂时无法显示房源"
+              : "没有符合条件的房源",
+          }}
           columns={[
             {
               title: "",
-              width: 44,
+              width: 52,
               render: (_, row) =>
                 check(row.id, row.title, row.importStatus !== "ready"),
             },
             {
               title: "房源",
               render: (_, row) => (
-                <div className="factory-property-cell">
-                  {row.image && (
-                    <img
-                      loading="lazy"
-                      alt=""
-                      src={row.image}
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        e.currentTarget.hidden = true;
-                      }}
-                    />
-                  )}
-                  <span>
+                <label
+                  className="factory-property-cell"
+                  htmlFor={checkboxId(row.id)}
+                >
+                  <span className="factory-property-cover" aria-hidden="true">
+                    <Building2 size={22} />
+                    {row.image && (
+                      <img
+                        key={row.image}
+                        loading="lazy"
+                        alt=""
+                        src={row.image}
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.hidden = true;
+                        }}
+                      />
+                    )}
+                  </span>
+                  <span className="factory-property-name">
                     <strong>{row.title}</strong>
                     <small>
-                      {row.propertyNumber || "无房源号"} · {row.community}
+                      {[row.propertyNumber || "无房源号", row.community]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </small>
+                    <span className="factory-property-compact">
+                      <span>
+                        {[row.district, propertySize(row)]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                      <MaterialStatus row={row} />
+                    </span>
                   </span>
-                </div>
+                </label>
               ),
             },
             {
               title: "区域",
               dataIndex: "district",
+              responsive: ["md"],
               width: 120,
               ellipsis: true,
             },
             {
               title: "户型 / 面积",
-              width: 150,
-              render: (_, row) =>
-                [row.layout, row.areaSqm ? row.areaSqm + " ㎡" : ""]
-                  .filter(Boolean)
-                  .join(" · ") || "—",
+              width: 168,
+              responsive: ["md"],
+              render: (_, row) => propertySize(row) || "—",
             },
             {
               title: "素材状态",
-              width: 108,
-              render: (_, row) =>
-                row.importStatus === "ready" ? (
-                  <Tag color="success">
-                    {row.sample ? "测试素材" : "素材就绪"}
-                  </Tag>
-                ) : (
-                  <Tag color="warning">缺少素材</Tag>
-                ),
+              width: 124,
+              responsive: ["md"],
+              render: (_, row) => <MaterialStatus row={row} />,
             },
           ]}
         />
       ) : (
         <Table
+          ref={templateTable}
+          className="factory-picker-table factory-template-table"
           size="small"
           rowKey={templateKey}
+          rowClassName={(row) =>
+            selected.has(templateKey(row)) ? "is-selected" : ""
+          }
           dataSource={shownTemplates}
           pagination={false}
-          scroll={{ y: 360 }}
+          scroll={{ y: "var(--factory-template-list-height, 400px)" }}
           locale={{ emptyText: "没有符合条件的模板" }}
           columns={[
             {
               title: "",
-              width: 44,
+              width: 52,
               render: (_, row) =>
                 check(templateKey(row), row.name + " · " + row.version),
             },
             {
               title: "模板",
               render: (_, row) => (
-                <span className="factory-template-cell">
+                <label
+                  className="factory-template-cell"
+                  htmlFor={checkboxId(templateKey(row))}
+                >
                   <strong>{row.name}</strong>
-                  <small>{row.description}</small>
-                </span>
+                  {row.description && (
+                    <small className="factory-template-description">
+                      {row.description}
+                    </small>
+                  )}
+                  <span className="factory-template-compact">
+                    版本 {row.version} · {templateSpecs(row)}
+                  </span>
+                </label>
               ),
             },
-            { title: "版本", dataIndex: "version", width: 90, ellipsis: true },
+            {
+              title: "版本",
+              dataIndex: "version",
+              width: 104,
+              ellipsis: true,
+              responsive: ["md"],
+            },
             {
               title: "制作规格",
-              width: 220,
-              render: (_, row) =>
-                [
-                  row.config.language === "en-US" ? "英文" : "中文",
-                  row.opening
-                    ? "MiniMax H3"
-                    : row.config.videoMode === "avatar"
-                      ? "露脸"
-                      : "配音",
-                  row.config.aspectRatio,
-                  row.config.resolution,
-                ].join(" · "),
+              width: 246,
+              responsive: ["md"],
+              render: (_, row) => templateSpecs(row),
             },
             {
               title: "",
@@ -461,20 +589,10 @@ export function FactoryPicker({
         </div>
       )}
       {preview && (
-        <Modal
-          open
-          title={preview.name}
-          onCancel={() => setPreview(undefined)}
-          footer={
-            <Button onClick={() => setPreview(undefined)}>返回选择</Button>
-          }
-        >
-          <p>{preview.description || "按房源图片顺序组织讲解。"}</p>
-          <p>
-            版本 {preview.version} · {preview.config.aspectRatio} ·{" "}
-            {preview.config.resolution}
-          </p>
-        </Modal>
+        <TemplateDetail
+          template={preview}
+          onClose={() => setPreview(undefined)}
+        />
       )}
     </Modal>
   );
