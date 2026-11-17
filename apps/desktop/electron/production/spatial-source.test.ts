@@ -112,6 +112,7 @@ function fixture() {
 
 describe("Realsee spatial import", () => {
   it("parses only JSON and normalizes all network references into safe local assets", () => {
+    expect(spatial.sourceURL(pageURL + "#lianjia").href).toBe(pageURL);
     const html = `<script>throw new Error('must not execute')</script><script type="application/json"><!--${JSON.stringify({ firstscreen: { defaultWork: rawWork() } })}--></script>`;
     const { work, assets } = spatial.normalizeWork(
       spatial.parseWork(html),

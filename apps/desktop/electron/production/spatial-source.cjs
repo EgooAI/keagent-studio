@@ -16,6 +16,7 @@ function sourceURL(value, asset = false, base) {
   } catch {
     throw new Error("VR 链接无效");
   }
+  if (!asset) url.hash = "";
   const allowed = asset
     ? ["vr-public.realsee-cdn.cn"]
     : [

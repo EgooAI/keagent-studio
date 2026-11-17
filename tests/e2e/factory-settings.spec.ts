@@ -74,7 +74,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
         workspace,
         catalog,
         aiConfigured: false,
-        spatialImported: false,
+        spatialImports: new Set<string>(),
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
         ],
@@ -144,7 +144,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
               };
             if (method === "panorama.source-restore")
               return {
-                scenes: state.spatialImported
+                scenes: state.spatialImports.has(args[0]?.propertyId)
                   ? [
                       {
                         id: "vr-0",
@@ -162,8 +162,27 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 reason: "not_configured",
               };
             const input = args[0] || {};
+            if (method === "createProperty") {
+              const saved = {
+                ...property,
+                ...input,
+                id: "new-property",
+                sample: false,
+              };
+              workspace.properties.push(saved);
+              return structuredClone(saved);
+            }
+            if (method === "updateProperty") {
+              const saved = workspace.properties.find((p) => p.id === args[0])!;
+              return structuredClone(Object.assign(saved, args[1]));
+            }
             if (method === "panorama.property-vr-import") {
-              state.spatialImported = true;
+              const saved = workspace.properties.find(
+                (p) => p.id === input.propertyId,
+              );
+              if (!saved?.details?.vrUrl?.startsWith("https://realsee.cn/"))
+                throw new Error("不支持的 VR 链接");
+              state.spatialImports.add(input.propertyId);
               return { count: 1 };
             }
             if (method === "panorama.opening-clip-import") {
@@ -1014,6 +1033,47 @@ test("房源制作素材可导入 VR 空间并刷新图库", async ({ page }) =>
     ),
   );
   expect(request.input).toEqual({ propertyId: "user-property" });
+});
+
+test("保存新增或更换的 VR 链接自动导入对应房源", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/properties");
+  await page.getByRole("button", { name: "手动添加", exact: true }).click();
+  const form = page.getByRole("dialog");
+  for (const [label, value] of Object.entries({
+    房源标题: "全景房源",
+    房源号: "VR-123",
+    小区名称: "全景小区",
+    "总价（万元）": "200",
+    "建筑面积（平方米）": "80",
+    "VR 看房链接": "https://realsee.cn/first",
+  }))
+    await form.getByLabel(label, { exact: true }).fill(value);
+  await form.getByRole("button", { name: "保存房源" }).click();
+  await expect(page).toHaveURL(/properties\/new-property$/);
+  await page.getByRole("tab", { name: "制作素材" }).click();
+  await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
+
+  for (const [label, value] of [
+    ["朝向", "南"],
+    ["VR 看房链接", "https://realsee.cn/second"],
+    ["VR 看房链接", "https://example.com/unsupported"],
+    ["VR 看房链接", ""],
+  ]) {
+    await page.getByRole("button", { name: "编辑房源" }).click();
+    await form.getByLabel(label, { exact: true }).fill(value);
+    await form.getByRole("button", { name: "保存修改" }).click();
+    await expect(form).toHaveCount(0);
+    if (value.endsWith("unsupported"))
+      await expect(page.getByText(/房源已保存，全景图导入失败/)).toBeVisible();
+  }
+  const imports = await page.evaluate(() =>
+    (window as any).factorySettingsTest.calls
+      .filter((c: any) => c.method === "panorama.property-vr-import")
+      .map((c: any) => c.input.propertyId),
+  );
+  expect(imports).toEqual(["new-property", "new-property", "new-property"]);
+  await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
 });
 
 test("贝壳未配置时可从正式房源导入切换到手动添加", async ({ page }) => {

@@ -66,9 +66,7 @@ import type { PanoramaScene } from "@keagent/shared-types";
 
 export default function PropertiesPage() {
   const { data } = useWorkspace();
-  const { message } = App.useApp();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState("grid");
@@ -321,19 +319,7 @@ export default function PropertiesPage() {
       {manualOpen && (
         <PropertyForm
           onClose={() => setManualOpen(false)}
-          onSave={async (input) => {
-            const property = await demoApi.createProperty({
-              ...input,
-              image: "",
-              images: [],
-            });
-            await queryClient.invalidateQueries(
-              { queryKey: ["workspace"] },
-              { cancelRefetch: false },
-            );
-            message.success("房源已保存，可继续添加素材");
-            navigate(`/properties/${property.id}`);
-          }}
+          onSaved={(property) => navigate(`/properties/${property.id}`)}
         />
       )}
     </>
@@ -741,7 +727,10 @@ export function PropertyDetailPage() {
               property={property}
               onDeleted={() => navigate("/properties", { replace: true })}
             />
-            <Button disabled={property.sample} onClick={() => setEditing(true)}>
+            <Button
+              disabled={property.sample || importing}
+              onClick={() => setEditing(true)}
+            >
               {property.sample ? "内置测试资料" : "编辑房源"}
             </Button>
             <Button
@@ -894,9 +883,8 @@ export function PropertyDetailPage() {
                   ) : window.desktop ? (
                     <>
                       <p className="muted">
-                        导入 VR 空间需先在房源资料填写含三维模型的 Realsee
-                        看房链接。
-                        导入会更新当前素材列表，已创建任务的素材和成片仍保留。
+                        保存新的如视看房链接后，会自动导入该空间的全部全景图。
+                        如需重试，可使用「导入 VR 空间」。
                       </p>
                       <div
                         style={{ display: "flex", gap: 12, flexWrap: "wrap" }}
@@ -999,18 +987,7 @@ export function PropertyDetailPage() {
         ]}
       />
       {editing && (
-        <PropertyForm
-          property={property}
-          onClose={() => setEditing(false)}
-          onSave={async (input) => {
-            await demoApi.updateProperty(property.id, input);
-            await queryClient.invalidateQueries(
-              { queryKey: ["workspace"] },
-              { cancelRefetch: false },
-            );
-            message.success("房源资料已更新");
-          }}
-        />
+        <PropertyForm property={property} onClose={() => setEditing(false)} />
       )}
     </>
   );

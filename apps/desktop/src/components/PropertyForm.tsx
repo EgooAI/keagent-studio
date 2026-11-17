@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { App, Form, Input, InputNumber, Modal, Select } from "antd";
+import { useQueryClient } from "@tanstack/react-query";
+import { demoApi } from "@keagent/api-client";
 import type { Property } from "@keagent/shared-types";
+import { request as productionRequest } from "./panoramaClient";
 
 type PropertyInput = Pick<
   Property,
@@ -47,22 +50,25 @@ async function validateLink(_: unknown, value?: string) {
 export function PropertyForm({
   property,
   onClose,
-  onSave,
+  onSaved,
 }: {
   property?: Property;
   onClose: () => void;
-  onSave: (input: PropertyInput) => Promise<void>;
+  onSaved?: (property: Property) => void;
 }) {
   const { message } = App.useApp();
+  const queryClient = useQueryClient();
   const [form] = Form.useForm<PropertyFormValues>();
-  const [saving, setSaving] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "saving" | "importing">("idle");
+  const busy = phase !== "idle";
   const minimumPrice = property ? 0 : 1;
 
   async function save(values: PropertyFormValues) {
-    setSaving(true);
+    if (busy) return;
+    setPhase("saving");
     try {
       const { price, sellingPoints, details, ...facts } = values;
-      await onSave({
+      const input: PropertyInput = {
         title: facts.title.trim(),
         propertyNumber: facts.propertyNumber.trim(),
         community: facts.community.trim(),
@@ -81,12 +87,47 @@ export function PropertyForm({
             .map(([key, value]) => [key, value?.trim() ?? ""])
             .filter(([, value]) => value !== ""),
         ),
-      });
+      };
+      const previousLink = property?.details?.vrUrl;
+      const saved = property
+        ? await demoApi.updateProperty(property.id, input)
+        : await demoApi.createProperty({ ...input, image: "", images: [] });
+      const link = saved.details?.vrUrl;
+      if (window.desktop && link && link !== previousLink) {
+        setPhase("importing");
+        try {
+          const { count } = await productionRequest<{ count: number }>(
+            "property-vr-import",
+            { propertyId: saved.id },
+          );
+          await queryClient.invalidateQueries({
+            queryKey: ["property-production-material", saved.id],
+          });
+          message.success(
+            `已为「${saved.community}」导入 ${count} 张 VR 全景图`,
+          );
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "请稍后重试";
+          message.warning(
+            `房源已保存，全景图导入失败（${reason}）。可在「制作素材」中重试。`,
+            8,
+          );
+        }
+      } else {
+        message.success(
+          property ? "房源资料已更新" : "房源已保存，可继续添加素材",
+        );
+      }
+      await queryClient.invalidateQueries(
+        { queryKey: ["workspace"] },
+        { cancelRefetch: false },
+      );
       onClose();
+      onSaved?.(saved);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "房源保存失败");
     } finally {
-      setSaving(false);
+      setPhase("idle");
     }
   }
 
@@ -96,14 +137,25 @@ export function PropertyForm({
       open
       width={700}
       styles={{ body: { maxHeight: "66vh", overflowY: "auto" } }}
-      onCancel={onClose}
+      onCancel={() => {
+        if (!busy) onClose();
+      }}
+      closable={!busy}
+      cancelButtonProps={{ disabled: busy }}
       onOk={() => form.submit()}
-      confirmLoading={saving}
-      okText={property ? "保存修改" : "保存房源"}
+      confirmLoading={busy}
+      okText={
+        phase === "importing"
+          ? "正在导入全景图…"
+          : property
+            ? "保存修改"
+            : "保存房源"
+      }
     >
       <Form
         form={form}
         layout="vertical"
+        disabled={busy}
         onFinish={save}
         initialValues={
           property && {
@@ -195,6 +247,10 @@ export function PropertyForm({
           <Form.Item
             name={["details", "vrUrl"]}
             label="VR 看房链接"
+            extra={
+              window.desktop &&
+              "保存新的如视看房链接后，自动导入全部点位并替换当前房源的全景图。"
+            }
             rules={[{ validator: validateLink }]}
           >
             <Input maxLength={2048} placeholder="https://…" />
