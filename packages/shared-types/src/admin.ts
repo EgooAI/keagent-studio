@@ -126,6 +126,8 @@ export interface AdminAIManagement {
   };
   candidate: (AdminAIValues & { missing: string[]; issues: string[] }) | null;
   canActivate: boolean;
+  ttsTestPassed?: boolean;
+  reusedTtsTestAt?: string | null;
 }
 export interface AdminOverview {
   users: number;

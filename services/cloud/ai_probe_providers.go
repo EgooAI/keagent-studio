@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -122,6 +123,9 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 			sentence = "This is a voice service test."
 		}
 		_, err = s.synthesizePCM(ctx, "keagent-ai-probe", sentence, voice.Speaker, voice.Resource, 1)
+		if err == nil {
+			p.Progress.TTSKeyFingerprint = ttsKeyFingerprint(aiValue(ctx, "VOLC_TTS_API_KEY"))
+		}
 		return err
 	case "voice-clone":
 		return s.probeAIClone(ctx, p, input)
@@ -243,18 +247,19 @@ func (s *server) probeAIClone(ctx context.Context, p *aiProbe, input object) err
 			if err := s.aiStep(ctx, p, "提交专用样本训练"); err != nil {
 				return err
 			}
-			raw, err := s.speechCall(ctx, "voice_clone", object{"speaker_id": "custom_speaker_id", "custom_speaker_id": speaker, "language": "zh-CN", "audio": object{"data": input["audio"], "format": input["format"]}}, "")
+			raw, err := s.speechCall(ctx, "voice_clone", object{"speaker_id": "custom_speaker_id", "custom_speaker_id": speaker, "language": 0, "audio": object{"data": input["audio"], "format": input["format"]}}, "")
 			if err != nil {
 				return err
 			}
 			var result struct {
-				Code *int `json:"code"`
+				Code   *int `json:"code"`
+				Status *int `json:"status"`
 			}
-			if json.Unmarshal(raw, &result) != nil || result.Code == nil {
+			if json.Unmarshal(raw, &result) != nil || result.Code == nil && result.Status == nil {
 				return fail(502, "训练提交结果未知，请核对供应商")
 			}
-			if *result.Code != 0 {
-				return fail(502, "供应商拒绝测试训练，请检查音色槽位和额度")
+			if result.Code != nil && *result.Code != 0 {
+				return fail(502, fmt.Sprintf("火山拒绝测试训练（错误码 %d）", *result.Code))
 			}
 			p.Progress.Task = speaker
 			if err = s.saveAIProgress(ctx, p); err != nil {

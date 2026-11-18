@@ -67,6 +67,7 @@ export function AIProbeState({ test }: { test?: AdminAIProbe | null }) {
 type Fields = Record<string, string | boolean>;
 type Props = {
   row: AdminAIManagement;
+  cloneTrainingRequired: boolean;
   voices: AdminAIConfig["voices"];
   writable: boolean;
   onDirty: (dirty: boolean) => void;
@@ -99,6 +100,7 @@ async function fixtureImages(count: number) {
 
 export default function AIConfigDialog({
   row,
+  cloneTrainingRequired,
   voices,
   writable,
   onDirty,
@@ -195,7 +197,7 @@ export default function AIConfigDialog({
       await submit(
         "/save",
         { revision: revision.current, fields },
-        (changed) => (changed ? "配置已保存，请运行真实样例" : "配置未改动"),
+        (changed) => (changed ? "配置已保存，请完成可用性测试" : "配置未改动"),
       )
     ) {
       markDirty(false);
@@ -392,7 +394,7 @@ export default function AIConfigDialog({
                 }
                 onClick={activate}
               >
-                启用配置
+                {row.group === "speech" ? "启用共享配置" : "启用配置"}
               </Button>
             )}
           </div>
@@ -404,9 +406,17 @@ export default function AIConfigDialog({
           <h3>服务配置</h3>
           {row.group === "speech" && (
             <p className="admin-secondary">
-              配音与声音复刻共用 API Key。启用前须验证已开启的能力。
+              配音与声音复刻共用 API Key。启用共享配置会同时应用两项服务的设置。
             </p>
           )}
+          {service === "tts" &&
+            candidate &&
+            row.summary.state === "configured" &&
+            !row.active.locked && (
+              <p className="admin-secondary">
+                当前火山配音已启用，可以继续使用公共音色。
+              </p>
+            )}
           <Form
             form={form}
             layout="vertical"
@@ -513,7 +523,14 @@ export default function AIConfigDialog({
         <section className="ai-config-section">
           <div className="admin-section-heading">
             <h3>可用性测试</h3>
-            <AIProbeState test={test} />
+            {testingCandidate &&
+            service === "tts" &&
+            !test &&
+            row.reusedTtsTestAt ? (
+              <Tag color="green">配音样例已复用</Tag>
+            ) : (
+              <AIProbeState test={test} />
+            )}
           </div>
           {candidate ? (
             <Radio.Group
@@ -581,10 +598,18 @@ export default function AIConfigDialog({
               )}
             </>
           )}
+          {candidate && service === "tts" && row.reusedTtsTestAt && (
+            <p className="admin-secondary">
+              待启用配置已复用生效配置的火山配音样例（
+              {dateTime(row.reusedTtsTestAt)}）。
+            </p>
+          )}
           {candidate && !row.canActivate && !running && (
             <p className="admin-secondary">
               {row.group === "speech"
-                ? "启用前须通过配音测试。打开声音复刻时，也须通过复刻测试。"
+                ? cloneTrainingRequired
+                  ? "待启用配置在「声音复刻」中通过最近 24 小时内的复刻训练后即可启用。"
+                  : "仅启用配音的配置需要最近 24 小时内通过配音样例。"
                 : "启用需要此配置最近 24 小时内通过真实样例测试。"}
             </p>
           )}
@@ -595,12 +620,14 @@ export default function AIConfigDialog({
             >
               检查连通性
             </Button>
-            <Button
-              disabled={busy || running}
-              onClick={() => openTest("sample")}
-            >
-              运行真实样例
-            </Button>
+            {service !== "voice-clone" && (
+              <Button
+                disabled={busy || running}
+                onClick={() => openTest("sample")}
+              >
+                运行真实样例
+              </Button>
+            )}
             {service === "voice-clone" && (
               <Button
                 disabled={busy || running}
@@ -615,8 +642,9 @@ export default function AIConfigDialog({
       {testDialog && (
         <div>
           <p className="admin-secondary">
-            本次会使用{testDialog.label}
-            向供应商发起真实调用，可能计费或消耗额度。
+            {testMode === "training"
+              ? `本次会使用${testDialog.label}提交训练并查询音色状态。生成试听音频时可能收取试听字符费。`
+              : `本次会使用${testDialog.label}向供应商发起真实调用，可能计费或消耗额度。`}
           </p>
           <Form
             layout="vertical"
@@ -638,15 +666,6 @@ export default function AIConfigDialog({
                   }))}
                   placeholder="选择已上架的音色"
                 />
-              </Form.Item>
-            )}
-            {service === "voice-clone" && testMode === "sample" && (
-              <Form.Item
-                name="speaker"
-                label="专用测试音色 ID"
-                rules={[{ required: true, message: "请输入测试音色 ID" }]}
-              >
-                <Input maxLength={150} />
               </Form.Item>
             )}
             {service === "beike" &&

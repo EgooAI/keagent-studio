@@ -67,16 +67,16 @@ func (s *server) aiOverview(ctx context.Context) (object, error) {
 		if err != nil {
 			return nil, err
 		}
-		canActivate := false
+		var activation aiActivation
 		if h.Candidate > 0 && keyErr == nil && !current.locked[spec.Group] {
-			canActivate, err = s.aiActivationReady(ctx, s.db, spec.Group, h)
+			activation, err = s.checkAIActivation(ctx, s.db, spec.Group, h)
 			if err != nil {
 				return nil, err
 			}
 		}
 		result = append(result, object{"summary": services[i], "fields": spec.Fields, "group": spec.Group,
 			"revision": h.Revision, "active": object{"version": h.Active, "source": map[bool]string{true: "managed", false: "environment"}[h.Active > 0], "fields": fields, "secrets": secrets, "activatedAt": h.ActivatedAt, "test": activeTest, "locked": current.locked[spec.Group]},
-			"candidate": candidate, "canActivate": canActivate})
+			"candidate": candidate, "canActivate": activation.ready, "ttsTestPassed": activation.ttsTestPassed, "reusedTtsTestAt": activation.reusedTTSTestAt})
 	}
 	voices, err := s.publicVoices(ctx, false)
 	if err != nil {
@@ -170,11 +170,11 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 		if h.Candidate == 0 || number(input["version"]) != float64(h.Candidate) {
 			return nil, fail(409, "待启用配置已变化，请刷新")
 		}
-		ready, err := s.aiActivationReady(ctx, tx, spec.Group, h)
+		activation, err := s.checkAIActivation(ctx, tx, spec.Group, h)
 		if err != nil {
 			return nil, err
 		}
-		if !ready {
+		if !activation.ready {
 			return nil, fail(409, "请先完成此配置最近 24 小时内所需的实际测试")
 		}
 		if h.Active == 0 {
@@ -256,31 +256,82 @@ func patchAIValues(spec aiSpec, values aiValues, patch object) (bool, error) {
 	}
 	return true, nil
 }
-func (s *server) aiActivationReady(ctx context.Context, db aiRowReader, group string, h aiHead) (bool, error) {
+
+type aiActivation struct {
+	ready           bool
+	ttsTestPassed   bool
+	reusedTTSTestAt *time.Time
+}
+
+type aiActivationTest struct {
+	status      string
+	finished    sql.NullTime
+	fingerprint string
+}
+
+func latestAIActivationTest(ctx context.Context, db aiRowReader, service, mode string, version int64) (aiActivationTest, error) {
+	var test aiActivationTest
+	err := db.QueryRowContext(ctx, `SELECT status,finished_at,COALESCE(result->>'ttsKeyFingerprint','')
+		FROM keagent_ai_probe WHERE service=$1 AND version=$2 AND mode=$3
+		ORDER BY created_at DESC,id DESC LIMIT 1`, service, version, mode).Scan(&test.status, &test.finished, &test.fingerprint)
+	return test, err
+}
+
+func (t aiActivationTest) passedRecently() bool {
+	return t.status == "passed" && t.finished.Valid && time.Since(t.finished.Time) <= 24*time.Hour
+}
+
+func (s *server) checkAIActivation(ctx context.Context, db aiRowReader, group string, h aiHead) (aiActivation, error) {
+	var activation aiActivation
 	values, err := readAIValues(ctx, db, group, h.Candidate)
 	if err != nil {
-		return false, nil
+		return activation, nil
 	}
+	cloneEnabled := group == "speech" && values["VOLC_VOICE_CLONE_ENABLED"] == "true"
 	for _, spec := range aiSpecs {
-		if spec.Group != group || spec.ID == "voice-clone" && values["VOLC_VOICE_CLONE_ENABLED"] != "true" {
+		if spec.Group != group || spec.ID == "voice-clone" && !cloneEnabled {
 			continue
 		}
 		missing, issues := aiConfigIssues(spec, values)
 		if len(missing)+len(issues) > 0 {
-			return false, nil
+			return activation, nil
 		}
-		var status string
-		var finished sql.NullTime
-		err = db.QueryRowContext(ctx, `SELECT status,finished_at FROM keagent_ai_probe WHERE service=$1 AND version=$2 AND mode IN ('sample','training') ORDER BY created_at DESC LIMIT 1`, spec.ID, h.Candidate).Scan(&status, &finished)
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
+		mode := "sample"
+		if spec.ID == "voice-clone" {
+			mode = "training"
 		}
-		if err != nil {
-			return false, err
+		test, err := latestAIActivationTest(ctx, db, spec.ID, mode, h.Candidate)
+		if errors.Is(err, sql.ErrNoRows) && spec.ID == "tts" {
+			active, activeErr := readAIValues(ctx, db, group, h.Active)
+			key := values["VOLC_TTS_API_KEY"]
+			if activeErr == nil && active["VOLC_TTS_API_KEY"] == key {
+				activeTest, activeTestErr := latestAIActivationTest(ctx, db, spec.ID, mode, h.Active)
+				if activeTestErr != nil && !errors.Is(activeTestErr, sql.ErrNoRows) {
+					return activation, activeTestErr
+				}
+				// Earlier tests identify their configuration by version alone.
+				if activeTest.passedRecently() &&
+					(activeTest.fingerprint == "" || activeTest.fingerprint == ttsKeyFingerprint(key)) {
+					activation.ttsTestPassed = true
+					activation.reusedTTSTestAt = &activeTest.finished.Time
+					continue
+				}
+			}
 		}
-		if status != "passed" || !finished.Valid || time.Since(finished.Time) > 24*time.Hour {
-			return false, nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return activation, err
+		}
+		passed := err == nil && test.passedRecently()
+		if spec.ID == "tts" {
+			activation.ttsTestPassed = passed
+			if cloneEnabled {
+				continue
+			}
+		}
+		if !passed {
+			return activation, nil
 		}
 	}
-	return true, nil
+	activation.ready = true
+	return activation, nil
 }

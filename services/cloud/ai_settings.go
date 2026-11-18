@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,6 +178,16 @@ func openAI(label string, sealed []byte, target any) error {
 }
 func aiVersionLabel(group string, version int64) string {
 	return fmt.Sprintf("ai-config:%s:%d", group, version)
+}
+
+func ttsKeyFingerprint(value string) string {
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("AI_CONFIG_ENCRYPTION_KEY")))
+	if err != nil || len(key) != 32 || value == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("ai-probe:tts-key:" + value))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 type aiRowReader interface {

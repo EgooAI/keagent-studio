@@ -63,12 +63,6 @@ const serviceOrder: AdminAIService["id"][] = [
 
 function ConfigState({ row }: { row: AdminAIManagement }) {
   if (row.active.locked) return <Tag color="red">配置无法解密</Tag>;
-  if (row.candidate)
-    return row.canActivate ? (
-      <Tag color="blue">待启用</Tag>
-    ) : (
-      <Tag color="orange">待测试</Tag>
-    );
   if (
     row.summary.id === "voice-clone" &&
     !row.active.fields.VOLC_VOICE_CLONE_ENABLED
@@ -110,6 +104,11 @@ export default function AdminAI() {
         serviceOrder.indexOf(a.summary.id) - serviceOrder.indexOf(b.summary.id),
     );
   const selected = rows.find((row) => row.summary.id === dialogId);
+  const cloneTrainingRequired = rows.some(
+    (row) =>
+      row.summary.id === "voice-clone" &&
+      row.candidate?.fields.VOLC_VOICE_CLONE_ENABLED === true,
+  );
 
   useEffect(() => {
     if (dialogId) lastService.current = dialogId;
@@ -247,12 +246,25 @@ export default function AdminAI() {
                               </th>
                               <td>
                                 <ConfigState row={row} />
+                                {row.candidate && !row.active.locked && (
+                                  <span className="admin-secondary ai-test-meta">
+                                    {row.canActivate
+                                      ? "待启用配置 · 可启用"
+                                      : row.summary.id === "tts" &&
+                                          cloneTrainingRequired
+                                        ? "共享配置待验证声音复刻"
+                                        : "待启用配置 · 待测试"}
+                                  </span>
+                                )}
                               </td>
                               <td className="ai-detail-column">
                                 <AIProbeState test={test} />
                                 {test && (
                                   <span className="admin-secondary ai-test-meta">
-                                    {probeModeLabel(test.mode)} ·{" "}
+                                    {test.version === row.active.version
+                                      ? "生效配置"
+                                      : "待启用配置"}{" "}
+                                    · {probeModeLabel(test.mode)} ·{" "}
                                     {dateTime(
                                       test.finishedAt ?? test.createdAt,
                                     )}
@@ -296,6 +308,7 @@ export default function AdminAI() {
                 <AIConfigDialog
                   key={selected.summary.id}
                   row={selected}
+                  cloneTrainingRequired={cloneTrainingRequired}
                   voices={query.data.voices}
                   writable={query.data.writable}
                   onDirty={setDirty}

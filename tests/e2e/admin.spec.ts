@@ -427,6 +427,25 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     finishedAt: stamp,
     steps: [],
   };
+  const tts = management[1];
+  tts.group = "speech";
+  tts.active.test = { ...script.active.test, id: "tts-sample", service: "tts" };
+  tts.candidate = {
+    version: 4,
+    fields: tts.active.fields,
+    secrets: tts.active.secrets,
+    test: null,
+    missing: [],
+    issues: [],
+  };
+  tts.ttsTestPassed = true;
+  tts.reusedTtsTestAt = stamp;
+  const clone = management.find((row) => row.summary.id === "voice-clone")!;
+  clone.group = "speech";
+  clone.candidate = {
+    ...tts.candidate,
+    fields: { VOLC_VOICE_CLONE_ENABLED: true },
+  };
   const data: AdminAIConfig = {
     configured: true,
     model: "vision-active",
@@ -475,6 +494,18 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
         script.canActivate = false;
       }
       if (path.endsWith("/test")) {
+        if (input.service === "voice-clone" && input.mode === "training") {
+          expect(input.version).toBe(clone.candidate!.version);
+          clone.candidate!.test = {
+            ...script.active.test!,
+            id: input.requestId,
+            service: "voice-clone",
+            version: input.version,
+            mode: "training",
+          };
+          clone.canActivate = true;
+          return route.fulfill({ json: {}, headers });
+        }
         const target =
           input.version === script.active.version
             ? script.active
@@ -491,11 +522,14 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
           steps: [],
         };
       }
-      if (path.endsWith("/activate") && script.candidate) {
-        script.revision++;
-        script.active = { ...script.active, ...script.candidate };
-        script.candidate = null;
-        script.canActivate = false;
+      if (path.endsWith("/activate")) {
+        const row = input.service === "voice-clone" ? clone : script;
+        if (row.candidate) {
+          row.revision++;
+          row.active = { ...row.active, ...row.candidate };
+          row.candidate = null;
+          row.canActivate = false;
+        }
       }
       return route.fulfill({ json: {}, headers });
     },
@@ -503,6 +537,63 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   await page.goto(adminBase + "/#/admin/ai");
   const table = page.getByRole("table");
   await expect(table.getByRole("row")).toHaveCount(7);
+  const ttsRow = table.getByRole("row", { name: /火山配音/ });
+  await expect(ttsRow.getByText("已启用", { exact: true })).toBeVisible();
+  await expect(ttsRow.getByText("共享配置待验证声音复刻")).toBeVisible();
+  await ttsRow.getByRole("button", { name: "管理火山配音" }).click();
+  const ttsDialog = page.getByRole("dialog", { name: "火山配音", exact: true });
+  await expect(
+    ttsDialog.getByText("当前火山配音已启用，可以继续使用公共音色。"),
+  ).toBeVisible();
+  await expect(
+    ttsDialog.getByText("配音样例已复用", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    ttsDialog.getByRole("button", { name: "启用共享配置", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(ttsDialog).toBeHidden();
+  tts.active.test = null;
+  tts.ttsTestPassed = false;
+  tts.reusedTtsTestAt = null;
+  await page.getByRole("button", { name: "管理声音复刻" }).click();
+  const cloneDialog = page.getByRole("dialog", {
+    name: "声音复刻",
+    exact: true,
+  });
+  const enableClone = cloneDialog.getByRole("button", {
+    name: "启用共享配置",
+    exact: true,
+  });
+  await expect(enableClone).toBeDisabled();
+  await expect(
+    cloneDialog.getByRole("button", { name: "运行真实样例", exact: true }),
+  ).toHaveCount(0);
+  await cloneDialog.getByRole("button", { name: "测试复刻训练" }).click();
+  const training = page.getByRole("dialog", { name: "确认测试复刻训练" });
+  await training.locator('input[type="file"]').setInputFiles({
+    name: "training.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.from("mock training audio"),
+  });
+  await training.getByRole("checkbox").check();
+  await training.getByRole("button", { name: "确认运行测试" }).click();
+  await expect(cloneDialog.getByText("复刻训练通过")).toBeVisible();
+  expect(writes.at(-1)?.input).toMatchObject({
+    service: "voice-clone",
+    version: 4,
+    mode: "training",
+    confirmed: true,
+  });
+  await enableClone.click();
+  await page.getByRole("button", { name: "确认启用", exact: true }).click();
+  await expect(enableClone).toHaveCount(0);
+  expect(writes.at(-1)).toMatchObject({
+    path: "/v1/admin/ai-config/activate",
+    input: { service: "voice-clone", version: 4 },
+  });
+  await cloneDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(cloneDialog).toBeHidden();
   const manage = page.getByRole("button", { name: "管理多模态文案" });
   for (const width of [1440, 1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -545,8 +636,7 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     exact: true,
   });
   const enable = configDialog.getByRole("button", {
-    name: "启用配置",
-    exact: true,
+    name: /启用配置$/,
   });
   const runSample = configDialog.getByRole("button", {
     name: "运行真实样例",
@@ -571,7 +661,11 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   );
 
   await save.click();
-  await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
+  await expect(scriptRow.getByText("已启用", { exact: true })).toBeVisible();
+  await expect(
+    scriptRow.getByText("待启用配置 · 待测试", { exact: true }),
+  ).toBeVisible();
+  await expect(scriptRow.getByText(/^生效配置 · 仅连通性 · /)).toBeVisible();
   await expect(configDialog.getByText("未测试", { exact: true })).toBeVisible();
   expect(script.active.fields.AI_MODEL).toBe("vision-active");
   await configDialog
@@ -587,6 +681,7 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   await expect(
     configDialog.getByText("连通性通过", { exact: true }),
   ).toBeVisible();
+  await expect(runSample).toBeEnabled();
   await expect(enable).toBeDisabled();
   await runSample.click();
   const sampleDialog = page.getByRole("dialog", {
@@ -618,8 +713,11 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   await expect(configDialog.getByText(probe.message)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(manage).toBeFocused();
-  await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
+  await expect(
+    scriptRow.getByText("待启用配置 · 待测试", { exact: true }),
+  ).toBeVisible();
   await expect(scriptRow.getByText("测试失败")).toBeVisible();
+  await expect(scriptRow.getByText(/^待启用配置 · 真实样例 · /)).toBeVisible();
   await manage.click();
   await runSample.click();
   await page.getByRole("button", { name: "确认运行测试", exact: true }).click();

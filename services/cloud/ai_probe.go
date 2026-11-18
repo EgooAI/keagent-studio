@@ -17,10 +17,11 @@ type aiProbeStep struct {
 	State string `json:"state"`
 }
 type aiProbeProgress struct {
-	Steps    []aiProbeStep `json:"steps"`
-	Message  string        `json:"message,omitempty"`
-	Category string        `json:"category,omitempty"`
-	Task     string        `json:"task,omitempty"`
+	Steps             []aiProbeStep `json:"steps"`
+	Message           string        `json:"message,omitempty"`
+	Category          string        `json:"category,omitempty"`
+	Task              string        `json:"task,omitempty"`
+	TTSKeyFingerprint string        `json:"ttsKeyFingerprint,omitempty"`
 }
 type aiProbe struct {
 	ID, Group, Service, Mode, Status, Actor, Hash, Worker string
@@ -239,18 +240,22 @@ func aiProbeFailure(service string, err error) (status, category, message string
 		}
 		return "failed", category, upstream.Error()
 	}
-	if service == "tts" && errors.As(err, &upstream) {
-		category, message = "validation", "火山配音请求失败"
+	if (service == "tts" || service == "voice-clone") && errors.As(err, &upstream) {
+		label := "火山配音"
+		if service == "voice-clone" {
+			label = "火山声音复刻"
+		}
+		category, message = "validation", label+"请求失败"
 		switch upstream.httpStatus {
 		case http.StatusUnauthorized:
-			category, message = "authentication", "火山配音鉴权失败，请核对豆包语音 API Key"
+			category, message = "authentication", label+"鉴权失败，请核对豆包语音 API Key"
 			if upstream.code == 45000010 {
 				message = "豆包语音 API Key 无效，请从豆包语音控制台复制有效的 API Key 后重新保存并测试"
 			}
 		case http.StatusForbidden:
-			category, message = "permission", "火山拒绝配音请求，请检查模型和音色权限"
+			category, message = "permission", "火山拒绝请求，请检查模型和音色权限"
 		case http.StatusPaymentRequired, http.StatusTooManyRequests:
-			category, message = "quota", "火山配音请求限流或额度不足，请在豆包语音控制台核对"
+			category, message = "quota", label+"请求限流或额度不足，请在豆包语音控制台核对"
 		}
 		details := fmt.Sprintf("HTTP %d", upstream.httpStatus)
 		if upstream.code != 0 {
