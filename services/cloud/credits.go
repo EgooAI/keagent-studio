@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS keagent_credit_hold (
  created_at timestamptz NOT NULL DEFAULT now(), settled_at timestamptz);
 -- 同键同时只允许一个未释放的冻结单；释放后的同键可重新冻结（失败重试）。
 CREATE UNIQUE INDEX IF NOT EXISTS keagent_credit_hold_idem_idx ON keagent_credit_hold(owner_id, op, idem_key) WHERE state <> 'released';
+CREATE INDEX IF NOT EXISTS keagent_credit_hold_activity_idx ON keagent_credit_hold(owner_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS keagent_credit_hold_task_idx ON keagent_credit_hold(owner_id, ref_id, created_at DESC, id DESC) WHERE metadata ? 'stage';
+CREATE INDEX IF NOT EXISTS keagent_credit_hold_batch_idx ON keagent_credit_hold(owner_id, (metadata->>'batchId'), created_at DESC, id DESC) WHERE metadata ? 'batchId';
 CREATE TABLE IF NOT EXISTS keagent_credit_ledger (
  id text PRIMARY KEY, owner_id text NOT NULL, kind text NOT NULL, lot_id text NOT NULL DEFAULT '',
  amount bigint NOT NULL, op text NOT NULL DEFAULT '', ref_id text NOT NULL DEFAULT '',
@@ -285,10 +288,10 @@ func releaseStaleHolds(ctx context.Context, tx *sql.Tx) (int64, error) {
 		return 0, err
 	}
 	for _, h := range holds {
-		if err = releaseAllocation(ctx, tx, h.ownerID, h.id, h.allocation); err != nil {
+		if err = releaseAllocation(ctx, tx, h.ownerID, h.id, h.allocation, "stale_hold"); err != nil {
 			return 0, err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_hold SET state=$2, settled_at=now() WHERE id=$1`, h.id, creditStateReleased); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_hold SET state=$2, settled_at=now(), metadata=metadata || $3::jsonb WHERE id=$1`, h.id, creditStateReleased, mustJSON(object{"releaseReason": "stale_hold"})); err != nil {
 			return 0, err
 		}
 	}
@@ -311,7 +314,7 @@ func (s *server) chargeSync(ctx context.Context, ownerID, op, refID string, amou
 	}
 	result, runErr := run(ctx)
 	if runErr != nil {
-		if releaseErr := s.releaseHold(ctx, hold.ID); releaseErr != nil {
+		if releaseErr := s.releaseHoldWithReason(ctx, hold.ID, "operation_failed"); releaseErr != nil {
 			log.Printf("credit release after failed %s: %v", op, releaseErr)
 		}
 		return nil, runErr
@@ -328,12 +331,13 @@ func (s *server) chargedScript(ctx context.Context, a actor, input object, run f
 	if err != nil {
 		return nil, err
 	}
-	return s.chargeSync(ctx, a.UserID, "script", "", prices["script"], digestBytes(mustJSON(input)), version, nil, run)
+	ref, metadata := creditChargeDetails(ctx, "", "request", 1, prices["script"])
+	return s.chargeSync(ctx, a.UserID, "script", ref, prices["script"], digestBytes(mustJSON(input)), version, metadata, run)
 }
 
 // settleHoldByKey 按幂等键收尾异步任务的冻结单。
 // 没有在途冻结单（免费操作或已收尾）时静默跳过；capture=true 全额结算，否则释放退款。
-func (s *server) settleHoldByKey(ctx context.Context, ownerID, op, idemKey string, capture bool) error {
+func (s *server) settleHoldByKey(ctx context.Context, ownerID, op, idemKey string, capture bool, releaseReason string) error {
 	var holdID string
 	var amount int64
 	err := s.db.QueryRowContext(ctx, `SELECT id, amount FROM keagent_credit_hold WHERE owner_id=$1 AND op=$2 AND idem_key=$3 AND state='held'`, ownerID, op, idemKey).Scan(&holdID, &amount)
@@ -346,7 +350,7 @@ func (s *server) settleHoldByKey(ctx context.Context, ownerID, op, idemKey strin
 	if capture {
 		return s.captureHold(ctx, holdID, amount)
 	}
-	return s.releaseHold(ctx, holdID)
+	return s.releaseHoldWithReason(ctx, holdID, releaseReason)
 }
 
 func scanHoldRow(row *sql.Row) (creditHold, error) {
@@ -385,7 +389,7 @@ func splitAllocation(allocation []creditAllocation, actual int64) (captured, rel
 }
 
 // releaseAllocation 把未消耗的冻结额度退回原批次；赠送批次已过期的，退回金额转为充值积分。
-func releaseAllocation(ctx context.Context, tx *sql.Tx, ownerID, holdID string, allocation []creditAllocation) error {
+func releaseAllocation(ctx context.Context, tx *sql.Tx, ownerID, holdID string, allocation []creditAllocation, releaseReason string) error {
 	for _, a := range allocation {
 		var kind string
 		var expires sql.NullTime
@@ -406,7 +410,7 @@ func releaseAllocation(ctx context.Context, tx *sql.Tx, ownerID, holdID string, 
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO keagent_credit_ledger(id,owner_id,kind,lot_id,amount,ref_id) VALUES($1,$2,'release',$3,$4,$5)`, id(), ownerID, ledgerLot, a.Amount, holdID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO keagent_credit_ledger(id,owner_id,kind,lot_id,amount,ref_id,metadata) VALUES($1,$2,'release',$3,$4,$5,$6)`, id(), ownerID, ledgerLot, a.Amount, holdID, mustJSON(object{"releaseReason": releaseReason})); err != nil {
 			return err
 		}
 	}
@@ -549,14 +553,18 @@ func (s *server) captureHold(ctx context.Context, holdID string, actual int64) e
 		if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_lot SET held=held-$2 WHERE id=$1 AND held>=$2`, a.LotID, a.Amount); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_credit_ledger(id,owner_id,kind,lot_id,amount,op,ref_id,idem_key,metadata) VALUES($1,$2,'capture',$3,0,$4,$5,$6,$7)`, id(), hold.OwnerID, a.LotID, hold.Op, hold.RefID, hold.IdemKey, mustJSON(object{"spent": a.Amount})); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_credit_ledger(id,owner_id,kind,lot_id,amount,op,ref_id,idem_key,price_version,metadata) VALUES($1,$2,'capture',$3,0,$4,$5,$6,$7,$8)`, id(), hold.OwnerID, a.LotID, hold.Op, hold.RefID, hold.IdemKey, hold.PriceVersion, mustJSON(object{"spent": a.Amount})); err != nil {
 			return err
 		}
 	}
-	if err = releaseAllocation(ctx, tx, hold.OwnerID, hold.ID, released); err != nil {
+	if err = releaseAllocation(ctx, tx, hold.OwnerID, hold.ID, released, "unused"); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_hold SET state=$2, settled_at=now(), allocation=$3 WHERE id=$1`, hold.ID, creditStateCaptured, mustJSON(captured)); err != nil {
+	settlement := object{}
+	if len(released) > 0 {
+		settlement["releaseReason"] = "unused"
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_hold SET state=$2, settled_at=now(), allocation=$3, metadata=metadata || $4::jsonb WHERE id=$1`, hold.ID, creditStateCaptured, mustJSON(captured), mustJSON(settlement)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -564,6 +572,10 @@ func (s *server) captureHold(ctx context.Context, holdID string, actual int64) e
 
 // releaseHold 全额释放冻结单。已释放的重复释放直接返回成功（幂等）。
 func (s *server) releaseHold(ctx context.Context, holdID string) error {
+	return s.releaseHoldWithReason(ctx, holdID, "manual")
+}
+
+func (s *server) releaseHoldWithReason(ctx context.Context, holdID, releaseReason string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -579,10 +591,10 @@ func (s *server) releaseHold(ctx context.Context, holdID string) error {
 	case creditStateCaptured:
 		return fail(409, "扣费单已结算，不能释放")
 	}
-	if err = releaseAllocation(ctx, tx, hold.OwnerID, hold.ID, hold.Allocation); err != nil {
+	if err = releaseAllocation(ctx, tx, hold.OwnerID, hold.ID, hold.Allocation, releaseReason); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_hold SET state=$2, settled_at=now() WHERE id=$1`, hold.ID, creditStateReleased); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE keagent_credit_hold SET state=$2, settled_at=now(), metadata=metadata || $3::jsonb WHERE id=$1`, hold.ID, creditStateReleased, mustJSON(object{"releaseReason": releaseReason})); err != nil {
 		return err
 	}
 	return tx.Commit()

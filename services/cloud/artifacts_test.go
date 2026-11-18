@@ -169,6 +169,26 @@ func TestExchangeContractValidation(t *testing.T) {
 		t.Fatal("video metadata accepted as cover")
 	}
 }
+
+func TestExchangeArtifactBillingTaskAttributionOnReplay(t *testing.T) {
+	s := exchangeTestServer(t)
+	a := actor{UserID: "billing-user", DeviceID: "billing-device"}
+	input, _ := exchangeInputs(t, s, a)
+	input.Source.Producer = "panorama"
+	artifact := mustExchange(t, s, a, "/v1/artifacts/create", input).(videoArtifact)
+	input.BillingTaskID = "factory-task-1"
+	replayed := mustExchange(t, s, a, "/v1/artifacts/create", input).(videoArtifact)
+	if replayed.ID != artifact.ID {
+		t.Fatalf("replay returned a new artifact: %s", replayed.ID)
+	}
+	input.BillingTaskID = "factory-task-2"
+	mustExchange(t, s, a, "/v1/artifacts/create", input)
+	var ownerID, taskID string
+	err := s.db.QueryRowContext(t.Context(), `SELECT owner_id,task_id FROM keagent_credit_artifact_task WHERE artifact_id=$1`, artifact.ID).Scan(&ownerID, &taskID)
+	if err != nil || ownerID != a.UserID || taskID != "factory-task-1" {
+		t.Fatalf("stored attribution = %q, %q, %v", ownerID, taskID, err)
+	}
+}
 func TestExchangeIsolationImmutabilityAndReceipt(t *testing.T) {
 	s := exchangeTestServer(t)
 	a := actor{UserID: "owner-a", DeviceID: "device-a"}

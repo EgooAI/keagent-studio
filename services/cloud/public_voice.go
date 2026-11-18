@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -223,21 +222,5 @@ func (s *server) previewPublicVoice(ctx context.Context, a actor, voiceID string
 	if err != nil {
 		return nil, err
 	}
-	return s.previewSynthesizedVoice(ctx, a, "builtin", v.ID, v.Language)
-}
-
-func (s *server) previewSynthesizedVoice(ctx context.Context, a actor, kind, voiceID, language string) (any, error) {
-	text := "您好，我是您的房产顾问，欢迎一起了解这套房源。"
-	if language == "en-US" {
-		text = "Hello, let me introduce this property to you."
-	}
-	result, err := s.synthesizeVoice(ctx, a, object{"voice": voiceID, "kind": kind, "text": text, "rate": float64(1)})
-	if err != nil {
-		return nil, err
-	}
-	pcm, err := base64.StdEncoding.DecodeString(str(result.(object)["pcm"]))
-	if err != nil {
-		return nil, err
-	}
-	return object{"audio": base64.StdEncoding.EncodeToString(pcmWAV(pcm)), "mime": "audio/wav"}, nil
+	return s.previewSynthesizedVoice(ctx, a, "", v.ID, v.Language, v.Speaker, v.Resource)
 }

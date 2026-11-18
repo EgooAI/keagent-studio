@@ -165,6 +165,8 @@ export async function authRequest<T>(
     "credits.summary": "/v1/credits",
     "credits.pricing": "/v1/credits/pricing",
     "credits.usage": "/v1/credits/usage",
+    "credits.activity": "/v1/credits/activity",
+    "credits.packs": "/v1/credits/packs",
     "credits.redeem": "/v1/credits/redeem",
   };
   const exchangeRoutes: Record<string, string> = {
@@ -219,7 +221,7 @@ export async function authRequest<T>(
   if (Object.hasOwn(creditRoutes, method))
     return serviceRequest<T>(
       creditRoutes[method] +
-        (method === "credits.usage"
+        (method === "credits.usage" || method === "credits.activity"
           ? `?${new URLSearchParams(args[0] as Record<string, string>)}`
           : ""),
       method === "credits.redeem" ? (args[0] ?? {}) : undefined,

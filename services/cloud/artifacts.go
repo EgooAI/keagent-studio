@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS keagent_video_artifact (
  FOREIGN KEY(owner_id,cover_asset_id) REFERENCES keagent_media_asset(owner_id,id),
  FOREIGN KEY(owner_id,subtitle_asset_id) REFERENCES keagent_media_asset(owner_id,id));
 CREATE INDEX IF NOT EXISTS keagent_video_artifact_owner_idx ON keagent_video_artifact(owner_id,(payload->>'createdAt') DESC,id DESC);
+CREATE TABLE IF NOT EXISTS keagent_credit_artifact_task (
+ artifact_id text PRIMARY KEY, owner_id text NOT NULL, task_id text NOT NULL,
+ FOREIGN KEY(owner_id,artifact_id) REFERENCES keagent_video_artifact(owner_id,id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS keagent_credit_artifact_task_owner_idx ON keagent_credit_artifact_task(owner_id,task_id);
 CREATE TABLE IF NOT EXISTS keagent_artifact_handoff (
  id text PRIMARY KEY, owner_id text NOT NULL, artifact_id text NOT NULL, request_key text NOT NULL,
  fingerprint text NOT NULL, payload jsonb NOT NULL, UNIQUE(owner_id,request_key),
@@ -102,10 +106,11 @@ type videoArtifact struct {
 	CreatedAt     string          `json:"createdAt"`
 }
 type createArtifactInput struct {
-	RequestKey string          `json:"requestKey"`
-	Source     artifactSource  `json:"source"`
-	Content    artifactContent `json:"content"`
-	Assets     artifactAssets  `json:"assets"`
+	RequestKey    string          `json:"requestKey"`
+	Source        artifactSource  `json:"source"`
+	Content       artifactContent `json:"content"`
+	Assets        artifactAssets  `json:"assets"`
+	BillingTaskID string          `json:"billingTaskId,omitempty"`
 }
 type artifactHandoff struct {
 	SchemaVersion int           `json:"schemaVersion"`
@@ -348,6 +353,12 @@ func (s *server) createExchangeArtifact(ctx context.Context, a actor, body []byt
 	if err := validateArtifactInput(&input); err != nil {
 		return nil, err
 	}
+	billingTaskID := input.BillingTaskID
+	if billingTaskID != "" && (input.Source.Producer != "panorama" || !creditTaskID.MatchString(billingTaskID)) {
+		return nil, exchangeFail(422, "INVALID_INPUT", "成片账单任务编号无效")
+	}
+	// Analytics attribution can be added to a replay of an existing artifact receipt.
+	input.BillingTaskID = ""
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -385,6 +396,12 @@ func (s *server) createExchangeArtifact(ctx context.Context, a actor, body []byt
 		}
 	} else if err = auditArtifact(ctx, tx, a, "artifact.create", v.ID, object{"source": v.Source}); err != nil {
 		return nil, err
+	}
+	if billingTaskID != "" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_credit_artifact_task(artifact_id,owner_id,task_id)
+			VALUES($1,$2,$3) ON CONFLICT(artifact_id) DO NOTHING`, v.ID, a.UserID, billingTaskID); err != nil {
+			return nil, err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err

@@ -1,6 +1,16 @@
 package main
 
-const leadSchema = `
+const leadTrialSchema = `
+CREATE TABLE IF NOT EXISTS keagent_lead_trial_usage (
+ owner_id text NOT NULL, usage_day date NOT NULL,
+ operation text NOT NULL CHECK (operation IN ('analysis','draft')),
+ used int NOT NULL CHECK (used > 0),
+ PRIMARY KEY(owner_id,usage_day,operation));
+CREATE INDEX IF NOT EXISTS keagent_lead_trial_usage_day
+ ON keagent_lead_trial_usage(usage_day,operation);
+`
+
+const leadSchema = leadTrialSchema + `
 CREATE TABLE IF NOT EXISTS keagent_comment_consents (
  owner_id text NOT NULL, device_id text NOT NULL, account_id text NOT NULL, work_id text NOT NULL,
  label text NOT NULL, purposes jsonb NOT NULL, expires_at timestamptz NOT NULL,

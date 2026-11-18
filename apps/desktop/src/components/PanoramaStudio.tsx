@@ -215,11 +215,15 @@ export function PanoramaStudio() {
     undefined,
   );
   const [search, setSearch] = useState("");
-  const [batchId, setBatchId] = useState<string>();
+  const [batchId, setBatchId] = useState<string | undefined>(
+    () => params.get("batchId") || undefined,
+  );
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
   const [selection, setSelection] = useState<FactoryRow[]>([]);
-  const [detailId, setDetailId] = useState<string>();
+  const [detailId, setDetailId] = useState<string | undefined>(
+    () => params.get("taskId") || undefined,
+  );
   const [reviewing, setReviewing] = useState(false);
   const detailTrigger = useRef<HTMLElement>(null);
   const taskList = useRef<HTMLElement>(null);
@@ -699,6 +703,14 @@ export function PanoramaStudio() {
       openingBackground: openingBackgroundId,
       openingAuthorized: useMiniMax && openingAuthorized,
       openingRecipe: true,
+      ...(costEstimate && pricing.data
+        ? {
+            billingEstimate: {
+              estimatedCredits: costEstimate.perTask,
+              estimateVersion: pricing.data.version,
+            },
+          }
+        : {}),
       ...(Object.keys(overrides).length ? { renderOverrides: overrides } : {}),
     });
     setIssues(result.issues);
@@ -893,6 +905,11 @@ export function PanoramaStudio() {
       dirty={dirty}
       busy={busy}
       onClose={wide && !reviewing ? () => switchDetail() : undefined}
+      billingPath={
+        isLive
+          ? `/settings/credits?${new URLSearchParams({ taskId: row.id })}`
+          : undefined
+      }
       onEdit={(id, text) => {
         if (!row.draft) return;
         const draft = row.draft;
@@ -1541,6 +1558,13 @@ export function PanoramaStudio() {
                       formatDate(batch.createdAt) + " · " + batch.count + " 条",
                   }))}
                 />
+                {isLive && batchId && (
+                  <Link
+                    to={`/settings/credits?${new URLSearchParams({ batchId })}`}
+                  >
+                    查看批次账单
+                  </Link>
+                )}
               </div>
               {!!selection.length && (
                 <Space wrap>

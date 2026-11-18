@@ -81,6 +81,7 @@ export interface VideoArtifact {
 }
 export interface CreateArtifactInput {
   requestKey: string;
+  billingTaskId?: string;
   source: ArtifactSource;
   content: ArtifactContent;
   assets: ArtifactAssets;

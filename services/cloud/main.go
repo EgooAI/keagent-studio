@@ -35,16 +35,17 @@ type actor struct {
 	Nonce     string `json:"nonce"`
 }
 type server struct {
-	db           *sql.DB
-	secret       string
-	nonces       sync.Map
-	jwt          *jwtVerifier
-	origins      []string
-	speech       func(context.Context, string, object, string) ([]byte, error)
-	sourceHTTP   func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
-	commentRead  func(context.Context, *commentGrant) (commentBatch, error)
-	commentSyncs sync.Map // per-work in-flight syncs; do not hold a database connection while waiting
-	leadComplete func(context.Context, any, string) (string, error)
+	db            *sql.DB
+	secret        string
+	nonces        sync.Map
+	jwt           *jwtVerifier
+	origins       []string
+	speech        func(context.Context, string, object, string) ([]byte, error)
+	voicePreviews voicePreviewCache
+	sourceHTTP    func(context.Context, string, string, http.Header, []byte, int64) ([]byte, error)
+	commentRead   func(context.Context, *commentGrant) (commentBatch, error)
+	commentSyncs  sync.Map // per-work in-flight syncs; do not hold a database connection while waiting
+	leadComplete  func(context.Context, any, string) (string, error)
 }
 type fault struct {
 	status  int
@@ -95,7 +96,7 @@ func initial(name string) object {
 	return w
 }
 
-const schema = aiSettingsSchema + minimaxOpeningSchema + creditSchema + `
+const schema = aiSettingsSchema + minimaxOpeningSchema + creditSchema + creditPilotSchema + providerUsageSchema + `
 CREATE TABLE IF NOT EXISTS keagent_workspace (owner_id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_resource (id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_factory_mix (
@@ -247,6 +248,16 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/credits/usage" {
 		v, e := s.creditUsage(r.Context(), r.URL.Query(), &a.UserID)
+		respond(w, v, e)
+		return
+	}
+	if r.Method == "GET" && r.URL.Path == "/v1/credits/activity" {
+		v, e := s.creditActivity(r.Context(), a.UserID, r.URL.Query())
+		respond(w, v, e)
+		return
+	}
+	if r.Method == "GET" && r.URL.Path == "/v1/credits/packs" {
+		v, e := s.creditPackOffers(r.Context())
 		respond(w, v, e)
 		return
 	}
@@ -670,6 +681,12 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 	if kind == "voices" {
 		return s.adminVoices(r, a, body)
 	}
+	if kind == "credits/provider-usage" || kind == "credits/provider-rates" {
+		return s.adminProviderUsage(r, a, kind, body)
+	}
+	if kind == "credits/lead-trial" {
+		return s.adminLeadTrial(r, a, body)
+	}
 	if kind == "credit-codes" || strings.HasPrefix(kind, "credit-codes/") || strings.HasPrefix(kind, "credits/") {
 		return s.adminCredits(r, a, kind, body)
 	}
@@ -1002,6 +1019,7 @@ func (s *server) workOnce(ctx context.Context) {
 	providerCtx, callErr := s.activeAI(ctx)
 	var text string
 	if callErr == nil {
+		providerCtx = s.withProviderUsageReference(providerCtx, owner, "legacy_script", str(task["id"]), str(task["batchId"]))
 		text, callErr = generate(providerCtx, obj(task["propertySnapshot"]))
 	}
 	tx, err = s.db.BeginTx(ctx, nil)
@@ -1102,16 +1120,22 @@ func completionWithContent(ctx context.Context, client *http.Client, endpoint, m
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
+	usage := providerUsage{Provider: providerHostname(endpoint), Model: model, Status: "unknown", Unit: "tokens"}
+	if scope := usageScope(ctx); scope.server != nil {
+		defer func() { scope.server.recordProviderUsage(ctx, usage) }()
+	}
 	response, err := client.Do(req)
 	if err != nil {
 		return "", errors.New("供应商结果未知，请核查后再处理，不要直接重试")
 	}
 	defer response.Body.Close()
+	usage.ProviderRef = response.Header.Get("X-Request-Id")
 	if response.StatusCode/100 != 2 {
 
 		if response.StatusCode >= 500 {
 			return "", errors.New("供应商结果未知：服务异常，请先核查，不要直接重试")
 		}
+		usage.Status = "failed"
 		return "", fmt.Errorf("AI 服务返回 HTTP %d，请检查服务端配置", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
@@ -1121,9 +1145,11 @@ func completionWithContent(ctx context.Context, client *http.Client, endpoint, m
 	var output struct {
 		Choices []struct{ Message struct{ Content string } }
 	}
+	usage.readCompletion(data)
 	if json.Unmarshal(data, &output) != nil || len(output.Choices) == 0 || strings.TrimSpace(output.Choices[0].Message.Content) == "" {
 		return "", errors.New("供应商结果未知：未取得有效文案")
 	}
+	usage.Status = "succeeded"
 	return output.Choices[0].Message.Content, nil
 }
 func main() {

@@ -417,6 +417,18 @@ class ProductionQueue {
   async create({ owner, assertCurrent }, input) {
     const data = this.data(owner);
     const overrides = renderOverrides(input.renderOverrides);
+    const estimate = input.billingEstimate;
+    const billingEstimate =
+      Number.isInteger(estimate?.estimatedCredits) &&
+      estimate.estimatedCredits >= 0 &&
+      estimate.estimatedCredits <= 3_000_000 &&
+      typeof estimate.estimateVersion === "string" &&
+      /^(default|v[0-9]{1,19})$/.test(estimate.estimateVersion)
+        ? {
+            estimatedCredits: estimate.estimatedCredits,
+            estimateVersion: estimate.estimateVersion,
+          }
+        : undefined;
     ensure(
       validID(input.requestId) &&
         Array.isArray(input.pairs) &&
@@ -784,6 +796,7 @@ class ProductionQueue {
       items.push({
         id: randomUUID(),
         batchId: input.requestId,
+        billingEstimate,
         property,
         scenes: structuredClone(scenes),
         config: resolved,
@@ -938,6 +951,7 @@ class ProductionQueue {
         config: currentSpeechConfig(item.config),
         id: randomUUID(),
         batchId: undefined,
+        billingEstimate: undefined,
         createdAt: now(),
         jobId: undefined,
         draftId: undefined,

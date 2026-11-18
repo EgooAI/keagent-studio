@@ -189,7 +189,7 @@ async function concatAudio(files, output, cwd, signal) {
     signal,
   );
 }
-async function synthesize(segment, c, cwd, signal, remote) {
+async function synthesize(segment, c, cwd, signal, remote, billingContext) {
   const key = audioKey(segment, c);
   const parts = sentences(segment.text);
   ensure(parts.length, "文案没有可朗读的内容");
@@ -221,6 +221,7 @@ async function synthesize(segment, c, cwd, signal, remote) {
         const response = await remote(
           "tts",
           {
+            ...(billingContext ? { billingContext } : {}),
             text: part,
             voice: c.voice,
             rate: c.rate,

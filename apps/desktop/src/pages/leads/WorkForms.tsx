@@ -17,6 +17,7 @@ import type {
   CreatorHubStartResult,
   WorkspaceComment,
 } from "@keagent/shared-types";
+import { LeadTrialNotice, leadTrialQuery } from "./leadTrial";
 
 // An ambiguous response must retry the same request rather than enqueue it twice.
 function useRequestKey() {
@@ -194,21 +195,29 @@ export function WorkAnalyze({
     queryKey: ["creatorhub", "settings"],
     queryFn: creatorHubApi.settings,
   });
+  const trial = useQuery(leadTrialQuery);
+  const remaining = trial.data?.analysis.remaining;
+  const maxAllowed = Math.min(500, remaining ?? 500);
   const [criteria, setCriteria] = useState<string>();
   const [max, setMax] = useState<number>();
   const value = criteria ?? settings.data?.criteria ?? "";
+  const requestedCount =
+    max ?? Math.min(settings.data?.maxComments ?? 1, Math.max(1, maxAllowed));
   const analyze = useMutation({
     mutationFn: () => {
+      setMax(requestedCount);
       const body = {
         accountId,
         workId,
         criteria: value.trim(),
-        maxComments: max ?? settings.data!.maxComments,
+        maxComments: requestedCount,
       };
       return creatorHubApi.analyze({ ...body, requestKey: requestKey(body) });
     },
     onSuccess: () =>
       void client.invalidateQueries({ queryKey: ["lead-workspace"] }),
+    onSettled: () =>
+      client.invalidateQueries({ queryKey: leadTrialQuery.queryKey }),
   });
   return (
     <Drawer
@@ -224,7 +233,14 @@ export function WorkAnalyze({
         <Button
           type="primary"
           loading={analyze.isPending}
-          disabled={!workId || !settings.data || !value.trim()}
+          disabled={
+            !workId ||
+            !settings.data ||
+            !value.trim() ||
+            remaining === 0 ||
+            requestedCount < 1 ||
+            requestedCount > maxAllowed
+          }
           onClick={() =>
             analyze.mutate(undefined, { onSuccess: (job) => onDone(job.id) })
           }
@@ -233,6 +249,18 @@ export function WorkAnalyze({
         </Button>
       }
     >
+      {trial.data && (
+        <p>
+          <LeadTrialNotice trial={trial.data} />
+        </p>
+      )}
+      {remaining === 0 && (
+        <Alert
+          showIcon
+          type="warning"
+          title="今日评论分析额度已用完，次日北京时间零点恢复。"
+        />
+      )}
       <Form layout="vertical" disabled={analyze.isPending || !settings.data}>
         {workSelector ? (
           <Form.Item label="来源作品">{workSelector}</Form.Item>
@@ -267,13 +295,21 @@ export function WorkAnalyze({
             onChange={(e) => setCriteria(e.target.value)}
           />
         </Form.Item>
-        <Form.Item label="最多分析评论数">
+        <Form.Item
+          label="最多分析评论数"
+          extra={
+            requestedCount > maxAllowed && maxAllowed > 0
+              ? `今日剩余 ${maxAllowed} 条，请减少分析条数。`
+              : undefined
+          }
+        >
           <InputNumber
             aria-label="最多分析评论数"
             min={1}
-            max={500}
+            max={Math.max(1, maxAllowed)}
             precision={0}
-            value={max ?? settings.data?.maxComments}
+            disabled={remaining === 0}
+            value={remaining === 0 ? undefined : requestedCount}
             onChange={(v) => setMax(v ?? undefined)}
           />
         </Form.Item>

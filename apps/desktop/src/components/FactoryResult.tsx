@@ -50,6 +50,7 @@ export function FactoryTaskDetail({
   dirty,
   busy,
   onClose,
+  billingPath,
   onEdit,
   onCamera,
   onCoverTitle,
@@ -69,6 +70,7 @@ export function FactoryTaskDetail({
   dirty: boolean;
   busy: boolean;
   onClose?: () => void;
+  billingPath?: string;
   onEdit: (id: string, text: string) => void;
   onCamera: (
     id: string,
@@ -125,6 +127,14 @@ export function FactoryTaskDetail({
       >
         {!reviewing && (
           <>
+            {billingPath && (
+              <div>
+                <dt>计费</dt>
+                <dd>
+                  <Link to={billingPath}>查看任务账单</Link>
+                </dd>
+              </div>
+            )}
             <div>
               <dt>视频模板</dt>
               <dd>

@@ -24,6 +24,7 @@ import {
 import { creatorHubApi, leadWorkspaceApi } from "@keagent/api-client";
 import type { AnalysisJob, WorkspaceJob } from "@keagent/shared-types";
 import { localTime } from "./navigation";
+import { leadTrialQuery } from "./leadTrial";
 
 const jobLabels: Record<AnalysisJob["status"], string> = {
   queued: "排队中",
@@ -187,7 +188,11 @@ export default function ReviewJobs({
         input.mode === "cancel" ? "已取消分析" : "已将失败条目重新提交分析",
       ),
     onError: (e) => void message.error(e.message),
-    onSettled: () => client.invalidateQueries({ queryKey: ["lead-workspace"] }),
+    onSettled: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ["lead-workspace"] }),
+        client.invalidateQueries({ queryKey: leadTrialQuery.queryKey }),
+      ]),
     retry: false,
   });
   return (

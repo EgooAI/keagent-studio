@@ -38,6 +38,7 @@ import type {
 import { PageHeader } from "../components/common";
 import { useCommentLeadStore } from "../lib/commentLeadStore";
 import { desktopPublishingAvailable } from "../lib/douyin";
+import { LeadTrialNotice, leadTrialQuery } from "./leads/leadTrial";
 
 const intentLabels: Record<string, string> = {
   buy: "求购",
@@ -189,6 +190,7 @@ export default function CommentLeadPage() {
 function CommentLeadWorkspace() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const trial = useQuery(leadTrialQuery);
   const navigate = useNavigate();
   const [monitorsOpen, setMonitorsOpen] = useState(false);
   const [monitor, setMonitor] = useState(false);
@@ -935,6 +937,11 @@ function CommentLeadWorkspace() {
           </Space>
         }
       />
+      {trial.data && (
+        <p>
+          <LeadTrialNotice trial={trial.data} />
+        </p>
+      )}
       {status.isPending && (
         <Typography.Paragraph type="secondary">
           <Spin size="small" /> 正在读取本机平台账号…

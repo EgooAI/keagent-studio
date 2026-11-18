@@ -1,10 +1,13 @@
 import { Alert, Button, Input, Table, message } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Coins, Gift, RefreshCw } from "lucide-react";
 import { authRequest, ServiceRequestError } from "@keagent/api-client";
 import { creditSummaryQuery, type CreditSummary } from "../lib/creditSummary";
 import CreditUsage from "./CreditUsage";
+import { CreditActivity } from "./CreditActivity";
+import CreditPackOffers from "./CreditPackOffers";
 
 const ledgerLabels: Record<string, string> = {
   grant: "发放",
@@ -25,6 +28,12 @@ const opLabels: Record<string, string> = {
 };
 
 export function CreditsPanel() {
+  const [params] = useSearchParams();
+  if (params.get("taskId") || params.get("batchId")) return <CreditActivity />;
+  return <CreditWallet />;
+}
+
+function CreditWallet() {
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
   const [redeeming, setRedeeming] = useState(false);
@@ -120,6 +129,7 @@ export function CreditsPanel() {
           </div>
         )}
       </div>
+      <CreditPackOffers />
       <div className="settings-redemption">
         <Input
           aria-label="兑换码"
@@ -139,6 +149,7 @@ export function CreditsPanel() {
         </Button>
       </div>
       <CreditUsage opLabels={opLabels} />
+      <CreditActivity />
       <h3>最近流水</h3>
       <p className="muted">余额在冻结时扣减，结算时的实际消耗单独列示。</p>
       <Table

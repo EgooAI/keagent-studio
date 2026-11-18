@@ -5,6 +5,15 @@ const adminBase = process.env.KEAGENT_ADMIN_TEST_URL || "http://127.0.0.1:5174";
 async function fixture(page: Page) {
   const requests: URL[] = [];
   const state = { failUsage: false, empty: false, historicalExpansion: 0 };
+  let pilot = {
+    instructions: "",
+    typicalVideoCredits: 0,
+    packs: [
+      { id: "starter", enabled: false, credits: 0 },
+      { id: "regular", enabled: false, credits: 0 },
+    ],
+  };
+  const issued: object[] = [];
   await page.route("**/api/auth/**", (route) =>
     route.fulfill({ json: { token: "fixture-access-token" } }),
   );
@@ -14,7 +23,7 @@ async function fixture(page: Page) {
     const headers = {
       "access-control-allow-origin": adminBase,
       "access-control-allow-headers": "authorization,content-type",
-      "access-control-allow-methods": "GET,OPTIONS",
+      "access-control-allow-methods": "GET,POST,OPTIONS",
     };
     const json = (body: unknown, status = 200) =>
       route.fulfill({ status, headers, json: body });
@@ -22,6 +31,32 @@ async function fixture(page: Page) {
       return route.fulfill({ status: 204, headers });
     if (url.pathname === "/v1/session")
       return json({ userId: "admin", name: "测试管理员", role: "admin" });
+    if (url.pathname === "/v1/admin/credits/packs") {
+      if (route.request().method() === "POST")
+        pilot = route.request().postDataJSON();
+      return json(pilot);
+    }
+    if (url.pathname === "/v1/admin/credits/pack-stats") return json([]);
+    if (url.pathname === "/v1/admin/credits/quote-stats")
+      return json({ sample: 0 });
+    if (url.pathname === "/v1/admin/credit-codes") {
+      if (route.request().method() === "POST") {
+        const input = route.request().postDataJSON();
+        const pack = pilot.packs.find((item) => item.id === input.packId);
+        if (!pack?.enabled) return json({ message: "积分包未启用" }, 422);
+        const batch = {
+          batchId: "pack-batch-1",
+          amount: pack.credits,
+          packId: pack.id,
+          total: 1,
+          used: 0,
+          createdAt: "2026-11-13T04:00:00Z",
+        };
+        issued.push(batch);
+        return json({ ...batch, codes: ["PILOT-TEST-CODE"] });
+      }
+      return json(issued);
+    }
     if (url.pathname === "/v1/admin/credits/usage") {
       if (state.failUsage) return json({ message: "统计暂时不可用" }, 503);
       return json({
@@ -80,6 +115,31 @@ async function fixture(page: Page) {
 }
 
 test.use({ timezoneId: "America/Los_Angeles" });
+
+test("后台启用试点积分包并按配置面额生成兑换码", async ({ page }) => {
+  await fixture(page);
+  await page.goto(adminBase + "/#/admin/credits");
+  await page.getByRole("tab", { name: "试点积分包" }).click();
+  const tab = page.getByRole("tabpanel", { name: "试点积分包" });
+  await tab.getByRole("switch", { name: "启用体验包" }).click();
+  await tab.getByLabel("面额（积分）", { exact: true }).first().fill("300");
+  await tab.getByLabel("普通房源视频参考用量（积分／条）").fill("150");
+  await tab.getByLabel("获取方式").fill("联系运营领取兑换码");
+  await tab.getByRole("button", { name: "保存积分包" }).click();
+  await expect(page.getByText("试点积分包已保存")).toBeVisible();
+
+  await page.getByRole("tab", { name: "兑换码批次" }).click();
+  await page.getByRole("button", { name: "生成兑换码批次" }).click();
+  const dialog = page.getByRole("dialog", { name: "生成兑换码批次" });
+  await dialog.getByLabel("关联试点积分包").click();
+  await page.getByRole("option", { name: "体验包 · 300 积分" }).click();
+  await dialog.getByLabel("生成数量（1–500）").fill("1");
+  await dialog.getByRole("button", { name: /^生\s*成$/ }).click();
+  await expect(page.getByRole("dialog", { name: /300 积分/ })).toBeVisible();
+  await expect(
+    page.getByText("PILOT-TEST-CODE", { exact: true }),
+  ).toBeVisible();
+});
 
 test("服务消耗按北京时间默认最近30天，支持范围、空结果和失败重试", async ({
   page,

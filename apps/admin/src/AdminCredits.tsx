@@ -21,6 +21,13 @@ import { useQuery } from "@tanstack/react-query";
 import { dateTime, useAdminAction } from "./admin-api";
 import { serviceRequest } from "@keagent/api-client";
 import AdminCreditUsage from "./AdminCreditUsage";
+import CreditPilotPanel, {
+  creditPackLabels,
+  useCreditPilot,
+} from "./CreditPilotPanel";
+import ProviderCostPanel from "./ProviderCostPanel";
+import LeadTrialPanel from "./LeadTrialPanel";
+import type { CreditPackId } from "@keagent/shared-types";
 
 interface CreditBalanceRow {
   ownerId: string;
@@ -52,6 +59,8 @@ interface CreditBatchRow {
   used: number;
   createdAt: string;
   expiresAt?: string;
+  packId?: CreditPackId;
+  priceFen?: number;
 }
 
 const opLabels: Record<string, string> = {
@@ -624,8 +633,10 @@ function CreditCodes() {
     "/v1/admin/credit-codes",
   );
   const { run, busy } = useAdminAction();
+  const pilot = useCreditPilot();
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
+  const selectedPack = Form.useWatch<CreditPackId | undefined>("packId", form);
   const [issued, setIssued] = useState<{
     batchId: string;
     codes: string[];
@@ -643,6 +654,7 @@ function CreditCodes() {
         amount: number;
       }>("/v1/admin/credit-codes", {
         amount: values.amount,
+        packId: values.packId,
         count: values.count,
         validityDays: values.validityDays,
         note: values.note,
@@ -680,6 +692,13 @@ function CreditCodes() {
             ),
           },
           { title: "面额", dataIndex: "amount" },
+          {
+            title: "试点积分包",
+            render: (_, row) =>
+              row.packId
+                ? `${creditPackLabels[row.packId]}${row.priceFen ? ` · ¥${(row.priceFen / 100).toFixed(2)}` : ""}`
+                : "—",
+          },
           { title: "数量", dataIndex: "total" },
           { title: "已兑换", dataIndex: "used" },
           {
@@ -718,13 +737,30 @@ function CreditCodes() {
           layout="vertical"
           initialValues={{ amount: 100, count: 20 }}
         >
-          <Form.Item
-            name="amount"
-            label="每码面额"
-            rules={[{ required: true }]}
-          >
-            <InputNumber min={1} max={10000000} style={{ width: "100%" }} />
-          </Form.Item>
+          {pilot.data?.packs.some((pack) => pack.enabled) && (
+            <Form.Item name="packId" label="关联试点积分包">
+              <Select
+                allowClear
+                virtual={false}
+                placeholder="直接填写面额"
+                options={pilot.data.packs
+                  .filter((pack) => pack.enabled)
+                  .map((pack) => ({
+                    value: pack.id,
+                    label: `${creditPackLabels[pack.id]} · ${pack.credits} 积分`,
+                  }))}
+              />
+            </Form.Item>
+          )}
+          {!selectedPack && (
+            <Form.Item
+              name="amount"
+              label="每码面额"
+              rules={[{ required: true }]}
+            >
+              <InputNumber min={1} max={10000000} style={{ width: "100%" }} />
+            </Form.Item>
+          )}
           <Form.Item
             name="count"
             label="生成数量（1–500）"
@@ -789,6 +825,21 @@ export default function AdminCredits() {
             key: "usage",
             label: "服务消耗",
             children: <AdminCreditUsage opLabels={opLabels} />,
+          },
+          {
+            key: "provider-cost",
+            label: "供应商成本",
+            children: <ProviderCostPanel />,
+          },
+          {
+            key: "lead-trial",
+            label: "获客试用",
+            children: <LeadTrialPanel />,
+          },
+          {
+            key: "pilot-packs",
+            label: "试点积分包",
+            children: <CreditPilotPanel />,
           },
           {
             key: "balances",

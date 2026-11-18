@@ -83,6 +83,7 @@ const nonQualifiedRow: LeadAnalysisRow = {
 };
 
 interface FixtureOptions {
+  analysisTrialRemaining?: number;
   failFirstAnalysis?: boolean;
   retryDraft?: (analysisId: string) => MockResponse | Promise<MockResponse>;
   manualContact?: boolean;
@@ -356,6 +357,14 @@ async function leadFixture(
           criteriaHash: "x",
           maxComments: 200,
         });
+      if (method === "lead/settings/trial") {
+        const remaining = options.analysisTrialRemaining ?? 200;
+        return okay({
+          analysis: { limit: 200, used: 200 - remaining, remaining },
+          draft: { limit: 50, used: 8, remaining: 42 },
+          resetsAt: new Date(Date.now() + 86400000).toISOString(),
+        });
+      }
       if (method === "comments/analyze-batch") {
         analysisInputs.push(input);
         if (options.failFirstAnalysis && analysisInputs.length === 1)
@@ -1298,6 +1307,25 @@ test("AI 获客四个工作区可直接打开原评论和已识别线索，查�
   expect(fixture.startInputs).toEqual([]);
   expect(fixture.analysisInputs).toEqual([]);
   expect(fixture.replies).toEqual([]);
+});
+
+test("评论分析试用用完后显示剩余额度并阻止新任务", async ({ page }) => {
+  const fixture = await leadFixture(
+    page,
+    [{ ...activeAccount(), id: "d".repeat(32) }],
+    undefined,
+    undefined,
+    undefined,
+    { analysisTrialRemaining: 0 },
+  );
+  await page.goto("/#/leads/works?tab=comments&workId=7392457264415722767");
+  await expect(page.getByText(/今日试用剩余 0 条评论分析/)).toBeVisible();
+  await page.getByRole("button", { name: "AI 筛选线索" }).click();
+  await expect(
+    page.getByText("今日评论分析额度已用完，次日北京时间零点恢复。"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始分析" })).toBeDisabled();
+  expect(fixture.analysisInputs).toHaveLength(0);
 });
 
 test("作品与评论从当前账号打开评论者主页，只提交来源引用", async ({ page }) => {

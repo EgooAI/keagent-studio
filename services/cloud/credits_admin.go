@@ -26,6 +26,12 @@ func (s *server) adminCredits(r *http.Request, a actor, kind string, body []byte
 		switch kind {
 		case "credits/usage":
 			return s.creditUsage(ctx, query, nil)
+		case "credits/packs":
+			return readCreditPilot(ctx, s.db)
+		case "credits/pack-stats":
+			return s.creditPackStatistics(ctx)
+		case "credits/quote-stats":
+			return s.creditPilotQuoteStats(ctx)
 		case "credits/list":
 			return s.adminCreditList(ctx, query)
 		case "credits/holds":
@@ -42,6 +48,9 @@ func (s *server) adminCredits(r *http.Request, a actor, kind string, body []byte
 			return s.adminCreditCodeBatches(ctx)
 		}
 	case "PUT", "POST":
+		if kind == "credits/packs" {
+			return s.updateCreditPilot(ctx, a, body)
+		}
 		var input object
 		if json.Unmarshal(body, &input) != nil {
 			return nil, fail(400, "参数无效")
@@ -392,11 +401,12 @@ func newCreditCode() string {
 }
 
 func (s *server) adminCreditCodesCreate(ctx context.Context, a actor, input object) (any, error) {
+	packID := str(input["packId"])
 	amount := int64(number(input["amount"]))
 	count := int(number(input["count"]))
 	days := int(number(input["validityDays"]))
 	note := strings.TrimSpace(str(input["note"]))
-	if amount <= 0 || amount > 10_000_000 {
+	if packID == "" && (amount <= 0 || amount > 10_000_000) {
 		return nil, fail(422, "兑换码面额无效")
 	}
 	if count <= 0 || count > 500 {
@@ -415,6 +425,22 @@ func (s *server) adminCreditCodesCreate(ctx context.Context, a actor, input obje
 	}
 	defer tx.Rollback()
 	batchID := id()
+	audit := object{"count": count, "amount": amount, "validityDays": days, "note": note}
+	if packID != "" {
+		pilot, err := readCreditPilot(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		pack, err := pilot.availablePack(packID)
+		if err != nil {
+			return nil, err
+		}
+		amount = pack.Credits
+		if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_credit_pack_batch(batch_id,pack_id,price_fen) VALUES($1,$2,$3)`, batchID, pack.ID, pack.PriceFen); err != nil {
+			return nil, err
+		}
+		audit["packId"], audit["amount"], audit["priceFen"] = pack.ID, amount, pack.PriceFen
+	}
 	codes := make([]string, 0, count)
 	for range count {
 		code := newCreditCode()
@@ -424,7 +450,7 @@ func (s *server) adminCreditCodesCreate(ctx context.Context, a actor, input obje
 		}
 		codes = append(codes, code)
 	}
-	if err = writeCreditAudit(ctx, tx, a.UserID, "credit.code.create", batchID, object{"count": count, "amount": amount, "validityDays": days, "note": note}); err != nil {
+	if err = writeCreditAudit(ctx, tx, a.UserID, "credit.code.create", batchID, audit); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -440,8 +466,9 @@ func (s *server) adminCreditCodesCreate(ctx context.Context, a actor, input obje
 func (s *server) adminCreditCodeBatches(ctx context.Context) (any, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT batch_id, amount, note, MAX(created_at), MIN(expires_at), COUNT(*),
-       COUNT(CASE WHEN used_by<>'' THEN 1 END)
-FROM keagent_credit_code GROUP BY batch_id, amount, note
+       COUNT(CASE WHEN used_by<>'' THEN 1 END), b.pack_id, b.price_fen
+ FROM keagent_credit_code c LEFT JOIN keagent_credit_pack_batch b USING (batch_id)
+ GROUP BY batch_id, amount, note, b.pack_id, b.price_fen
 ORDER BY MAX(created_at) DESC LIMIT 100`)
 	if err != nil {
 		return nil, err
@@ -453,10 +480,18 @@ ORDER BY MAX(created_at) DESC LIMIT 100`)
 		var amount, total, used int64
 		var createdAt time.Time
 		var expires sql.NullTime
-		if err = rows.Scan(&batchID, &amount, &note, &createdAt, &expires, &total, &used); err != nil {
+		var packID sql.NullString
+		var priceFen sql.NullInt64
+		if err = rows.Scan(&batchID, &amount, &note, &createdAt, &expires, &total, &used, &packID, &priceFen); err != nil {
 			return nil, err
 		}
 		item := object{"batchId": batchID, "amount": amount, "note": note, "total": total, "used": used, "createdAt": createdAt.UTC().Format(time.RFC3339)}
+		if packID.Valid {
+			item["packId"] = packID.String
+		}
+		if priceFen.Valid {
+			item["priceFen"] = priceFen.Int64
+		}
 		if expires.Valid {
 			item["expiresAt"] = expires.Time.UTC().Format(time.RFC3339)
 		}

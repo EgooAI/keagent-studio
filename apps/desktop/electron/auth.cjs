@@ -336,6 +336,7 @@ function registerAuth(onTargetStopped, devOrigin = "http://127.0.0.1:5173") {
             "lead/consent/revoke",
             "lead/settings/get",
             "lead/settings/save",
+            "lead/settings/trial",
             "lead/workspace/accounts",
             "lead/workspace/overview",
             "lead/workspace/works",
@@ -395,6 +396,8 @@ function registerAuth(onTargetStopped, devOrigin = "http://127.0.0.1:5173") {
       "credits.summary": "/v1/credits",
       "credits.pricing": "/v1/credits/pricing",
       "credits.usage": "/v1/credits/usage",
+      "credits.activity": "/v1/credits/activity",
+      "credits.packs": "/v1/credits/packs",
       "credits.redeem": "/v1/credits/redeem",
     };
     if (Object.hasOwn(creditRoutes, method)) {
@@ -404,7 +407,7 @@ function registerAuth(onTargetStopped, devOrigin = "http://127.0.0.1:5173") {
           data: (
             await request(
               creditRoutes[method] +
-                (method === "credits.usage"
+                (method === "credits.usage" || method === "credits.activity"
                   ? `?${new URLSearchParams(args[0])}`
                   : ""),
               method === "credits.redeem" ? args[0] || {} : undefined,

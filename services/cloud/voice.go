@@ -165,7 +165,7 @@ func (s *server) refreshVoice(ctx context.Context, owner string, v storedVoice) 
 		return v, nil
 	}
 	if v.Status == "failed" && v.Speaker == "" {
-		return v, s.settleVoiceClone(ctx, owner, v.ID, false)
+		return v, s.settleVoiceClone(ctx, owner, v.ID, false, "operation_failed")
 	}
 	ctx, err := s.voiceProviderContext(ctx, v)
 	if err != nil {
@@ -203,26 +203,32 @@ func (s *server) refreshVoice(ctx context.Context, owner string, v storedVoice) 
 	if err != nil {
 		return v, err
 	}
+	switch v.Status {
+	case "ready":
+		s.finishProviderUsage(ctx, owner, "voice_clone", v.ID, v.Speaker, "succeeded")
+	case "failed":
+		s.finishProviderUsage(ctx, owner, "voice_clone", v.ID, v.Speaker, "failed")
+	}
 	// 复刻审核成功后扣款，明确失败时退款，待核对的请求保留冻结。
 	switch v.Status {
 	case "ready":
-		if err = s.settleVoiceClone(ctx, owner, v.ID, true); err != nil {
+		if err = s.settleVoiceClone(ctx, owner, v.ID, true, ""); err != nil {
 			return storedVoice{}, err
 		}
 	case "failed":
-		if err = s.settleVoiceClone(ctx, owner, v.ID, false); err != nil {
+		if err = s.settleVoiceClone(ctx, owner, v.ID, false, "operation_failed"); err != nil {
 			return storedVoice{}, err
 		}
 	}
 	return v, nil
 }
 
-func (s *server) settleVoiceClone(ctx context.Context, owner, voiceID string, capture bool) error {
+func (s *server) settleVoiceClone(ctx context.Context, owner, voiceID string, capture bool, reason string) error {
 	var requestKey string
 	if err := s.db.QueryRowContext(ctx, `SELECT request_key FROM keagent_voice WHERE id=$1 AND owner_id=$2`, voiceID, owner).Scan(&requestKey); err != nil {
 		return err
 	}
-	return s.settleHoldByKey(ctx, owner, "voice_clone", requestKey, capture)
+	return s.settleHoldByKey(ctx, owner, "voice_clone", requestKey, capture, reason)
 }
 
 func (s *server) voices(ctx context.Context, a actor, operation string, body []byte) (any, error) {
@@ -306,7 +312,8 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 			return nil, err
 		}
 		if clonePrice := prices["voice_clone"]; clonePrice > 0 {
-			if _, err = s.holdCredits(ctx, a.UserID, "voice_clone", requestKey, clonePrice, requestKey, priceVersion, nil); err != nil {
+			_, metadata := creditChargeDetails(ctx, requestKey, "request", 1, clonePrice)
+			if _, err = s.holdCredits(ctx, a.UserID, "voice_clone", requestKey, clonePrice, requestKey, priceVersion, metadata); err != nil {
 				return nil, err
 			}
 		}
@@ -343,6 +350,7 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 			v.Status = "failed"
 			v.Error = "百炼拒绝了声音复刻，请检查录音或联系管理员"
 		}
+		s.recordVoiceEnrollmentUsage(ctx, a.UserID, v)
 		// Save the provider checkpoint even if the browser disconnected.
 		checkpoint, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -350,7 +358,7 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 			return nil, err
 		}
 		if v.Status == "failed" {
-			if err = s.settleVoiceClone(checkpoint, a.UserID, v.ID, false); err != nil {
+			if err = s.settleVoiceClone(checkpoint, a.UserID, v.ID, false, "provider_rejected"); err != nil {
 				return nil, err
 			}
 		}
@@ -375,10 +383,14 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 		if err != nil {
 			return nil, err
 		}
-		if v.Status != "ready" {
+		if v.Status != "ready" || v.Speaker == "" {
 			return nil, fail(409, "音色尚未就绪，请稍后刷新")
 		}
-		return s.previewSynthesizedVoice(ctx, a, "personal", v.ID, v.Language)
+		ctx, err = s.voiceProviderContext(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		return s.previewSynthesizedVoice(ctx, a, a.UserID, v.ID, v.Language, v.Speaker, v.Resource)
 	case "remove":
 		if voiceSubmissionInFlight(v) {
 			return nil, fail(409, "正在提交，请先刷新状态再移除")
@@ -388,13 +400,26 @@ func (s *server) voices(ctx context.Context, a actor, operation string, body []b
 				return nil, err
 			}
 		}
-		if err = s.settleVoiceClone(ctx, a.UserID, v.ID, false); err != nil {
+		if err = s.settleVoiceClone(ctx, a.UserID, v.ID, false, "removed"); err != nil {
 			return nil, err
 		}
 		_, err = s.db.ExecContext(ctx, `UPDATE keagent_voice SET archived=true WHERE id=$1 AND owner_id=$2`, v.ID, a.UserID)
 		return object{"removed": err == nil}, err
 	}
 	return nil, fail(404, "音色操作不存在")
+}
+
+func (s *server) recordVoiceEnrollmentUsage(ctx context.Context, owner string, v storedVoice) {
+	status := v.Status
+	if status == "processing" {
+		status = "pending"
+	}
+	requests := int64(1)
+	ctx = s.withProviderUsageReference(ctx, owner, "voice_clone", v.ID, "")
+	s.recordProviderUsage(ctx, providerUsage{
+		Provider: "bailian", Model: v.Resource, ProviderRef: v.Speaker, BusinessRef: v.ID,
+		Status: status, Unit: "requests", Source: "request", Requests: &requests,
+	})
 }
 
 func (s *server) deleteEnrolledVoice(ctx context.Context, v storedVoice) error {

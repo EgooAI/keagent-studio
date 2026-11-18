@@ -17,6 +17,7 @@ import {
 } from "./registry";
 export interface CompletedArtifactOutput {
   source: ArtifactSource;
+  billingTaskId?: string;
   content: ArtifactContent;
   files: { video: string; cover: string; subtitle?: string };
   sample: boolean;
@@ -148,6 +149,7 @@ export class ArtifactRegistrationService {
     await this.registry.assertIdentity(identity);
     const artifact = await this.exchange.createArtifact({
       requestKey: createHash("sha256").update(`${key}:artifact`).digest("hex"),
+      ...(output.billingTaskId ? { billingTaskId: output.billingTaskId } : {}),
       source: output.source,
       content: output.content,
       assets: {

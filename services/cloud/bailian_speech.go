@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const qwenAudioModel = "qwen-audio-3.1-tts-plus"
@@ -148,6 +149,10 @@ func qwenSpeechEvent(data []byte) ([]byte, bool, error) {
 }
 
 func decodeQwenSpeech(data []byte) ([]byte, error) {
+	return decodeQwenSpeechWithUsage(data, nil)
+}
+
+func decodeQwenSpeechWithUsage(data []byte, usage *providerUsage) ([]byte, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 4096), maxSpeechResponse)
 	var audio, event bytes.Buffer
@@ -160,6 +165,9 @@ func decodeQwenSpeech(data []byte) ([]byte, error) {
 		}
 		if len(line) != 0 || event.Len() == 0 {
 			continue
+		}
+		if usage != nil {
+			speechEventUsage(event.Bytes(), usage)
 		}
 		pcm, stop, err := qwenSpeechEvent(event.Bytes())
 		if err != nil {
@@ -175,6 +183,33 @@ func decodeQwenSpeech(data []byte) ([]byte, error) {
 	return audio.Bytes(), nil
 }
 
+func speechEventUsage(data []byte, usage *providerUsage) {
+	var event struct {
+		RequestID string `json:"request_id"`
+		Usage     struct {
+			Characters *int64 `json:"characters"`
+			Input      *int64 `json:"input_tokens"`
+			Output     *int64 `json:"output_tokens"`
+		}
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return
+	}
+	if event.RequestID != "" {
+		usage.ProviderRef = event.RequestID
+	}
+	if n := validUsageCount(event.Usage.Characters); n != nil && (usage.Characters == nil || *n >= *usage.Characters) {
+		usage.Characters = n
+		usage.Source = "provider"
+	}
+	if event.Usage.Input != nil {
+		usage.InputTokens = event.Usage.Input
+	}
+	if event.Usage.Output != nil {
+		usage.OutputTokens = event.Usage.Output
+	}
+}
+
 func (s *server) synthesizePCM(ctx context.Context, language, text, voice, resource string, rate float64) (any, error) {
 	if resource != qwenAudioModel || !qwenVoiceID.MatchString(voice) {
 		return nil, fail(503, "百炼配音模型或音色无效")
@@ -188,17 +223,30 @@ func (s *server) synthesizePCM(ctx context.Context, language, text, voice, resou
 	}
 	var raw []byte
 	var err error
+	usage := providerUsage{Provider: "bailian", Model: resource, Unit: "characters", Status: "unknown"}
+	if usageScope(ctx).owner != "" && (s.speech != nil || qwenSpeechConfigured(ctx)) {
+		defer func() { s.recordProviderUsage(ctx, usage) }()
+	}
 	if s.speech != nil {
 		raw, err = s.speech(ctx, qwenSynthesis, input, resource)
 	} else {
 		raw, err = s.qwenSpeechRequest(ctx, qwenSynthesis, resource, input, true)
 	}
 	if err != nil {
+		usage.Status = providerUsageFailure(err)
 		return nil, err
 	}
-	pcm, err := decodeQwenSpeech(raw)
+	pcm, err := decodeQwenSpeechWithUsage(raw, &usage)
 	if err != nil {
+		if usage.Source == "provider" {
+			usage.Source = "partial"
+		}
 		return nil, err
+	}
+	usage.Status = "succeeded"
+	if usage.Characters == nil {
+		characters := int64(utf8.RuneCountInString(text))
+		usage.Characters, usage.Source = &characters, "request"
 	}
 	return object{"pcm": base64.StdEncoding.EncodeToString(pcm)}, nil
 }

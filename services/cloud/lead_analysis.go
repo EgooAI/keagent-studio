@@ -61,7 +61,7 @@ func (s *server) leadCompleter() func(context.Context, any, string) (string, err
 	return generateWithContent
 }
 
-func (s *server) completeLead(ctx context.Context, grant *commentGrant, payload object, prompt string) (string, error) {
+func (s *server) completeLead(ctx context.Context, grant *commentGrant, ownerID string, operation leadTrialOperation, taskID, jobID string, payload object, prompt string) (string, error) {
 	providerCtx, err := s.activeAI(ctx)
 	if err != nil {
 		return "", err
@@ -81,6 +81,10 @@ func (s *server) completeLead(ctx context.Context, grant *commentGrant, payload 
 	if err != nil {
 		return "", err
 	}
+	if err = s.consumeLeadTrial(providerCtx, ownerID, operation); err != nil {
+		return "", err
+	}
+	providerCtx = s.withProviderUsageReference(providerCtx, ownerID, operation.providerOperation(), taskID, jobID)
 	raw, err := s.leadCompleter()(providerCtx, string(content), prompt)
 	if err != nil {
 		return "", exchangeFail(502, "COMMENT_AI_UNAVAILABLE", "模型服务未完成此次请求")
@@ -88,7 +92,7 @@ func (s *server) completeLead(ctx context.Context, grant *commentGrant, payload 
 	return raw, nil
 }
 
-func (s *server) analyzeCommentWithCriteria(ctx context.Context, a actor, in commentInput, criteria string, requireRealEstate bool) (leadAnalysisResult, commentDetail, error) {
+func (s *server) analyzeCommentWithCriteria(ctx context.Context, a actor, in commentInput, jobID, criteria string, requireRealEstate bool) (leadAnalysisResult, commentDetail, error) {
 	row, grant, err := s.authorizedComment(ctx, a, in, "analyze")
 	if err != nil {
 		return leadAnalysisResult{}, row, err
@@ -99,7 +103,7 @@ func (s *server) analyzeCommentWithCriteria(ctx context.Context, a actor, in com
 	if strings.TrimSpace(criteria) == "" {
 		criteria = defaultLeadCriteria
 	}
-	raw, err := s.completeLead(ctx, grant, object{
+	raw, err := s.completeLead(ctx, grant, a.UserID, leadTrialAnalysis, in.ID, jobID, object{
 		"criteria": criteria, "comment_text": *row.CommentText, "require_real_estate": requireRealEstate,
 	}, leadAnalysisPrompt)
 	if err != nil {
@@ -245,6 +249,9 @@ func (s *server) createAnalysisJob(ctx context.Context, a actor, body []byte) (a
 	}
 	if total == 0 {
 		return nil, exchangeFail(409, "COMMENT_EMPTY", "没有可分析的一级评论")
+	}
+	if err = s.checkLeadAnalysisTrial(ctx, tx, a.UserID, total); err != nil {
+		return nil, err
 	}
 	job := analysisJob{ID: id(), Status: "queued", Total: total, CriteriaVersion: version,
 		CriteriaHash: criteriaHash(version, in.Criteria), CreatedAt: time.Now().UTC()}
@@ -571,6 +578,9 @@ func (s *server) retryAnalysisJob(ctx context.Context, a actor, body []byte) (an
 	if affected == 0 {
 		return nil, exchangeFail(409, "ANALYSIS_NOT_RETRYABLE", "任务没有可重试的失败项")
 	}
+	if err = s.checkLeadAnalysisTrial(ctx, tx, a.UserID, 1); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -724,7 +734,7 @@ loop:
 			defer wg.Done()
 			defer func() { <-sem }()
 			in := commentInput{commentScope: commentScope{AccountID: account, WorkID: work}, ID: it.rowID}
-			result, _, err := s.analyzeCommentWithCriteria(ctx, a, in, criteria, requireRealEstate)
+			result, _, err := s.analyzeCommentWithCriteria(ctx, a, in, jobID, criteria, requireRealEstate)
 			ok := err == nil
 			if !ok {
 				mu.Lock()

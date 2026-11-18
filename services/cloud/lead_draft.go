@@ -22,13 +22,13 @@ func (s *server) retryLeadDraft(ctx context.Context, a actor, body []byte) (any,
 
 func (s *server) generateLeadDraft(ctx context.Context, a actor, analysisID string) (any, error) {
 	var comment commentInput
-	var intent, evidence, draft, draftError string
+	var intent, evidence, draft, draftError, jobID string
 	var version time.Time
 	var outreachExists bool
-	err := s.db.QueryRowContext(ctx, `SELECT account_id,work_id,comment_row_id,intent,evidence,draft,draft_error,updated_at,
+	err := s.db.QueryRowContext(ctx, `SELECT account_id,work_id,comment_row_id,intent,evidence,draft,draft_error,updated_at,job_id,
  EXISTS(SELECT 1 FROM keagent_outreach_tasks t WHERE t.analysis_id=l.id)
  FROM keagent_comment_analyses l WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND status='done' AND qualified`,
-		analysisID, a.UserID, a.DeviceID).Scan(&comment.AccountID, &comment.WorkID, &comment.ID, &intent, &evidence, &draft, &draftError, &version, &outreachExists)
+		analysisID, a.UserID, a.DeviceID).Scan(&comment.AccountID, &comment.WorkID, &comment.ID, &intent, &evidence, &draft, &draftError, &version, &jobID, &outreachExists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, collectionMissing()
 	}
@@ -55,7 +55,8 @@ func (s *server) generateLeadDraft(ctx context.Context, a actor, analysisID stri
 	if draftError == "" {
 		return nil, exchangeFail(409, "DRAFT_NOT_RETRYABLE", "该线索没有待重试的草稿")
 	}
-	raw, generationErr := s.completeLead(ctx, grant, object{"comment_text": *row.CommentText, "intent": intent, "evidence": evidence}, leadDraftPrompt)
+	raw, generationErr := s.completeLead(ctx, grant, a.UserID, leadTrialDraft, analysisID, jobID,
+		object{"comment_text": *row.CommentText, "intent": intent, "evidence": evidence}, leadDraftPrompt)
 	var out struct {
 		Draft string `json:"draft"`
 	}

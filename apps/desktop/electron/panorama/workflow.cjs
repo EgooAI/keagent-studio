@@ -900,7 +900,7 @@ class PanoramaWorkflow {
         state.jobs.shift();
         throw error;
       }
-      this.execute(owner, job);
+      this.execute(owner, job, productionItem);
       return job;
     }
     const job = state.jobs.find((j) => j.id === input.id);
@@ -943,7 +943,7 @@ class PanoramaWorkflow {
         Object.assign(job, previous);
         throw error;
       }
-      this.execute(owner, job);
+      this.execute(owner, job, productionItem);
       return job;
     }
     if (method === "export") {
@@ -969,6 +969,8 @@ class PanoramaWorkflow {
     preparationSignal,
   ) {
     const state = this.store(owner);
+    const draftId = crypto.randomUUID();
+    const billingContext = this.billingContext(draftId, item);
     const overrides = domain.renderOverrides(
       item
         ? Object.fromEntries(
@@ -1102,6 +1104,7 @@ class PanoramaWorkflow {
               await this.remote(
                 "script-vision",
                 {
+                  billingContext,
                   property: Object.fromEntries(
                     [
                       "title",
@@ -1139,6 +1142,7 @@ class PanoramaWorkflow {
                 await this.remote(
                   "script",
                   {
+                    billingContext,
                     property,
                     scenes: scenes.map(({ room, description }) => ({
                       room,
@@ -1155,7 +1159,7 @@ class PanoramaWorkflow {
             : domain.validateSegments(expected, expected);
       assertCurrent();
       const draft = {
-        id: crypto.randomUUID(),
+        id: draftId,
         revision: 1,
         property: structuredClone(property),
         sample: property.sample === true,
@@ -1302,7 +1306,25 @@ class PanoramaWorkflow {
         );
     }
   }
-  async miniMaxOpening(dir, config, opening, signal, templateSnapshot) {
+  billingContext(draftId, productionItem) {
+    const safeId = (id) =>
+      typeof id === "string" && /^[a-zA-Z0-9_.:-]{1,160}$/.test(id);
+    return {
+      taskId: safeId(productionItem?.id) ? productionItem.id : draftId,
+      batchId: safeId(productionItem?.batchId)
+        ? productionItem.batchId
+        : undefined,
+      ...productionItem?.billingEstimate,
+    };
+  }
+  async miniMaxOpening(
+    dir,
+    config,
+    opening,
+    signal,
+    templateSnapshot,
+    billingContext,
+  ) {
     const cache = path.join(dir, "cache");
     const audio = await fsp.readFile(path.join(cache, opening.audio));
     const location = config.openingLocation;
@@ -1355,6 +1377,7 @@ class PanoramaWorkflow {
       "opening-submit",
       {
         ...reference,
+        billingContext,
         photo: photo.toString("base64"),
         audio: audio.toString("base64"),
         ratio: config.aspectRatio,
@@ -1374,7 +1397,11 @@ class PanoramaWorkflow {
     try {
       for (;;) {
         polling.throwIfAborted();
-        result = await this.remote("opening-query", { requestKey }, polling);
+        result = await this.remote(
+          "opening-query",
+          { requestKey, billingContext },
+          polling,
+        );
         if (result.status === "succeeded") break;
         domain.ensure(
           result.status === "queued" || result.status === "running",
@@ -1404,7 +1431,8 @@ class PanoramaWorkflow {
       await fsp.rm(temp, { force: true });
     }
   }
-  execute(owner, job) {
+  execute(owner, job, productionItem) {
+    const billingContext = this.billingContext(job.draftId, productionItem);
     const controller = new AbortController();
     const signal = controller.signal;
     this.active.set(job.id, { owner, controller });
@@ -1430,6 +1458,7 @@ class PanoramaWorkflow {
           cache,
           signal,
           this.remote,
+          billingContext,
         );
         if (
           index === 0 &&
@@ -1452,6 +1481,7 @@ class PanoramaWorkflow {
           audio[0],
           signal,
           job.templateSnapshot,
+          billingContext,
         );
       }
       update("render", 40);
@@ -1537,7 +1567,8 @@ class PanoramaWorkflow {
       typeof jobId === "string" && uuid.test(jobId),
       "制作结果引用无效",
     );
-    const job = this.store(owner).jobs.find((item) => item.id === jobId);
+    const state = this.store(owner);
+    const job = state.jobs.find((item) => item.id === jobId);
     domain.ensure(job && job.status === "succeeded", "本机制作任务尚未完成");
     domain.ensure(
       !job.sample &&
@@ -1546,12 +1577,16 @@ class PanoramaWorkflow {
       "示例成片不能登记为正式成果",
     );
     // This producer-owned port exports completed files only. Consumers never read checkpoints.
+    const productionItem = state.production?.items?.find(
+      (item) => item.jobId === job.id,
+    );
     return {
       source: {
         producer: "panorama",
         taskId: job.id,
         revision: job.draftRevision,
       },
+      billingTaskId: this.billingContext(job.draftId, productionItem).taskId,
       content: {
         title: job.property.title,
         script: job.segments.map((segment) => segment.text).join("\n\n"),

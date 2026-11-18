@@ -83,15 +83,22 @@ func (s *server) analyzeCommentUsing(ctx context.Context, a actor, body []byte, 
 	defer cancel()
 	// Only the selected text goes to the approved provider. No profile or account identifiers are sent.
 	content, _ := json.Marshal(map[string]string{"comment_text": *row.CommentText})
+	allowDraft, err := s.allowLegacyLeadDraft(providerCtx, a.UserID, grant.ManualContact)
+	if err != nil {
+		return nil, err
+	}
 	prompt := commentIntentPrompt
 	if !grant.ManualContact {
 		prompt += " 本条仅授权意图分析，所有类别的 draft 一律为空。"
+	} else if !allowDraft {
+		prompt += " 本次只执行意图分析，所有类别的 draft 一律为空。"
 	}
+	providerCtx = s.withProviderUsageReference(providerCtx, a.UserID, "lead_analysis", in.ID, "")
 	raw, err := complete(providerCtx, string(content), prompt)
 	if err != nil {
 		return nil, exchangeFail(502, "COMMENT_AI_UNAVAILABLE", "模型服务未完成此次分析，请查看服务设置")
 	}
-	result, err := parseCommentAnalysis(*row.CommentText, raw, grant.ManualContact)
+	result, err := parseCommentAnalysis(*row.CommentText, raw, allowDraft)
 	if err != nil {
 		return nil, err
 	}

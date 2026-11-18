@@ -8,6 +8,7 @@ import type {
   LeadAnalysisPage,
   LeadIntent,
   LeadSettings,
+  LeadTrial,
   WorkMonitorSummary,
   CommentDetailPage,
   OutreachTask,
@@ -53,6 +54,7 @@ export const creatorHubApi = {
     }),
   settings: () =>
     desktopCloud<LeadSettings>("collection", "lead/settings/get", {}),
+  trial: () => desktopCloud<LeadTrial>("collection", "lead/settings/trial", {}),
   saveSettings: (input: unknown) =>
     desktopCloud<unknown>("collection", "lead/settings/save", input),
   analyze: (input: {

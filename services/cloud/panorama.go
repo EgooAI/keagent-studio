@@ -123,6 +123,14 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		return nil, fail(400, "参数格式无效")
 	}
 	switch operation {
+	case "script-vision", "script", "tts", "opening-submit", "opening-query":
+		var err error
+		ctx, err = withBillingTask(ctx, input, operation)
+		if err != nil {
+			return nil, err
+		}
+	}
+	switch operation {
 	case "image-submit", "image-query":
 		return nil, fail(410, "AI 扩图已移除，请使用原始 VR 全景图")
 	case "beike-import":
@@ -189,6 +197,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 			return nil, err
 		}
 		return s.chargedScript(ctx, a, input, func(chargeCtx context.Context) (any, error) {
+			chargeCtx = s.withProviderUsage(chargeCtx, a.UserID, "script_vision")
 			return generateVisionScript(chargeCtx, template, obj(input["property"]), rows(input["images"]))
 		})
 	case "script":
@@ -198,6 +207,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 			return nil, fail(422, "文案段落或语言无效")
 		}
 		return s.chargedScript(ctx, a, input, func(chargeCtx context.Context) (any, error) {
+			chargeCtx = s.withProviderUsage(chargeCtx, a.UserID, "script")
 			content, err := generateWithInstruction(chargeCtx, input, "你是房产视频编导。仅使用输入房源事实和人工标注的空间说明，不编造学区、产权、朝向、收益。按输入模板改写。输出语言 "+language+"。只输出 JSON 数组，每项包含 id 和 text，id和顺序与输入segments一致。开场宜在15秒内读完。")
 			if err != nil {
 				return nil, fail(502, err.Error())
@@ -226,8 +236,12 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 			return nil, err
 		}
 		perKilo := prices["tts_per_kilo_char"]
-		amount := perKilo * int64((len([]rune(str(input["text"])))+999)/1000)
-		return s.chargeSync(ctx, a.UserID, "tts", "", amount, digestBytes(mustJSON(input)), priceVersion, nil, func(chargeCtx context.Context) (any, error) {
+		characters := int64(len([]rune(str(input["text"]))))
+		quantity := (characters + 999) / 1000
+		ref, metadata := creditChargeDetails(ctx, "", "kilo_char", quantity, perKilo)
+		metadata["characters"] = characters
+		return s.chargeSync(ctx, a.UserID, "tts", ref, perKilo*quantity, digestBytes(mustJSON(input)), priceVersion, metadata, func(chargeCtx context.Context) (any, error) {
+			chargeCtx = s.withProviderUsage(chargeCtx, a.UserID, "tts")
 			return s.synthesizeVoice(chargeCtx, a, input)
 		})
 	}

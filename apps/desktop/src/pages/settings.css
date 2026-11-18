@@ -243,6 +243,13 @@
 .settings-credit-balances small {
   color: var(--muted);
 }
+.settings-credit-packs {
+  margin: 24px 0;
+}
+.settings-credit-packs-instructions {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .settings-redemption {
   display: flex;
   align-items: center;

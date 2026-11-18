@@ -258,7 +258,8 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 		// 先冻结再落库：余额不足时干净地 402，不留下未提交的检查点。
 		var holdID string
 		if openingPrice := prices["opening"]; openingPrice > 0 {
-			hold, holdErr := s.holdCredits(ctx, a.UserID, "opening", key, openingPrice, key, priceVersion, nil)
+			ref, metadata := creditChargeDetails(ctx, key, "request", 1, openingPrice)
+			hold, holdErr := s.holdCredits(ctx, a.UserID, "opening", ref, openingPrice, key, priceVersion, metadata)
 			if holdErr != nil {
 				return nil, holdErr
 			}
@@ -271,6 +272,7 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 		}
 		if inserted, _ := result.RowsAffected(); inserted == 1 {
 			id, submitErr := s.minimaxSubmit(ctx, body)
+			s.recordOpeningUsage(ctx, a.UserID, key, id, body, submitErr)
 			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			if submitErr != nil {
@@ -281,7 +283,7 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 					case http.StatusBadRequest, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusUnprocessableEntity, http.StatusTooManyRequests:
 						_, _ = s.db.ExecContext(finish, `DELETE FROM keagent_minimax_opening WHERE owner_id=$1 AND input_hash=$2 AND task_id=''`, a.UserID, key)
 						if holdID != "" {
-							_ = s.releaseHold(finish, holdID)
+							_ = s.releaseHoldWithReason(finish, holdID, "provider_rejected")
 						}
 					}
 				}
@@ -319,16 +321,40 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 	if err != nil {
 		return nil, err
 	}
+	switch status := str(result["status"]); status {
+	case "succeeded", "failed", "cancelled":
+		s.finishProviderUsage(ctx, a.UserID, "opening", key, id, status)
+	}
 	// 结算在途冻结单：成功扣款，明确失败退款；结果未知保持冻结。
 	switch str(result["status"]) {
 	case "succeeded":
-		if err = s.settleHoldByKey(ctx, a.UserID, "opening", key, true); err != nil {
+		if err = s.settleHoldByKey(ctx, a.UserID, "opening", key, true, ""); err != nil {
 			return nil, err
 		}
 	case "failed", "cancelled":
-		if err = s.settleHoldByKey(ctx, a.UserID, "opening", key, false); err != nil {
+		reason := "operation_failed"
+		if result["status"] == "cancelled" {
+			reason = "provider_cancelled"
+		}
+		if err = s.settleHoldByKey(ctx, a.UserID, "opening", key, false, reason); err != nil {
 			return nil, err
 		}
 	}
 	return result, nil
+}
+
+func (s *server) recordOpeningUsage(ctx context.Context, owner, businessRef, providerRef string, body []byte, submitErr error) {
+	var params struct{ Duration int64 }
+	_ = json.Unmarshal(body, &params)
+	usage := providerUsage{
+		Provider: "minimax", Model: minimaxModel, ProviderRef: providerRef, BusinessRef: businessRef,
+		Status: "pending", Unit: "seconds",
+	}
+	if params.Duration > 0 {
+		usage.Seconds, usage.Source = &params.Duration, "request"
+	}
+	if submitErr != nil {
+		usage.Status = providerUsageFailure(submitErr)
+	}
+	s.recordProviderUsage(s.withProviderUsage(ctx, owner, "opening"), usage)
 }

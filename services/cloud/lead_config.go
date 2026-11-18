@@ -45,6 +45,8 @@ func (s *server) leadConfig(ctx context.Context, a actor, op string, body []byte
 		return s.leadSettingsGet(ctx, a)
 	case "lead/settings/save":
 		return s.leadSettingsSave(ctx, a, body)
+	case "lead/settings/trial":
+		return s.leadTrialStatus(ctx, s.db, a.UserID)
 	case "lead/consent/save":
 		return s.saveLeadConsent(ctx, a, body, true)
 	case "creatorhub/consent/save":

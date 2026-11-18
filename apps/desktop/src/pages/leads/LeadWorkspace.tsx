@@ -10,6 +10,7 @@ import Works from "./Works";
 import Review from "./Review";
 import Todo from "./Todo";
 import AccountQueue from "./AccountQueue";
+import { LeadTrialNotice, leadTrialQuery } from "./leadTrial";
 import "./workspace.css";
 
 export default function LeadWorkspace() {
@@ -41,6 +42,10 @@ function AccountWorkspace() {
     platform === "douyin"
       ? logged.data?.accounts.find((a) => (a.platform || "douyin") === "douyin")
       : undefined;
+  const trial = useQuery({
+    ...leadTrialQuery,
+    enabled: !!account && !logged.isError,
+  });
   const requested = params.get("accountId");
   if (account && requested && requested !== account.id) {
     // Abandon actions and filters from links for a previous account.
@@ -83,6 +88,7 @@ function AccountWorkspace() {
             </Tag>
           </Space>
         )}
+        {trial.data && <LeadTrialNotice trial={trial.data} />}
       </header>
       {platform === "xhs" ? (
         <Empty

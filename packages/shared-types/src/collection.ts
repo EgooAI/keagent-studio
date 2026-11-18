@@ -205,6 +205,16 @@ export interface LeadSettings {
   criteriaHash: string;
   maxComments: number;
 }
+export interface LeadTrialBalance {
+  limit: number;
+  used: number;
+  remaining: number;
+}
+export interface LeadTrial {
+  analysis: LeadTrialBalance;
+  draft: LeadTrialBalance;
+  resetsAt: string;
+}
 export interface CreatorHubConsent {
   state: "unconfigured" | "active" | "revoked" | "expired";
   label?: string;

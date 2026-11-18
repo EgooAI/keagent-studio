@@ -29,6 +29,7 @@ import { useCommentLeadStore } from "../../lib/commentLeadStore";
 import { PageHeader } from "../../components/common";
 import ReviewJobs, { ReviewWorkFilter } from "./ReviewJobs";
 import { leadUrl, localTime } from "./navigation";
+import { leadTrialQuery } from "./leadTrial";
 import "../comment-lead.css";
 import "./Review.css";
 
@@ -321,7 +322,11 @@ function LeadList({
       void message.success("草稿已生成");
     },
     onError: (e) => void message.error(e.message),
-    onSettled: refresh,
+    onSettled: () =>
+      Promise.all([
+        refresh(),
+        client.invalidateQueries({ queryKey: leadTrialQuery.queryKey }),
+      ]),
     retry: false,
   });
   const submit = useMutation({

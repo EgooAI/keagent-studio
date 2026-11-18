@@ -30,6 +30,15 @@ test("桌面侧栏显示可用积分并直达兑换，也可按日期查看实�
     if (url.pathname === "/v1/session")
       return json({ userId: "u1", name: "测试用户", role: "user" });
     if (url.pathname === "/v1/workspace") return json(createInitialWorkspace());
+    if (url.pathname === "/v1/credits/packs")
+      return json({
+        instructions: "联系试点运营领取兑换码",
+        typicalVideoCredits: 150,
+        packs: [
+          { id: "starter", enabled: true, credits: 300 },
+          { id: "regular", enabled: true, credits: 1500, priceFen: 9900 },
+        ],
+      });
     if (url.pathname === "/v1/credits/usage") {
       if (failUsage) return json({ error: { message: "统计暂时不可用" } }, 503);
       return json({
@@ -42,6 +51,33 @@ test("桌面侧栏显示可用积分并直达兑换，也可按日期查看实�
         total: empty ? 0 : 45,
       });
     }
+    if (url.pathname === "/v1/credits/activity")
+      return json({
+        hasMore: false,
+        ...(url.searchParams.get("taskId") === "video-1"
+          ? { totalSpent: 10, estimate: { credits: 15, version: "v3" } }
+          : {}),
+        items: [
+          {
+            id: "charge-1",
+            taskId: "video-1",
+            batchId: "batch-1",
+            op: "tts",
+            stage: "tts",
+            state: "captured",
+            unit: "kilo_char",
+            quantity: 2,
+            characters: 1500,
+            unitPrice: 10,
+            priceVersion: "v4",
+            spent: 10,
+            held: 0,
+            released: 10,
+            releaseReason: "unused",
+            createdAt: "2026-11-13T04:00:00Z",
+          },
+        ],
+      });
     if (url.pathname === "/v1/credits/redeem") {
       purchased += 20;
       return json({ amount: 20 });
@@ -78,6 +114,11 @@ test("桌面侧栏显示可用积分并直达兑换，也可按日期查看实�
   await redeemLink.click();
   await expect(page).toHaveURL(/#\/settings\/credits$/);
   await expect(redeemLink).toHaveAttribute("aria-current", "page");
+  const packs = page.getByRole("region", { name: "试点积分包" });
+  await expect(packs.getByText("约 2 条普通房源视频")).toBeVisible();
+  await expect(packs.getByText("约 10 条普通房源视频")).toBeVisible();
+  await expect(packs.getByText(/MiniMax 开场单独计费/)).toBeVisible();
+  await expect(packs.getByText("联系试点运营领取兑换码")).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("textbox", { name: "兑换码" }).fill("TEST-CREDIT-CODE");
   await page.getByRole("button", { name: /^兑\s*换$/ }).click();
@@ -150,4 +191,26 @@ test("桌面侧栏显示可用积分并直达兑换，也可按日期查看实�
   expect(requests.some((url) => url.pathname.startsWith("/v1/admin/"))).toBe(
     false,
   );
+
+  const activity = page.getByRole("region", { name: "任务账单" });
+  await activity.getByRole("link", { name: "任务 video-1" }).click();
+  await expect(page).toHaveURL(/#\/settings\/credits\?taskId=video-1$/);
+  await expect(
+    activity.getByText("视频任务账单", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    activity.getByText(/当前已结算 10 积分.*预估 15 积分/),
+  ).toBeVisible();
+  await expect(activity.getByText(/1,500 字符.*2 千字符/)).toBeVisible();
+  await expect(activity.getByText("价目 v4")).toBeVisible();
+  await expect(activity.getByText(/退回 10 积分.*未使用/)).toBeVisible();
+  await expect
+    .poll(() =>
+      requests.some(
+        (url) =>
+          url.pathname === "/v1/credits/activity" &&
+          url.searchParams.get("taskId") === "video-1",
+      ),
+    )
+    .toBeTruthy();
 });
