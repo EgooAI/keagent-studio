@@ -1,6 +1,17 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, App, Button, Checkbox, Input, Modal, Tag } from "antd";
+import {
+  Alert,
+  App,
+  AutoComplete,
+  Button,
+  Checkbox,
+  Input,
+  Modal,
+  Select,
+  Tag,
+} from "antd";
+import { ChevronDown, Search } from "lucide-react";
 import {
   demoApi,
   searchBeikeHouses,
@@ -16,6 +27,33 @@ type BeikeCliStatus = {
   reason: "not_configured" | "ready";
 };
 
+const cityOptions = [
+  "北京",
+  "上海",
+  "广州",
+  "深圳",
+  "杭州",
+  "成都",
+  "重庆",
+  "武汉",
+  "南京",
+  "苏州",
+  "天津",
+  "西安",
+  "长沙",
+  "郑州",
+  "合肥",
+  "青岛",
+].map((value) => ({ value }));
+
+const layoutOptions = [
+  { value: "", label: "不限" },
+  ...["一居", "两居", "三居", "四居", "五居及以上"].map((value) => ({
+    value,
+    label: value,
+  })),
+];
+
 export function BeikeImportModal({
   open,
   onClose,
@@ -27,8 +65,11 @@ export function BeikeImportModal({
 }) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const formId = useId();
   const [city, setCity] = useState("北京");
-  const [query, setQuery] = useState("");
+  const [location, setLocation] = useState("");
+  const [layout, setLayout] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
   const [result, setResult] = useState<BeikeSearchResult>();
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, setPending] = useState<"search" | "import" | null>(null);
@@ -44,13 +85,29 @@ export function BeikeImportModal({
 
   async function runSearch() {
     if (pending) return;
-    if (!city.trim() || !query.trim()) {
-      message.warning(!city.trim() ? "请输入城市" : "请输入搜索条件");
+    const searchCity = city.trim();
+    const area = location.trim();
+    const budget = maxPrice.trim().normalize("NFKC");
+    const budgetAmount = Number(budget);
+    if (!searchCity || !area) {
+      message.warning(searchCity ? "请输入区域、商圈或小区" : "请输入城市");
       return;
     }
+    if (
+      budget &&
+      (!/^\d+(?:\.\d+)?$/.test(budget) ||
+        budgetAmount <= 0 ||
+        !Number.isFinite(budgetAmount))
+    ) {
+      message.warning("最高总价请输入大于 0 的数字，例如 500");
+      return;
+    }
+    const query = [area, layout, budget && `${budget}万以内`]
+      .filter(Boolean)
+      .join(" ");
     setPending("search");
     try {
-      const next = await searchBeikeHouses(city.trim(), query.trim());
+      const next = await searchBeikeHouses(searchCity, query);
       setResult(next);
       setSelected([]);
     } catch (error) {
@@ -58,6 +115,13 @@ export function BeikeImportModal({
     } finally {
       setPending(null);
     }
+  }
+
+  function fillExample(withFilters: boolean) {
+    setCity("北京");
+    setLocation("望京");
+    setLayout(withFilters ? "两居" : "");
+    setMaxPrice(withFilters ? "500" : "");
   }
 
   async function importSelected() {
@@ -131,54 +195,120 @@ export function BeikeImportModal({
       centered
       title="从贝壳找房"
       open={open}
-      width={710}
+      width={820}
       onCancel={onClose}
       footer={
         <>
           <Button onClick={onClose}>关闭</Button>
           <Button
-            type="primary"
-            loading={pending === "import"}
-            disabled={!selected.length || pending === "search"}
-            onClick={importSelected}
+            type={selected.length ? "default" : "primary"}
+            htmlType="submit"
+            form={formId}
+            icon={<Search size={17} />}
+            loading={pending === "search"}
+            disabled={pending === "import"}
           >
-            导入选中（{selected.length}）
+            搜索房源
           </Button>
+          {!!(result?.houses.length || result?.overBudget.length) && (
+            <Button
+              type={selected.length ? "primary" : "default"}
+              loading={pending === "import"}
+              disabled={!selected.length || pending === "search"}
+              onClick={importSelected}
+            >
+              导入选中（{selected.length}）
+            </Button>
+          )}
         </>
       }
     >
+      <p className="beike-intro">查找在售二手房，选中后可导入房源中心。</p>
       <form
+        id={formId}
         className="beike-search-form"
         onSubmit={(event) => {
           event.preventDefault();
           void runSearch();
         }}
       >
-        <label>
-          <span>城市</span>
-          <Input
+        <div className="beike-search-field">
+          <label htmlFor={`${formId}-city`}>城市</label>
+          <AutoComplete
+            id={`${formId}-city`}
             value={city}
-            onChange={(event) => setCity(event.target.value)}
+            onChange={setCity}
+            options={cityOptions}
+            showSearch={{
+              filterOption: (input, option) =>
+                cityOptions.some(({ value }) => value === input.trim()) ||
+                !!option?.value.includes(input.trim()),
+            }}
+            suffixIcon={<ChevronDown size={16} aria-hidden="true" />}
+            virtual={false}
+            aria-required="true"
             disabled={!!pending}
           />
-        </label>
-        <label>
-          <span>搜索条件</span>
+        </div>
+        <div className="beike-search-field">
+          <label htmlFor={`${formId}-location`}>区域、商圈或小区</label>
           <Input
-            value={query}
-            placeholder="例如：望京 两居 500万以内"
-            onChange={(event) => setQuery(event.target.value)}
+            id={`${formId}-location`}
+            value={location}
+            placeholder="如 望京、望京西园"
+            onChange={(event) => setLocation(event.target.value)}
+            aria-describedby={`${formId}-location-hint`}
+            aria-required="true"
             disabled={!!pending}
           />
-        </label>
-        <Button
-          type="primary"
-          htmlType="submit"
-          loading={pending === "search"}
-          disabled={pending === "import"}
-        >
-          搜索
-        </Button>
+          <small id={`${formId}-location-hint`}>填一个地点就能搜。</small>
+        </div>
+        <div className="beike-search-field">
+          <label htmlFor={`${formId}-layout`}>
+            户型<span>（选填）</span>
+          </label>
+          <Select
+            id={`${formId}-layout`}
+            value={layout}
+            options={layoutOptions}
+            onChange={setLayout}
+            virtual={false}
+            disabled={!!pending}
+          />
+        </div>
+        <div className="beike-search-field">
+          <label htmlFor={`${formId}-price`}>
+            最高总价<span>（选填）</span>
+          </label>
+          <Input
+            id={`${formId}-price`}
+            inputMode="decimal"
+            value={maxPrice}
+            placeholder="如 500"
+            suffix={<span id={`${formId}-price-unit`}>万元</span>}
+            onChange={(event) => setMaxPrice(event.target.value)}
+            aria-describedby={`${formId}-price-unit`}
+            disabled={!!pending}
+          />
+        </div>
+        <div className="beike-examples">
+          <span>点一下试填</span>
+          <Button
+            htmlType="button"
+            autoInsertSpace={false}
+            disabled={!!pending}
+            onClick={() => fillExample(false)}
+          >
+            望京
+          </Button>
+          <Button
+            htmlType="button"
+            disabled={!!pending}
+            onClick={() => fillExample(true)}
+          >
+            望京 · 两居 · 500万以内
+          </Button>
+        </div>
       </form>
       {result && (
         <>

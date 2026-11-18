@@ -41,7 +41,7 @@ import { useWorkspace } from "../lib/workspace";
 import { PageHeader, PropertyPhoto, formatPrice } from "../components/common";
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
 import { request as productionRequest } from "../components/panoramaClient";
-import { PropertyForm } from "../components/PropertyForm";
+import { PropertyForm, PropertyVrLinkForm } from "../components/PropertyForm";
 import { BeikeImportModal } from "../components/BeikeImportModal";
 import { PropertyInfoTab } from "../components/PropertyInfoTab";
 import { PropertyMaterialsTab } from "../components/PropertyMaterialsTab";
@@ -458,7 +458,7 @@ function ImportModal({
   );
 }
 
-type MaterialImportKind = "panorama" | "reference" | "spatial";
+type MaterialImportKind = "panorama" | "reference";
 
 export function PropertyDetailPage() {
   const { propertyId } = useParams();
@@ -467,6 +467,7 @@ export function PropertyDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [addingVrLink, setAddingVrLink] = useState(false);
   const [activeImport, setActiveImport] = useState<MaterialImportKind | null>(
     null,
   );
@@ -487,8 +488,8 @@ export function PropertyDetailPage() {
     setActiveImport(kind);
     try {
       const value = await productionRequest<{ count: number }>(
-        kind === "spatial" ? "property-vr-import" : "property-import",
-        kind === "spatial" ? { propertyId } : { propertyId, kind },
+        "property-import",
+        { propertyId, kind },
       );
       await Promise.all([
         material.refetch(),
@@ -514,8 +515,12 @@ export function PropertyDetailPage() {
   const panoramas = material.data?.scenes.length
     ? material.data.scenes.map((scene) => scene.url)
     : (property.panoramas ?? []);
+  const hasPanoramas = panoramas.length > 0;
+  const materialReadError =
+    material.isError &&
+    !material.error.message.includes("没有这套房源的本机素材记录");
   let materialReadFeedback: ReactNode;
-  if (material.isLoading && !panoramas.length) {
+  if (material.isLoading && !hasPanoramas) {
     materialReadFeedback = (
       <Skeleton
         active
@@ -524,10 +529,7 @@ export function PropertyDetailPage() {
         aria-label="正在读取房源素材"
       />
     );
-  } else if (
-    material.isError &&
-    !material.error.message.includes("没有这套房源的本机素材记录")
-  ) {
+  } else if (materialReadError) {
     materialReadFeedback = (
       <Alert
         type="warning"
@@ -545,19 +547,23 @@ export function PropertyDetailPage() {
   let materialNote: string | undefined;
   let materialActions: ReactNode;
   if (property.sample) {
-    if (panoramas.length) materialNote = "内置素材已就绪，可直接创建视频任务。";
+    if (hasPanoramas) materialNote = "内置素材已就绪，可直接创建视频任务。";
   } else if (window.desktop) {
-    materialNote = property.details?.vrUrl
-      ? "保存新的如视看房链接后会自动导入。可用「导入 VR 空间」重试，成功后会替换全景图，保留参考图。"
-      : "在「编辑房源」中保存如视看房链接后会自动导入全景图，也可以直接添加本机图片。";
+    materialNote = hasPanoramas
+      ? "已添加 VR 全景图，可用于制作视频。"
+      : "保存如视 VR 看房链接后会自动导入全景图，也可以直接添加本机图片。";
     materialActions = (
       <>
         <Button
-          loading={activeImport === "spatial"}
-          disabled={!property.details?.vrUrl || activeImport !== null}
-          onClick={() => void addMaterial("spatial")}
+          disabled={
+            hasPanoramas ||
+            material.isPending ||
+            materialReadError ||
+            activeImport !== null
+          }
+          onClick={() => setAddingVrLink(true)}
         >
-          导入 VR 空间
+          添加房源 VR 链接
         </Button>
         <Button
           loading={activeImport === "panorama"}
@@ -677,6 +683,13 @@ export function PropertyDetailPage() {
       />
       {editing && (
         <PropertyForm property={property} onClose={() => setEditing(false)} />
+      )}
+      {addingVrLink && (
+        <PropertyVrLinkForm
+          key={property.id}
+          property={property}
+          onClose={() => setAddingVrLink(false)}
+        />
       )}
     </div>
   );

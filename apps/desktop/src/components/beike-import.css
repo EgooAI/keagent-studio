@@ -2,19 +2,19 @@
   display: flex;
   flex-direction: column;
   max-height: calc(100dvh - 32px);
-  padding: 24px;
+  padding: 26px 30px 24px;
   border-radius: 12px;
   background: var(--surface);
 }
 
 .beike-import-modal .ant-modal-header {
-  margin-block-end: 20px;
+  margin-block-end: 6px;
 }
 
 .beike-import-modal .ant-modal-title {
   padding-inline-end: 28px;
   color: var(--ink);
-  font-size: 24px;
+  font-size: 28px;
   line-height: 1.35;
 }
 
@@ -26,30 +26,73 @@
   margin: -3px;
 }
 
-.beike-import-modal .beike-search-form {
-  display: grid;
-  grid-template-columns: 112px minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 12px;
+.beike-import-modal .beike-intro {
+  margin: 0 0 22px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.5;
 }
 
-.beike-import-modal .beike-search-form label {
+.beike-import-modal .beike-search-form {
   display: grid;
+  grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
+  gap: 18px 24px;
+}
+
+.beike-import-modal .beike-search-field {
+  display: grid;
+  align-content: start;
   min-width: 0;
   gap: 6px;
+}
+
+.beike-import-modal .beike-search-field label {
   color: var(--ink);
   font-weight: 600;
 }
 
-.beike-import-modal .beike-search-form .ant-input,
-.beike-import-modal .beike-search-form .ant-btn,
-.beike-import-modal .ant-modal-footer .ant-btn {
-  min-height: 40px;
+.beike-import-modal .beike-search-field label span {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.beike-import-modal
+  .beike-search-field
+  > :is(.ant-input, .ant-input-affix-wrapper, .ant-select) {
+  width: 100%;
+  height: 42px;
   font-size: 15px;
 }
 
-.beike-import-modal .beike-search-form .ant-input {
-  font-weight: 400;
+.beike-import-modal .beike-search-field small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.beike-import-modal .beike-examples {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-block: 10px 4px;
+  color: var(--ink);
+}
+
+.beike-import-modal .beike-examples .ant-btn:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.beike-import-modal .beike-examples .ant-btn:not(:disabled):hover {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.beike-import-modal .ant-modal-footer .ant-btn {
+  min-height: 42px;
+  font-size: 15px;
 }
 
 .beike-import-modal .beike-summary {
@@ -165,7 +208,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  margin-block-start: 16px;
+  margin-block-start: 24px;
   padding-block-start: 16px;
   border-block-start: 1px solid var(--line);
 }
@@ -176,12 +219,8 @@
   }
 
   .beike-import-modal .beike-search-form {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-  }
-
-  .beike-import-modal .beike-search-form label:first-child {
-    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
 
   .beike-import-modal .beike-house-row.ant-checkbox-wrapper {

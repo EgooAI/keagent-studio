@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { App, Form, Input, InputNumber, Modal, Select } from "antd";
-import { useQueryClient } from "@tanstack/react-query";
+import { Alert, App, Form, Input, InputNumber, Modal, Select } from "antd";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { demoApi } from "@keagent/api-client";
 import type { Property } from "@keagent/shared-types";
 import { request as productionRequest } from "./panoramaClient";
@@ -30,6 +30,17 @@ type PropertyFormValues = Omit<
 };
 
 const requiredText = [{ required: true, whitespace: true }];
+
+async function importPropertyVr(propertyId: string, queryClient: QueryClient) {
+  const { count } = await productionRequest<{ count: number }>(
+    "property-vr-import",
+    { propertyId },
+  );
+  await queryClient.invalidateQueries({
+    queryKey: ["property-production-material", propertyId],
+  });
+  return count;
+}
 
 async function validateLink(_: unknown, value?: string) {
   if (!value?.trim()) return;
@@ -97,22 +108,13 @@ export function PropertyForm({
       if (window.desktop && link && link !== previousLink) {
         setPhase("importing");
         try {
-          const { count } = await productionRequest<{ count: number }>(
-            "property-vr-import",
-            { propertyId: saved.id },
-          );
-          await queryClient.invalidateQueries({
-            queryKey: ["property-production-material", saved.id],
-          });
+          const count = await importPropertyVr(saved.id, queryClient);
           message.success(
             `已为「${saved.community}」导入 ${count} 张 VR 全景图`,
           );
         } catch (error) {
           const reason = error instanceof Error ? error.message : "请稍后重试";
-          message.warning(
-            `房源已保存，全景图导入失败（${reason}）。可在「制作素材」中重试。`,
-            8,
-          );
+          message.warning(`房源已保存，全景图导入失败（${reason}）。`, 8);
         }
       } else {
         message.success(
@@ -269,6 +271,92 @@ export function PropertyForm({
             保存后可在详情页添加室内照片、全景原图和户型图。
           </p>
         )}
+      </Form>
+    </Modal>
+  );
+}
+
+export function PropertyVrLinkForm({
+  property,
+  onClose,
+}: {
+  property: Property;
+  onClose: () => void;
+}) {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const [form] = Form.useForm<{ vrUrl: string }>();
+  const [phase, setPhase] = useState<"idle" | "saving" | "importing">("idle");
+  const [failure, setFailure] = useState<string>();
+  const busy = phase !== "idle";
+
+  async function save({ vrUrl }: { vrUrl: string }) {
+    if (busy) return;
+    const link = vrUrl.trim();
+    setPhase("saving");
+    setFailure(undefined);
+    let linkSaved = false;
+    try {
+      if (link !== property.details?.vrUrl) {
+        await demoApi.updateProperty(property.id, {
+          details: { ...property.details, vrUrl: link },
+        });
+        await queryClient.invalidateQueries(
+          { queryKey: ["workspace"] },
+          { cancelRefetch: false },
+        );
+      }
+      linkSaved = true;
+      setPhase("importing");
+      const count = await importPropertyVr(property.id, queryClient);
+      message.success(`已导入 ${count} 张 VR 全景图`);
+      onClose();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "请稍后重试";
+      setFailure(
+        linkSaved
+          ? `链接已保存，全景图导入失败（${reason}）。`
+          : `链接保存失败（${reason}）。`,
+      );
+    } finally {
+      setPhase("idle");
+    }
+  }
+
+  return (
+    <Modal
+      title="添加房源 VR 链接"
+      open
+      centered
+      className="property-form-modal"
+      onCancel={() => {
+        if (!busy) onClose();
+      }}
+      closable={!busy}
+      cancelButtonProps={{ disabled: busy }}
+      confirmLoading={busy}
+      onOk={() => form.submit()}
+      okText={phase === "importing" ? "正在导入全景图…" : "保存并导入"}
+    >
+      <Form
+        form={form}
+        layout="vertical"
+        disabled={busy}
+        initialValues={{ vrUrl: property.details?.vrUrl ?? "" }}
+        onFinish={save}
+      >
+        <Form.Item
+          name="vrUrl"
+          label="VR 看房链接"
+          extra="粘贴公开的如视 VR 看房链接，保存后自动导入全景图。"
+          rules={[
+            { required: true, whitespace: true, message: "请输入 VR 看房链接" },
+            { validator: validateLink },
+          ]}
+        >
+          <Input placeholder="https://…" maxLength={2048} />
+        </Form.Item>
+        {failure && <Alert type="error" showIcon title={failure} />}
       </Form>
     </Modal>
   );

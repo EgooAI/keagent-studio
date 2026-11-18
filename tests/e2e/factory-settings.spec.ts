@@ -43,7 +43,7 @@ async function fixture(
           id: "user-property",
           title: "本人房源联调测试",
           sample: false,
-          details: { vrUrl: "https://realsee.cn/example" },
+          details: { orientation: "南" },
         },
       ];
       if (miniMax) {
@@ -82,6 +82,7 @@ async function fixture(
         aiConfigured: false,
         beikeResult: undefined as BeikeSearchResult | undefined,
         failNextPropertyNumber: "",
+        failNextVrImport: false,
         spatialImports: new Set<string>(),
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
@@ -250,6 +251,10 @@ async function fixture(
               );
               if (!saved?.details?.vrUrl?.startsWith("https://realsee.cn/"))
                 throw new Error("不支持的 VR 链接");
+              if (state.failNextVrImport) {
+                state.failNextVrImport = false;
+                throw new Error("模拟导入超时");
+              }
               state.spatialImports.add(input.propertyId);
               return { count: 1 };
             }
@@ -1204,10 +1209,13 @@ test("内置房源没有核验日期时仍可查看素材", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "房源素材" })).toBeVisible();
 });
 
-test("房源制作素材可导入 VR 空间并刷新图库", async ({ page }) => {
+test("从制作素材保存 VR 链接后自动导入，已有全景图时入口置灰", async ({
+  page,
+}) => {
   await fixture(page);
   await page.goto("/#/properties/user-property");
   await page.getByRole("tab", { name: "制作素材" }).click();
+  await expect(page.getByText("0 张 VR 全景图", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "添加 VR 全景图" }),
   ).toBeVisible();
@@ -1218,17 +1226,60 @@ test("房源制作素材可导入 VR 空间并刷新图库", async ({ page }) =>
     0,
   );
   await expect(page.getByText(/AI 扩图|生成 AI 扩图/)).toHaveCount(0);
-  await page.getByRole("button", { name: "导入 VR 空间", exact: true }).click();
+  const addLink = page.getByRole("button", { name: "添加房源 VR 链接" });
+  await addLink.click();
+  const dialog = page.getByRole("dialog", { name: "添加房源 VR 链接" });
+  const link = dialog.getByRole("textbox", { name: "VR 看房链接" });
+  const save = dialog.getByRole("button", { name: "保存并导入" });
+  await expect(link).toHaveValue("");
+  await save.click();
+  await expect(dialog.getByText("请输入 VR 看房链接")).toBeVisible();
+
+  await page.evaluate(() => {
+    (window as any).factorySettingsTest.failNextVrImport = true;
+  });
+  await link.fill("https://realsee.cn/example");
+  await save.click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "链接已保存，全景图导入失败（模拟导入超时）",
+  );
+  await expect(link).toHaveValue("https://realsee.cn/example");
+  await expect(save).toBeEnabled();
+
+  await save.click();
+  await expect(dialog).toHaveCount(0);
   await expect(
     page.getByRole("img", { name: "房源图片 1", exact: true }),
   ).toHaveAttribute("src", "/media/interior-1.jpg");
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
-  const request = await page.evaluate(() =>
-    (window as any).factorySettingsTest.calls.find(
-      (call: any) => call.method === "panorama.property-vr-import",
-    ),
-  );
-  expect(request.input).toEqual({ propertyId: "user-property" });
+  await expect(addLink).toBeDisabled();
+  const { details, requests } = await page.evaluate(() => {
+    const { workspace, calls } = (window as any).factorySettingsTest;
+    return {
+      details: workspace.properties.find((p: any) => p.id === "user-property")
+        .details,
+      requests: calls.filter(
+        (call: any) =>
+          call.method === "updateProperty" ||
+          call.method === "panorama.property-vr-import",
+      ),
+    };
+  });
+  expect(details).toEqual({
+    orientation: "南",
+    vrUrl: "https://realsee.cn/example",
+  });
+  expect(requests).toEqual([
+    { method: "updateProperty", input: "user-property" },
+    {
+      method: "panorama.property-vr-import",
+      input: { propertyId: "user-property" },
+    },
+    {
+      method: "panorama.property-vr-import",
+      input: { propertyId: "user-property" },
+    },
+  ]);
 });
 
 test("保存新增或更换的 VR 链接自动导入对应房源", async ({ page }) => {
@@ -1270,6 +1321,9 @@ test("保存新增或更换的 VR 链接自动导入对应房源", async ({ page
   );
   expect(imports).toEqual(["new-property", "new-property", "new-property"]);
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "添加房源 VR 链接" }),
+  ).toBeDisabled();
 });
 
 test("贝壳未配置时可从正式房源导入切换到手动添加", async ({ page }) => {
@@ -1305,7 +1359,7 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
     };
     const beikeResult: BeikeSearchResult = {
       city: "北京市",
-      query: "两居 500万以内",
+      query: "望京 两居 500万以内",
       strictBudgetWan: 500,
       totalRecalled: 2,
       returned: 2,
@@ -1322,15 +1376,57 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
   });
   await page.getByRole("button", { name: "导入房源" }).click();
   const dialog = page.getByRole("dialog", { name: "从贝壳找房" });
-  const query = dialog.getByRole("textbox", { name: "搜索条件" });
-  await query.fill("两居 500万以内");
-  await query.press("Enter");
+  const city = dialog.getByRole("combobox", { name: "城市" });
+  const location = dialog.getByRole("textbox", { name: "区域、商圈或小区" });
+  const layout = dialog.getByRole("combobox", { name: /户型/ });
+  const maxPrice = dialog.getByRole("textbox", { name: /最高总价/ });
+  const search = dialog.getByRole("button", { name: "搜索房源" });
+  const searches = () =>
+    page.evaluate(() =>
+      (window as any).factorySettingsTest.calls
+        .filter((call: any) => call.method === "beikeCli.search")
+        .map((call: any) => call.input),
+    );
+
+  await expect(city).toHaveValue("北京");
+  await expect(location).toHaveValue("");
+  await dialog.getByRole("button", { name: "望京 · 两居 · 500万以内" }).click();
+  await expect(location).toHaveValue("望京");
+  await expect(dialog.getByText("两居", { exact: true })).toBeVisible();
+  await expect(maxPrice).toHaveValue("500");
+  await dialog.getByRole("button", { name: "望京", exact: true }).click();
+  await expect(maxPrice).toHaveValue("");
+  await expect(dialog.getByText("不限", { exact: true })).toBeVisible();
+  expect(await searches()).toEqual([]);
+
+  await search.click();
   const withinBudget = dialog.getByRole("checkbox", { name: /望京西园/ });
   const overBudget = dialog.getByRole("checkbox", { name: /望京新城/ });
+  await expect(withinBudget).toBeVisible();
+  expect(await searches()).toEqual([{ city: "北京", query: "望京" }]);
+
+  await layout.click();
+  await page.getByRole("option", { name: "两居", exact: true }).click();
+  await maxPrice.fill("500万元");
+  await search.click();
+  await expect(
+    page.getByText("最高总价请输入大于 0 的数字，例如 500"),
+  ).toBeVisible();
+  expect(await searches()).toHaveLength(1);
+
+  await maxPrice.fill("５００");
+  await location.press("Enter");
+  await expect.poll(searches).toEqual([
+    { city: "北京", query: "望京" },
+    { city: "北京", query: "望京 两居 500万以内" },
+  ]);
+  await expect(overBudget).toHaveAccessibleName(/超预算/);
   await withinBudget.check();
   await overBudget.check();
   await expect(withinBudget).toBeChecked();
-  await dialog.getByRole("textbox", { name: "城市" }).fill("上海");
+  await city.click();
+  await page.getByRole("option", { name: "上海", exact: true }).click();
+  await expect(city).toHaveValue("上海");
   await dialog.getByRole("button", { name: "导入选中（2）" }).click();
   await expect(withinBudget).not.toBeChecked();
   await expect(overBudget).toBeChecked();
