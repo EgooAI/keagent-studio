@@ -20,7 +20,7 @@ func (s *server) publishWorkspace(ctx context.Context, a actor, body []byte) (ob
 	if in.Limit == 0 {
 		in.Limit = 50
 	}
-	validStatus := map[string]bool{"": true, "unpublished": true, "running": true, "accepted": true, "unknown": true, "failed": true}
+	validStatus := map[string]bool{"": true, "unpublished": true, "running": true, "accepted": true, "scheduled": true, "unknown": true, "failed": true}
 	if in.Limit < 1 || in.Limit > 100 || in.Offset < 0 || in.Offset > 1000000 ||
 		len(in.Search) > 512 || !validStatus[in.Status] || (in.Review != "" && !validReview(in.Review)) {
 		return nil, exchangeFail(422, "INVALID_INPUT", "发布工作台筛选无效")
@@ -31,9 +31,12 @@ WITH matches AS (
     a.payload->'content'->'property'->>'title' AS "propertyTitle",
     a.payload->'review' AS review, a.source_revision AS "sourceRevision",
     a.payload->>'createdAt' AS "createdAt",
-    CASE r.state WHEN 'submitting' THEN 'running' WHEN 'canceled' THEN 'failed'
+    CASE WHEN r.state='accepted' AND r.payload ? 'scheduledAt'
+      AND r.payload->>'resultSource'='platform' THEN 'scheduled'
+      WHEN r.state='submitting' THEN 'running' WHEN r.state='canceled' THEN 'failed'
       ELSE COALESCE(r.state,'unpublished') END AS status,
     r.state AS "recordState", r.id AS "recordId", r.payload->'progress' AS progress,
+    r.payload->'scheduledAt' AS "scheduledAt",
     COALESCE($6<>'' AND v.device_id=$6 AND c.device_id=$6
       AND v.payload->'availability'->>'state'='available'
       AND c.payload->'availability'->>'state'='available'

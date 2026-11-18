@@ -21,6 +21,8 @@ export interface DouyinPublishInput {
   hashtags: string[];
   coverRef?: string;
   batch?: boolean;
+  /** Unix seconds at minute precision, omitted for immediate publishing. */
+  scheduledAt?: number;
 }
 export interface DouyinPublishLog {
   step: string;
@@ -64,7 +66,7 @@ export interface DouyinDesktopState {
 }
 
 export type DouyinWorkspaceStatus =
-  "unpublished" | "running" | "accepted" | "unknown" | "failed";
+  "unpublished" | "running" | "accepted" | "scheduled" | "unknown" | "failed";
 export interface DouyinWorkspaceRow {
   id: string;
   title: string;
@@ -75,6 +77,7 @@ export interface DouyinWorkspaceRow {
   status: DouyinWorkspaceStatus;
   recordState?: DouyinPublishState | null;
   recordId?: string | null;
+  scheduledAt?: number | null;
   progress?: number | null;
   deviceReady: boolean;
 }
@@ -125,6 +128,34 @@ export const douyinStateLabels: Record<DouyinPublishState, string> = {
   unknown: "结果待核对",
   canceled: "已取消",
 };
+export function douyinRecordLabel(record: DouyinPublishRecord): string {
+  if (record.state === "accepted" && record.scheduledAt)
+    return record.resultSource === "manual" ? "已发布" : "已排期";
+  return douyinStateLabels[record.state];
+}
+
+export function formatDouyinSchedule(seconds: number): string {
+  const time = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  return time.format(seconds * 1000);
+}
+
+export function validateDouyinSchedule(
+  seconds: number,
+  now = Date.now() / 1000,
+): string | undefined {
+  if (!Number.isSafeInteger(seconds) || seconds % 60 !== 0)
+    return "请选择有效的预约日期和时间";
+  if (seconds < now + 2 * 3600) return "定时发布时间须至少提前 2 小时";
+  if (seconds > now + 14 * 86400) return "定时发布时间不能超过 14 天";
+}
 /** OpenCLI counts UTF-16 code units. Keep UI, Main and Go aligned, including emoji. */
 export function douyinCaption(description: string, hashtags: string[]): string {
   return [

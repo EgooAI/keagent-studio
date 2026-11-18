@@ -11,6 +11,7 @@ import {
   Modal,
   Pagination,
   Progress,
+  Radio,
   Segmented,
   Select,
   Space,
@@ -22,8 +23,10 @@ import { ArrowLeft, ChevronDown, Film, RotateCcw, Send } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { artifactExchange, isLive } from "@keagent/api-client";
 import {
-  douyinStateLabels,
+  douyinRecordLabel,
+  formatDouyinSchedule,
   validateDouyinInput,
+  validateDouyinSchedule,
   type ArtifactReviewState,
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
@@ -70,7 +73,10 @@ interface EditValues {
   description: string;
   hashtags: string[];
   accountId: string;
+  timing: "immediate" | "scheduled";
+  scheduleTime?: string;
 }
+const beijingSeconds = (value: string) => Date.parse(value + "+08:00") / 1000;
 function ArtifactPublishDetail({
   artifactId,
   surface,
@@ -173,7 +179,13 @@ function ArtifactPublishDetail({
     publishKey.current = crypto.randomUUID();
   }, [artifactId, artifact.data?.review.revision]);
   const current = artifact.data;
-  const active = desktop.data?.activeRecord;
+  const localRecord = desktop.data?.activeRecord;
+  const active = localRecord?.scheduledAt
+    ? (records.data?.items.find(
+        (record) =>
+          record.id === localRecord.id && record.resultSource === "manual",
+      ) ?? localRecord)
+    : localRecord;
   const running =
     (!!active && ["running", "submitting"].includes(active.state)) ||
     !!desktop.data?.queue?.rows.some((row) =>
@@ -186,6 +198,19 @@ function ArtifactPublishDetail({
         hashtags: values.hashtags || [],
       })
     : undefined;
+  const scheduled = values?.timing === "scheduled";
+  const scheduledAt = values?.scheduleTime
+    ? beijingSeconds(values.scheduleTime)
+    : undefined;
+  const scheduleIssue =
+    scheduled && scheduledAt !== undefined
+      ? validateDouyinSchedule(scheduledAt)
+      : undefined;
+  const publishAction = scheduled
+    ? scheduledAt && !scheduleIssue
+      ? `预约 ${formatDouyinSchedule(scheduledAt).slice(5)} 发布`
+      : "确认定时发布"
+    : "立即发布到抖音";
   const deviceId = desktop.data?.deviceId;
   const local =
     !!deviceId &&
@@ -271,6 +296,14 @@ function ArtifactPublishDetail({
   }
   async function start(edit: EditValues) {
     if (!handoff) return;
+    const scheduledAt =
+      edit.timing === "scheduled"
+        ? beijingSeconds(edit.scheduleTime || "")
+        : undefined;
+    if (scheduledAt !== undefined) {
+      const invalid = validateDouyinSchedule(scheduledAt);
+      if (invalid) throw new Error(invalid);
+    }
     const record = await douyinApi.start({
       requestKey: publishKey.current,
       handoffId: handoff.id,
@@ -278,12 +311,20 @@ function ArtifactPublishDetail({
       title: edit.title,
       description: edit.description || "",
       hashtags: edit.hashtags || [],
+      scheduledAt,
     });
     if (!["running", "submitting"].includes(record.state))
       publishKey.current = crypto.randomUUID();
     resetConfiguration();
     setDetailTab("records");
-    message.info(douyinStateLabels[record.state]);
+    message.info(douyinRecordLabel(record));
+  }
+  async function openCreatorManage(record: DouyinPublishRecord) {
+    await douyinDesktop("account.open", { accountId: record.accountId });
+    await douyinDesktop("browser.action", {
+      accountId: record.accountId,
+      action: "manage",
+    });
   }
   useEffect(() => {
     if (
@@ -510,7 +551,7 @@ function ArtifactPublishDetail({
           className="panel douyin-result"
           hidden={detailTab !== "records"}
         >
-          <h3>{douyinStateLabels[active.state]}</h3>
+          <h3>{douyinRecordLabel(active)}</h3>
           <Progress
             percent={active.progress}
             status={active.state === "failed" ? "exception" : undefined}
@@ -556,7 +597,7 @@ function ArtifactPublishDetail({
                       : "default"
                 }
               >
-                {douyinStateLabels[record.state]}
+                {douyinRecordLabel(record)}
               </Tag>
               <span>{record.title}</span>
               <small>
@@ -564,7 +605,12 @@ function ArtifactPublishDetail({
               </small>
               {record.resultSource === "manual" && <Tag>用户人工核对</Tag>}
             </Space>
-            {record.url && (
+            {record.scheduledAt && (
+              <p>
+                预约时间 {formatDouyinSchedule(record.scheduledAt)}（北京时间）
+              </p>
+            )}
+            {record.url && douyinRecordLabel(record) !== "已排期" && (
               <p>
                 <a
                   href={record.url}
@@ -595,29 +641,24 @@ function ArtifactPublishDetail({
                 {publishingFailureText(record.errorCode)}
               </p>
             )}
-            {record.state === "unknown" && (
+            {(record.state === "unknown" ||
+              douyinRecordLabel(record) === "已排期") && (
               <Space>
                 <Button
                   disabled={!desktopPublishingAvailable()}
-                  onClick={() =>
-                    void act(async () => {
-                      await douyinDesktop("account.open", {
-                        accountId: record.accountId,
-                      });
-                      await douyinDesktop("browser.action", {
-                        accountId: record.accountId,
-                        action: "manage",
-                      });
-                    })
-                  }
+                  onClick={() => void act(() => openCreatorManage(record))}
                 >
-                  打开创作者中心核对
+                  {record.state === "unknown"
+                    ? "打开创作者中心核对"
+                    : "去抖音管理"}
                 </Button>
                 <Button
                   disabled={record.deviceId !== desktop.data?.deviceId}
                   onClick={() => {
                     setReconciling(record);
-                    setResultUrl("");
+                    setResultUrl(
+                      record.state === "accepted" ? record.url || "" : "",
+                    );
                     setConfirmAbsent(false);
                   }}
                 >
@@ -664,11 +705,16 @@ function ArtifactPublishDetail({
         mask={{ closable: false }}
         onCancel={closeConfiguration}
         cancelText="取消"
-        okText="立即发布到抖音"
+        okText={publishAction}
         confirmLoading={busy}
         okButtonProps={{
-          "aria-label": "立即发布到抖音",
-          disabled: busy || !canSubmit || running || !!invalid,
+          "aria-label": publishAction,
+          disabled:
+            busy ||
+            !canSubmit ||
+            running ||
+            !!invalid ||
+            (scheduled && (!scheduledAt || !!scheduleIssue)),
         }}
         onOk={() => form.submit()}
         afterOpenChange={(open) => {
@@ -683,7 +729,12 @@ function ArtifactPublishDetail({
       >
         <p className="muted publish-config-notice">
           <Send size={17} aria-hidden="true" />
-          立即公开发布，关闭下载，不同步头条。封面由抖音页面处理。
+          <span>
+            {scheduled
+              ? "由抖音按排期公开，关闭下载，不同步头条。"
+              : "立即公开发布，关闭下载，不同步头条。"}
+            成片封面将上传为抖音竖封面。
+          </span>
         </p>
         <Form
           className="publish-config-fields"
@@ -693,7 +744,7 @@ function ArtifactPublishDetail({
           onFinish={(edit) => {
             if (canSubmit && !running && !invalid) void act(() => start(edit));
           }}
-          initialValues={{ hashtags: [], description: "" }}
+          initialValues={{ hashtags: [], description: "", timing: "immediate" }}
           onValuesChange={() => {
             setDirty(true);
             publishKey.current = crypto.randomUUID();
@@ -741,8 +792,37 @@ function ArtifactPublishDetail({
             <p className="publish-config-account-link">
               <Link to="/settings/platforms">添加或重新登录抖音账号</Link>
             </p>
+            <Form.Item name="timing" label="发布时间">
+              <Radio.Group
+                options={[
+                  { value: "immediate", label: "立即发布" },
+                  { value: "scheduled", label: "定时发布" },
+                ]}
+              />
+            </Form.Item>
+            {scheduled && (
+              <>
+                <Form.Item
+                  name="scheduleTime"
+                  label="预约时间（北京时间）"
+                  preserve={false}
+                  extra="请选择 2 小时后至 14 天内的时间。"
+                  rules={[{ required: true, message: "请选择预约时间" }]}
+                >
+                  <Input type="datetime-local" />
+                </Form.Item>
+                {previewSource?.cover && (
+                  <img
+                    className="douyin-cover-thumbnail"
+                    src={previewSource.cover}
+                    alt="预约发布封面"
+                  />
+                )}
+              </>
+            )}
           </div>
           {invalid && <Alert type="warning" title={invalid} />}
+          {scheduleIssue && <Alert type="warning" title={scheduleIssue} />}
           {configuring && error && (
             <Alert type="error" showIcon title={error} />
           )}
@@ -758,7 +838,7 @@ function ArtifactPublishDetail({
       <Modal
         className="publish-dialog publish-reconcile-dialog"
         centered
-        title={confirmAbsent ? "确认未发布后允许重新操作" : "记录人工核对结果"}
+        title={confirmAbsent ? "核对后允许重新安排发布" : "记录人工核对结果"}
         open={!!reconciling}
         onCancel={() => setReconciling(undefined)}
         footer={
@@ -777,7 +857,13 @@ function ArtifactPublishDetail({
                 });
               }}
             >
-              {confirmAbsent ? "我已核对，确认未发布" : "确认未发布"}
+              {reconciling?.state === "accepted"
+                ? confirmAbsent
+                  ? "我已核对，预约已取消"
+                  : "确认预约已取消"
+                : confirmAbsent
+                  ? "我已核对，确认未发布"
+                  : "确认未发布"}
             </Button>
             <Button
               type="primary"
@@ -789,14 +875,16 @@ function ArtifactPublishDetail({
                 })
               }
             >
-              确认已有作品
+              {reconciling?.scheduledAt ? "确认作品已公开" : "确认已有作品"}
             </Button>
           </Space>
         }
       >
         {error && <Alert type="error" title={error} />}
         <p>
-          请先在创作者中心核对。仅凭网络错误不能判断未发布，错误判断后再次操作可能产生重复作品。
+          {reconciling?.scheduledAt
+            ? "请先在抖音创作者中心核对该作品的排期和公开状态。排期仍在时请保留原记录。"
+            : "请先在创作者中心核对。仅凭网络错误不能判断未发布，错误判断后再次操作可能产生重复作品。"}
         </p>
         <label className="publish-reconcile-field">
           已发布的抖音作品链接

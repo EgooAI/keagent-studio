@@ -43,6 +43,44 @@ func createdDouyin(t *testing.T, s *server, a actor, input douyinInput) douyinRe
 	t.Helper()
 	return mustDouyin(t, s, a, "records/create", input).(object)["record"].(douyinRecord)
 }
+func TestDouyinScheduledPublishRecord(t *testing.T) {
+	s, a, input := douyinFixture(t)
+	input.ScheduledAt = time.Now().Add(time.Hour).Truncate(time.Minute).Unix()
+	_, err := douyinCall(s, a, "records/create", input)
+	expectExchangeStatus(t, err, 422)
+	input.ScheduledAt += 86400
+	record := createdDouyin(t, s, a, input)
+	if record.ScheduledAt != input.ScheduledAt {
+		t.Fatal("schedule missing from created record")
+	}
+	changed := input
+	changed.ScheduledAt += 60
+	_, err = douyinCall(s, a, "records/create", changed)
+	expectExchangeStatus(t, err, 409)
+	record.State = "submitting"
+	mustDouyin(t, s, a, "records/report", record)
+	record.State, record.Progress, record.ResultSource = "accepted", 100, "platform"
+	record.ExternalID, record.URL = "123456789", "https://www.douyin.com/video/123456789"
+	mustDouyin(t, s, a, "records/report", record)
+	workspace := mustDouyin(t, s, a, "workspace", object{"status": "scheduled"}).(object)
+	if workspace["total"] != float64(1) || rows(workspace["items"])[0].(object)["scheduledAt"] != float64(input.ScheduledAt) {
+		t.Fatalf("missing scheduled workspace row: %v", workspace)
+	}
+	retry := input
+	retry.RequestKey, retry.ScheduledAt = id(), 0
+	_, err = douyinCall(s, a, "records/create", retry)
+	expectExchangeStatus(t, err, 409)
+	_, err = douyinCall(s, a, "records/reconcile", object{"id": record.ID, "published": true, "url": "https://www.douyin.com/video/987654321"})
+	expectExchangeStatus(t, err, 422)
+	cancel := object{"id": record.ID, "published": false}
+	for range 2 {
+		result := mustDouyin(t, s, a, "records/reconcile", cancel).(douyinRecord)
+		if result.State != "canceled" || result.ResultSource != "manual" || result.URL != "" {
+			t.Fatalf("schedule cancellation was not recorded: %+v", result)
+		}
+	}
+	createdDouyin(t, s, a, retry)
+}
 func TestDouyinValidationAndTransitions(t *testing.T) {
 	valid := douyinInput{RequestKey: id(), HandoffID: id(), AccountID: id(), Title: "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀", Hashtags: []string{"上海"}}
 	if err := validateDouyinInput(valid); err != nil {

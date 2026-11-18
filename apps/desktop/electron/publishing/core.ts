@@ -6,6 +6,7 @@ import type {
 } from "@keagent/shared-types";
 import {
   validateDouyinInput,
+  validateDouyinSchedule,
   type DouyinPublishInput,
   type DouyinPublishRecord,
   type DouyinAccount,
@@ -154,6 +155,13 @@ export class DirectPublisher {
     await checkSession?.();
     const invalid = validateDouyinInput(input);
     if (invalid) throw new PublishingError("INVALID_INPUT", invalid, 422);
+    if (input.scheduledAt !== undefined) {
+      const scheduleError = input.batch
+        ? "批量发布暂不支持排期"
+        : validateDouyinSchedule(input.scheduledAt);
+      if (scheduleError)
+        throw new PublishingError("INVALID_SCHEDULE", scheduleError, 422);
+    }
     if (!/^[A-Za-z0-9_-]{16,100}$/.test(input.requestKey))
       throw new PublishingError("INVALID_INPUT", "发布请求键无效", 422);
     const resolver = this.ports.resolver();

@@ -408,7 +408,7 @@ test("fixture UI prepares an approved artifact automatically, edits consumer fie
   const title = config.getByLabel("标题", { exact: true });
   await title.fill("抖音独立标题");
   await config.getByLabel("正文", { exact: true }).fill("只修改发布文案");
-  await expect(config.getByText(/封面由抖音页面处理/)).toBeVisible();
+  await expect(config.getByText(/成片封面将上传为抖音竖封面/)).toBeVisible();
   await page.setViewportSize({ width: 1080, height: 720 });
   await config.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "继续编辑", exact: true }).click();
@@ -459,6 +459,42 @@ test("fixture UI prepares an approved artifact automatically, edits consumer fie
   await expect(page.getByText(/平台回执|提交回执/).first()).toBeVisible();
   await page.screenshot({ path: "output/douyin-user.png", fullPage: true });
 });
+test("single-video scheduling validates Beijing time and displays a scheduled receipt", async ({
+  page,
+}) => {
+  await desktopFixture(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/#/publish");
+  await page
+    .getByRole("button", { name: fixture.artifact.content.title, exact: true })
+    .click();
+  const detail = page.getByRole("dialog", { name: "成片详情" });
+  await detail.getByRole("button", { name: "配置发布" }).click();
+  const config = page.getByRole("dialog", { name: "配置发布" });
+  const accountInput = config.getByRole("combobox", { name: "发布账号" });
+  await accountInput.press("ArrowDown");
+  await accountInput.press("Enter");
+  await config.getByText("定时发布", { exact: true }).click();
+  const time = config.getByLabel("预约时间（北京时间）");
+  await time.fill("2020-01-01T12:00");
+  await expect(
+    config.getByRole("button", { name: "确认定时发布" }),
+  ).toBeDisabled();
+  const target = new Date(Date.now() + 24 * 3600_000 + 8 * 3600_000)
+    .toISOString()
+    .slice(0, 16);
+  await time.fill(target);
+  await expect(config.getByRole("img", { name: "预约发布封面" })).toBeVisible();
+  await config.getByRole("button", { name: /^预约 .* 发布$/ }).click();
+  await expect(
+    detail.getByRole("button", { name: "去抖音管理" }),
+  ).toBeVisible();
+  await expect(detail.getByText(/预约时间.*北京时间/)).toBeVisible();
+  await expect(
+    detail.getByText("已排期", { exact: true }).first(),
+  ).toBeVisible();
+});
+
 test("missing production resolver clearly blocks actual publishing", async ({
   page,
 }) => {
