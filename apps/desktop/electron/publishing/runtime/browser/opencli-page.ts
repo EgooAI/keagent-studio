@@ -610,6 +610,7 @@ export class OpenCliPage {
     beforeSubmit: () => Promise<void>,
     click: () => Promise<void>,
     signal: AbortSignal,
+    validatePost?: (body: string) => boolean,
   ): Promise<string> {
     return this.withDebugger(async (debuggerApi) => {
       await debuggerApi.sendCommand("Network.enable", {
@@ -621,7 +622,9 @@ export class OpenCliPage {
       let requestId: string | undefined;
       let armed = false;
       let success = false;
+      let continuedPost = false;
       let stop = () => {};
+      let rejectReceipt: (reason: Error) => void;
       let listener: (
         event: Electron.Event,
         method: string,
@@ -632,6 +635,7 @@ export class OpenCliPage {
         },
       ) => void;
       const receipt = new Promise<string>((resolve, reject) => {
+        rejectReceipt = reject;
         stop = () =>
           reject(wait.reason ?? new Error("The platform tab closed"));
         listener = (_event, method, params) => {
@@ -676,13 +680,56 @@ export class OpenCliPage {
         wait.addEventListener("abort", stop, { once: true });
       });
       void receipt.catch(() => {});
+      const contents = this.contents;
+      // This session belongs to the locked publishing account.
+      const webRequest = contents.session.webRequest;
       try {
+        if (validatePost)
+          webRequest.onBeforeRequest(
+            { urls: [endpoint + "*"] },
+            (details, respond) => {
+              if (
+                details.method !== "POST" ||
+                details.url.split("?")[0] !== endpoint ||
+                details.webContentsId !== contents.id
+              ) {
+                respond({});
+                return;
+              }
+              let allow = false;
+              if (armed && !continuedPost && !wait.aborted) {
+                try {
+                  const chunks = details.uploadData ?? [];
+                  if (chunks.length && chunks.every((chunk) => chunk.bytes))
+                    allow = validatePost(
+                      Buffer.concat(
+                        chunks.map((chunk) => chunk.bytes!),
+                      ).toString("utf8"),
+                    );
+                } catch {
+                  // An unrecognized payload cannot be sent as a scheduled post.
+                }
+              }
+              if (allow) continuedPost = true;
+              respond({ cancel: !allow });
+              if (!allow)
+                rejectReceipt(
+                  new Error(
+                    "The platform request did not contain the verified schedule",
+                  ),
+                );
+            },
+          );
         await beforeSubmit();
         wait.throwIfAborted();
         armed = true;
         await click();
-        return await receipt;
+        const body = await receipt;
+        if (validatePost && !continuedPost)
+          throw new Error("The scheduled POST was not verified");
+        return body;
       } finally {
+        if (validatePost) webRequest.onBeforeRequest(null);
         debuggerApi.off("message", listener!);
         debuggerApi.off("detach", stop);
         wait.removeEventListener("abort", stop);

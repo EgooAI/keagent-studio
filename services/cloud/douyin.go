@@ -47,6 +47,7 @@ type douyinInput struct {
 	Hashtags    []string `json:"hashtags"`
 	CoverRef    string   `json:"coverRef,omitempty"`
 	Batch       bool     `json:"batch,omitempty"`
+	ScheduledAt int64    `json:"scheduledAt,omitempty"`
 }
 type douyinLog struct {
 	Step       string `json:"step"`
@@ -98,6 +99,9 @@ func validateDouyinInput(v douyinInput) error {
 	}
 	if !exchangeKey.MatchString(v.RequestKey) || !exchangeID.MatchString(v.HandoffID) || !exchangeID.MatchString(v.AccountID) || strings.TrimSpace(v.Title) == "" || len(utf16.Encode([]rune(v.Title))) > 30 || len(utf16.Encode([]rune(caption))) > 1000 || (v.CoverRef != "" && !exchangeID.MatchString(v.CoverRef)) {
 		return exchangeFail(422, "INVALID_INPUT", "发布参数无效；标题最多30字符，正文与话题合计最多1000字符")
+	}
+	if v.ScheduledAt != 0 && (v.Batch || v.ScheduledAt < 0 || v.ScheduledAt%60 != 0) {
+		return exchangeFail(422, "INVALID_SCHEDULE", "定时发布须选择有效的单条预约时间")
 	}
 	for _, r := range v.Title + v.Description + strings.Join(v.Hashtags, "") {
 		if r < 32 && r != '\n' && r != '\r' && r != '\t' {
@@ -355,6 +359,12 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
+		if in.ScheduledAt != 0 {
+			offset := in.ScheduledAt - time.Now().Unix()
+			if offset < 2*3600 || offset > 14*86400 {
+				return nil, exchangeFail(422, "INVALID_SCHEDULE", "预约时间须在 2 小时至 14 天内")
+			}
+		}
 		var busy bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_publish WHERE owner_id=$1 AND device_id=$2 AND state IN('running','submitting'))`, a.UserID, a.DeviceID).Scan(&busy); err != nil {
 			return nil, err
@@ -403,6 +413,14 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		}
 		if busy {
 			return nil, exchangeFail(409, "OUTCOME_UNRESOLVED", "请先核对该成片在此账号的上次发布结果")
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_publish
+			WHERE owner_id=$1 AND artifact_id=$2 AND payload->>'accountId'=$3 AND state='accepted'
+			AND (payload ? 'scheduledAt' OR $4))`, a.UserID, current.ID, in.AccountID, in.ScheduledAt != 0).Scan(&busy); err != nil {
+			return nil, err
+		}
+		if busy {
+			return nil, exchangeFail(409, "ARTIFACT_ALREADY_SUBMITTED", "该成片已提交到此抖音账号")
 		}
 		if in.Batch {
 			var state string
@@ -494,17 +512,20 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			return nil, exchangeFail(409, "WRONG_DEVICE", "请在原设备核对")
 		}
 		if v.ResultSource == "manual" {
-			if (in.Published && v.State == "accepted" && in.URL == v.URL) || (!in.Published && v.State == "failed" && v.ErrorCode == "USER_CONFIRMED_NOT_PUBLISHED" && in.URL == "") {
+			if (in.Published && v.State == "accepted" && in.URL == v.URL) ||
+				(!in.Published && in.URL == "" && (v.ErrorCode == "USER_CONFIRMED_NOT_PUBLISHED" || v.ErrorCode == "USER_CONFIRMED_SCHEDULE_CANCELED")) {
 				return v, nil
 			}
 			return nil, exchangeFail(409, "STATE_CONFLICT", "人工核对结论已保存，不能改写")
 		}
-		if v.State != "unknown" {
+		scheduledConfirmation := v.State == "accepted" && v.ScheduledAt != 0
+		if v.State != "unknown" && !scheduledConfirmation {
 			return nil, exchangeFail(409, "STATE_CONFLICT", "只允许核对结果未知的发布")
 		}
 		v.ResultSource = "manual"
 		v.UpdatedAt = now()
 		if in.Published {
+			priorExternalID := v.ExternalID
 			u, e := url.Parse(in.URL)
 			if e != nil {
 				return nil, exchangeFail(422, "INVALID_INPUT", "作品链接无效")
@@ -514,9 +535,16 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			if !validDouyinResult(v.ExternalID, v.URL) {
 				return nil, exchangeFail(422, "INVALID_INPUT", "请输入抖音作品的完整视频链接")
 			}
+			if scheduledConfirmation && v.ExternalID != priorExternalID {
+				return nil, exchangeFail(422, "INVALID_INPUT", "作品链接与预约回执不一致")
+			}
 			v.State = "accepted"
 			v.Progress = 100
 			v.ErrorCode = ""
+		} else if scheduledConfirmation {
+			v.State = "canceled"
+			v.ExternalID, v.URL = "", ""
+			v.ErrorCode = "USER_CONFIRMED_SCHEDULE_CANCELED"
 		} else {
 			v.State = "failed"
 			v.ErrorCode = "USER_CONFIRMED_NOT_PUBLISHED"

@@ -24,6 +24,10 @@ const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
 const failVideo = process.env.DOUYIN_TEST_UPLOAD_FAILURE === "1";
 const failCover = process.env.DOUYIN_TEST_COVER_FAILURE === "1";
 const directCover = process.env.DOUYIN_TEST_DIRECT_COVER === "1";
+const scheduleTest = process.env.DOUYIN_TEST_SCHEDULE;
+const scheduledAt = scheduleTest
+  ? Math.ceil((Date.now() / 1000 + 86400) / 60) * 60
+  : undefined;
 async function verifyCommentSync(
   testAPI,
   workId,
@@ -171,6 +175,8 @@ function creatorForm(videoHash, coverHash) {
     <label><input type="radio" name="download" checked value="允许"><span>允许</span></label>
     <label><input type="radio" name="download" value="不允许"><span>不允许</span></label>
     <label><input type="radio" name="schedule" checked value="立即发布"><span>立即发布</span></label>
+    <label><input id="schedule" type="radio" name="schedule" value="定时发布"><span>定时发布</span></label>
+    <input id="schedule-date" placeholder="日期和时间" hidden>
     <button id="submit" disabled>发布</button>
     </section>
   </section>
@@ -179,6 +185,10 @@ function creatorForm(videoHash, coverHash) {
     const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), n => n.toString(16).padStart(2, '0')).join('');
     let video, caption, selectedCover, appliedCover, imageURL, skipClicks = 0;
     let uploaded = false;
+    el('schedule').onchange = () => { el('schedule-date').hidden = !el('schedule').checked; };
+    el('schedule-date').oninput = () => {
+      if (${scheduleTest === "readback_mismatch"}) el('schedule-date').value = '2099-01-01 10:00';
+    };
     el('upload').onclick = () => el('video').click();
     el('horizontal').onclick = () => { throw new Error('Wrong cover ratio'); };
     el('vertical').onclick = () => { el('cover-editor').hidden = false; };
@@ -245,6 +255,9 @@ function creatorForm(videoHash, coverHash) {
         body: JSON.stringify({
           video, cover: appliedCover, title: el('title').value,
           caption,
+          ...(el('schedule').checked ? { item: { common: {
+            timing: ${scheduleTest === "request_mismatch"} ? 0 : Date.parse(el('schedule-date').value.replace(' ', 'T') + '+08:00') / 1000
+          } } } : {}),
           settings: Array.from(document.querySelectorAll('input:checked'), input => input.value),
         }),
       });
@@ -590,6 +603,7 @@ app.whenReady().then(async () => {
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
           if (url.pathname === "/web/api/media/aweme/create_v2/") {
+            submits++;
             assert.equal(request.method, "POST");
             const submission = await request.json();
             assert.deepEqual(submission, {
@@ -597,13 +611,20 @@ app.whenReady().then(async () => {
               cover: hash(cover),
               title: "集成测试视频",
               caption: "仅测试适配器\n\n后续一段 #测试",
-              settings: ["不同时发布", "公开", "不允许", "立即发布"],
+              ...(scheduledAt
+                ? { item: { common: { timing: scheduledAt } } }
+                : {}),
+              settings: [
+                "不同时发布",
+                "公开",
+                "不允许",
+                scheduledAt ? "定时发布" : "立即发布",
+              ],
             });
             assert.equal(
               records.get("electron-publish-fixture-0001")?.state,
               "submitting",
             );
-            submits++;
             return new Response(
               '{"status_code":0,"item_id":7612345678901234567}',
               { headers: { "Content-Type": "application/json" } },
@@ -1070,23 +1091,39 @@ app.whenReady().then(async () => {
       title: "集成测试视频",
       description: "仅测试适配器\n\n后续一段",
       hashtags: ["测试"],
+      scheduledAt,
     };
     const started = await call("publish.start", input);
     assert.equal(started.ok, true, JSON.stringify(started));
     await service.publisher.idle();
-    if (failVideo || failCover) {
+    if (failVideo || failCover || scheduleTest?.endsWith("mismatch")) {
       const record = service.publisher.active;
-      assert.equal(record.state, "failed");
+      assert.equal(
+        record.state,
+        scheduleTest === "request_mismatch" ? "unknown" : "failed",
+      );
       assert.equal(
         record.errorCode,
-        failVideo ? "VIDEO_UPLOAD_FAILED" : "COVER_UPLOAD_FAILED",
+        failVideo
+          ? "VIDEO_UPLOAD_FAILED"
+          : failCover
+            ? "COVER_UPLOAD_FAILED"
+            : scheduleTest === "readback_mismatch"
+              ? "SCHEDULE_TIME_MISMATCH"
+              : "PUBLISH_OUTCOME_UNKNOWN",
       );
-      assert.ok(
-        !record.logs.some(
-          (entry) =>
-            entry.step === (failVideo ? "upload_cover" : "publish_settings"),
-        ),
-      );
+      if (scheduleTest !== "request_mismatch")
+        assert.ok(
+          !record.logs.some(
+            (entry) =>
+              entry.step ===
+              (failVideo
+                ? "upload_cover"
+                : failCover
+                  ? "publish_settings"
+                  : "submit_page_request"),
+          ),
+        );
       assert.equal(submits, 0);
       service.stop();
       window.destroy();

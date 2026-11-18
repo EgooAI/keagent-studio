@@ -25,6 +25,9 @@ export function publishingFailureText(code: string): string {
       "等待抖音网页完成上传超时，请查看账号浏览器中的进度。",
     COVER_UPLOAD_FAILED:
       "抖音未确认封面上传，发布已停止。请检查成片封面及执行步骤。",
+    INVALID_SCHEDULE: "预约时间超出可排期范围，请重新选择。",
+    SCHEDULE_TIME_MISMATCH: "抖音页面未保留预约时间，已停止提交。",
+    USER_CONFIRMED_SCHEDULE_CANCELED: "已记录抖音预约取消，可以重新安排。",
     PUBLISH_TEXT_MISMATCH: "抖音网页中的文案与任务不一致，已停止提交。",
     LOGIN_REQUIRED: "抖音登录已失效，请重新登录后再发布。",
     ASSET_UNAVAILABLE: "本机成片文件不可用，请恢复文件后重试。",

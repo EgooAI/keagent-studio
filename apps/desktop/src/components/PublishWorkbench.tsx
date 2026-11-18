@@ -32,6 +32,7 @@ import { Link } from "react-router-dom";
 import { artifactExchange } from "@keagent/api-client";
 import {
   douyinStateLabels,
+  formatDouyinSchedule,
   validateDouyinInput,
   type ArtifactReviewState,
   type DouyinAccount,
@@ -59,6 +60,7 @@ const statusLabels: Record<DouyinWorkspaceStatus, string> = {
   unpublished: "未发布",
   running: "执行中",
   accepted: "已提交",
+  scheduled: "已排期",
   unknown: "待核对",
   failed: "失败或取消",
 };
@@ -66,6 +68,7 @@ const colors: Record<string, string> = {
   running: "processing",
   submitting: "processing",
   accepted: "success",
+  scheduled: "blue",
   failed: "error",
   unknown: "warning",
   interrupted: "warning",
@@ -170,6 +173,14 @@ export function PublishWorkbench({
     selectable(row) && !outstanding.has(row.id);
   function artifactStatus(row: DouyinWorkspaceRow) {
     const task = outstanding.get(row.id);
+    if (!task && row.status === "scheduled" && row.scheduledAt)
+      return (
+        <Tag color={colors.scheduled}>
+          已排期 · {formatDouyinSchedule(row.scheduledAt).slice(5)}
+        </Tag>
+      );
+    if (!task && row.status === "accepted" && row.scheduledAt)
+      return <Tag color={colors.accepted}>已发布</Tag>;
     return (
       <Tag color={colors[task?.state || row.status]}>
         {task
