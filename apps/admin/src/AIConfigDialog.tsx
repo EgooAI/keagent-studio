@@ -7,6 +7,7 @@ import {
   Form,
   Input,
   Modal,
+  Radio,
   Select,
   Space,
   Switch,
@@ -110,7 +111,14 @@ export default function AIConfigDialog({
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [testMode, setTestMode] = useState<AdminAIProbeMode>();
+  const [testDialog, setTestDialog] = useState<{
+    mode: AdminAIProbeMode;
+    version: number;
+    label: string;
+  }>();
+  const [testSource, setTestSource] = useState<"active" | "candidate">(
+    "candidate",
+  );
   const [sampleDirty, setSampleDirty] = useState(false);
   const dialogTitle = useRef<HTMLSpanElement>(null);
   const testing = useRef(false);
@@ -121,7 +129,12 @@ export default function AIConfigDialog({
   const request = useRef<{ key: string; id: string } | null>(null);
   const service = row.summary.id;
   const candidate = row.candidate;
-  const running = probeRunning(candidate?.test);
+  const testingCandidate = testSource === "candidate" && !!candidate;
+  const testConfig = testingCandidate ? candidate : row.active;
+  const test = testConfig.test;
+  const testMode = testDialog?.mode;
+  const running =
+    probeRunning(candidate?.test) || probeRunning(row.active.test);
   const locked = !writable || row.active.locked;
 
   useEffect(() => {
@@ -211,7 +224,7 @@ export default function AIConfigDialog({
     onDirty(value || dirty);
   }
   function returnToConfiguration() {
-    setTestMode(undefined);
+    setTestDialog(undefined);
     setFile(undefined);
     setOpeningLocation(undefined);
     setError("");
@@ -235,19 +248,22 @@ export default function AIConfigDialog({
 
   function openTest(mode: AdminAIProbeMode) {
     if (mode === "connection") {
-      void runTest(mode);
+      void runTest(mode, testConfig.version);
       return;
     }
     setError("");
     setFile(undefined);
     setOpeningLocation(undefined);
-    setTestMode(mode);
+    setTestDialog({
+      mode,
+      version: testConfig.version,
+      label: testingCandidate ? "待启用配置" : "生效配置",
+    });
   }
-  async function runTest(mode: AdminAIProbeMode) {
-    if (!candidate || action.current || testing.current) return;
+  async function runTest(mode: AdminAIProbeMode, version: number) {
+    if (running || action.current || testing.current) return;
     testing.current = true;
     setBusy(true);
-    const version = candidate.version;
     const sample: Record<string, unknown> = {};
     if (mode !== "connection") {
       try {
@@ -317,7 +333,6 @@ export default function AIConfigDialog({
     }
   }
 
-  const test = candidate ? candidate.test : row.active.test;
   return (
     <Modal
       open
@@ -338,7 +353,7 @@ export default function AIConfigDialog({
       mask={{ closable: false }}
       onCancel={close}
       footer={
-        testMode ? (
+        testDialog ? (
           <div className="ai-config-actions">
             <Button disabled={busy} onClick={close}>
               返回配置
@@ -346,8 +361,8 @@ export default function AIConfigDialog({
             <Button
               type="primary"
               loading={busy}
-              disabled={locked || running}
-              onClick={() => void runTest(testMode)}
+              disabled={running}
+              onClick={() => void runTest(testDialog.mode, testDialog.version)}
             >
               确认运行测试
             </Button>
@@ -369,7 +384,12 @@ export default function AIConfigDialog({
               <Button
                 type="primary"
                 loading={busy}
-                disabled={!row.canActivate || locked || running || dirty}
+                disabled={
+                  !row.canActivate ||
+                  locked ||
+                  probeRunning(candidate.test) ||
+                  dirty
+                }
                 onClick={activate}
               >
                 启用配置
@@ -495,6 +515,27 @@ export default function AIConfigDialog({
             <h3>可用性测试</h3>
             <AIProbeState test={test} />
           </div>
+          {candidate ? (
+            <Radio.Group
+              aria-label="测试配置"
+              value={testSource}
+              onChange={(event) => setTestSource(event.target.value)}
+              options={[
+                { value: "active", label: "生效配置" },
+                { value: "candidate", label: "待启用配置" },
+              ]}
+            />
+          ) : (
+            <p className="admin-secondary">测试对象：生效配置</p>
+          )}
+          {dirty && (
+            <p className="admin-secondary">
+              当前测试使用已保存的配置。保存修改后即可测试新配置。
+            </p>
+          )}
+          {running && !probeRunning(test) && (
+            <p className="admin-secondary">此服务的另一个配置正在测试。</p>
+          )}
           {test && (
             <>
               <p className="admin-secondary">
@@ -549,20 +590,20 @@ export default function AIConfigDialog({
           )}
           <Space wrap>
             <Button
-              disabled={!candidate || locked || dirty || busy || running}
+              disabled={busy || running}
               onClick={() => openTest("connection")}
             >
               检查连通性
             </Button>
             <Button
-              disabled={!candidate || locked || dirty || busy || running}
+              disabled={busy || running}
               onClick={() => openTest("sample")}
             >
               运行真实样例
             </Button>
             {service === "voice-clone" && (
               <Button
-                disabled={!candidate || locked || dirty || busy || running}
+                disabled={busy || running}
                 onClick={() => openTest("training")}
               >
                 测试复刻训练
@@ -571,10 +612,11 @@ export default function AIConfigDialog({
           </Space>
         </section>
       </div>
-      {testMode && (
+      {testDialog && (
         <div>
           <p className="admin-secondary">
-            本次会向供应商发起真实调用，可能计费或消耗额度。测试仅使用这里指定的测试素材。
+            本次会使用{testDialog.label}
+            向供应商发起真实调用，可能计费或消耗额度。
           </p>
           <Form
             layout="vertical"

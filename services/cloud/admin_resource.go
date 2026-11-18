@@ -15,6 +15,7 @@ import (
 const resourceFamilySQL = `COALESCE(payload->>'familyId', 'legacy:' || jsonb_build_array(payload->>'type', lower(trim(payload->>'name')))::text)`
 const resourceVersionOrderSQL = `CASE WHEN payload->>'version' ~ '^[0-9]+(\.[0-9]+)*$' THEN string_to_array(payload->>'version', '.')::numeric[] END DESC NULLS LAST, payload->>'version' DESC, id`
 const productionResourceSQL = `payload->>'type'='video' AND payload->'production'->>'schemaVersion' IN ('1','2')`
+const undeletedResourceSQL = `NOT (payload ? 'deletedAt')`
 
 func resourceFamily(ctx context.Context, tx *sql.Tx, target, source string, input object) (string, error) {
 	anchor := target
@@ -35,13 +36,55 @@ func resourceFamily(ctx context.Context, tx *sql.Tx, target, source string, inpu
 		return "", fail(422, "更新版本须使用原模板类型并先保存草稿")
 	}
 	// Every write locks the family before any row, including switches across two versions.
-	_, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('keagent-resource-family:' || $1, 0))`, family)
-	return family, err
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('keagent-resource-family:' || $1, 0))`, family); err != nil {
+		return "", err
+	}
+	if source != "" {
+		var exists bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id=$1 AND `+undeletedResourceSQL+`)`, source).Scan(&exists); err != nil {
+			return "", err
+		}
+		if !exists {
+			return "", fail(404, "来源模板版本不存在")
+		}
+	}
+	return family, nil
+}
+
+func deleteResourceFamily(ctx context.Context, tx *sql.Tx, target string) (object, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fail(422, "请选择要删除的模板")
+	}
+	family, err := resourceFamily(ctx, tx, target, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	var raw []byte
+	err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND `+productionResourceSQL, target).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fail(404, "模板不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
+	var resource object
+	if err = json.Unmarshal(raw, &resource); err != nil {
+		return nil, err
+	}
+	if resource["deletedAt"] != nil {
+		return nil, nil
+	}
+	// Preserve exact version data for existing tasks and keep built-in templates from being reseeded.
+	_, err = tx.ExecContext(ctx, `UPDATE keagent_resource SET payload=payload || jsonb_build_object(
+		'deletedAt', now(), 'published', false,
+		'publishedOnce', COALESCE(payload->>'published'='true', false) OR COALESCE(payload->>'publishedOnce'='true', false)
+	) WHERE `+resourceFamilySQL+`=$1 AND `+undeletedResourceSQL, family)
+	return pickFields(resource, "name", "type", "version"), err
 }
 
 func queryResourceVersions(ctx context.Context, db adminQuerier, id string) ([]any, error) {
-	rr, err := db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE `+productionResourceSQL+` AND `+resourceFamilySQL+
-		`=(SELECT `+resourceFamilySQL+` FROM keagent_resource WHERE id=$1 AND `+productionResourceSQL+`) ORDER BY `+resourceVersionOrderSQL, id)
+	rr, err := db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE `+undeletedResourceSQL+` AND `+productionResourceSQL+` AND `+resourceFamilySQL+
+		`=(SELECT `+resourceFamilySQL+` FROM keagent_resource WHERE id=$1 AND `+undeletedResourceSQL+` AND `+productionResourceSQL+`) ORDER BY `+resourceVersionOrderSQL, id)
 	if err != nil {
 		return nil, err
 	}

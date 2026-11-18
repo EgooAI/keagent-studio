@@ -86,7 +86,10 @@ func (s *server) enqueueAIProbe(ctx context.Context, tx *sql.Tx, a actor, spec a
 	if mode != "connection" && input["confirmed"] != true {
 		return nil, fail(422, "请先确认真实测试")
 	}
-	version := number(input["version"])
+	version, ok := input["version"].(float64)
+	if !ok {
+		return nil, fail(422, "请选择测试配置")
+	}
 	payload := obj(input["sample"])
 	if mode == "connection" {
 		payload = nil
@@ -103,26 +106,22 @@ func (s *server) enqueueAIProbe(ctx context.Context, tx *sql.Tx, a actor, spec a
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if h.Candidate <= 0 || version != float64(h.Candidate) {
-		return nil, fail(409, "请保存并刷新配置后再测试")
+	if version != float64(h.Active) && (h.Candidate == 0 || version != float64(h.Candidate)) {
+		return nil, fail(409, "测试配置已变化，请刷新后重试")
 	}
 	if err = validateAIProbeInput(spec.ID, mode, payload); err != nil {
 		return nil, err
 	}
-	var tooSoon bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_ai_probe WHERE service=$1 AND created_at>now()-interval '10 seconds')`, spec.ID).Scan(&tooSoon); err != nil {
-		return nil, err
-	}
-	if tooSoon {
-		return nil, fail(429, "测试请求过于频繁，请稍后再试")
-	}
-	ciphertext, err := sealAI("ai-probe:"+requestID, payload)
-	if err != nil {
-		return nil, err
+	var ciphertext []byte
+	if mode != "connection" && spec.ID != "beike-cli" {
+		ciphertext, err = sealAI("ai-probe:"+requestID, payload)
+		if err != nil {
+			return nil, err
+		}
 	}
 	p, err := scanAIProbe(tx.QueryRowContext(ctx, `INSERT INTO keagent_ai_probe(id,service_group,service,version,mode,status,encrypted_input,actor_id,request_hash)
 		VALUES($1,$2,$3,$4,$5,'queued',$6,$7,$8) ON CONFLICT DO NOTHING RETURNING `+aiProbeColumns,
-		requestID, spec.Group, spec.ID, h.Candidate, mode, ciphertext, a.UserID, hash))
+		requestID, spec.Group, spec.ID, int64(version), mode, ciphertext, a.UserID, hash))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fail(409, "已有该服务的测试正在处理")
 	}

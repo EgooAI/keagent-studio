@@ -79,17 +79,18 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 			return err
 		}
 		missing, issues := aiConfigIssues(spec, values)
-		if len(issues) > 0 {
+		needsCredentials := p.Mode != "connection" || spec.ID == "beike-cli"
+		if len(issues) > 0 && (needsCredentials || spec.ID == "script") {
 			return fail(422, issues[0])
 		}
-		if len(missing) > 0 {
-			return fail(422, "配置仍有缺项，请补充后重测")
+		if len(missing) > 0 && needsCredentials {
+			return fail(422, "缺少配置："+strings.Join(missing, "、"))
 		}
 	}
+	if p.Service == "beike-cli" {
+		return s.probeBeikeCLI(ctx, p)
+	}
 	if p.Mode == "connection" {
-		if p.Service == "beike-cli" {
-			return s.probeBeikeCLI(ctx, p)
-		}
 		return s.probeAIConnection(ctx, p)
 	}
 	var input object
@@ -198,7 +199,7 @@ func (s *server) probeAIConnection(ctx context.Context, p *aiProbe) error {
 		}
 	}
 	if endpoint == "" {
-		return fail(422, "服务地址不可用")
+		return fail(422, "请先配置服务地址")
 	}
 	targets := []string{endpoint}
 	client, transport := providerClient()

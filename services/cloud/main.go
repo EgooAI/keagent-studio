@@ -689,7 +689,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		case "devices":
 			query = `SELECT jsonb_build_object('id',id,'ownerId',owner_id,'name',name,'platform',platform,'revoked',revoked,'lastSeenAt',seen_at) FROM keagent_device ORDER BY seen_at DESC LIMIT 100`
 		case "resources":
-			query = `SELECT payload - 'previewSegments' FROM keagent_resource ORDER BY id`
+			query = `SELECT payload - 'previewSegments' FROM keagent_resource WHERE ` + undeletedResourceSQL + ` ORDER BY id`
 		case "tasks":
 			query = `SELECT t.value || jsonb_build_object('ownerId',owner_id) FROM keagent_workspace CROSS JOIN LATERAL jsonb_array_elements(payload->'tasks') t(value) LIMIT 100`
 		case "audit":
@@ -766,6 +766,12 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		if n == 0 {
 			return nil, fail(404, "设备不存在")
 		}
+	case "resources/delete":
+		action = "resource.delete"
+		metadata, err = deleteResourceFamily(ctx, tx, target)
+		if err == nil && metadata == nil {
+			return object{"id": target}, nil
+		}
 	case "resources":
 		source := str(input["versionOf"])
 		if source != "" && target != "" {
@@ -794,6 +800,9 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		if len(old) > 0 {
 			if err = json.Unmarshal(old, &prior); err != nil {
 				return nil, err
+			}
+			if prior["deletedAt"] != nil {
+				return nil, fail(404, "模板已删除")
 			}
 		}
 		action = "resource.update"
@@ -846,7 +855,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 				return nil, err
 			}
 			var duplicate bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id<>$1 AND lower(trim(payload->>'name'))=lower(trim($2)) AND payload->>'version'=$3 AND payload ? 'production')`, target, str(input["name"]), str(input["version"])).Scan(&duplicate); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id<>$1 AND lower(trim(payload->>'name'))=lower(trim($2)) AND payload->>'version'=$3 AND payload ? 'production' AND `+undeletedResourceSQL+`)`, target, str(input["name"]), str(input["version"])).Scan(&duplicate); err != nil {
 				return nil, err
 			}
 			if duplicate {

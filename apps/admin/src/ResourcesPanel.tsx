@@ -209,6 +209,31 @@ export default function ResourcesPanel() {
       },
     });
   }
+  function deleteTemplate(resource: Resource) {
+    const page = query.data;
+    modal.confirm({
+      title: `删除「${resource.name}」？`,
+      content:
+        "删除后，模板的所有版本都会从目录移除，新任务将无法选择。已有任务的版本记录会保留。",
+      okText: "确认删除",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const deleted = await run(
+          () =>
+            serviceRequest("/v1/admin/resources/delete", { id: resource.id }),
+          "模板已删除",
+        );
+        if (!deleted) throw new Error("删除失败，请重试");
+        if (page && page.offset > 0 && page.items.length === 1) {
+          setParams(
+            { offset: String(Math.max(0, page.offset - page.limit)) },
+            false,
+          );
+        }
+      },
+    });
+  }
   return (
     <>
       {templateId ? (
@@ -465,7 +490,7 @@ export default function ResourcesPanel() {
               {
                 title: "操作",
                 key: "actions",
-                width: 205,
+                width: 280,
                 render: (_, r) => (
                   <Space wrap>
                     <Button
@@ -481,6 +506,14 @@ export default function ResourcesPanel() {
                       onClick={() => void showPreview(r)}
                     >
                       预览校验
+                    </Button>
+                    <Button
+                      danger
+                      size="small"
+                      disabled={busy}
+                      onClick={() => deleteTemplate(r)}
+                    >
+                      删除模板
                     </Button>
                   </Space>
                 ),

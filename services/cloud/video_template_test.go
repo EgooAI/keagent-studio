@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http/httptest"
 	"net/url"
@@ -401,5 +402,94 @@ func TestProductionTemplateLifecycle(t *testing.T) {
 	assertCatalog(previous)
 	if _, err = s.productionTemplate(t.Context(), object{"id": nextID}); err == nil {
 		t.Fatal("rollback left the new version active")
+	}
+}
+
+func TestDeleteProductionTemplateFamily(t *testing.T) {
+	db := productionTestDB(t)
+	ctx := t.Context()
+	if err := seedVideoTemplates(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{db: db}
+	admin := actor{UserID: "catalog-admin"}
+	request := func(method, route string, input object) (any, error) {
+		body, _ := json.Marshal(input)
+		return s.admin(httptest.NewRequest(method, "/v1/admin/resources"+route, nil).WithContext(ctx), admin, body)
+	}
+	requireMissing := func(err error) {
+		t.Helper()
+		var f fault
+		if !errors.As(err, &f) || f.status != 404 {
+			t.Fatalf("expected a missing template, got %v", err)
+		}
+	}
+
+	const currentID = "short-tour-avatar-v1-1"
+	const previousID = "short-tour-avatar"
+	draft := seedTemplate(t)
+	delete(draft, "id")
+	draft["name"] = "短视频带看 · 经纪人开场"
+	draft["version"] = "1.2.0"
+	draft["versionOf"] = currentID
+	draft["published"] = false
+	created, err := request("POST", "", draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draftID := str(obj(created)["id"])
+
+	for _, target := range []string{currentID, previousID} {
+		if _, err = request("POST", "/delete", object{"id": target}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = seedVideoTemplates(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	list, err := request("GET", "/list?productionOnly=true", nil)
+	if err != nil || len(rows(obj(list)["items"])) == 0 {
+		t.Fatalf("unrelated templates missing: %v %v", list, err)
+	}
+	for _, item := range rows(obj(list)["items"]) {
+		if obj(item)["name"] == draft["name"] {
+			t.Fatalf("deleted template in admin catalog: %v", obj(item)["id"])
+		}
+	}
+	templates, err := s.productionTemplates(ctx, true)
+	if err != nil || len(templates) == 0 {
+		t.Fatalf("unrelated templates missing: %v %v", templates, err)
+	}
+	for _, item := range templates {
+		if obj(item)["name"] == draft["name"] {
+			t.Fatalf("deleted template in production catalog: %v", obj(item)["id"])
+		}
+	}
+	for _, target := range []string{currentID, previousID, draftID} {
+		_, err = request("GET", "/versions?id="+target, nil)
+		requireMissing(err)
+		_, err = request("POST", "", object{"id": target, "published": true})
+		requireMissing(err)
+	}
+	_, err = request("POST", "/preview", object{"id": currentID})
+	requireMissing(err)
+	_, err = request("POST", "", draft)
+	requireMissing(err)
+	_, err = request("POST", "/delete", object{"id": "missing"})
+	requireMissing(err)
+	ref := object{"id": currentID, "version": "1.1.0"}
+	if _, err = s.productionTemplate(ctx, ref); err == nil {
+		t.Fatal("deleted version resolved for new tasks")
+	}
+	if version, err := s.loadProductionTemplate(ctx, ref, true); err != nil || obj(version["production"])["opening"] == nil {
+		t.Fatalf("existing opening task lost its version: %v", err)
+	}
+	var auditCount int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM keagent_audit WHERE action='resource.delete' AND actor_id=$1 AND metadata->>'name'=$2`, admin.UserID, draft["name"]).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("expected one deletion audit entry, got %d: %v", auditCount, err)
+	}
+	delete(draft, "versionOf")
+	if replacement, err := request("POST", "", draft); err != nil || obj(replacement)["id"] == draftID {
+		t.Fatalf("could not reuse deleted template name and version with a new ID: %v %v", replacement, err)
 	}
 }

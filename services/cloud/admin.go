@@ -131,9 +131,9 @@ func adminSource(kind string, productionOnly bool) (string, error) {
 	case "devices":
 		return `SELECT jsonb_build_object('id',d.id,'ownerId',d.owner_id,'owner',` + identitySQL("u") + `,'name',d.name,'platform',d.platform,'revoked',d.revoked,'lastSeenAt',d.seen_at) data, d.seen_at sort_at, concat_ws(' ',d.id,d.name,d.platform,d.owner_id,u.name,u.email) search FROM keagent_device d LEFT JOIN "user" u ON u.id=d.owner_id`, nil
 	case "resources":
-		where := ""
+		where := " WHERE " + undeletedResourceSQL
 		if productionOnly {
-			where = " WHERE " + productionResourceSQL
+			where += " AND " + productionResourceSQL
 		}
 		return `SELECT payload || jsonb_build_object('id',id,'state',CASE WHEN payload->>'published'='true' THEN 'published' WHEN payload->>'publishedOnce'='true' THEN 'unpublished' ELSE 'draft' END) data,
 			NULL::timestamptz sort_at, concat_ws(' ',id,payload->>'name',payload->>'category',payload->>'description',payload->>'version') search

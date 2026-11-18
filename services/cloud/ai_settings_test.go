@@ -73,6 +73,50 @@ func TestAIConfigProtection(t *testing.T) {
 	}
 }
 
+func TestAIProbeEnvironmentWithoutConfigKey(t *testing.T) {
+	db := productionTestDB(t)
+	ctx := t.Context()
+	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", "")
+	t.Setenv("AI_BASE_URL", "")
+	s := &server{db: db}
+	queue := func(input object) (any, error) {
+		body, _ := json.Marshal(input)
+		r := httptest.NewRequest("POST", "/v1/admin/ai-config/test", nil).WithContext(ctx)
+		return s.admin(r, actor{UserID: "ai-config-admin"}, body)
+	}
+	assertStatus := func(err error, expected int) {
+		t.Helper()
+		var f fault
+		if !errors.As(err, &f) || f.status != expected {
+			t.Fatalf("expected HTTP %d, got %v", expected, err)
+		}
+	}
+	input := object{"service": "script", "mode": "connection", "requestId": "connection-without-key"}
+	_, err := queue(input)
+	assertStatus(err, 422)
+	input["version"] = 0
+	if _, err = queue(input); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.claimAIProbe(ctx)
+	if err != nil || len(p.Input) != 0 || p.Version != 0 {
+		t.Fatalf("unexpected environment probe: %#v / %v", p.public(), err)
+	}
+	input["requestId"] = "connection-without-key-retry"
+	_, err = queue(input)
+	assertStatus(err, 409)
+	s.executeAIProbe(ctx, p)
+	result, err := s.aiProbeByID(ctx, p.ID)
+	if err != nil || result["status"] != "failed" || result["message"] != "请先配置服务地址" {
+		t.Fatalf("expected a missing address diagnosis: %#v / %v", result, err)
+	}
+	if _, err = queue(input); err != nil {
+		t.Fatal("completed test prevented immediate retry", err)
+	}
+	_, err = queue(object{"service": "tts", "version": 0, "mode": "sample", "requestId": "sample-without-key", "confirmed": true, "sample": object{"voiceId": "test-voice"}})
+	assertStatus(err, 503)
+}
+
 func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	db := productionTestDB(t)
 	ctx := t.Context()
@@ -92,10 +136,11 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	s := &server{db: db}
 	admin := actor{UserID: "ai-config-admin"}
 	calls := 0
+	expectedKey := "existing-environment-key"
 	s.speech = func(ctx context.Context, operation string, payload object, resource string) ([]byte, error) {
 		calls++
-		if operation != "unidirectional" || aiValue(ctx, "VOLC_TTS_API_KEY") != "candidate-key" || resource == "" {
-			t.Fatal("test did not use its candidate and public voice")
+		if operation != "unidirectional" || aiValue(ctx, "VOLC_TTS_API_KEY") != expectedKey || resource == "" {
+			t.Fatal("test did not use the selected configuration and public voice")
 		}
 		return []byte(`{"code":0,"data":"AAA="}`), nil
 	}
@@ -122,7 +167,22 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 		}
 	}
 	assertUnchanged(0, 0, "")
-	_, err := adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"VOLC_TTS_API_KEY": "candidate-key"}})
+	activeSample := object{"service": "tts", "version": 0, "mode": "sample", "requestId": "tts-environment-test", "confirmed": true, "sample": object{"voiceId": voiceID}}
+	if _, err := adminCall("/test", activeSample); err != nil {
+		t.Fatal("sample test rejected for the current environment configuration", err)
+	}
+	environmentProbe, err := s.claimAIProbe(ctx)
+	if err != nil || len(environmentProbe.Input) == 0 {
+		t.Fatal("sample was not queued with encrypted input", err)
+	}
+	s.executeAIProbe(ctx, environmentProbe)
+	environmentResult, err := s.latestAIProbe(ctx, "tts", 0)
+	if err != nil || environmentResult["status"] != "passed" || calls != 1 {
+		t.Fatalf("expected one passed environment test, got %#v / %v / %d", environmentResult, err, calls)
+	}
+	expectedKey = "candidate-key"
+	calls = 0
+	_, err = adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"VOLC_TTS_API_KEY": "candidate-key"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +241,15 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 		t.Fatal("in-flight version was not retained", err)
 	}
 	assertUnchanged(2, 1, "")
+	test["requestId"] = "tts-active-managed-test"
+	if _, err = adminCall("/test", test); err != nil {
+		t.Fatal("sample test rejected for the active managed version", err)
+	}
+	activeProbe, err := s.claimAIProbe(ctx)
+	if err != nil || activeProbe.Version != 1 {
+		t.Fatal("managed active test was not queued", err)
+	}
+	s.executeAIProbe(ctx, activeProbe)
 	if _, err = adminCall("/save", object{"service": "tts", "revision": 2, "fields": object{"VOLC_TTS_API_KEY": "replacement"}}); err != nil {
 		t.Fatal(err)
 	}

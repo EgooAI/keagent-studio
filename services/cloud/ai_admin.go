@@ -108,8 +108,10 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 	if !ok {
 		return nil, fail(422, "未知 AI 服务")
 	}
-	if _, err := aiCipher(); err != nil {
-		return nil, err
+	if action != "ai-config/test" {
+		if _, err := aiCipher(); err != nil {
+			return nil, err
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

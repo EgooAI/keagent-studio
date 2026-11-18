@@ -96,8 +96,9 @@ export default function AdminAI() {
     queryFn: () => serviceRequest<AdminAIConfig>("/v1/admin/ai-config"),
     enabled: activeTab === "services",
     refetchInterval: (state) =>
-      state.state.data?.management?.some((row) =>
-        probeRunning(row.candidate?.test),
+      state.state.data?.management?.some(
+        (row) =>
+          probeRunning(row.candidate?.test) || probeRunning(row.active.test),
       )
         ? 2000
         : false,
@@ -181,7 +182,7 @@ export default function AdminAI() {
               >
                 <div className="admin-toolbar">
                   <p className="admin-secondary">
-                    保存修改后运行真实测试，通过后点击启用。
+                    可直接测试生效配置。保存修改并通过真实样例测试后，可启用新配置。
                   </p>
                   <Button
                     loading={query.isFetching}
@@ -204,7 +205,7 @@ export default function AdminAI() {
                     type="warning"
                     showIcon
                     title="配置管理暂不可写"
-                    description="请部署人员设置服务端加密密钥。当前仍可查看状态。"
+                    description="请部署人员设置服务端加密密钥，以保存配置和提交需要素材的测试。"
                   />
                 )}
                 {query.data && rows.length === 0 && (
@@ -227,9 +228,15 @@ export default function AdminAI() {
                       </thead>
                       <tbody>
                         {rows.map((row) => {
-                          const test = row.candidate
-                            ? row.candidate.test
-                            : row.active.test;
+                          const activeTest = row.active.test;
+                          const candidateTest = row.candidate?.test;
+                          const test =
+                            activeTest &&
+                            (!candidateTest ||
+                              Date.parse(activeTest.createdAt) >
+                                Date.parse(candidateTest.createdAt))
+                              ? activeTest
+                              : candidateTest;
                           return (
                             <tr key={row.summary.id}>
                               <th scope="row">

@@ -265,6 +265,14 @@ async function fixture(page: Page) {
         devices[0].revoked = true;
         return json({ id: devices[0].id });
       }
+      if (url.pathname.endsWith("/resources/delete")) {
+        const resource = resources.find((item) => item.id === body.id)!;
+        const remaining = resources.filter(
+          (item) => family(item) !== family(resource),
+        );
+        resources.splice(0, resources.length, ...remaining);
+        return json({ id: resource.id });
+      }
       if (url.pathname.endsWith("/resources")) {
         const existing = resources.find((resource) => resource.id === body.id);
         if (existing) {
@@ -466,11 +474,16 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
         };
         script.canActivate = false;
       }
-      if (path.endsWith("/test") && script.candidate) {
-        script.candidate.test = {
+      if (path.endsWith("/test")) {
+        const target =
+          input.version === script.active.version
+            ? script.active
+            : script.candidate!;
+        expect(input.version).toBe(target.version);
+        target.test = {
           id: input.requestId,
           service: "script",
-          version: script.candidate.version,
+          version: target.version,
           mode: input.mode,
           status: input.mode === "connection" ? "passed" : "running",
           createdAt: stamp,
@@ -539,14 +552,38 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     name: "运行真实样例",
     exact: true,
   });
+  const connection = configDialog.getByRole("button", {
+    name: "检查连通性",
+    exact: true,
+  });
   const scriptRow = table.getByRole("row", { name: /多模态文案/ });
+  await expect(runSample).toBeEnabled();
+  await connection.click();
+  await expect(
+    configDialog.getByText("连通性通过", { exact: true }),
+  ).toBeVisible();
+  expect(writes.at(-1)?.input).toMatchObject({
+    mode: "connection",
+    version: 3,
+  });
+  await expect(configDialog.getByLabel("模型名", { exact: true })).toHaveValue(
+    "vision-candidate",
+  );
+
   await save.click();
   await expect(scriptRow.getByText("待测试", { exact: true })).toBeVisible();
   await expect(configDialog.getByText("未测试", { exact: true })).toBeVisible();
   expect(script.active.fields.AI_MODEL).toBe("vision-active");
   await configDialog
-    .getByRole("button", { name: "检查连通性", exact: true })
-    .click();
+    .getByRole("radio", { name: "生效配置", exact: true })
+    .check();
+  await expect(
+    configDialog.getByText("连通性通过", { exact: true }),
+  ).toBeVisible();
+  await configDialog
+    .getByRole("radio", { name: "待启用配置", exact: true })
+    .check();
+  await connection.click();
   await expect(
     configDialog.getByText("连通性通过", { exact: true }),
   ).toBeVisible();
@@ -610,6 +647,14 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     0,
   );
   expect(script.active.fields.AI_MODEL).toBe("vision-candidate");
+  await connection.click();
+  await expect(
+    configDialog.getByText("连通性通过", { exact: true }),
+  ).toBeVisible();
+  expect(writes.at(-1)?.input).toMatchObject({
+    mode: "connection",
+    version: 4,
+  });
 });
 
 test("管理入口职责明确，真实路由和旧入口可恢复", async ({ page }) => {
@@ -881,6 +926,27 @@ test("模板目录只显示当前版本，编辑页可更新、启用和切回�
   await expect(
     page.getByText("已启用版本 1.0.0", { exact: true }),
   ).toBeVisible();
+});
+
+test("删除公共模板需要确认，成功后从目录移除", async ({ page }) => {
+  const data = await fixture(page);
+  await page.goto(adminBase + "/#/admin/resources");
+  const row = page.locator('tr[data-row-key="published"]');
+  const remove = row.getByRole("button", { name: "删除模板", exact: true });
+  const dialog = page.getByRole("dialog", { name: "删除「在架视频模板」？" });
+
+  await remove.click();
+  await dialog.getByRole("button", { name: /^取\s*消$/ }).click();
+  await expect(row).toBeVisible();
+  expect(data.writes).toHaveLength(0);
+
+  await remove.click();
+  await dialog.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page.getByText("模板已删除", { exact: true })).toBeVisible();
+  await expect(row).toHaveCount(0);
+  expect(data.writes).toEqual([
+    { path: "/v1/admin/resources/delete", body: { id: "published" } },
+  ]);
 });
 
 test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async ({ page }) => {

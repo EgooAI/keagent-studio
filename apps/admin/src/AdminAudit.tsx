@@ -42,6 +42,7 @@ export const auditActionLabels: Record<string, string> = {
   "resource.update": "编辑模板草稿",
   "resource.publish": "上架模板",
   "resource.unpublish": "下架模板",
+  "resource.delete": "删除模板",
   "device.revoke": "解绑设备",
   "credit.grant": "积分发放",
   "credit.adjust": "积分调整",

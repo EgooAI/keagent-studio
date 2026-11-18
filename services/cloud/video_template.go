@@ -221,7 +221,7 @@ func (s *server) loadProductionTemplate(ctx context.Context, input object, allow
 
 func (s *server) previewProduction(ctx context.Context, a actor, input object, generate bool) (any, error) {
 	var b []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1`, str(input["id"])).Scan(&b)
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND `+undeletedResourceSQL, str(input["id"])).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fail(404, "模板不存在，请先保存草稿")
 	}
@@ -273,7 +273,11 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 		return nil, err
 	}
 	defer tx.Rollback()
-	if err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 FOR UPDATE`, str(input["id"])).Scan(&b); err != nil {
+	err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND `+undeletedResourceSQL+` FOR UPDATE`, str(input["id"])).Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fail(404, "模板已删除")
+	}
+	if err != nil {
 		return nil, err
 	}
 	var current object
