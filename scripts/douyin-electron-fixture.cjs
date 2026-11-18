@@ -134,6 +134,9 @@ function creatorForm(videoHash, coverHash) {
     #cover-editor { position: fixed; inset: 25% 30%; z-index: 2; background: white; }
     #cover-upload { display: block; height: 42px; }
     .bg-fixture { width: 90px; height: 60px; background-size: cover; }
+    #cover-layer.closing, #cover-mask { position: fixed; inset: 0; z-index: 2; background: #fff9; }
+    @keyframes cover-leave { from { opacity: 1; } to { opacity: 0; } }
+    .dy-creator-content-modal-content-animate-hide, .dy-creator-content-modal-mask-animate-hide { animation: cover-leave 1s paused both; }
     label { position: relative; display: inline-block; padding: 8px; }
     label input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; }
     label span { pointer-events: none; }
@@ -145,6 +148,9 @@ function creatorForm(videoHash, coverHash) {
     <div id="caption" contenteditable="true" data-placeholder="添加作品简介"></div>
     <div class="coverControl-fixture"><div class="cover-fixture" id="horizontal"></div><div class="cover-tip-fixture">横封面4:3</div></div>
     <div class="coverControl-fixture"><div class="cover-fixture" id="vertical"><img id="applied-preview" width="90"></div><div class="cover-tip-fixture">竖封面3:4</div></div>
+    <div id="cover-portal">
+    <div id="cover-mask" class="dy-creator-content-modal-mask-animate-hide" hidden></div>
+    <div id="cover-layer" class="fixture-modal-wrap">
     <div id="cover-editor" class="${directCover ? "direct-cover-fixture" : "coverSelect-fixture"}" hidden>
       ${
         directCover
@@ -166,6 +172,8 @@ function creatorForm(videoHash, coverHash) {
       <div class="uploadCrop-fixture" id="crop" hidden><button id="confirm-cover">完成</button></div>
       `
       }
+    </div>
+    </div>
     </div>
     <div id="cover-result" role="status"></div>
     <section id="settings">
@@ -214,9 +222,17 @@ function creatorForm(videoHash, coverHash) {
           return;
         }
         appliedCover = selectedCover;
-        el('cover-editor').hidden = true;
-        if (${directCover}) el('applied-preview').src = imageURL;
-        else el('cover-result').textContent = '封面上传成功';
+        if (${directCover}) {
+          // The creator center may keep the closing dialog and its children in the DOM.
+          el('cover-editor').setAttribute('role', 'dialog');
+          el('cover-editor').classList.add('dy-creator-content-modal-content-animate-hide');
+          el('cover-layer').classList.add('closing');
+          el('cover-mask').hidden = false;
+          el('applied-preview').src = imageURL;
+        } else {
+          el('cover-editor').hidden = true;
+          el('cover-result').textContent = '封面上传成功';
+        }
       }, 600);
     };
     if (${directCover}) el('skip-horizontal').onclick = () => {

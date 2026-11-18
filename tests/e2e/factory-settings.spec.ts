@@ -783,6 +783,15 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图和镜头
   page,
 }) => {
   await fixture(page, false, true);
+  await page.route("**/media/interior-{1,2}.jpg", (route) => {
+    const height = route.request().url().endsWith("interior-1.jpg")
+      ? 1536
+      : 1820;
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body: `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="${height}"><rect width="100%" height="100%" fill="gray"/></svg>`,
+    });
+  });
   await page.goto("/#/settings/appearance");
   await expect(page.getByRole("heading", { name: "形象与背景" })).toBeVisible();
   await page
@@ -799,6 +808,27 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图和镜头
   ).toBeVisible();
   for (const width of [1440, 1280]) {
     await page.setViewportSize({ width, height: 900 });
+    for (const name of ["经纪人照片", "开场背景图"]) {
+      const card = page.getByRole("region", { name, exact: true });
+      const preview = card.locator(".settings-material-preview");
+      const image = preview.getByRole("img", { name, exact: true });
+      await image.evaluate((element: HTMLImageElement) => element.decode());
+      const imageBox = (await image.boundingBox())!;
+      const previewBox = (await preview.boundingBox())!;
+      const button = card.getByRole("button", { name: `更换${name}` });
+      expect(imageBox.x).toBeGreaterThanOrEqual(previewBox.x);
+      expect(imageBox.y).toBeGreaterThanOrEqual(previewBox.y);
+      expect(imageBox.x + imageBox.width).toBeLessThanOrEqual(
+        previewBox.x + previewBox.width,
+      );
+      expect(imageBox.y + imageBox.height).toBeLessThanOrEqual(
+        previewBox.y + previewBox.height,
+      );
+      expect((await button.boundingBox())!.y).toBeGreaterThan(
+        previewBox.y + previewBox.height,
+      );
+      await button.click({ trial: true });
+    }
     await page.screenshot({
       path: test.info().outputPath("opening-materials-" + width + ".png"),
     });
@@ -908,6 +938,12 @@ test("MiniMax 模板要求经纪人授权，审核页可更换地点图和镜头
 test("短视频带看审核可单独保存两行开场封面标题", async ({ page }) => {
   await fixture(page);
   await page.goto("/#/studio/create?propertyId=user-property");
+  await page.evaluate(() => {
+    const property = (window as any).factorySettingsTest.workspace
+      .properties[1];
+    property.community = "测试小区";
+    property.sellingPoints = ["南北通透", "低楼层"];
+  });
   await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
   await page
     .getByRole("checkbox", { name: "选择短视频带看 · 1.0.0", exact: true })
@@ -921,6 +957,8 @@ test("短视频带看审核可单独保存两行开场封面标题", async ({ pa
     exact: true,
   });
   const save = page.getByRole("button", { name: "保存修改", exact: true });
+  const defaultTitle = "测试小区\n南北通透";
+  await expect(title).toHaveValue(defaultTitle);
   await expect(save).toBeDisabled();
   const value = "崇文门西大街\n南北通透 · 低楼层";
   await title.fill(value);
@@ -936,6 +974,14 @@ test("短视频带看审核可单独保存两行开场封面标题", async ({ pa
   );
   expect(input.config.coverTitle).toBe(value);
   expect(input.segments[0].text).toBe("请确认这条房源文案。");
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  await expect(title).toHaveValue(value);
+  await title.clear();
+  await save.click();
+  await expect(title).toHaveValue(defaultTitle);
+  await expect(save).toBeDisabled();
 });
 
 test("制作参数默认跟随模板，清空或越界不能生成，恢复后省略覆盖参数", async ({
@@ -1115,6 +1161,7 @@ test("审核制作参数支持保存、离开提醒、恢复模板与确认持�
     rate: 1.5,
     maxSweep: 120,
   });
+  expect(saves[0].input.config.coverTitle ?? "").toBe("");
   expect(saves[1].input.config).toMatchObject({
     speed: 36,
     rate: 1.1,

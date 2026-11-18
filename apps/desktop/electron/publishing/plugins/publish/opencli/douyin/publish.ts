@@ -142,6 +142,45 @@ async function uploadCover(
     await page.clickElement(complete, options);
 
     const deadline = Date.now() + 30_000;
+    const editorControl = direct ? directUpload : editor;
+    const closingDialog =
+      '[role="dialog"][class*="modal-content-animate-hide"]';
+    const editorOpen = () =>
+      page.evaluate<boolean>(`(() => {
+        const controls = document.querySelectorAll(${JSON.stringify(editorControl)});
+        return [...controls].some(element =>
+          element.getClientRects().length > 0 &&
+          element.checkVisibility({opacityProperty: true, visibilityProperty: true}) &&
+          !element.closest(${JSON.stringify(closingDialog)})
+        );
+      })()`);
+    const finishEditorExit = async () => {
+      assertPage();
+      await page.evaluate(`(() => {
+        if (location.origin !== ${JSON.stringify(origin)}) return;
+        for (const dialog of document.querySelectorAll(${JSON.stringify(closingDialog)})) {
+          if (!dialog.querySelector(${JSON.stringify(editorControl)})) continue;
+          const layer = dialog.closest('[class*="modal-wrap"]');
+          const maskSelector = '[class*="modal-mask-animate-hide"]';
+          const masks = [
+            ...(layer?.querySelectorAll(maskSelector) ?? []),
+            ...(layer?.parentElement?.querySelectorAll(':scope > ' + maskSelector) ?? []),
+          ];
+          // A hidden publishing view can leave the exit animation at its first frame.
+          // Only the exiting cover dialog and its closing masks should stop taking input.
+          for (const element of [dialog, ...masks]) {
+            element.inert = true;
+            for (const animation of element.getAnimations()) {
+              if (animation.playbackRate !== 0 && animation.effect &&
+                  Number.isFinite(animation.effect.getComputedTiming().endTime))
+                animation.finish();
+            }
+          }
+          if (layer && [...layer.querySelectorAll('[role="dialog"]')].every(other =>
+            other.matches(${JSON.stringify(closingDialog)}))) layer.inert = true;
+        }
+      })()`);
+    };
     let uploaded = false;
     let declinedHorizontal = false;
     while (Date.now() < deadline) {
@@ -159,14 +198,20 @@ async function uploadCover(
           await page.clickElement(skipHorizontal, options);
           declinedHorizontal = true;
         }
-        if (!(await page.isElementVisible({ selector: directUpload }))) {
+        // Douyin can leave the closing dialog mounted while its cover preview updates.
+        if (!(await editorOpen())) {
           const currentPreview = await savedPreview();
-          if (currentPreview && currentPreview !== previousPreview) return;
+          if (currentPreview && currentPreview !== previousPreview) {
+            await finishEditorExit();
+            return;
+          }
         }
       } else {
         uploaded ||= await page.isElementVisible(success);
-        if (uploaded && !(await page.isElementVisible({ selector: editor })))
+        if (uploaded && !(await editorOpen())) {
+          await finishEditorExit();
           return;
+        }
       }
       await delay(100, undefined, { signal });
     }

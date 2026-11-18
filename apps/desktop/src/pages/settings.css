@@ -165,17 +165,20 @@
   width: 100%;
   height: 104px;
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
+  overflow: hidden;
   color: var(--muted);
   margin-block: 4px 12px;
   background: var(--canvas);
   border-radius: 7px;
 }
 .settings-material-preview .ant-image {
-  max-width: 100%;
+  width: 100%;
   height: 100%;
 }
 .settings-material-preview .ant-image-img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;

@@ -99,6 +99,16 @@ const tabs = [
   ["canceled", "取消"],
 ];
 
+function reviewCoverTitle(draft: PanoramaDraft) {
+  const { config, property } = draft;
+  return (
+    config.coverTitle ||
+    [property.community || property.title, property.sellingPoints?.[0]]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
 function TaskStep({ row }: { row: FactoryRow }) {
   if (row.phase !== "running") {
     return row.error ? (
@@ -217,7 +227,7 @@ export function PanoramaStudio() {
     draft: PanoramaDraft;
     segments: PanoramaSegment[];
     scenes: PanoramaScene[];
-    coverTitle: string;
+    coverTitle?: string;
     renderSettings: RenderEdits;
   }>();
   const [busy, setBusy] = useState(false);
@@ -225,6 +235,9 @@ export function PanoramaStudio() {
   const [wide, setWide] = useState(
     () => window.matchMedia("(min-width: 1400px)").matches,
   );
+  const coverTitleChanged =
+    edits?.coverTitle !== undefined &&
+    edits.coverTitle !== reviewCoverTitle(edits.draft);
   const dirty =
     !!edits &&
     (edits.segments.some((s, i) => s.text !== edits.draft.segments[i].text) ||
@@ -235,7 +248,7 @@ export function PanoramaStudio() {
           scene.spatial?.targetPanoIndex !==
             edits.draft.scenes[i].spatial?.targetPanoIndex,
       ) ||
-      edits.coverTitle !== (edits.draft.config.coverTitle || "") ||
+      coverTitleChanged ||
       renderKeys.some(
         (key) =>
           edits.renderSettings[key] !== undefined &&
@@ -570,7 +583,8 @@ export function PanoramaStudio() {
   }, [wide, reviewing, loaded?.id]);
   const segments = edits?.segments || row?.draft?.segments || [];
   const scenes = edits?.scenes || row?.draft?.scenes || [];
-  const coverTitle = edits?.coverTitle ?? row?.draft?.config.coverTitle ?? "";
+  const coverTitle =
+    edits?.coverTitle ?? (row?.draft ? reviewCoverTitle(row.draft) : "");
   const taskRenderEdits = edits?.renderSettings || {};
   const refresh = () =>
     Promise.all([
@@ -731,7 +745,7 @@ export function PanoramaStudio() {
           taskRenderEdits,
           draft.config.cameraMode === "spatial",
         ),
-        ...(draft.config.design === "short-tour" ? { coverTitle } : {}),
+        ...(coverTitleChanged ? { coverTitle } : {}),
       },
       segments,
       scenes,
@@ -874,7 +888,7 @@ export function PanoramaStudio() {
             s.id === id ? { ...s, text } : s,
           ),
           scenes: current?.scenes || draft.scenes,
-          coverTitle: current?.coverTitle ?? draft.config.coverTitle ?? "",
+          coverTitle: current?.coverTitle,
           renderSettings: current?.renderSettings || {},
         }));
       }}
@@ -887,7 +901,7 @@ export function PanoramaStudio() {
           scenes: (current?.scenes || draft.scenes).map((scene) =>
             scene.id === id ? { ...scene, ...camera } : scene,
           ),
-          coverTitle: current?.coverTitle ?? draft.config.coverTitle ?? "",
+          coverTitle: current?.coverTitle,
           renderSettings: current?.renderSettings || {},
         }));
       }}
@@ -909,7 +923,7 @@ export function PanoramaStudio() {
           draft: current?.draft || draft,
           segments: current?.segments || draft.segments,
           scenes: current?.scenes || draft.scenes,
-          coverTitle: current?.coverTitle ?? draft.config.coverTitle ?? "",
+          coverTitle: current?.coverTitle,
           renderSettings,
         }));
       }}
