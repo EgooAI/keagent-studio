@@ -408,7 +408,7 @@ test("fixture UI prepares an approved artifact automatically, edits consumer fie
   const title = config.getByLabel("标题", { exact: true });
   await title.fill("抖音独立标题");
   await config.getByLabel("正文", { exact: true }).fill("只修改发布文案");
-  await expect(config.getByText(/封面由抖音页面处理/)).toBeVisible();
+  await expect(config.getByText(/成片封面将上传为抖音竖封面/)).toBeVisible();
   await page.setViewportSize({ width: 1080, height: 720 });
   await config.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "继续编辑", exact: true }).click();

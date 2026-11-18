@@ -885,7 +885,7 @@ function PublishBatch({
         showIcon
         type="info"
         title="确认后按列表顺序公开发布到同一账号"
-        description="封面由抖音页面处理。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
+        description="每条成片的封面将上传为抖音竖封面。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
       />
       <div className="publish-batch-account">
         <label htmlFor="publish-batch-account-id">发布账号</label>

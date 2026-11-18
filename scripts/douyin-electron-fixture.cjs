@@ -22,6 +22,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
 const failVideo = process.env.DOUYIN_TEST_UPLOAD_FAILURE === "1";
+const failCover = process.env.DOUYIN_TEST_COVER_FAILURE === "1";
+const directCover = process.env.DOUYIN_TEST_DIRECT_COVER === "1";
 async function verifyCommentSync(
   testAPI,
   workId,
@@ -120,10 +122,14 @@ async function verifyCommentSync(
   await assert.rejects(request("contact", { id: parent.id }), { status: 403 });
   console.log("Comment detail shared API passed.");
 }
-function creatorForm(videoHash) {
+function creatorForm(videoHash, coverHash) {
   return `<!doctype html><meta charset="utf-8"><style>
     [contenteditable] { min-height: 40px; white-space: pre-wrap; }
     #settings { margin-top: 1200px; }
+    .cover-fixture { width: 120px; height: 90px; background: #ddd; }
+    #cover-editor { position: fixed; inset: 25% 30%; z-index: 2; background: white; }
+    #cover-upload { display: block; height: 42px; }
+    .bg-fixture { width: 90px; height: 60px; background-size: cover; }
     label { position: relative; display: inline-block; padding: 8px; }
     label input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; }
     label span { pointer-events: none; }
@@ -133,6 +139,31 @@ function creatorForm(videoHash) {
     <div id="uploadStatus">取消上传</div>
     <input id="title" placeholder="填写作品标题，为作品获得更多流量">
     <div id="caption" contenteditable="true" data-placeholder="添加作品简介"></div>
+    <div class="coverControl-fixture"><div class="cover-fixture" id="horizontal"></div><div class="cover-tip-fixture">横封面4:3</div></div>
+    <div class="coverControl-fixture"><div class="cover-fixture" id="vertical"><img id="applied-preview" width="90"></div><div class="cover-tip-fixture">竖封面3:4</div></div>
+    <div id="cover-editor" class="${directCover ? "direct-cover-fixture" : "coverSelect-fixture"}" hidden>
+      ${
+        directCover
+          ? `
+      <div><div id="file-preview" class="bg-fixture"></div>
+        <div class="upload-tips-fixture"><div>上传封面</div></div>
+        <div class="upload-fixture">
+          <input id="cover" class="semi-upload-hidden-input" type="file" accept="image/jpeg,image/png" hidden>
+          <input class="semi-upload-hidden-input-replace" type="file" accept="image/jpeg,image/png" hidden>
+        </div>
+      </div>
+      <button id="confirm-cover">完成</button>
+      <button id="skip-horizontal" hidden>暂不设置</button>
+      `
+          : `
+      <div id="cover-tab">上传封面</div>
+      <div id="cover-area" hidden><span id="cover-upload">点击上传 或直接将图片文件拖入此区域</span></div>
+      <input id="cover" type="file" accept="image/jpeg,image/png" hidden>
+      <div class="uploadCrop-fixture" id="crop" hidden><button id="confirm-cover">完成</button></div>
+      `
+      }
+    </div>
+    <div id="cover-result" role="status"></div>
     <section id="settings">
     <label><input type="radio" name="sync" checked value="同时发布"><span>同时发布</span></label>
     <label><input type="radio" name="sync" value="不同时发布"><span>不同时发布</span></label>
@@ -146,9 +177,46 @@ function creatorForm(videoHash) {
   <script>
     const el = id => document.getElementById(id);
     const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), n => n.toString(16).padStart(2, '0')).join('');
-    let video, caption;
+    let video, caption, selectedCover, appliedCover, imageURL, skipClicks = 0;
     let uploaded = false;
     el('upload').onclick = () => el('video').click();
+    el('horizontal').onclick = () => { throw new Error('Wrong cover ratio'); };
+    el('vertical').onclick = () => { el('cover-editor').hidden = false; };
+    if (!${directCover}) {
+      el('cover-tab').onclick = () => { el('cover-area').hidden = false; };
+      el('cover-upload').onclick = () => el('cover').click();
+    }
+    el('cover').onchange = async () => {
+      selectedCover = await digest(el('cover').files[0]);
+      if (selectedCover !== ${JSON.stringify(coverHash)}) return;
+      if (${directCover}) {
+        imageURL = URL.createObjectURL(el('cover').files[0]);
+        el('file-preview').style.backgroundImage = 'url(' + imageURL + ')';
+      } else {
+        el('cover-area').hidden = true;
+        el('crop').hidden = false;
+      }
+    };
+    const saveCover = () => {
+      setTimeout(() => {
+        if (${failCover}) {
+          el('cover-result').textContent = '封面上传失败，请重试';
+          return;
+        }
+        appliedCover = selectedCover;
+        el('cover-editor').hidden = true;
+        if (${directCover}) el('applied-preview').src = imageURL;
+        else el('cover-result').textContent = '封面上传成功';
+      }, 600);
+    };
+    if (${directCover}) el('skip-horizontal').onclick = () => {
+      if (++skipClicks === 1) saveCover();
+    };
+    el('confirm-cover').onclick = () => {
+      el('confirm-cover').disabled = true;
+      if (${directCover}) el('skip-horizontal').hidden = false;
+      else saveCover();
+    };
     el('video').onchange = async () => {
       video = await digest(el('video').files[0]);
       if (video !== ${JSON.stringify(videoHash)}) return;
@@ -171,10 +239,11 @@ function creatorForm(videoHash) {
     };
     el('submit').onclick = async () => {
       el('submit').disabled = true;
+      if (${directCover} && skipClicks !== 1) throw new Error('Cover confirmation must be clicked once');
       const response = await fetch('/web/api/media/aweme/create_v2/?read_aid=2906', {
         method: 'POST',
         body: JSON.stringify({
-          video, title: el('title').value,
+          video, cover: appliedCover, title: el('title').value,
           caption,
           settings: Array.from(document.querySelectorAll('input:checked'), input => input.value),
         }),
@@ -517,7 +586,7 @@ app.whenReady().then(async () => {
               },
             });
           if (url.pathname === "/creator-micro/content/upload")
-            return new Response(creatorForm(hash(video)), {
+            return new Response(creatorForm(hash(video), hash(cover)), {
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
           if (url.pathname === "/web/api/media/aweme/create_v2/") {
@@ -525,6 +594,7 @@ app.whenReady().then(async () => {
             const submission = await request.json();
             assert.deepEqual(submission, {
               video: hash(video),
+              cover: hash(cover),
               title: "集成测试视频",
               caption: "仅测试适配器\n\n后续一段 #测试",
               settings: ["不同时发布", "公开", "不允许", "立即发布"],
@@ -1004,12 +1074,18 @@ app.whenReady().then(async () => {
     const started = await call("publish.start", input);
     assert.equal(started.ok, true, JSON.stringify(started));
     await service.publisher.idle();
-    if (failVideo) {
+    if (failVideo || failCover) {
       const record = service.publisher.active;
       assert.equal(record.state, "failed");
-      assert.equal(record.errorCode, "VIDEO_UPLOAD_FAILED");
+      assert.equal(
+        record.errorCode,
+        failVideo ? "VIDEO_UPLOAD_FAILED" : "COVER_UPLOAD_FAILED",
+      );
       assert.ok(
-        !record.logs.some((entry) => entry.step === "fill_publish_form"),
+        !record.logs.some(
+          (entry) =>
+            entry.step === (failVideo ? "upload_cover" : "publish_settings"),
+        ),
       );
       assert.equal(submits, 0);
       service.stop();
@@ -1087,7 +1163,7 @@ app.whenReady().then(async () => {
     service.stop();
     for (const win of windows) win.destroy();
     console.log(
-      "Hidden Electron verified: real file registration, explicit review, isolated login, video-only upload, form input, single submit and recovery.",
+      "Hidden Electron verified: real file registration, explicit review, isolated login, video and cover upload, form input, single submit and recovery.",
     );
     app.exit(0);
   } catch (error) {

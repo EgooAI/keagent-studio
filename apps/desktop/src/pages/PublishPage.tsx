@@ -683,7 +683,7 @@ function ArtifactPublishDetail({
       >
         <p className="muted publish-config-notice">
           <Send size={17} aria-hidden="true" />
-          立即公开发布，关闭下载，不同步头条。封面由抖音页面处理。
+          立即公开发布，关闭下载，不同步头条。成片封面将上传为抖音竖封面。
         </p>
         <Form
           className="publish-config-fields"

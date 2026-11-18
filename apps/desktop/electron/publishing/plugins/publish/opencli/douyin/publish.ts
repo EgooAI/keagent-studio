@@ -28,6 +28,149 @@ const label = (text: string): PublishPageElementQuery => ({
   exactText: true,
 });
 
+async function uploadCover(
+  page: OpenCliPage,
+  file: string,
+  signal: AbortSignal,
+  assertPage: () => void,
+) {
+  // The card label identifies the ratio, but the click handler is on its preview.
+  const card = 'div[class*="coverControl-"]';
+  const preview = `${card} > div[class^="cover-"]:not([class^="cover-tip-"])`;
+  const editor = '[class*="coverSelect-"]';
+  const directUpload = '[class*="upload-tips-"]';
+  const uploadControl = {
+    ...label("上传封面"),
+    within: `${editor}, ${directUpload}`,
+  };
+  const directInput = `${directUpload} + [class*="upload-"] input.semi-upload-hidden-input[type="file"][accept*="image"]:not(:disabled)`;
+  const directPreview = `div:has(> ${directUpload}) > [class*="bg-"][style*="background-image"]`;
+  const uploadArea = {
+    ...label("点击上传"),
+    exactText: false,
+    within: editor,
+  };
+  const cropComplete = {
+    ...button("完成"),
+    within: `${editor} [class*="uploadCrop-"]`,
+  };
+  const editorComplete = button("完成");
+  const skipHorizontal = button("暂不设置");
+  const success = label("封面上传成功");
+  const rejected = {
+    selector: ":is(div, span, p):not(:has(div, span, p))",
+    text: "封面失败",
+  };
+  const options = { origin, signal };
+
+  try {
+    await page.waitForElement(
+      { selector: card, text: "竖封面3:4" },
+      "visible",
+      15_000,
+      signal,
+    );
+    const index = await page.evaluate<number>(`(() => {
+      return [...document.querySelectorAll(${JSON.stringify(preview)})].findIndex(element => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.width > 0 && bounds.height > 0 &&
+          element.parentElement.textContent.replace(/\\s+/g, '').includes('竖封面3:4');
+      });
+    })()`);
+    if (index < 0) throw new Error("The vertical cover preview is unavailable");
+    await page.clickElement({ selector: preview, index }, options);
+    await page.waitForElement(uploadControl, "visible", 15_000, signal);
+    const direct = await page.isElementVisible({
+      ...uploadControl,
+      within: directUpload,
+    });
+    if (direct) {
+      // The full editor has separate inputs for adding and replacing images.
+      await page.waitForElement(
+        { selector: directInput },
+        "attached",
+        15_000,
+        signal,
+      );
+      await page.setFileInput([file], directInput, options);
+    } else {
+      await page.clickElement(uploadControl, options);
+      await page.waitForElement(uploadArea, "visible", 15_000, signal);
+      await page.chooseFiles(uploadArea, [file], 10_000, options);
+    }
+
+    const complete = direct ? editorComplete : cropComplete;
+    const savedPreview = () =>
+      page.evaluate<string>(`(() => {
+        const img = document.querySelectorAll(${JSON.stringify(preview)})[${index}]?.querySelector('img');
+        return img?.complete && img.naturalWidth > 0 ? img.currentSrc : '';
+      })()`);
+
+    const readyBy = Date.now() + 15_000;
+    while (true) {
+      assertPage();
+      if (
+        (await page.isElementVisible({
+          ...label("不支持的图片格式"),
+          exactText: false,
+        })) ||
+        (await page.isElementVisible({
+          ...label("分辨率过低"),
+          exactText: false,
+        }))
+      )
+        throw new PublishingError(
+          "COVER_UPLOAD_FAILED",
+          "抖音拒绝了封面图片的格式或尺寸",
+        );
+      if (
+        (await page.isElementVisible(complete)) &&
+        (!direct || (await page.isElementVisible({ selector: directPreview })))
+      )
+        break;
+      if (Date.now() >= readyBy) throw new Error("The cover crop is not ready");
+      await delay(100, undefined, { signal });
+    }
+    const previousPreview = direct ? await savedPreview() : "";
+    await page.clickElement(complete, options);
+
+    const deadline = Date.now() + 30_000;
+    let uploaded = false;
+    let declinedHorizontal = false;
+    while (Date.now() < deadline) {
+      assertPage();
+      if (
+        (await page.isElementVisible(rejected)) ||
+        (await page.isElementVisible({ ...rejected, text: "封面上传失败" }))
+      )
+        break;
+      if (direct) {
+        if (
+          !declinedHorizontal &&
+          (await page.isElementVisible(skipHorizontal))
+        ) {
+          await page.clickElement(skipHorizontal, options);
+          declinedHorizontal = true;
+        }
+        if (!(await page.isElementVisible({ selector: directUpload }))) {
+          const currentPreview = await savedPreview();
+          if (currentPreview && currentPreview !== previousPreview) return;
+        }
+      } else {
+        uploaded ||= await page.isElementVisible(success);
+        if (uploaded && !(await page.isElementVisible({ selector: editor })))
+          return;
+      }
+      await delay(100, undefined, { signal });
+    }
+    throw new Error("The creator page did not confirm the cover upload");
+  } catch (error) {
+    assertPage();
+    if (error instanceof PublishingError) throw error;
+    throw new PublishingError("COVER_UPLOAD_FAILED", "抖音未能确认封面已上传");
+  }
+}
+
 export async function publishFromCreatorPage(
   page: OpenCliPage,
   input: DouyinPublishInput,
@@ -95,6 +238,10 @@ export async function publishFromCreatorPage(
     );
   });
   progress(55);
+
+  await steps.run("upload_cover", "通过网页上传竖版封面", () =>
+    uploadCover(page, files.cover, signal, assertPage),
+  );
 
   await steps.run("publish_settings", "核对网页发布设置", async () => {
     for (const [step, text] of [

@@ -21,7 +21,7 @@
 
 用户明确接收成片后创建不可变交接。平台标题、正文和话题属于消费记录。发布前及最终提交前重新检查当前验收、资产及登录身份。
 
-发布器通过网页文件选择器上传视频，输入标题和正文，并核对公开、立即发布、关闭保存权限和不同步等设置。封面交由抖音网页处理。
+发布器通过网页文件选择器上传视频，输入标题和正文，将交接封面上传为抖音 3:4 竖封面，并核对公开、立即发布、关闭保存权限和不同步等设置。封面上传未获确认时停止提交。竖封面的网页操作参考 [auto-upload 的抖音上传器](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L338-L423)。
 
 执行状态为 `running / submitting / accepted / failed / unknown / canceled`。本机写入 `submitting` 日志并获得云端确认后，只点击一次网页的发布按钮。发布器读取网页发出的提交回执，有效作品 ID 记为 `accepted`。明确的平台拒绝记为失败，超时或回执不明时转为待核对。平台审核与作品可见性由抖音决定。
 
@@ -45,7 +45,7 @@ corepack pnpm package:desktop --config.electronDist=node_modules/electron/dist
 node scripts/douyin-package-smoke.mjs
 ```
 
-隐藏 Electron 使用真实测试文件、默认注册器和解析器，以及隔离 Session 的 HTTPS 页面夹具。用例覆盖登录、只上传视频、文案输入、发布设置、单次提交、作品 ID 和中断恢复。Go 集成测试使用真实共享 API 和临时数据库 schema，结束后清理测试记录。真实抖音网页的兼容性需单独验证。
+隐藏 Electron 使用真实测试文件、默认注册器和解析器，以及隔离 Session 的 HTTPS 页面夹具。用例覆盖登录、视频与封面上传、文案输入、发布设置、单次提交、作品 ID 和中断恢复。Go 集成测试使用真实共享 API 和临时数据库 schema，结束后清理测试记录。真实抖音网页的兼容性需单独验证。
 
 目录打包先将桌面构建产物暂存到 `output/desktop-app`，独立清单不声明运行时外部依赖；构建钩子防止打包工具把整个pnpm工作区的后台依赖带入客户端。上面的electronDist命令复用当前平台已安装的Electron；跨平台构建需匹配的分发文件。目录包为未签名验证产物。
 
