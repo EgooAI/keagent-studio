@@ -3,11 +3,14 @@ import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
 
 test.use({ timezoneId: "America/Los_Angeles" });
 
-test("桌面端可按日期查看本人服务消耗，并显示流水实际消耗", async ({ page }) => {
+test("桌面侧栏显示可用积分并直达兑换，也可按日期查看实际消耗", async ({
+  page,
+}) => {
   const base = "http://127.0.0.1:5183";
   const requests: URL[] = [];
   let failUsage = false;
   let empty = false;
+  let purchased = 100;
   await page.clock.setFixedTime(new Date("2026-11-12T16:30:00Z"));
   await page.route("**/api/auth/**", (route) =>
     route.fulfill({ json: { token: "fixture-token" } }),
@@ -39,9 +42,13 @@ test("桌面端可按日期查看本人服务消耗，并显示流水实际消�
         total: empty ? 0 : 45,
       });
     }
+    if (url.pathname === "/v1/credits/redeem") {
+      purchased += 20;
+      return json({ amount: 20 });
+    }
     if (url.pathname === "/v1/credits")
       return json({
-        purchased: { available: 100, held: 0 },
+        purchased: { available: purchased, held: 20 },
         granted: { available: 50, held: 0 },
         ledger: [
           {
@@ -61,7 +68,21 @@ test("桌面端可按日期查看本人服务消耗，并显示流水实际消�
       });
     return json({});
   });
-  await page.goto(base + "/#/settings/credits");
+  await page.goto(base + "/#/dashboard");
+  const sidebar = page.getByRole("complementary");
+  const userMenu = sidebar.getByRole("button", { name: "用户菜单" });
+  const redeemLink = sidebar.getByRole("link", { name: "积分兑换" });
+  await expect(userMenu).toHaveAccessibleDescription(/可用积分\s*150/);
+  await page.setViewportSize({ width: 600, height: 900 });
+  await expect(userMenu.getByText("150", { exact: true })).toBeVisible();
+  await redeemLink.click();
+  await expect(page).toHaveURL(/#\/settings\/credits$/);
+  await expect(redeemLink).toHaveAttribute("aria-current", "page");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("textbox", { name: "兑换码" }).fill("TEST-CREDIT-CODE");
+  await page.getByRole("button", { name: /^兑\s*换$/ }).click();
+  await expect(userMenu).toHaveAccessibleDescription(/可用积分\s*170/);
+
   const usage = page.getByRole("region", { name: "服务消耗", exact: true });
   await expect(usage.getByLabel("开始日期")).toHaveValue("2026-10-15");
   await expect(usage.getByLabel("结束日期")).toHaveValue("2026-11-13");

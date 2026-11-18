@@ -3,20 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Coins, Gift, RefreshCw } from "lucide-react";
 import { authRequest, ServiceRequestError } from "@keagent/api-client";
+import { creditSummaryQuery, type CreditSummary } from "../lib/creditSummary";
 import CreditUsage from "./CreditUsage";
-
-interface CreditSummary {
-  purchased?: { available?: number; held?: number };
-  granted?: { available?: number; held?: number; nextExpiry?: string };
-  ledger?: {
-    kind: string;
-    amount: number;
-    op: string;
-    refId: string;
-    metadata?: { note?: string; spent?: number };
-    createdAt: string;
-  }[];
-}
 
 const ledgerLabels: Record<string, string> = {
   grant: "发放",
@@ -40,11 +28,7 @@ export function CreditsPanel() {
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
   const [redeeming, setRedeeming] = useState(false);
-  const summary = useQuery({
-    queryKey: ["credits-summary"],
-    queryFn: () => authRequest<CreditSummary>("credits.summary"),
-    retry: false,
-  });
+  const summary = useQuery(creditSummaryQuery);
   async function redeem() {
     const trimmed = code.trim();
     if (!trimmed) {
@@ -58,7 +42,9 @@ export function CreditsPanel() {
       ]);
       message.success(`兑换成功，到账 ${result.amount} 积分`);
       setCode("");
-      await queryClient.invalidateQueries({ queryKey: ["credits-summary"] });
+      await queryClient.invalidateQueries({
+        queryKey: creditSummaryQuery.queryKey,
+      });
     } catch (error) {
       message.error(
         error instanceof Error ? error.message : "兑换失败，请重试",

@@ -8,7 +8,6 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { insufficientCreditsEvent } from "@keagent/api-client";
 import {
   Alert,
   App as AntApp,
@@ -19,8 +18,9 @@ import {
   Popconfirm,
   Skeleton,
 } from "antd";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArrowRight,
   Building2,
   House,
   LogOut,
@@ -29,7 +29,8 @@ import {
   SquarePlay,
   UsersRound,
 } from "lucide-react";
-import { demoApi, isLive } from "@keagent/api-client";
+import { demoApi, insufficientCreditsEvent, isLive } from "@keagent/api-client";
+import { creditSummaryQuery } from "./lib/creditSummary";
 import { useWorkspace } from "./lib/workspace";
 import DouyinBrowserWorkspace from "./components/DouyinBrowserWorkspace";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
@@ -70,6 +71,7 @@ const CollectionPage = lazy(() => import("./pages/CollectionPage"));
 const CommentLeadPage = lazy(() => import("./pages/CommentLeadPage"));
 const LeadWorkspace = lazy(() => import("./pages/leads/LeadWorkspace"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const creditsPath = "/settings/credits";
 
 const navigation = [
   { path: "/dashboard", label: "工作台", icon: House },
@@ -82,6 +84,11 @@ const navigation = [
 export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const { data, error, isPending } = useWorkspace();
   const queryClient = useQueryClient();
+  const creditSummary = useQuery({
+    ...creditSummaryQuery,
+    enabled: isLive,
+    refetchInterval: 30_000,
+  });
   const location = useLocation();
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
@@ -104,21 +111,27 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   }, [location.pathname]);
   useEffect(() => {
     const onInsufficient = () => {
+      void queryClient.invalidateQueries({
+        queryKey: creditSummaryQuery.queryKey,
+      });
       message.warning({
-        content: "积分不足，请先到“设置 → 积分与兑换”充值或兑换。",
-        onClick: () => navigate("/settings/credits"),
+        content: "积分不足，请点击左下角「积分兑换」。",
+        onClick: () => navigate(creditsPath),
       });
     };
     window.addEventListener(insufficientCreditsEvent, onInsufficient);
     return () =>
       window.removeEventListener(insufficientCreditsEvent, onInsufficient);
-  }, [message, navigate]);
+  }, [message, navigate, queryClient]);
   const activeTasks =
     data?.tasks.filter((t) =>
       ["queued", "running", "awaiting_review"].includes(t.status),
     ).length ?? 0;
   const profileName =
     data?.profile.name.trim() || (isLive ? "用户" : "演示经纪人");
+  const balance = creditSummary.data;
+  const availableCredits =
+    (balance?.purchased?.available ?? 0) + (balance?.granted?.available ?? 0);
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -219,6 +232,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
               className="sidebar-profile"
               title={profileName}
               aria-label="用户菜单"
+              aria-describedby={isLive ? "sidebar-credit-balance" : undefined}
               aria-haspopup="menu"
               aria-expanded={userMenuOpen}
               disabled={!onLogout}
@@ -226,10 +240,31 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
               <Avatar size={44}>{Array.from(profileName)[0]}</Avatar>
               <span>
                 <strong>{profileName}</strong>
-                <small>{isLive ? "云端工作区" : "演示工作区"}</small>
+                {isLive ? (
+                  <small
+                    id="sidebar-credit-balance"
+                    className="sidebar-credit-balance"
+                  >
+                    <span>可用积分</span>
+                    <b>
+                      {balance
+                        ? availableCredits.toLocaleString("zh-CN")
+                        : creditSummary.isError
+                          ? "暂不可用"
+                          : "—"}
+                    </b>
+                  </small>
+                ) : (
+                  <small>演示工作区</small>
+                )}
               </span>
             </button>
           </Dropdown>
+          {isLive && (
+            <NavLink to={creditsPath} className="sidebar-credit-link" end>
+              积分兑换 <ArrowRight size={13} aria-hidden="true" />
+            </NavLink>
+          )}
         </div>
       </aside>
       <div className="app-workspace">
