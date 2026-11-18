@@ -4,6 +4,7 @@ import {
   Alert,
   App,
   Button,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -15,22 +16,14 @@ import {
   Space,
   Tag,
   Timeline,
+  type MenuProps,
 } from "antd";
-import {
-  ArrowLeft,
-  Film,
-  FolderCheck,
-  Play,
-  RotateCcw,
-  Send,
-  ShieldCheck,
-} from "lucide-react";
+import { ArrowLeft, ChevronDown, Film, RotateCcw, Send } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { artifactExchange, isLive } from "@keagent/api-client";
 import {
   douyinStateLabels,
   validateDouyinInput,
-  type ArtifactHandoff,
   type ArtifactReviewState,
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
@@ -89,8 +82,9 @@ function ArtifactPublishDetail({
   const client = useQueryClient();
   const { message, modal } = App.useApp();
   const desktop = useDouyinDesktop(!embedded);
+  const artifactKey = ["douyin", "artifact", artifactId];
   const artifact = useQuery({
-    queryKey: ["douyin", "artifact", artifactId],
+    queryKey: artifactKey,
     queryFn: () => artifactExchange.getArtifact(artifactId),
   });
   const accounts = useQuery({
@@ -116,20 +110,19 @@ function ArtifactPublishDetail({
   });
   const [form] = Form.useForm<EditValues>();
   const values = Form.useWatch([], form) as EditValues | undefined;
-  const [configuring, setConfiguring] = useState(false);
+  const [configurationRevision, setConfigurationRevision] = useState<number>();
+  const configuring = configurationRevision !== undefined;
   const [dirty, setDirty] = useState(false);
   const blocker = useBlocker(dirty);
   const returnFocus = useRef<HTMLButtonElement>(null);
   const resultFocus = useRef<HTMLElement>(null);
   const inFlight = useRef(false);
-  const [handoff, setHandoff] = useState<ArtifactHandoff>();
-  const [preview, setPreview] = useState<{ video: string; cover: string }>();
+  const [unplayableAt, setUnplayableAt] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [reconciling, setReconciling] = useState<DouyinPublishRecord>();
   const [resultUrl, setResultUrl] = useState("");
   const [confirmAbsent, setConfirmAbsent] = useState(false);
-  const handoffKey = useRef(crypto.randomUUID());
   const publishKey = useRef(crypto.randomUUID());
   useEffect(() => {
     if (blocker.state !== "blocked") return;
@@ -170,21 +163,15 @@ function ArtifactPublishDetail({
 
   function resetConfiguration() {
     setDirty(false);
-    setConfiguring(false);
+    setConfigurationRevision(undefined);
     setError("");
   }
   useEffect(() => {
-    setHandoff(undefined);
     setRecordOffset(0);
-    setPreview(undefined);
-    handoffKey.current = crypto.randomUUID();
-    publishKey.current = crypto.randomUUID();
   }, [artifactId]);
   useEffect(() => {
-    setHandoff(undefined);
-    handoffKey.current = crypto.randomUUID();
     publishKey.current = crypto.randomUUID();
-  }, [artifact.data?.review.revision]);
+  }, [artifactId, artifact.data?.review.revision]);
   const current = artifact.data;
   const active = desktop.data?.activeRecord;
   const running =
@@ -199,11 +186,52 @@ function ArtifactPublishDetail({
         hashtags: values.hashtags || [],
       })
     : undefined;
-  const local = assets.data?.every(
-    (asset) =>
-      asset.location.deviceId === desktop.data?.deviceId &&
-      asset.availability.state === "available",
-  );
+  const deviceId = desktop.data?.deviceId;
+  const local =
+    !!deviceId &&
+    assets.data?.every(
+      (asset) =>
+        asset.location.deviceId === deviceId &&
+        asset.availability.state === "available",
+    );
+  const canPreview = !!desktop.data?.resolverAvailable && !!local;
+  const previewKey = ["douyin-preview", artifactId, deviceId];
+  const preview = useQuery({
+    queryKey: previewKey,
+    queryFn: () =>
+      douyinDesktop<{ video: string; cover: string }>("preview", {
+        artifactId,
+      }),
+    enabled: detailTab === "preview" && canPreview,
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+  const playbackFailed = unplayableAt === preview.dataUpdatedAt;
+  const previewError = preview.isError
+    ? publishingMessage(preview.error)
+    : playbackFailed
+      ? "视频暂时无法播放"
+      : undefined;
+  const previewSource =
+    canPreview && !playbackFailed && !preview.isError
+      ? preview.data
+      : undefined;
+  const approved = current?.review.state === "approved";
+  const reviewRevision = current?.review.revision;
+  const handoffQuery = useQuery({
+    queryKey: ["douyin-handoff", artifactId, deviceId, reviewRevision],
+    queryFn: () =>
+      artifactExchange.createHandoff({
+        requestKey: `review-${artifactId}-${reviewRevision}`,
+        artifactId,
+        expectedReviewRevision: reviewRevision!,
+      }),
+    enabled: detailTab === "preview" && !!previewSource && approved,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const handoff = handoffQuery.data;
   async function act(action: () => Promise<void>) {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -219,16 +247,6 @@ function ArtifactPublishDetail({
       setBusy(false);
     }
   }
-  async function receive() {
-    if (!current) return;
-    const value = await artifactExchange.createHandoff({
-      requestKey: handoffKey.current,
-      artifactId: current.id,
-      expectedReviewRevision: current.review.revision,
-    });
-    setHandoff(value);
-    message.success("已固定成片交接版本");
-  }
   function review(state: ArtifactReviewState) {
     modal.confirm({
       className: "publish-dialog publish-confirm-dialog",
@@ -236,18 +254,18 @@ function ArtifactPublishDetail({
       title: state === "approved" ? "确认成片验收通过？" : "撤回成片验收？",
       content:
         state === "approved"
-          ? "请确认已检查视频、封面与最终文案。验收通过后才能接收并发布这份成片。"
+          ? "请确认已检查视频、封面与最终文案。通过后即可配置发布。"
           : "撤回后，尚未最终提交的发布操作会重新检查并停止。",
       okText: state === "approved" ? "验收通过" : "撤回验收",
       cancelText: "取消",
       onOk: () =>
         act(async () => {
-          await artifactExchange.reviewArtifact({
+          const updated = await artifactExchange.reviewArtifact({
             id: current!.id,
             expectedRevision: current!.review.revision,
             state,
           });
-          setHandoff(undefined);
+          client.setQueryData(artifactKey, updated);
         }),
     });
   }
@@ -287,11 +305,53 @@ function ArtifactPublishDetail({
     );
     return surface ? surface(status, false) : status;
   }
-  const canConfigure =
-    !!handoff &&
-    !!desktop.data?.resolverAvailable &&
-    !!local &&
-    current.review.state === "approved";
+  const canConfigure = !!handoff && !!previewSource && approved;
+  // A configuration that was opened for a different review must be closed and reopened.
+  const canSubmit = canConfigure && configurationRevision === reviewRevision;
+  let previewStatus = "正在加载视频预览…";
+  if (previewError) previewStatus = previewError;
+  else if (
+    !desktopPublishingAvailable() ||
+    desktop.data?.resolverAvailable === false ||
+    desktop.isError ||
+    assets.isError
+  )
+    previewStatus = "暂时无法预览成片";
+  else if (assets.data && deviceId && !local)
+    previewStatus = "请在原设备通过「更多」恢复文件";
+  const restoreLabels = {
+    video: "恢复视频文件",
+    cover: "恢复封面文件",
+    subtitle: "恢复字幕文件",
+  };
+  const recoveryItems = window.desktop?.artifactMedia
+    ? (assets.data ?? []).map((asset) => ({
+        key: asset.id,
+        label: restoreLabels[asset.kind],
+        disabled: busy || running || asset.location.deviceId !== deviceId,
+        onClick: () =>
+          void act(async () => {
+            await artifactMedia.restore(asset.id);
+            await client.resetQueries({ queryKey: previewKey, exact: true });
+            message.success("文件已验证并恢复登记");
+          }),
+      }))
+    : [];
+  const moreItems: MenuProps["items"] = [
+    ...(approved
+      ? [
+          {
+            key: "withdraw",
+            label: "撤回验收",
+            icon: <RotateCcw size={15} aria-hidden="true" />,
+            disabled: busy || running,
+            onClick: () => review("pending"),
+          },
+        ]
+      : []),
+    ...(approved && recoveryItems.length ? [{ type: "divider" as const }] : []),
+    ...recoveryItems,
+  ];
   const content = (
     <div
       className={embedded ? "publish-artifact is-embedded" : "publish-artifact"}
@@ -299,20 +359,13 @@ function ArtifactPublishDetail({
       {embedded ? (
         <div className="publish-detail-heading">
           <h2>{current.content.title}</h2>
-          <p className="muted">
-            成片版本 {current.source.revision} · 验收修订{" "}
-            {current.review.revision}
-          </p>
         </div>
       ) : (
         <>
           <Link className="back-link" to="/publish">
             <ArrowLeft size={16} aria-hidden="true" /> 返回成片列表
           </Link>
-          <PageHeader
-            title={current.content.title}
-            description={`成片版本 ${current.source.revision} · 验收修订 ${current.review.revision}`}
-          />
+          <PageHeader title={current.content.title} />
         </>
       )}
       {!desktopPublishingAvailable() && (
@@ -355,139 +408,101 @@ function ArtifactPublishDetail({
           hidden={detailTab !== "preview"}
         >
           <div className="douyin-video-preview">
-            {preview ? (
-              <video src={preview.video} poster={preview.cover} controls />
+            {previewSource ? (
+              <video
+                key={preview.dataUpdatedAt}
+                aria-label="成片预览"
+                src={previewSource.video}
+                poster={previewSource.cover}
+                onError={() => setUnplayableAt(preview.dataUpdatedAt)}
+                controls
+              />
             ) : (
-              <span className="publish-preview-placeholder">
-                <Film size={34} aria-hidden="true" />
-                <span>尚未验证预览</span>
-              </span>
+              <div className="publish-preview-placeholder">
+                <div role="status">
+                  <Film size={34} aria-hidden="true" />
+                  <span>{previewStatus}</span>
+                </div>
+                {canPreview && previewError && (
+                  <Button
+                    size="small"
+                    loading={preview.isFetching}
+                    onClick={() => void preview.refetch()}
+                  >
+                    重新加载预览
+                  </Button>
+                )}
+              </div>
             )}
           </div>
           <div className="publish-preview-actions">
-            <section className="publish-action-group">
-              <h3>
-                <FolderCheck size={18} aria-hidden="true" /> 本机文件
-              </h3>
-              <Tag>
-                {assets.isPending
-                  ? "检查资产状态中"
-                  : local
-                    ? "当前设备文件已登记"
-                    : "需在原设备恢复文件"}
-              </Tag>
-              <p className="muted">发布前会重新检查验收状态和本机文件。</p>
-              <Space wrap>
+            <Tag color={approved ? "green" : "gold"}>
+              {reviewLabels[current.review.state]}
+            </Tag>
+            <div className="publish-review-actions">
+              {approved ? (
                 <Button
-                  icon={<Play size={15} aria-hidden="true" />}
-                  disabled={!desktop.data?.resolverAvailable || !local || busy}
-                  onClick={() =>
-                    void act(async () =>
-                      setPreview(
-                        await douyinDesktop("preview", { artifactId }),
-                      ),
-                    )
-                  }
+                  key="configure"
+                  ref={returnFocus}
+                  type="primary"
+                  aria-label="配置发布"
+                  aria-busy={handoffQuery.isFetching}
+                  loading={handoffQuery.isFetching}
+                  disabled={!canConfigure || busy || running}
+                  onClick={() => {
+                    form.resetFields();
+                    form.setFieldsValue({
+                      title: current.content.title,
+                      description: current.content.script,
+                      hashtags: [],
+                    });
+                    setError("");
+                    setConfigurationRevision(current.review.revision);
+                  }}
                 >
-                  验证文件并预览
+                  配置发布
                 </Button>
-                {window.desktop?.artifactMedia &&
-                  assets.data?.map((asset) => (
-                    <Button
-                      key={asset.id}
-                      size="small"
-                      icon={<RotateCcw size={14} aria-hidden="true" />}
-                      disabled={
-                        busy ||
-                        running ||
-                        asset.location.deviceId !== desktop.data?.deviceId
-                      }
-                      onClick={() =>
-                        void act(async () => {
-                          await artifactMedia.restore(asset.id);
-                          setPreview(undefined);
-                          message.success("文件已验证并恢复登记");
-                        })
-                      }
-                    >
-                      {asset.kind === "video"
-                        ? "恢复视频文件"
-                        : asset.kind === "cover"
-                          ? "恢复封面文件"
-                          : "恢复字幕文件"}
-                    </Button>
-                  ))}
-              </Space>
-            </section>
-            <section className="publish-action-group">
-              <h3>
-                <ShieldCheck size={18} aria-hidden="true" /> 成片验收
-              </h3>
-              <Tag
-                color={
-                  current.review.state === "approved" ? "green" : "default"
-                }
-              >
-                {reviewLabels[current.review.state]}
-              </Tag>
-              <div className="publish-review-actions">
-                {current.review.state !== "approved" && (
-                  <Button
-                    type="primary"
-                    disabled={!preview || busy || running}
-                    onClick={() => review("approved")}
-                  >
-                    验收通过
-                  </Button>
-                )}
-                {current.review.state === "approved" && (
-                  <Button
-                    disabled={busy || running}
-                    onClick={() => review("pending")}
-                  >
-                    撤回验收
-                  </Button>
-                )}
-                {current.review.state !== "approved" && (
-                  <p className="muted">先验证文件并预览，再确认成片验收。</p>
-                )}
-
+              ) : (
                 <Button
-                  disabled={
-                    !desktopPublishingAvailable() ||
-                    busy ||
-                    current.review.state !== "approved" ||
-                    !local
-                  }
-                  onClick={() => void act(receive)}
+                  key="approve"
+                  type="primary"
+                  disabled={!previewSource || busy || running}
+                  onClick={() => review("approved")}
                 >
-                  {handoff ? "已接收该版本" : "接收这份成片"}
+                  验收通过
                 </Button>
-                {handoff && (
-                  <>
-                    <p className="muted">交接号：{handoff.id}</p>
-                    <Button
-                      ref={returnFocus}
-                      type="primary"
-                      disabled={!canConfigure || busy || running}
-                      onClick={() => {
-                        form.resetFields();
-                        form.setFieldsValue({
-                          title: current.content.title,
-                          description: current.content.script,
-                          hashtags: [],
-                        });
-                        setError("");
-                        setConfiguring(true);
-                      }}
-                    >
-                      配置发布
-                    </Button>
-                  </>
-                )}
-              </div>
-            </section>
+              )}
+              {!!moreItems.length && (
+                <Dropdown trigger={["click"]} menu={{ items: moreItems }}>
+                  <Button
+                    icon={<ChevronDown size={14} aria-hidden="true" />}
+                    iconPlacement="end"
+                    autoInsertSpace={false}
+                    aria-haspopup="menu"
+                    disabled={busy}
+                  >
+                    更多
+                  </Button>
+                </Dropdown>
+              )}
+            </div>
           </div>
+          {approved && previewSource && handoffQuery.isError && (
+            <Alert
+              type="warning"
+              showIcon
+              title="暂时无法准备发布"
+              description={publishingMessage(handoffQuery.error)}
+              action={
+                <Button
+                  size="small"
+                  onClick={() => void handoffQuery.refetch()}
+                >
+                  重试准备
+                </Button>
+              }
+            />
+          )}
         </section>
       </div>
       {active?.artifactId === artifactId && (
@@ -653,7 +668,7 @@ function ArtifactPublishDetail({
         confirmLoading={busy}
         okButtonProps={{
           "aria-label": "立即发布到抖音",
-          disabled: busy || !canConfigure || running || !!invalid,
+          disabled: busy || !canSubmit || running || !!invalid,
         }}
         onOk={() => form.submit()}
         afterOpenChange={(open) => {
@@ -676,8 +691,7 @@ function ArtifactPublishDetail({
           layout="vertical"
           disabled={busy}
           onFinish={(edit) => {
-            if (canConfigure && !running && !invalid)
-              void act(() => start(edit));
+            if (canSubmit && !running && !invalid) void act(() => start(edit));
           }}
           initialValues={{ hashtags: [], description: "" }}
           onValuesChange={() => {
@@ -732,7 +746,7 @@ function ArtifactPublishDetail({
           {configuring && error && (
             <Alert type="error" showIcon title={error} />
           )}
-          {configuring && !canConfigure && (
+          {configuring && !canSubmit && (
             <Alert
               type="warning"
               showIcon

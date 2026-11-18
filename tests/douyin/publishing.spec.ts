@@ -1,6 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import type { ArtifactHandoff } from "../../packages/shared-types/src/artifact";
+import type {
+  ArtifactHandoff,
+  CreateArtifactHandoffInput,
+} from "../../packages/shared-types/src/artifact";
 const fixture = JSON.parse(
   readFileSync(
     new URL(
@@ -101,6 +104,9 @@ async function desktopFixture(
         __source: fixture,
         __restores: 0,
         __restoreWrong: false,
+        __previewChecks: 0,
+        __handoffRequests: [] as CreateArtifactHandoffInput[],
+        __failHandoff: false,
       });
       Object.assign(window, {
         desktop: {
@@ -149,7 +155,35 @@ async function desktopFixture(
                   (asset) => asset.id === (args[0] as { id: string }).id,
                 ),
               );
-            if (method === "artifactHandoff.create") return okay(fixture);
+            if (method === "artifactHandoff.create") {
+              const input = args[0] as CreateArtifactHandoffInput;
+              const state = window as unknown as {
+                __handoffRequests: CreateArtifactHandoffInput[];
+                __failHandoff: boolean;
+              };
+              state.__handoffRequests.push(input);
+              if (state.__failHandoff)
+                return {
+                  ok: false,
+                  error: { status: 503, message: "测试自动接收失败" },
+                };
+              const source = artifacts.find(
+                (value) => value.id === input.artifactId,
+              );
+              if (
+                source?.review.state !== "approved" ||
+                source.review.revision !== input.expectedReviewRevision
+              )
+                return {
+                  ok: false,
+                  error: {
+                    status: 409,
+                    code: "REVISION_CONFLICT",
+                    message: "验收已改变",
+                  },
+                };
+              return okay(structuredClone({ ...fixture, artifact: source }));
+            }
             if (method === "douyin.cloud") {
               const op = args[0],
                 input = args[1] as Record<string, unknown>;
@@ -214,9 +248,11 @@ async function desktopFixture(
                   },
                 };
               state.__restores++;
-              return okay(
-                fixture.assets.find((asset) => asset.id === input.assetId),
+              const asset = fixture.assets.find(
+                (asset) => asset.id === input.assetId,
               );
+              if (asset) asset.availability.state = "available";
+              return okay(asset);
             },
           },
           publishing: {
@@ -251,11 +287,14 @@ async function desktopFixture(
                   activeRecord,
                   queue,
                 });
-              if (method === "preview")
+              if (method === "preview") {
+                (window as unknown as { __previewChecks: number })
+                  .__previewChecks++;
                 return okay({
                   video: "/media/demo-property.mp4",
                   cover: "/media/interior-1.jpg",
                 });
+              }
               if (method === "publish.batch") {
                 (
                   window as unknown as { __batchRequests: unknown[] }
@@ -343,7 +382,7 @@ async function desktopFixture(
     },
   );
 }
-test("fixture UI receives an approved artifact, edits consumer fields and shows a submission receipt", async ({
+test("fixture UI prepares an approved artifact automatically, edits consumer fields and shows a submission receipt", async ({
   page,
 }) => {
   await desktopFixture(page);
@@ -352,10 +391,10 @@ test("fixture UI receives an approved artifact, edits consumer fields and shows 
   await page
     .getByRole("button", { name: fixture.artifact.content.title, exact: true })
     .click();
-  await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
   const detail = page.getByRole("dialog", { name: "成片详情" });
   const config = page.getByRole("dialog", { name: "配置发布" });
   await expect(detail).toBeVisible();
+  await expect(detail.locator('video[aria-label="成片预览"]')).toBeVisible();
   await expect(config).toBeHidden();
   const configure = detail.getByRole("button", { name: "配置发布" });
   await configure.click();
@@ -428,33 +467,53 @@ test("missing production resolver clearly blocks actual publishing", async ({
   await expect(
     page.getByText("等待制作侧文件解析器", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
   await expect(page.getByRole("button", { name: "配置发布" })).toBeDisabled();
+  await expect(page.locator("video")).toHaveCount(0);
 });
 
-test("a registered pending output requires preview and explicit review before receiving", async ({
+test("a pending output previews automatically, receives the approved revision and can withdraw from More", async ({
   page,
 }) => {
   await desktopFixture(page, true, false, true);
   await page.goto(`/#/publish/${fixture.artifact.id}`);
-  await expect(
-    page.getByRole("button", { name: "接收这份成片", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "验收通过", exact: true }),
-  ).toBeDisabled();
-  await page.getByRole("button", { name: "验证文件并预览" }).click();
+  await expect(page.locator('video[aria-label="成片预览"]')).toBeVisible();
+  const handoffRequests = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __handoffRequests: CreateArtifactHandoffInput[];
+          }
+        ).__handoffRequests,
+    );
+  expect(await handoffRequests()).toEqual([]);
   await page.getByRole("button", { name: "验收通过", exact: true }).click();
   const confirmation = page.getByRole("dialog", { name: "确认成片验收通过？" });
   await confirmation
     .getByRole("button", { name: "验收通过", exact: true })
     .click();
+  const configure = page.getByRole("button", { name: "配置发布" });
+  await expect(configure).toBeEnabled();
+  expect(await handoffRequests()).toEqual([
+    expect.objectContaining({
+      artifactId: fixture.artifact.id,
+      expectedReviewRevision: fixture.artifact.review.revision + 1,
+    }),
+  ]);
   await expect(
-    page.getByRole("button", { name: "撤回验收", exact: true }),
-  ).toBeVisible();
+    page.getByRole("menuitem", { name: "撤回验收", exact: true }),
+  ).toBeHidden();
+  await page.getByRole("button", { name: "更多", exact: true }).click();
+  await page.getByRole("menuitem", { name: "撤回验收", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "撤回成片验收？" })
+    .getByRole("button", { name: "撤回验收", exact: true })
+    .click();
+  await expect(configure).toBeHidden();
   await expect(
-    page.getByRole("button", { name: "接收这份成片", exact: true }),
+    page.getByRole("button", { name: "验收通过", exact: true }),
   ).toBeEnabled();
+  expect(await handoffRequests()).toHaveLength(1);
   expect(
     await page.evaluate(
       () => (window as unknown as { __publishCount: number }).__publishCount,
@@ -470,19 +529,39 @@ test("file recovery reports mismatched bytes without changing the source review"
   await page.evaluate(() => {
     (window as unknown as { __restoreWrong: boolean }).__restoreWrong = true;
   });
-  await page.getByRole("button", { name: "恢复视频文件", exact: true }).click();
+  const more = page.getByRole("button", { name: "更多", exact: true });
+  const restore = page.getByRole("menuitem", {
+    name: "恢复视频文件",
+    exact: true,
+  });
+  await expect(page.locator('video[aria-label="成片预览"]')).toBeVisible();
+  await expect(restore).toBeHidden();
+  await more.click();
+  await restore.click();
   await expect(
     page.getByText("所选文件与验收版本不一致，请选择原始文件", { exact: true }),
   ).toBeVisible();
   await page.evaluate(() => {
     (window as unknown as { __restoreWrong: boolean }).__restoreWrong = false;
   });
-  await page.getByRole("button", { name: "恢复视频文件", exact: true }).click();
-  expect(
-    await page.evaluate(
-      () => (window as unknown as { __restores: number }).__restores,
-    ),
-  ).toBe(1);
+  await more.click();
+  await restore.click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __restores: number }).__restores,
+      ),
+    )
+    .toBe(1);
+  await expect(page.locator('video[aria-label="成片预览"]')).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __previewChecks: number }).__previewChecks,
+      ),
+    )
+    .toBe(2);
   expect(
     await page.evaluate(
       () =>
@@ -492,16 +571,41 @@ test("file recovery reports mismatched bytes without changing the source review"
   ).toEqual(fixture.artifact.review);
 });
 
-test("a new acceptance revision clears the old handoff and permits a fresh explicit receipt", async ({
+test("a failed automatic receipt can be retried for the same reviewed version", async ({
+  page,
+}) => {
+  await desktopFixture(page, true, false, true);
+  await page.goto(`/#/publish/${fixture.artifact.id}`);
+  const approve = page.getByRole("button", { name: "验收通过", exact: true });
+  await expect(approve).toBeEnabled();
+  await page.evaluate(() => Object.assign(window, { __failHandoff: true }));
+  await approve.click();
+  await page
+    .getByRole("dialog", { name: "确认成片验收通过？" })
+    .getByRole("button", { name: "验收通过", exact: true })
+    .click();
+  const configure = page.getByRole("button", { name: "配置发布" });
+  await expect(page.getByText("测试自动接收失败")).toBeVisible();
+  await expect(configure).toBeDisabled();
+  await page.evaluate(() => Object.assign(window, { __failHandoff: false }));
+  await page.getByRole("button", { name: "重试准备" }).click();
+  await expect(configure).toBeEnabled();
+  const requests = await page.evaluate(
+    () =>
+      (window as unknown as { __handoffRequests: CreateArtifactHandoffInput[] })
+        .__handoffRequests,
+  );
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+});
+
+test("a new acceptance revision requires reopening configuration even after automatic receipt", async ({
   page,
 }) => {
   await desktopFixture(page);
   await page.goto(`/#/publish/${fixture.artifact.id}`);
-  await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "已接收该版本" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "配置发布" }).click();
+  const configure = page.getByRole("button", { name: "配置发布" });
+  await configure.click();
   const config = page.getByRole("dialog", { name: "配置发布" });
   await expect(config).toBeVisible();
   await config.getByLabel("发布账号").click();
@@ -515,15 +619,23 @@ test("a new acceptance revision clears the old handoff and permits a fresh expli
   await expect(
     page.getByText("发布条件已变化，请返回详情检查验收和本机文件。"),
   ).toBeVisible();
+  await expect(
+    config.getByRole("button", { name: "立即发布到抖音" }),
+  ).toBeDisabled();
   await config.getByRole("button", { name: /^取\s*消$/ }).click();
   await page.getByRole("button", { name: "放弃修改", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "接收这份成片", exact: true }),
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "接收这份成片", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "已接收该版本" }),
-  ).toBeVisible();
+  await expect(configure).toBeEnabled();
+  const requests = await page.evaluate(
+    () =>
+      (window as unknown as { __handoffRequests: CreateArtifactHandoffInput[] })
+        .__handoffRequests,
+  );
+  expect(
+    requests.map(({ expectedReviewRevision }) => expectedReviewRevision),
+  ).toEqual([
+    fixture.artifact.review.revision,
+    fixture.artifact.review.revision + 1,
+  ]);
 });
 test("an unknown result is resolved explicitly in the artifact detail", async ({
   page,
@@ -758,19 +870,35 @@ test("发布工作区按需显示批量操作，预览和记录独立切换", as
   });
   await page.goto(`/#/publish/${fixture.artifact.id}`);
   await expect(
-    page.getByRole("button", { name: "接收这份成片", exact: true }),
+    page.getByRole("button", { name: "配置发布", exact: true }),
   ).toBeVisible();
   await page.getByText("发布记录", { exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "这份成片的发布记录" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "接收这份成片", exact: true }),
+    page.getByRole("button", { name: "配置发布", exact: true }),
   ).toBeHidden();
   await page.getByText("预览验收", { exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "接收这份成片", exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "配置发布", exact: true }),
+  ).toBeEnabled();
+  const player = page.locator('video[aria-label="成片预览"]');
+  await expect
+    .poll(() =>
+      player.evaluate((video: HTMLVideoElement) => {
+        const box = video.getBoundingClientRect();
+        const frame = video.parentElement!.getBoundingClientRect();
+        return (
+          video.readyState > 0 &&
+          video.controls &&
+          box.top >= frame.top - 1 &&
+          box.bottom <= frame.bottom + 1
+        );
+      }),
+    )
+    .toBe(true);
+  await player.hover();
   await page.screenshot({
     path: ".impeccable/review/publish-detail-live-1440.png",
     fullPage: true,

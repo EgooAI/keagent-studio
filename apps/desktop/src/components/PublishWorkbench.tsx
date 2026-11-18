@@ -248,10 +248,8 @@ export function PublishWorkbench({
       setBusy(false);
     }
   }
-  const layout =
-    wide && selectedId
-      ? "publish-bench-split with-detail"
-      : "publish-bench-split";
+  const inlineDetail = wide && !!selectedId;
+  const layout = `publish-bench-split${inlineDetail ? " with-detail" : ""}`;
   return (
     <div className="publish-bench">
       <PageHeader
@@ -435,7 +433,7 @@ export function PublishWorkbench({
               loading={query.isPending}
               dataSource={query.data?.items}
               scroll={{
-                x: compact ? undefined : 700,
+                x: compact ? undefined : inlineDetail ? 630 : 700,
                 y: "max(260px, calc(100vh - 335px))",
               }}
               pagination={{
@@ -504,7 +502,7 @@ export function PublishWorkbench({
                 {
                   title: "验收",
                   responsive: ["md"],
-                  width: 102,
+                  width: inlineDetail ? 88 : 102,
                   render: (_, row) => (
                     <Tag
                       color={
@@ -522,25 +520,25 @@ export function PublishWorkbench({
                 {
                   title: "发布",
                   responsive: ["md"],
-                  width: 122,
+                  width: inlineDetail ? 98 : 122,
                   render: (_, row) => artifactStatus(row),
                 },
                 {
                   title: "文件",
                   responsive: ["md"],
-                  width: 84,
+                  width: inlineDetail ? 76 : 84,
                   render: (_, row) =>
                     row.deviceReady ? "本机就绪" : "需原设备",
                 },
                 {
                   title: "登记时间",
                   responsive: ["md"],
-                  width: 114,
+                  width: inlineDetail ? 98 : 114,
                   render: (_, row) => formatDate(row.createdAt),
                 },
                 {
                   title: "操作",
-                  width: 66,
+                  width: inlineDetail ? 58 : 66,
                   render: (_, row) => (
                     <Button
                       size="small"
