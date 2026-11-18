@@ -917,7 +917,7 @@ describe("production queue", () => {
       ffprobe: true,
       ai: true,
       managedVoices: true,
-      volcTts: true,
+      bailianTts: true,
       voices: [],
       templates,
       defaultConfig: config,
@@ -956,6 +956,45 @@ describe("production queue", () => {
       scriptCalls: () => scriptCalls,
     };
   }
+
+  it("upgrades the previous stock default and asks users to replace unavailable custom defaults", async () => {
+    const { workflow, owner, call, pairs } = batchFixture();
+    const selected = await workflow.factoryProperties();
+    workflow.remote = vi.fn(async () => ({
+      publicVoices: [
+        { id: "builtin-public-zh-qwen-lingxin", language: "zh-CN" },
+        { id: "voice-1", language: "zh-CN" },
+      ],
+    }));
+    await call("pause");
+    const input = { requestId: "voice-migration", pairs: [pairs[0]] };
+    workflow.factoryProperties = vi.fn(async () => ({
+      ...selected,
+      defaults: { voiceId: "retired-custom-voice" },
+    }));
+    expect(await call("create", input)).toMatchObject({
+      issues: [{ error: "默认音色已不可用，请重新选择音色后提交" }],
+    });
+    expect(workflow.store(owner).production.items).toHaveLength(0);
+    for (const voiceId of [
+      "builtin-public-zh-vv-v2",
+      "builtin-public-zh-qwen-plus",
+    ]) {
+      workflow.factoryProperties = vi.fn(async () => ({
+        ...selected,
+        defaults: { voiceId },
+      }));
+      expect(
+        await call("create", { ...input, requestId: voiceId }),
+      ).toMatchObject({
+        batchId: voiceId,
+      });
+      expect(workflow.store(owner).production.items[0].config).toMatchObject({
+        ttsProvider: "bailian",
+        voice: "builtin-public-zh-qwen-lingxin",
+      });
+    }
+  });
 
   it("freezes task pacing separately from templates and preserves it across pending retry, copy and review", async () => {
     const { workflow, owner, call, act, pairs, templates, releaseScripts } =
@@ -1154,7 +1193,7 @@ describe("production queue", () => {
     fs.mkdirSync(references);
     const video = Buffer.from("video reference".repeat(6));
     const photo = Buffer.from("photo reference".repeat(6));
-    const wav = Buffer.from("original Doubao WAV");
+    const wav = Buffer.from("original Bailian WAV");
     const openingClip = domain.hash(video);
     const openingPhoto = domain.hash(photo);
     fs.writeFileSync(path.join(references, `${openingClip}.mp4`), video);
@@ -1163,7 +1202,7 @@ describe("production queue", () => {
       ffmpeg: true,
       ffprobe: true,
       managedVoices: true,
-      volcTts: true,
+      bailianTts: true,
       minimaxOpening: true,
     });
     workflow.remote = vi.fn(async (method: string, input: unknown) => {
@@ -1192,7 +1231,7 @@ describe("production queue", () => {
           { ttsProvider: string },
           string,
         ];
-        expect(voice.ttsProvider).toBe("volcengine");
+        expect(voice.ttsProvider).toBe("bailian");
         const audio = `${segment.kind}.wav`;
         fs.writeFileSync(path.join(cache, audio), wav);
         return { audio, duration: 4.2, captions: [] };
@@ -1214,7 +1253,7 @@ describe("production queue", () => {
       scenes,
       config: {
         ...config,
-        ttsProvider: "volcengine",
+        ttsProvider: "bailian",
         openingClip,
         openingPhoto,
       },
@@ -1311,7 +1350,7 @@ describe("production queue", () => {
       ffmpeg: true,
       ffprobe: true,
       managedVoices: true,
-      volcTts: true,
+      bailianTts: true,
       minimaxOpening: true,
       templates,
       defaultConfig: config,
@@ -1505,7 +1544,7 @@ describe("production queue", () => {
       ffmpeg: true,
       ffprobe: true,
       managedVoices: true,
-      volcTts: true,
+      bailianTts: true,
       minimaxOpening: true,
       templates,
       defaultConfig: config,
@@ -1632,17 +1671,30 @@ describe("production queue", () => {
   it("backs up legacy history and restores a persisted queue without claiming work", async () => {
     const { workflow, owner, scenes, config } = fixture();
     const state = workflow.store(owner);
+    const legacyVoice = {
+      ...config,
+      ttsProvider: "volcengine",
+      voice: "builtin-public-zh-vv-v2",
+    };
     const draft = {
       id: "legacy-draft",
       property,
-      config,
+      config: legacyVoice,
       scenes,
       confirmation: "whole",
       revision: 1,
       segments: domain.segments(property, scenes, config),
       createdAt: "2026-01-01",
     };
-    state.drafts.push(draft);
+    state.drafts.push(draft, {
+      ...draft,
+      id: "first-bailian-draft",
+      config: {
+        ...config,
+        ttsProvider: "bailian",
+        voice: "builtin-public-zh-qwen-plus",
+      },
+    });
     state.jobs.push({
       ...draft,
       id: "legacy-job",
@@ -1655,9 +1707,16 @@ describe("production queue", () => {
     const before = fs.readFileSync(file, "utf8");
     const migrated = new PanoramaWorkflow(workflow.root, "", {});
     const list = await migrated.handle("user-a", "factory-list");
-    expect(list.counts).toEqual({ all: 2, done: 1, review: 1 });
+    expect(list.counts).toEqual({ all: 3, done: 1, review: 2 });
     expect(fs.readFileSync(file + ".pre-batch", "utf8")).toBe(before);
-    const production = migrated.store(owner).production;
+    const migratedState = migrated.store(owner);
+    const production = migratedState.production;
+    for (const migratedDraft of migratedState.drafts)
+      expect(migratedDraft.config).toMatchObject({
+        ttsProvider: "bailian",
+        voice: "builtin-public-zh-qwen-lingxin",
+      });
+    expect(migratedState.jobs[0].config).toEqual(legacyVoice);
     production.items.push({
       ...production.items.find((row: any) => row.id === draft.id),
       id: "interrupted",
@@ -1670,7 +1729,7 @@ describe("production queue", () => {
     expect(await reopened.handle("user-a", "factory-list")).toMatchObject({
       paused: true,
       interrupted: 1,
-      counts: { all: 3, queued: 1, review: 1, done: 1 },
+      counts: { all: 4, queued: 1, review: 2, done: 1 },
     });
     expect(reopened.active.size).toBe(0);
   });

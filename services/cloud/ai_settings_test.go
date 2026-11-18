@@ -17,13 +17,12 @@ func TestAITTSProbeHTTPFailure(t *testing.T) {
 	response := &http.Response{
 		StatusCode: http.StatusUnauthorized,
 		Header:     http.Header{},
-		Body:       io.NopCloser(strings.NewReader(`{"header":{"code":45000010,"message":"invalid API key: private-value"}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"code":"InvalidApiKey","message":"invalid API key: private-value"}`)),
 	}
-	response.Header.Set("X-Tt-Logid", "20261110102945ABCD0123ABCD0123ABCD")
 	err := providerResponseFailure(response)
 	status, category, message := aiProbeFailure("tts", err)
-	if status != "failed" || category != "authentication" || !strings.Contains(message, "API Key 无效") ||
-		!strings.Contains(message, "HTTP 401，火山错误码 45000010，火山日志 ID 20261110102945ABCD0123ABCD0123ABCD") ||
+	if status != "failed" || category != "authentication" || !strings.Contains(message, "百炼 API Key 和业务空间 ID") ||
+		!strings.Contains(message, "HTTP 401，百炼错误码 InvalidApiKey") ||
 		strings.Contains(message, "private-value") {
 		t.Fatalf("unexpected probe result: %s / %s / %s", status, category, message)
 	}
@@ -33,67 +32,94 @@ func TestAITTSProbeHTTPFailure(t *testing.T) {
 	}
 
 	response.StatusCode = http.StatusForbidden
-	response.Header.Set("X-Tt-Logid", "private-value")
-	response.Body = io.NopCloser(strings.NewReader(`{"code":1,"message":"private-value"}`))
+	response.Body = io.NopCloser(strings.NewReader(`{"code":"AccessDenied","request_id":"private-value","message":"private-value"}`))
 	status, category, message = aiProbeFailure("tts", providerResponseFailure(response))
-	if status != "failed" || category != "permission" || !strings.Contains(message, "HTTP 403，火山错误码 1") || strings.Contains(message, "private-value") {
+	if status != "failed" || category != "permission" || !strings.Contains(message, "HTTP 403，百炼错误码 AccessDenied") || strings.Contains(message, "private-value") {
 		t.Fatalf("unexpected probe result: %s / %s / %s", status, category, message)
 	}
 }
 
 func TestAICloneProbeHTTPFailureIncludesProviderDetails(t *testing.T) {
-	logID := "20261110102945ABCD0123ABCD0123ABCD"
 	response := &http.Response{
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{},
-		Body:       io.NopCloser(strings.NewReader(`{"code":45001001,"message":"private response details"}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"code":"InvalidParameter","request_id":"a2c3d567-6b11-471a-b4f8-ab12cd345678","message":"private response details"}`)),
 	}
-	response.Header.Set("X-Tt-Logid", logID)
 	status, category, message := aiProbeFailure("voice-clone", providerResponseFailure(response))
 	if status != "failed" || category != "validation" ||
-		!strings.Contains(message, "HTTP 400，火山错误码 45001001，火山日志 ID "+logID) ||
+		!strings.Contains(message, "HTTP 400，百炼错误码 InvalidParameter，百炼请求 ID a2c3d567-6b11-471a-b4f8-ab12cd345678") ||
 		strings.Contains(message, "private response details") {
 		t.Fatalf("unexpected probe result: %s / %s / %s", status, category, message)
 	}
 }
 
-func TestAICloneTrainingAcceptsVolcengineV3Response(t *testing.T) {
+func TestAICloneTrainingVerifiesSynthesisAndDeletesTemporaryVoice(t *testing.T) {
 	db := productionTestDB(t)
-	ctx := withAIGroup(t.Context(), "speech", 0, aiValues{
-		"VOLC_TTS_API_KEY":             "test-key",
-		"VOLC_VOICE_CLONE_ENABLED":     "true",
-		"VOLC_VOICE_CLONE_RESOURCE_ID": "seed-icl-2.0",
-	})
-	p := aiProbe{ID: "clone-test", Worker: "test-worker", Mode: "training"}
-	_, err := db.ExecContext(ctx, `INSERT INTO keagent_ai_probe
-		(id,service_group,service,version,mode,status,actor_id,request_hash,worker)
-		VALUES($1,'speech','voice-clone',0,'training','running','admin',$1,$2)`, p.ID, p.Worker)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var trained, queried bool
-	s := &server{db: db, speech: func(_ context.Context, operation string, payload object, _ string) ([]byte, error) {
+	ctx := t.Context()
+	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("DASHSCOPE_API_KEY", "test-key")
+	t.Setenv("DASHSCOPE_WORKSPACE_ID", "ws-test")
+	t.Setenv("DASHSCOPE_VOICE_CLONE_ENABLED", "true")
+	data := make([]byte, 128)
+	copy(data, "ID3")
+	audio := base64.StdEncoding.EncodeToString(data)
+	requestID := id()
+	var calls []string
+	prefix := "p" + digestBytes([]byte(requestID))[:9]
+	speaker := qwenAudioModel + "-" + prefix + "-synthetic"
+	s := &server{db: db, speech: func(_ context.Context, operation string, payload object, model string) ([]byte, error) {
+		calls = append(calls, operation)
 		switch operation {
-		case "voice_clone":
-			if payload["language"] != 0 {
-				t.Fatalf("expected numeric Chinese language code 0, got %#v", payload["language"])
+		case "create_voice":
+			hints, ok := payload["language_hints"].([]string)
+			if payload["target_model"] != qwenAudioModel || payload["prefix"] != prefix ||
+				payload["audio"] != "data:audio/mpeg;base64,"+audio || !ok || len(hints) != 1 || hints[0] != "zh" {
+				t.Fatalf("unexpected enrollment payload: %#v", payload)
 			}
-			trained = true
-			return []byte(`{"status":1,"speaker_id":"keagentprobeclonetest"}`), nil
-		case "get_voice":
-			queried = true
-			return []byte(`{"status":2}`), nil
+			return qwenVoiceCreated(prefix), nil
+		case "query_voice":
+			if payload["voice_id"] != speaker {
+				t.Fatal("query targeted a different voice")
+			}
+			return qwenVoiceStatus("OK"), nil
+		case qwenSynthesis:
+			if payload["voice"] != speaker || model != qwenAudioModel {
+				t.Fatal("synthesis targeted a different voice")
+			}
+			return []byte(qwenSpeechFixture), nil
+		case "delete_voice":
+			if payload["voice_id"] != speaker {
+				t.Fatal("cleanup targeted a different voice")
+			}
+			return []byte(`{"output":{}}`), nil
 		default:
 			t.Fatalf("unexpected operation %q", operation)
 			return nil, nil
 		}
 	}}
-	if err := s.probeAIClone(ctx, &p, uploadFixture()); err != nil {
+	post := func(authorized bool) (any, error) {
+		body, _ := json.Marshal(object{"service": "voice-clone", "version": 0, "mode": "training", "requestId": requestID, "confirmed": true,
+			"sample": object{"audio": audio, "format": "mp3", "authorized": authorized}})
+		r := httptest.NewRequest("POST", "/v1/admin/ai-config/test", nil).WithContext(ctx)
+		return s.manageAI(r, actor{UserID: "admin"}, "ai-config/test", body)
+	}
+	if _, err := post(false); err == nil || err.Error() != "请确认已获得这份测试录音的使用授权" {
+		t.Fatalf("expected test authorization check, got %v", err)
+	}
+	if _, err := post(true); err != nil {
+		t.Fatalf("admin MP3 sample could not be queued: %v", err)
+	}
+	p, err := s.claimAIProbe(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !trained || !queried || p.Progress.Task != "keagentprobeclonetest" {
-		t.Fatalf("expected a submitted and queried training job, got %+v", p.Progress)
+	s.executeAIProbe(ctx, p)
+	result, err := s.aiProbeByID(ctx, requestID)
+	if err != nil || result["status"] != "passed" {
+		t.Fatalf("voice training did not pass: %v %v", result, err)
+	}
+	if got := strings.Join(calls, ","); got != "create_voice,query_voice,"+qwenSynthesis+",delete_voice" {
+		t.Fatalf("unexpected probe sequence %s", got)
 	}
 }
 
@@ -177,8 +203,9 @@ func TestAISpeechActivationWithVoiceCloneRequiresOnlyTraining(t *testing.T) {
 	db := productionTestDB(t)
 	ctx := t.Context()
 	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	t.Setenv("VOLC_TTS_API_KEY", "shared-speech-key")
-	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "false")
+	t.Setenv("DASHSCOPE_API_KEY", "shared-speech-key")
+	t.Setenv("DASHSCOPE_WORKSPACE_ID", "llm-test")
+	t.Setenv("DASHSCOPE_VOICE_CLONE_ENABLED", "false")
 	s := &server{db: db, speech: func(_ context.Context, operation string, _ object, _ string) ([]byte, error) {
 		t.Fatalf("activation made an unexpected speech call: %s", operation)
 		return nil, nil
@@ -197,11 +224,11 @@ func TestAISpeechActivationWithVoiceCloneRequiresOnlyTraining(t *testing.T) {
 	}
 	check := func() aiActivation {
 		t.Helper()
-		head, err := readAIHead(ctx, db, "speech", false)
+		head, err := readAIHead(ctx, db, speechAIGroup, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		activation, err := s.checkAIActivation(ctx, db, "speech", head)
+		activation, err := s.checkAIActivation(ctx, db, speechAIGroup, head)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,13 +236,19 @@ func TestAISpeechActivationWithVoiceCloneRequiresOnlyTraining(t *testing.T) {
 	}
 	seed := func(probeID, service, mode, status string, version int64) {
 		t.Helper()
-		exec(`INSERT INTO keagent_ai_probe(id,service_group,service,version,mode,status,actor_id,request_hash,finished_at)
-			VALUES($1,'speech',$2,$3,$4,$5,'ai-config-admin',$1,now())`, probeID, service, version, mode, status)
+		exec(`INSERT INTO keagent_ai_probe(id,service_group,service,version,mode,status,actor_id,request_hash,finished_at,result)
+			VALUES($1,$2,$3,$4,$5,$6,'ai-config-admin',$1,now(),jsonb_build_object('speechConfigFingerprint',$7::text))`,
+			probeID, speechAIGroup, service, version, mode, status, speechConfigFingerprint(environmentAI(speechAIGroup)))
 	}
 
-	// The existing active-version test predates stored key fingerprints.
+	// A test from the retired provider must not carry over even if the version matches.
+	exec(`INSERT INTO keagent_ai_probe(id,service_group,service,version,mode,status,actor_id,request_hash,finished_at)
+		VALUES('retired-tts-sample','speech','tts',0,'sample','passed','ai-config-admin','retired-tts-sample',now())`)
+	if got, err := s.latestAIProbe(ctx, "tts", 0); err != nil || got != nil {
+		t.Fatalf("retired probe should not be displayed for current service: %+v / %v", got, err)
+	}
 	seed("active-tts-sample", "tts", "sample", "passed", 0)
-	if err := post("save", object{"service": "voice-clone", "revision": 0, "fields": object{"VOLC_VOICE_CLONE_ENABLED": true}}); err != nil {
+	if err := post("save", object{"service": "voice-clone", "revision": 0, "fields": object{"DASHSCOPE_VOICE_CLONE_ENABLED": true}}); err != nil {
 		t.Fatal(err)
 	}
 	seed("candidate-clone-sample", "voice-clone", "sample", "passed", 1)
@@ -234,20 +267,25 @@ func TestAISpeechActivationWithVoiceCloneRequiresOnlyTraining(t *testing.T) {
 		t.Fatalf("expected to activate with the clone test and existing TTS sample: %+v", got)
 	}
 
-	t.Setenv("VOLC_TTS_API_KEY", "different-key")
+	t.Setenv("DASHSCOPE_API_KEY", "different-key")
 	if got := check(); !got.ready || got.ttsTestPassed || got.reusedTTSTestAt != nil {
 		t.Fatalf("expected activation without reusing TTS with different credentials: %+v", got)
 	}
-	t.Setenv("VOLC_TTS_API_KEY", "shared-speech-key")
+	t.Setenv("DASHSCOPE_API_KEY", "shared-speech-key")
+	t.Setenv("DASHSCOPE_WORKSPACE_ID", "llm-different")
+	if got := check(); !got.ready || got.ttsTestPassed || got.reusedTTSTestAt != nil {
+		t.Fatalf("expected activation without reusing TTS with a different workspace: %+v", got)
+	}
+	t.Setenv("DASHSCOPE_WORKSPACE_ID", "llm-test")
 	exec(`UPDATE keagent_ai_probe SET finished_at=now()-interval '25 hours' WHERE id='active-tts-sample'`)
 	if got := check(); !got.ready || got.ttsTestPassed || got.reusedTTSTestAt != nil {
 		t.Fatalf("expected activation without reusing an expired TTS sample: %+v", got)
 	}
-	exec(`UPDATE keagent_ai_probe SET finished_at=now(),result=jsonb_build_object('ttsKeyFingerprint',$1::text) WHERE id='active-tts-sample'`, ttsKeyFingerprint("previous-environment-key"))
+	exec(`UPDATE keagent_ai_probe SET finished_at=now(),result=jsonb_build_object('speechConfigFingerprint',$1::text) WHERE id='active-tts-sample'`, speechConfigFingerprint(aiValues{"DASHSCOPE_API_KEY": "shared-speech-key", "DASHSCOPE_WORKSPACE_ID": "llm-previous"}))
 	if got := check(); !got.ready || got.ttsTestPassed || got.reusedTTSTestAt != nil {
-		t.Fatalf("expected activation without reusing a TTS sample from a previous key: %+v", got)
+		t.Fatalf("expected activation without reusing a TTS sample from a previous workspace: %+v", got)
 	}
-	exec(`UPDATE keagent_ai_probe SET result=jsonb_build_object('ttsKeyFingerprint',$1::text) WHERE id='active-tts-sample'`, ttsKeyFingerprint("shared-speech-key"))
+	exec(`UPDATE keagent_ai_probe SET result=jsonb_build_object('speechConfigFingerprint',$1::text) WHERE id='active-tts-sample'`, speechConfigFingerprint(environmentAI(speechAIGroup)))
 	seed("candidate-tts-failure", "tts", "sample", "failed", 1)
 	if got := check(); !got.ready || got.ttsTestPassed || got.reusedTTSTestAt != nil {
 		t.Fatalf("failed TTS sample should not block verified clone training: %+v", got)
@@ -266,28 +304,38 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	db := productionTestDB(t)
 	ctx := t.Context()
 	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
-	t.Setenv("VOLC_TTS_API_KEY", "existing-environment-key")
-	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "false")
+	t.Setenv("DASHSCOPE_API_KEY", "existing-environment-key")
+	t.Setenv("DASHSCOPE_WORKSPACE_ID", "llm-test")
+	t.Setenv("DASHSCOPE_VOICE_CLONE_ENABLED", "false")
+	legacy, err := sealAI(aiVersionLabel("speech", 1), aiValues{"legacy-token": "retired-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO keagent_ai_version(service_group,version,encrypted,actor_id)
+		VALUES('speech',1,$1,'admin')`, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO keagent_ai_head(service_group,revision,active)
+		VALUES('speech',1,1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, publicVoiceSchema); err != nil {
 		t.Fatal(err)
 	}
 	if err := seedDefaultPublicVoice(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	var voiceID string
-	if err := db.QueryRowContext(ctx, "SELECT id FROM keagent_public_voice LIMIT 1").Scan(&voiceID); err != nil {
-		t.Fatal(err)
-	}
+	voiceID := defaultPublicVoiceID
 	s := &server{db: db}
 	admin := actor{UserID: "ai-config-admin"}
 	calls := 0
 	expectedKey := "existing-environment-key"
 	s.speech = func(ctx context.Context, operation string, payload object, resource string) ([]byte, error) {
 		calls++
-		if operation != "unidirectional" || aiValue(ctx, "VOLC_TTS_API_KEY") != expectedKey || resource == "" {
+		if operation != qwenSynthesis || aiValue(ctx, "DASHSCOPE_API_KEY") != expectedKey || resource != qwenAudioModel {
 			t.Fatal("test did not use the selected configuration and public voice")
 		}
-		return []byte(`{"code":0,"data":"AAA="}`), nil
+		return []byte(qwenSpeechFixture), nil
 	}
 	adminCall := func(path string, body object) (any, error) {
 		method := "GET"
@@ -306,7 +354,7 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	}
 	assertUnchanged := func(revision, version int64, key string) {
 		t.Helper()
-		result, err := adminCall("/save", object{"service": "tts", "revision": revision, "fields": object{"VOLC_TTS_API_KEY": key}})
+		result, err := adminCall("/save", object{"service": "tts", "revision": revision, "fields": object{"DASHSCOPE_API_KEY": key}})
 		if err != nil || obj(result)["changed"] != false || obj(result)["version"] != version {
 			t.Fatalf("save should leave the configuration unchanged, got %#v / %v", result, err)
 		}
@@ -322,8 +370,8 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	}
 	s.executeAIProbe(ctx, environmentProbe)
 	var fingerprint string
-	err = db.QueryRowContext(ctx, `SELECT result->>'ttsKeyFingerprint' FROM keagent_ai_probe WHERE id=$1`, environmentProbe.ID).Scan(&fingerprint)
-	if err != nil || fingerprint == "" || fingerprint != ttsKeyFingerprint(expectedKey) {
+	err = db.QueryRowContext(ctx, `SELECT result->>'speechConfigFingerprint' FROM keagent_ai_probe WHERE id=$1`, environmentProbe.ID).Scan(&fingerprint)
+	if err != nil || fingerprint == "" || fingerprint != speechConfigFingerprint(environmentAI(speechAIGroup)) {
 		t.Fatalf("TTS sample did not record the tested credential fingerprint: %v", err)
 	}
 	environmentResult, err := s.latestAIProbe(ctx, "tts", 0)
@@ -332,14 +380,14 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 	}
 	expectedKey = "candidate-key"
 	calls = 0
-	_, err = adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"VOLC_TTS_API_KEY": "candidate-key"}})
+	_, err = adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"DASHSCOPE_API_KEY": "candidate-key"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"VOLC_TTS_API_KEY": "stale"}})
+	_, err = adminCall("/save", object{"service": "tts", "revision": 0, "fields": object{"DASHSCOPE_API_KEY": "stale"}})
 	assertStatus(err, 409)
 	active, err := s.activeAI(ctx)
-	if err != nil || aiValue(active, "VOLC_TTS_API_KEY") != "existing-environment-key" {
+	if err != nil || aiValue(active, "DASHSCOPE_API_KEY") != "existing-environment-key" {
 		t.Fatal("draft affected production", err)
 	}
 	overview, err := adminCall("", nil)
@@ -383,11 +431,11 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	active, err = s.activeAI(ctx)
-	if err != nil || aiValue(active, "VOLC_TTS_API_KEY") != "candidate-key" {
+	if err != nil || aiValue(active, "DASHSCOPE_API_KEY") != "candidate-key" {
 		t.Fatal("activation did not take effect", err)
 	}
-	pinned, err := s.pinnedAI(active, "speech", 0)
-	if err != nil || aiValue(pinned, "VOLC_TTS_API_KEY") != "existing-environment-key" {
+	pinned, err := s.pinnedAI(active, speechAIGroup, 0)
+	if err != nil || aiValue(pinned, "DASHSCOPE_API_KEY") != "existing-environment-key" {
 		t.Fatal("in-flight version was not retained", err)
 	}
 	assertUnchanged(2, 1, "")
@@ -400,14 +448,14 @@ func TestAIManagedConfigurationLifecycle(t *testing.T) {
 		t.Fatal("managed active test was not queued", err)
 	}
 	s.executeAIProbe(ctx, activeProbe)
-	if _, err = adminCall("/save", object{"service": "tts", "revision": 2, "fields": object{"VOLC_TTS_API_KEY": "replacement"}}); err != nil {
+	if _, err = adminCall("/save", object{"service": "tts", "revision": 2, "fields": object{"DASHSCOPE_API_KEY": "replacement"}}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = adminCall("/activate", object{"service": "tts", "revision": 3, "version": 3})
 	assertStatus(err, 409)
 	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString(append([]byte{1}, make([]byte, 31)...)))
 	active, err = s.activeAI(ctx)
-	if err != nil || !aiSnapshotFrom(active).locked["speech"] || aiValue(active, "VOLC_TTS_API_KEY") != "" {
+	if err != nil || !aiSnapshotFrom(active).locked[speechAIGroup] || aiValue(active, "DASHSCOPE_API_KEY") != "" {
 		t.Fatal("bad master key silently fell back to the environment", err)
 	}
 }

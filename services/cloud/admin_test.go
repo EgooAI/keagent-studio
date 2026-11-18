@@ -37,7 +37,7 @@ func TestAdminPageValidation(t *testing.T) {
 }
 
 func TestAdminAISafeConfiguration(t *testing.T) {
-	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "VOLC_TTS_API_KEY", "MINIMAX_API_KEY"} {
+	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID", "DASHSCOPE_VOICE_CLONE_ENABLED", "MINIMAX_API_KEY"} {
 		t.Setenv(key, "")
 	}
 	if services := aiServices(); services[0].State != "missing" || services[1].State != "missing" || services[len(services)-1].State != "missing" {
@@ -61,16 +61,33 @@ func TestAdminAISafeConfiguration(t *testing.T) {
 			t.Fatal("generation ignored unsafe configuration")
 		}
 	}
-	t.Setenv("VOLC_TTS_API_KEY", "private-tts-key")
-
-	if aiServices()[1].State != "configured" {
-		t.Fatal("valid TTS configuration rejected")
+	t.Setenv("DASHSCOPE_API_KEY", "private-tts-key")
+	if service := aiServices()[1]; service.State != "incomplete" || service.Endpoint != "" {
+		t.Fatal("TTS unexpectedly available without a business workspace")
+	}
+	for _, workspace := range []string{"llm-test.example.org", "ws-test.cn-beijing.maas.aliyuncs.com", "ws-test/other", "ws-"} {
+		t.Setenv("DASHSCOPE_WORKSPACE_ID", workspace)
+		if service := aiServices()[1]; service.State != "incomplete" || service.Endpoint != "" || len(service.Issues) == 0 {
+			t.Fatalf("invalid TTS workspace %q was accepted", workspace)
+		}
+	}
+	t.Setenv("DASHSCOPE_VOICE_CLONE_ENABLED", "true")
+	for _, workspace := range []string{"llm-test", "ws-test3example42"} {
+		t.Setenv("DASHSCOPE_WORKSPACE_ID", workspace)
+		base := "https://" + workspace + ".cn-beijing.maas.aliyuncs.com/api/v1/services/audio/tts/"
+		services := aiServices()
+		if services[1].State != "configured" || services[1].Endpoint != base+"SpeechSynthesizer" {
+			t.Fatalf("valid TTS workspace %q rejected", workspace)
+		}
+		if services[2].State != "configured" || services[2].Endpoint != base+"customization" || !cloneConfigured(t.Context()) {
+			t.Fatalf("valid clone workspace %q rejected", workspace)
+		}
 	}
 	if _, exists := specFor("avatar"); exists {
 		t.Fatal("retired avatar service is still exposed")
 	}
 	value, err := (&server{}).panorama(t.Context(), actor{}, "capabilities", []byte(`{}`))
-	if err != nil || value.(object)["ai"] != false || value.(object)["volcTts"] != true {
+	if err != nil || value.(object)["ai"] != false || value.(object)["bailianTts"] != true {
 		t.Fatal("capability rules diverged from admin checks", value, err)
 	}
 }

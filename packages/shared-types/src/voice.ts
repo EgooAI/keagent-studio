@@ -22,8 +22,10 @@ export interface AdminPublicVoice extends PublicVoice {
   resourceId: string;
   enabled: boolean;
   publishedOnce: boolean;
+  retired?: boolean;
 }
 export interface VoiceUpload {
+  provider: "bailian";
   name: string;
   language: PersonalVoice["language"];
   authorized: boolean;

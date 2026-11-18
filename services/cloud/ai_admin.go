@@ -38,6 +38,7 @@ func (s *server) aiOverview(ctx context.Context) (object, error) {
 	services := aiServicesFor(ctx)
 	_, keyErr := aiCipher()
 	result := make([]object, 0, len(aiSpecs))
+	verifications := map[string]object{}
 	for i, spec := range aiSpecs {
 		h, err := readAIHead(ctx, s.db, spec.Group, false)
 		if err != nil {
@@ -74,9 +75,18 @@ func (s *server) aiOverview(ctx context.Context) (object, error) {
 				return nil, err
 			}
 		}
+		verification, fetched := verifications[spec.Group]
+		if !fetched {
+			verification, err = s.latestAIVerification(ctx, spec.Group)
+			if err != nil {
+				return nil, err
+			}
+			verifications[spec.Group] = verification
+		}
 		result = append(result, object{"summary": services[i], "fields": spec.Fields, "group": spec.Group,
 			"revision": h.Revision, "active": object{"version": h.Active, "source": map[bool]string{true: "managed", false: "environment"}[h.Active > 0], "fields": fields, "secrets": secrets, "activatedAt": h.ActivatedAt, "test": activeTest, "locked": current.locked[spec.Group]},
-			"candidate": candidate, "canActivate": activation.ready, "ttsTestPassed": activation.ttsTestPassed, "reusedTtsTestAt": activation.reusedTTSTestAt})
+			"candidate": candidate, "canActivate": activation.ready, "ttsTestPassed": activation.ttsTestPassed,
+			"reusedTtsTestAt": activation.reusedTTSTestAt, "verification": verification})
 	}
 	voices, err := s.publicVoices(ctx, false)
 	if err != nil {
@@ -132,6 +142,13 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 		}
 		return run, tx.Commit()
 	}
+	if action == "ai-config/verify-enable" {
+		run, err := s.enqueueAIVerification(ctx, tx, a, spec, h, input)
+		if err != nil {
+			return nil, err
+		}
+		return run, tx.Commit()
+	}
 	if revision, ok := input["revision"].(float64); !ok || revision != float64(h.Revision) {
 		return nil, fail(409, "配置已被修改，请刷新后重试")
 	}
@@ -177,18 +194,8 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 		if !activation.ready {
 			return nil, fail(409, "请先完成此配置最近 24 小时内所需的实际测试")
 		}
-		if h.Active == 0 {
-			baseline := environmentAI(spec.Group)
-			sealed, err := sealAI(aiVersionLabel(spec.Group, 0), baseline)
-			if err != nil {
-				return nil, err
-			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_ai_version(service_group,version,encrypted,actor_id) VALUES($1,0,$2,$3) ON CONFLICT DO NOTHING`, spec.Group, sealed, a.UserID); err != nil {
-				return nil, err
-			}
-		}
 		version = h.Candidate
-		if _, err = tx.ExecContext(ctx, `UPDATE keagent_ai_head SET revision=revision+1,active=candidate,candidate=0,activated_at=now() WHERE service_group=$1`, spec.Group); err != nil {
+		if err = activateAIVersion(ctx, tx, a.UserID, spec.Group, h, version); err != nil {
 			return nil, err
 		}
 	default:
@@ -269,11 +276,11 @@ type aiActivationTest struct {
 	fingerprint string
 }
 
-func latestAIActivationTest(ctx context.Context, db aiRowReader, service, mode string, version int64) (aiActivationTest, error) {
+func latestAIActivationTest(ctx context.Context, db aiRowReader, spec aiSpec, mode string, version int64) (aiActivationTest, error) {
 	var test aiActivationTest
-	err := db.QueryRowContext(ctx, `SELECT status,finished_at,COALESCE(result->>'ttsKeyFingerprint','')
-		FROM keagent_ai_probe WHERE service=$1 AND version=$2 AND mode=$3
-		ORDER BY created_at DESC,id DESC LIMIT 1`, service, version, mode).Scan(&test.status, &test.finished, &test.fingerprint)
+	err := db.QueryRowContext(ctx, `SELECT status,finished_at,COALESCE(result->>'speechConfigFingerprint','')
+		FROM keagent_ai_probe WHERE service_group=$1 AND service=$2 AND version=$3 AND mode=$4
+		ORDER BY created_at DESC,id DESC LIMIT 1`, spec.Group, spec.ID, version, mode).Scan(&test.status, &test.finished, &test.fingerprint)
 	return test, err
 }
 
@@ -287,7 +294,8 @@ func (s *server) checkAIActivation(ctx context.Context, db aiRowReader, group st
 	if err != nil {
 		return activation, nil
 	}
-	cloneEnabled := group == "speech" && values["VOLC_VOICE_CLONE_ENABLED"] == "true"
+	cloneEnabled := group == speechAIGroup && values["DASHSCOPE_VOICE_CLONE_ENABLED"] == "true"
+	fingerprint := speechConfigFingerprint(values)
 	for _, spec := range aiSpecs {
 		if spec.Group != group || spec.ID == "voice-clone" && !cloneEnabled {
 			continue
@@ -300,18 +308,15 @@ func (s *server) checkAIActivation(ctx context.Context, db aiRowReader, group st
 		if spec.ID == "voice-clone" {
 			mode = "training"
 		}
-		test, err := latestAIActivationTest(ctx, db, spec.ID, mode, h.Candidate)
+		test, err := latestAIActivationTest(ctx, db, spec, mode, h.Candidate)
 		if errors.Is(err, sql.ErrNoRows) && spec.ID == "tts" {
 			active, activeErr := readAIValues(ctx, db, group, h.Active)
-			key := values["VOLC_TTS_API_KEY"]
-			if activeErr == nil && active["VOLC_TTS_API_KEY"] == key {
-				activeTest, activeTestErr := latestAIActivationTest(ctx, db, spec.ID, mode, h.Active)
+			if activeErr == nil && fingerprint != "" && speechConfigFingerprint(active) == fingerprint {
+				activeTest, activeTestErr := latestAIActivationTest(ctx, db, spec, mode, h.Active)
 				if activeTestErr != nil && !errors.Is(activeTestErr, sql.ErrNoRows) {
 					return activation, activeTestErr
 				}
-				// Earlier tests identify their configuration by version alone.
-				if activeTest.passedRecently() &&
-					(activeTest.fingerprint == "" || activeTest.fingerprint == ttsKeyFingerprint(key)) {
+				if activeTest.passedRecently() && activeTest.fingerprint == fingerprint {
 					activation.ttsTestPassed = true
 					activation.reusedTTSTestAt = &activeTest.finished.Time
 					continue
@@ -321,7 +326,8 @@ func (s *server) checkAIActivation(ctx context.Context, db aiRowReader, group st
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return activation, err
 		}
-		passed := err == nil && test.passedRecently()
+		passed := err == nil && test.passedRecently() &&
+			(group != speechAIGroup || fingerprint != "" && test.fingerprint == fingerprint)
 		if spec.ID == "tts" {
 			activation.ttsTestPassed = passed
 			if cloneEnabled {

@@ -63,7 +63,7 @@ const draft = await workflow.handle(
     config: {
       ...domain.defaultConfig,
       scriptProvider: "ai",
-      ttsProvider: "volcengine",
+      ttsProvider: "bailian",
       voice: "cloud-voice",
     },
   },

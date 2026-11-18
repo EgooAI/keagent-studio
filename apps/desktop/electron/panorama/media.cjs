@@ -203,7 +203,7 @@ async function synthesize(segment, c, cwd, signal, remote) {
       if (c.ttsProvider === "system") {
         ensure(
           process.platform === "win32",
-          "当前系统不支持 Windows 配音，请选择火山 TTS",
+          "当前系统不支持 Windows 配音，请选择百炼配音",
         );
         await speech(
           {

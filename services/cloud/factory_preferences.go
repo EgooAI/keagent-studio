@@ -16,7 +16,8 @@ func (s *server) factoryPreferences(ctx context.Context, a actor, input object) 
 			return nil, fail(422, "默认制作配置字段无效："+key)
 		}
 	}
-	result := object{"videoTemplate": object{"id": "", "version": ""}, "voiceId": input["voiceId"], "propertyIds": []any{}, "requireScriptReview": true}
+	voiceID := currentPublicVoiceID(str(input["voiceId"]))
+	result := object{"videoTemplate": object{"id": "", "version": ""}, "voiceId": voiceID, "propertyIds": []any{}, "requireScriptReview": true}
 	var template object
 	if str(input["templateId"]) != "" {
 		if str(input["templateVersion"]) == "" {
@@ -33,7 +34,7 @@ func (s *server) factoryPreferences(ctx context.Context, a actor, input object) 
 	} else if input["templateVersion"] != "" {
 		return nil, fail(422, "未选择模板时版本必须为空")
 	}
-	if voiceID := str(input["voiceId"]); voiceID != "" {
+	if voiceID != "" {
 		language := ""
 		public, err := s.publicVoices(ctx, false)
 		if err != nil {

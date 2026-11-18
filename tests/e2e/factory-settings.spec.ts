@@ -123,7 +123,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 })),
                 defaultConfig: {
                   templateId: "standard-tour",
-                  ttsProvider: "volcengine",
+                  ttsProvider: "bailian",
                   voice: "",
 
                   scriptProvider: "template",
@@ -132,7 +132,7 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 ffmpeg: true,
                 ffprobe: true,
                 managedVoices: true,
-                volcTts: true,
+                bailianTts: true,
                 ai: state.aiConfigured,
                 beike: false,
                 voices: [],
@@ -1240,7 +1240,7 @@ test("设置只展示制作服务状态，支持刷新和旧链接", async ({ pa
     panel.getByRole("cell", { name: /AI 文案.*未配置/ }),
   ).toBeVisible();
   await expect(
-    panel.getByRole("cell", { name: /云端配音.*已配置/ }),
+    panel.getByRole("cell", { name: /百炼配音.*已配置/ }),
   ).toBeVisible();
   await expect(panel.getByText("本机合成工具：已就绪")).toBeVisible();
 

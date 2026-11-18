@@ -21,6 +21,8 @@ import (
 	"time"
 )
 
+const speechAIGroup = "bailian-speech"
+
 const aiSettingsSchema = `
 CREATE TABLE IF NOT EXISTS keagent_ai_version (
  service_group text NOT NULL, version bigint NOT NULL, encrypted bytea NOT NULL,
@@ -39,6 +41,11 @@ CREATE TABLE IF NOT EXISTS keagent_ai_probe (
  worker text NOT NULL DEFAULT '');
 CREATE UNIQUE INDEX IF NOT EXISTS keagent_ai_probe_running
  ON keagent_ai_probe(service_group,service) WHERE status IN ('queued','running');
+-- Retire incomplete probes from the previous speech provider and discard their samples.
+UPDATE keagent_ai_probe
+ SET status='failed',finished_at=now(),encrypted_input=NULL,
+     result='{"message":"语音供应商已切换，请重新测试百炼配置","category":"validation"}'
+ WHERE service_group='speech' AND status IN ('queued','running');
 `
 
 type aiField struct {
@@ -53,8 +60,8 @@ type aiSpec struct {
 
 var aiSpecs = []aiSpec{
 	{"script", "script", "多模态文案", "OpenAI 兼容接口", []aiField{{"AI_BASE_URL", "服务地址", "url"}, {"AI_MODEL", "模型名", "text"}, {"AI_API_KEY", "API Key", "secret"}}},
-	{"tts", "speech", "火山配音", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}}},
-	{"voice-clone", "speech", "声音复刻", "火山引擎", []aiField{{"VOLC_TTS_API_KEY", "共享 API Key", "secret"}, {"VOLC_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}, {"VOLC_VOICE_CLONE_RESOURCE_ID", "复刻资源编号", "text"}}},
+	{"tts", speechAIGroup, "百炼配音", "阿里云百炼", []aiField{{"DASHSCOPE_API_KEY", "共享 API Key", "secret"}, {"DASHSCOPE_WORKSPACE_ID", "业务空间 ID", "text"}}},
+	{"voice-clone", speechAIGroup, "声音复刻", "阿里云百炼", []aiField{{"DASHSCOPE_API_KEY", "共享 API Key", "secret"}, {"DASHSCOPE_WORKSPACE_ID", "业务空间 ID", "text"}, {"DASHSCOPE_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}}},
 	{"beike", "beike", "贝壳取材", "贝壳开放平台", []aiField{{"BEIKE_ACCESS_TOKEN", "Access Token", "secret"}}},
 	{"beike-cli", "beike-cli", "贝壳找房", "贝壳 AI 平台 CLI", []aiField{{"BEIKE_MCP_API_KEY", "MCP API Key", "secret"}, {"BEIKE_CLI_PATH", "CLI 可执行文件路径（可选，留空自动检测）", "text"}}},
 	{"opening", "opening", "MiniMax 开场", "MiniMax", []aiField{{"MINIMAX_API_KEY", "API Key", "secret"}}},
@@ -87,12 +94,8 @@ func environmentAI(group string) aiValues {
 	for key := range groupFields(group) {
 		values[key] = strings.TrimSpace(os.Getenv(key))
 	}
-	switch group {
-	case "speech":
-		if values["VOLC_VOICE_CLONE_RESOURCE_ID"] == "" {
-			values["VOLC_VOICE_CLONE_RESOURCE_ID"] = "seed-icl-2.0"
-		}
-		values["VOLC_VOICE_CLONE_ENABLED"] = strconv.FormatBool(values["VOLC_VOICE_CLONE_ENABLED"] == "true")
+	if group == speechAIGroup {
+		values["DASHSCOPE_VOICE_CLONE_ENABLED"] = strconv.FormatBool(values["DASHSCOPE_VOICE_CLONE_ENABLED"] == "true")
 	}
 	return values
 }
@@ -180,13 +183,14 @@ func aiVersionLabel(group string, version int64) string {
 	return fmt.Sprintf("ai-config:%s:%d", group, version)
 }
 
-func ttsKeyFingerprint(value string) string {
+func speechConfigFingerprint(values aiValues) string {
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("AI_CONFIG_ENCRYPTION_KEY")))
-	if err != nil || len(key) != 32 || value == "" {
+	token, workspace := values["DASHSCOPE_API_KEY"], values["DASHSCOPE_WORKSPACE_ID"]
+	if err != nil || len(key) != 32 || token == "" || !qwenWorkspaceID.MatchString(workspace) {
 		return ""
 	}
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte("ai-probe:tts-key:" + value))
+	_, _ = mac.Write([]byte("ai-probe:bailian-speech:" + qwenAudioModel + ":" + workspace + ":" + token))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -224,6 +228,9 @@ func (s *server) activeAI(ctx context.Context) (context.Context, error) {
 		var encrypted []byte
 		if err = list.Scan(&group, &version, &encrypted); err != nil {
 			return ctx, err
+		}
+		if len(groupFields(group)) == 0 {
+			continue
 		}
 		var values aiValues
 		if openAI(aiVersionLabel(group, version), encrypted, &values) != nil {
@@ -274,9 +281,9 @@ func aiConfigIssues(spec aiSpec, values aiValues) (missing []string, issues []st
 		if strings.TrimSpace(os.Getenv("AI_ALLOWED_HOSTS")) == "" {
 			missing = append(missing, "AI_ALLOWED_HOSTS")
 		}
-	case "voice-clone":
-		if !speechResourceID.MatchString(values["VOLC_VOICE_CLONE_RESOURCE_ID"]) {
-			issues = append(issues, "复刻资源编号格式无效")
+	case "tts", "voice-clone":
+		if workspace := values["DASHSCOPE_WORKSPACE_ID"]; workspace != "" && !qwenWorkspaceID.MatchString(workspace) {
+			issues = append(issues, "请填写以 ws- 或 llm- 开头的百炼业务空间 ID")
 		}
 	}
 	return

@@ -1104,7 +1104,7 @@ export function PanoramaStudio() {
                   我确认已获得经纪人照片和开场素材的使用授权
                 </Checkbox>
                 <div>
-                  审核通过后，照片、地点图和豆包开场配音将发送给
+                  审核通过后，照片、地点图和百炼开场配音将发送给
                   MiniMax，生成视频会计费。
                 </div>
                 {!catalog.data?.minimaxOpening && (

@@ -15,6 +15,8 @@ import { serviceRequest } from "@keagent/api-client";
 import type { AdminPublicVoice } from "@keagent/shared-types";
 import { useAdminAction } from "./admin-api";
 
+const publicVoiceModel = "qwen-audio-3.1-tts-plus";
+
 export default function AdminPublicVoices() {
   const query = useQuery({
     queryKey: ["admin", "public-voices"],
@@ -30,7 +32,7 @@ export default function AdminPublicVoices() {
         id: "",
         name: "",
         speakerId: "",
-        resourceId: "seed-tts-2.0",
+        resourceId: publicVoiceModel,
         language: "zh-CN",
         enabled: false,
         publishedOnce: false,
@@ -44,6 +46,7 @@ export default function AdminPublicVoices() {
           ...values,
           id: editor && editor !== "new" ? editor.id : "",
           enabled: editor && editor !== "new" ? editor.enabled : false,
+          resourceId: publicVoiceModel,
         }),
       "公共音色已保存",
     );
@@ -56,7 +59,7 @@ export default function AdminPublicVoices() {
         type="info"
         showIcon
         title="用户只能选择已上架的公共音色或本人音色"
-        description="在这里配置名称、语言、火山公共音色编号和合成资源。上架过的编号、模型及语言不能覆盖修改；更换音色时请新建，以保持历史制作记录一致。"
+        description="千问 3.1 Plus 支持龙安灵心、许南川、龙安欢和龙安风悦。已上架过的音色编号和语言会保留在历史制作记录中，更换时请新增音色。"
       />
       <div className="admin-toolbar admin-block">
         <Button onClick={() => void query.refetch()}>刷新列表</Button>
@@ -83,41 +86,46 @@ export default function AdminPublicVoices() {
               dataIndex: "language",
               render: (value) => (value === "zh-CN" ? "普通话" : "英语"),
             },
-            { title: "火山音色编号", dataIndex: "speakerId" },
-            { title: "合成资源", dataIndex: "resourceId" },
+            { title: "音色编号", dataIndex: "speakerId" },
+            { title: "合成模型", dataIndex: "resourceId" },
             {
               title: "状态",
-              render: (_, voice) => (
-                <Tag color={voice.enabled ? "green" : "default"}>
-                  {voice.enabled ? "已上架" : "未上架"}
-                </Tag>
-              ),
+              render: (_, voice) =>
+                !voice.retired && voice.resourceId === publicVoiceModel ? (
+                  <Tag color={voice.enabled ? "green" : "default"}>
+                    {voice.enabled ? "已上架" : "未上架"}
+                  </Tag>
+                ) : (
+                  <Tag>已停用</Tag>
+                ),
             },
             {
               title: "操作",
-              render: (_, voice) => (
-                <Space>
-                  <Button size="small" onClick={() => edit(voice)}>
-                    编辑
-                  </Button>
-                  <Button
-                    size="small"
-                    loading={action.busy}
-                    onClick={() =>
-                      void action.run(
-                        () =>
-                          serviceRequest("/v1/admin/voices", {
-                            ...voice,
-                            enabled: !voice.enabled,
-                          }),
-                        voice.enabled ? "音色已下架" : "音色已上架",
-                      )
-                    }
-                  >
-                    {voice.enabled ? "下架" : "上架"}
-                  </Button>
-                </Space>
-              ),
+              render: (_, voice) =>
+                !voice.retired &&
+                voice.resourceId === publicVoiceModel && (
+                  <Space>
+                    <Button size="small" onClick={() => edit(voice)}>
+                      编辑
+                    </Button>
+                    <Button
+                      size="small"
+                      loading={action.busy}
+                      onClick={() =>
+                        void action.run(
+                          () =>
+                            serviceRequest("/v1/admin/voices", {
+                              ...voice,
+                              enabled: !voice.enabled,
+                            }),
+                          voice.enabled ? "音色已下架" : "音色已上架",
+                        )
+                      }
+                    >
+                      {voice.enabled ? "下架" : "上架"}
+                    </Button>
+                  </Space>
+                ),
             },
           ]}
           pagination={{ pageSize: 20 }}
@@ -155,25 +163,26 @@ export default function AdminPublicVoices() {
           </Form.Item>
           <Form.Item
             name="speakerId"
-            label="火山公共音色编号"
+            label="百炼公共音色编号"
             rules={[{ required: true }]}
+            extra={
+              <a
+                href="https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list"
+                target="_blank"
+                rel="noreferrer"
+              >
+                查看百炼系统音色列表
+              </a>
+            }
           >
             <Input
               disabled={locked}
               maxLength={150}
-              placeholder="从火山语音控制台的公共音色库获取"
+              placeholder="例如 longanlingxin_v3.1"
             />
           </Form.Item>
-          <Form.Item
-            name="resourceId"
-            label="语音合成资源"
-            rules={[{ required: true }]}
-          >
-            <Input
-              disabled={locked}
-              maxLength={150}
-              placeholder="例如 seed-tts-2.0"
-            />
+          <Form.Item label="合成模型" htmlFor="public-voice-model">
+            <Input id="public-voice-model" value={publicVoiceModel} readOnly />
           </Form.Item>
         </Form>
       </Modal>

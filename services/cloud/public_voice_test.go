@@ -19,11 +19,16 @@ func TestPublicVoicesManagedCatalog(t *testing.T) {
 		}
 		return result.(adminVoice), nil
 	}
-	voice := adminVoice{publicVoice: publicVoice{Name: "经纪人女声", Language: "zh-CN"}, Speaker: "zh_female_example", Resource: "seed-tts-2.0"}
+	voice := adminVoice{publicVoice: publicVoice{Name: "经纪人女声", Language: "zh-CN"}, Speaker: "longanlingxin_v3.1", Resource: qwenAudioModel}
 	private := voice
-	private.Speaker = "keagent-private-user-voice"
+	private.Speaker = qwenAudioModel + "-private-user-voice"
 	if validatePublicVoice(private) == nil {
 		t.Fatal("user-owned cloned voice accepted as public")
+	}
+	flash := voice
+	flash.Speaker = "wenhuaiqing_v3.1"
+	if _, err := save(flash); err == nil {
+		t.Fatal("Flash-only voice was accepted for Plus")
 	}
 	saved, err := save(voice)
 	if err != nil {
@@ -45,10 +50,10 @@ func TestPublicVoicesManagedCatalog(t *testing.T) {
 		t.Fatal("published voice missing")
 	}
 	s.speech = func(_ context.Context, operation string, payload object, resource string) ([]byte, error) {
-		if operation != "unidirectional" || resource != saved.Resource || obj(payload["req_params"])["speaker"] != saved.Speaker {
+		if operation != qwenSynthesis || resource != saved.Resource || payload["voice"] != saved.Speaker {
 			t.Fatal("catalog was not resolved server-side")
 		}
-		return []byte(`{"code":0,"data":"AQIDBA=="}`), nil
+		return []byte(qwenSpeechFixture), nil
 	}
 	if _, err = s.synthesizeVoice(t.Context(), actor{UserID: "user"}, object{"text": "测试文案", "voice": saved.ID, "kind": "builtin", "rate": float64(1)}); err != nil {
 		t.Fatal(err)
@@ -57,7 +62,7 @@ func TestPublicVoicesManagedCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := saved
-	changed.Speaker = "different-speaker"
+	changed.Speaker = "xunanchuan_v3.1"
 	if _, err = save(changed); err == nil {
 		t.Fatal("published provider identity overwritten")
 	}
@@ -71,5 +76,46 @@ func TestPublicVoicesManagedCatalog(t *testing.T) {
 	var count int
 	if err = s.db.QueryRow(`SELECT count(*) FROM keagent_audit WHERE target_id=$1`, saved.ID).Scan(&count); err != nil || count != 3 {
 		t.Fatal("catalog changes not audited", count, err)
+	}
+}
+
+func TestPublicVoiceProviderCutover(t *testing.T) {
+	s := voiceTestServer(t)
+	_, err := s.db.Exec(`INSERT INTO keagent_public_voice(id,payload) VALUES
+		($1,'{"id":"builtin-public-zh-vv-v2","resourceId":"seed-tts-2.0","enabled":true,"publishedOnce":true}'),
+		($2,jsonb_build_object('id',$2::text,'speakerId','wenhuaiqing_v3.1','resourceId',$3::text,'enabled',true,'publishedOnce',true)),
+		('old-custom','{"id":"old-custom","resourceId":"seed-tts-2.0","enabled":true,"publishedOnce":true}')`,
+		retiredDefaultPublicVoiceID, retiredBailianPublicVoiceID, qwenAudioModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = seedDefaultPublicVoice(t.Context(), s.db); err != nil {
+		t.Fatal(err)
+	}
+	for _, oldID := range []string{retiredDefaultPublicVoiceID, retiredBailianPublicVoiceID} {
+		v, err := s.activePublicVoice(t.Context(), oldID)
+		if err != nil || v.ID != defaultPublicVoiceID || v.Speaker != "longanlingxin_v3.1" {
+			t.Fatalf("historic default did not resolve to new voice: %+v %v", v, err)
+		}
+	}
+	catalog, err := s.publicVoices(t.Context(), true)
+	if err != nil || len(catalog) != 7 {
+		t.Fatalf("historical entries were lost: %+v %v", catalog, err)
+	}
+	var active int
+	for _, item := range catalog {
+		if item.ID == retiredDefaultPublicVoiceID || item.ID == retiredBailianPublicVoiceID || item.ID == "old-custom" {
+			if item.Enabled || !item.Retired {
+				t.Fatalf("retired voice remained usable: %+v", item)
+			}
+		} else if item.Enabled && !item.Retired {
+			active++
+		}
+	}
+	if active != 4 {
+		t.Fatalf("expected four published Plus voices, got %d", active)
+	}
+	if _, err = s.activePublicVoice(t.Context(), "old-custom"); err == nil {
+		t.Fatal("active lookup accepted a retired custom voice")
 	}
 }

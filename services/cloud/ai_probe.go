@@ -17,11 +17,12 @@ type aiProbeStep struct {
 	State string `json:"state"`
 }
 type aiProbeProgress struct {
-	Steps             []aiProbeStep `json:"steps"`
-	Message           string        `json:"message,omitempty"`
-	Category          string        `json:"category,omitempty"`
-	Task              string        `json:"task,omitempty"`
-	TTSKeyFingerprint string        `json:"ttsKeyFingerprint,omitempty"`
+	Steps                   []aiProbeStep `json:"steps"`
+	Message                 string        `json:"message,omitempty"`
+	Category                string        `json:"category,omitempty"`
+	Task                    string        `json:"task,omitempty"`
+	SpeechConfigFingerprint string        `json:"speechConfigFingerprint,omitempty"`
+	ActivationRevision      *int64        `json:"activationRevision,omitempty"`
 }
 type aiProbe struct {
 	ID, Group, Service, Mode, Status, Actor, Hash, Worker string
@@ -59,7 +60,11 @@ func (p aiProbe) public() object {
 		"finishedAt": p.Finished, "steps": steps, "message": p.Progress.Message, "category": p.Progress.Category}
 }
 func (s *server) latestAIProbe(ctx context.Context, service string, version int64) (object, error) {
-	p, err := scanAIProbe(s.db.QueryRowContext(ctx, "SELECT "+aiProbeReadColumns+" FROM keagent_ai_probe WHERE service=$1 AND version=$2 ORDER BY created_at DESC,id DESC LIMIT 1", service, version))
+	spec, ok := specFor(service)
+	if !ok {
+		return nil, nil
+	}
+	p, err := scanAIProbe(s.db.QueryRowContext(ctx, "SELECT "+aiProbeReadColumns+" FROM keagent_ai_probe WHERE service_group=$1 AND service=$2 AND version=$3 ORDER BY created_at DESC,id DESC LIMIT 1", spec.Group, service, version))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -99,7 +104,7 @@ func (s *server) enqueueAIProbe(ctx context.Context, tx *sql.Tx, a actor, spec a
 	hash := digestBytes(raw)
 	existing, err := scanAIProbe(tx.QueryRowContext(ctx, "SELECT "+aiProbeReadColumns+" FROM keagent_ai_probe WHERE id=$1", requestID))
 	if err == nil {
-		if existing.Hash != hash || existing.Actor != a.UserID {
+		if existing.Group != spec.Group || existing.Hash != hash || existing.Actor != a.UserID {
 			return nil, fail(409, "请求标识已使用")
 		}
 		return existing.public(), nil
@@ -157,7 +162,9 @@ func (s *server) runAIProbes(ctx context.Context) {
 			_, _ = s.db.ExecContext(ctx, `WITH abandoned AS (UPDATE keagent_ai_probe SET status='unknown',finished_at=now(),encrypted_input=NULL,
 				result=result||'{"message":"提交结果未知，请在供应商控制台核对","category":"unknown"}'
 				WHERE status='running' AND lease_until<now() AND COALESCE(result->>'task','')=''
-				RETURNING id,actor_id,service,version)
+				RETURNING id,actor_id,service_group,service,version,result),
+				discarded AS (DELETE FROM keagent_ai_version v USING abandoned a
+					WHERE v.service_group=a.service_group AND v.version=a.version AND a.result ? 'activationRevision')
 				INSERT INTO keagent_audit(id,actor_id,action,target_id,metadata)
 				SELECT md5(id||':ai-abandoned'),actor_id,'ai.test.result',service,jsonb_build_object('service',service,'version',version,'result','unknown') FROM abandoned ON CONFLICT DO NOTHING`)
 		case <-ticker.C:
@@ -176,8 +183,7 @@ func (s *server) runAIProbes(ctx context.Context) {
 	}
 }
 func (s *server) saveAIProgress(ctx context.Context, p *aiProbe) error {
-	raw, _ := json.Marshal(p.Progress)
-	result, err := s.db.ExecContext(ctx, `UPDATE keagent_ai_probe SET result=$3,lease_until=now()+interval '90 seconds' WHERE id=$1 AND worker=$2 AND status='running'`, p.ID, p.Worker, raw)
+	result, err := s.db.ExecContext(ctx, `UPDATE keagent_ai_probe SET result=$3,lease_until=now()+interval '90 seconds' WHERE id=$1 AND worker=$2 AND status='running'`, p.ID, p.Worker, p.progressJSON())
 	if err != nil {
 		return err
 	}
@@ -204,6 +210,43 @@ func (s *server) executeAIProbe(parent context.Context, p aiProbe) {
 	err := s.performAIProbe(ctx, &p)
 	finish, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer finishCancel()
+	tx, dbErr := s.db.BeginTx(finish, nil)
+	if dbErr != nil {
+		return
+	}
+	defer tx.Rollback()
+	verification := p.Progress.ActivationRevision
+	var head aiHead
+	if verification != nil {
+		// Mutations take the group head lock before touching the probe.
+		head, dbErr = readAIHead(finish, tx, p.Group, true)
+		if dbErr != nil {
+			return
+		}
+		if err == nil && head.Revision != *verification {
+			err = fail(409, "验证期间配置已变化，请刷新后重试")
+		}
+	}
+	status := p.finish(err)
+	result, dbErr := tx.ExecContext(finish, `UPDATE keagent_ai_probe SET status=$3,result=$4,finished_at=now(),encrypted_input=NULL WHERE id=$1 AND worker=$2 AND status='running'`, p.ID, p.Worker, status, p.progressJSON())
+	if dbErr != nil {
+		return
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return
+	}
+	if verification != nil {
+		status, dbErr = s.completeAIVerification(finish, tx, &p, head, status)
+		if dbErr != nil {
+			return
+		}
+	}
+	if aiAudit(finish, tx, p.Actor, p.Service, "test.result", p.Version, status) == nil {
+		_ = tx.Commit()
+	}
+}
+
+func (p *aiProbe) finish(err error) string {
 	status := "passed"
 	if err != nil {
 		status, p.Progress.Category, p.Progress.Message = aiProbeFailure(p.Service, err)
@@ -211,22 +254,12 @@ func (s *server) executeAIProbe(parent context.Context, p aiProbe) {
 	if n := len(p.Progress.Steps); n > 0 {
 		p.Progress.Steps[n-1].State = status
 	}
+	return status
+}
+
+func (p *aiProbe) progressJSON() []byte {
 	raw, _ := json.Marshal(p.Progress)
-	tx, dbErr := s.db.BeginTx(finish, nil)
-	if dbErr != nil {
-		return
-	}
-	defer tx.Rollback()
-	result, dbErr := tx.ExecContext(finish, `UPDATE keagent_ai_probe SET status=$3,result=$4,finished_at=now(),encrypted_input=NULL WHERE id=$1 AND worker=$2 AND status='running'`, p.ID, p.Worker, status, raw)
-	if dbErr != nil {
-		return
-	}
-	if n, _ := result.RowsAffected(); n != 1 {
-		return
-	}
-	if aiAudit(finish, tx, p.Actor, p.Service, "test.result", p.Version, status) == nil {
-		_ = tx.Commit()
-	}
+	return raw
 }
 func aiProbeFailure(service string, err error) (status, category, message string) {
 	var upstream providerHTTPError
@@ -241,28 +274,26 @@ func aiProbeFailure(service string, err error) (status, category, message string
 		return "failed", category, upstream.Error()
 	}
 	if (service == "tts" || service == "voice-clone") && errors.As(err, &upstream) {
-		label := "火山配音"
+		label := "百炼配音"
 		if service == "voice-clone" {
-			label = "火山声音复刻"
+			label = "百炼声音复刻"
 		}
 		category, message = "validation", label+"请求失败"
 		switch upstream.httpStatus {
 		case http.StatusUnauthorized:
-			category, message = "authentication", label+"鉴权失败，请核对豆包语音 API Key"
-			if upstream.code == 45000010 {
-				message = "豆包语音 API Key 无效，请从豆包语音控制台复制有效的 API Key 后重新保存并测试"
-			}
+			category, message = "authentication", label+"鉴权失败，请核对百炼 API Key 和业务空间 ID"
 		case http.StatusForbidden:
-			category, message = "permission", "火山拒绝请求，请检查模型和音色权限"
+			category, message = "permission", "百炼拒绝请求，请检查业务空间、模型和音色权限"
 		case http.StatusPaymentRequired, http.StatusTooManyRequests:
-			category, message = "quota", label+"请求限流或额度不足，请在豆包语音控制台核对"
+			category, message = "quota", label+"请求限流或额度不足，请在百炼控制台核对"
 		}
 		details := fmt.Sprintf("HTTP %d", upstream.httpStatus)
-		if upstream.code != 0 {
-			details += fmt.Sprintf("，火山错误码 %d", upstream.code)
+		switch upstream.name {
+		case "InvalidApiKey", "AccessDenied", "InvalidParameter", "ModelNotFound", "WorkspaceNotFound", "Throttling", "Throttling.RateQuota", "Throttling.AllocationQuota":
+			details += "，百炼错误码 " + upstream.name
 		}
 		if upstream.logID != "" {
-			details += "，火山日志 ID " + upstream.logID
+			details += "，百炼请求 ID " + upstream.logID
 		}
 		return "failed", category, message + "（" + details + "）"
 	}

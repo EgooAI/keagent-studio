@@ -8,7 +8,7 @@ export interface PanoramaConfig {
   sceneTemplate: string;
   closingTemplate: string;
   videoMode: "voiceover" | "avatar";
-  ttsProvider: "system" | "volcengine" | "personal";
+  ttsProvider: "system" | "bailian" | "personal";
   voice: string;
   rate: number;
   openingClip?: string;
@@ -128,7 +128,7 @@ export interface PanoramaCapabilities {
   ffprobe: boolean;
   voices: { name: string; language: string }[];
   ai: boolean;
-  volcTts: boolean;
+  bailianTts: boolean;
   minimaxOpening?: boolean;
   managedVoices: boolean;
   defaultConfig: PanoramaConfig;

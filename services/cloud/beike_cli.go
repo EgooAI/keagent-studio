@@ -17,6 +17,8 @@ import (
 
 const beikeCLITimeout = 30 * time.Second
 
+type beikeSkipCacheKey struct{}
+
 var (
 	errBeikeCLIRejected      = errors.New("贝壳拒绝当前客户端请求（invalid cli request）")
 	errBeikeCLIExecution     = errors.New("贝壳 CLI 执行失败")
@@ -77,9 +79,12 @@ func runBeikeCLIArgs(ctx context.Context, executable, key string, args []string,
 	if len(args) == 0 {
 		return nil, errors.New("贝壳 CLI 参数为空")
 	}
-	cacheKey := executable + "\x00" + strings.Join(args, "\x00")
-	if cached, ok := beikeCacheStore.get(cacheKey); ok {
-		return cached, nil
+	cacheKey := executable + "\x00" + digestBytes([]byte(key)) + "\x00" + beikeCLISessionID() + "\x00" + strings.Join(args, "\x00")
+	skipCache, _ := ctx.Value(beikeSkipCacheKey{}).(bool)
+	if !skipCache {
+		if cached, ok := beikeCacheStore.get(cacheKey); ok {
+			return cached, nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, beikeCLITimeout)
@@ -133,7 +138,9 @@ func runBeikeCLIArgs(ctx context.Context, executable, key string, args []string,
 	if bytes.Contains(output, []byte(key)) {
 		return nil, errBeikeCLIInvalidOutput
 	}
-	beikeCacheStore.put(cacheKey, output)
+	if !skipCache {
+		beikeCacheStore.put(cacheKey, output)
+	}
 	return output, nil
 }
 

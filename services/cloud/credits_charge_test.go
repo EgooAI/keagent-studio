@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -94,14 +93,14 @@ func TestPanoramaTTSCreditsPerKiloChar(t *testing.T) {
 	grantForTest(t, s, "u1", creditKindPurchased, 25, 0)
 	var synthCalls atomic.Int32
 	s.speech = func(_ context.Context, operation string, _ object, _ string) ([]byte, error) {
-		if operation != "unidirectional" {
+		if operation != qwenSynthesis {
 			t.Errorf("unexpected speech operation %s", operation)
 		}
 		synthCalls.Add(1)
-		return []byte(`{"code":0,"data":"AQIDBA=="}`), nil
+		return []byte(qwenSpeechFixture), nil
 	}
 	call := func(text string) (object, error) {
-		body, _ := json.Marshal(object{"text": text, "voice": "builtin-public-zh-vv-v2", "kind": "builtin", "rate": float64(1)})
+		body, _ := json.Marshal(object{"text": text, "voice": defaultPublicVoiceID, "kind": "builtin", "rate": float64(1)})
 		value, err := s.panorama(t.Context(), actor{UserID: "u1"}, "tts", body)
 		if err != nil {
 			return nil, err
@@ -245,16 +244,15 @@ func TestOpeningExplicitRejectionReleasesHold(t *testing.T) {
 
 func TestVoiceCloneCreditsLifecycle(t *testing.T) {
 	s := chargeTestServer(t)
-	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "true")
-	t.Setenv("VOLC_TTS_API_KEY", "server-only-test-key")
+	configureBailianTest(t)
 	grantForTest(t, s, "u1", creditKindPurchased, 200, 0)
-	status := 1 // 1=processing，提交已受理
-	s.speech = func(_ context.Context, operation string, _ object, _ string) ([]byte, error) {
+	status := "DEPLOYING"
+	s.speech = func(_ context.Context, operation string, payload object, _ string) ([]byte, error) {
 		switch operation {
-		case "voice_clone":
-			return []byte(`{"status":1}`), nil
-		case "get_voice":
-			return []byte(`{"status":` + itoa(status) + `}`), nil
+		case "create_voice":
+			return qwenVoiceCreated(payload["prefix"]), nil
+		case "query_voice":
+			return qwenVoiceStatus(status), nil
 		}
 		return nil, errors.New("unexpected operation")
 	}
@@ -278,7 +276,7 @@ func TestVoiceCloneCreditsLifecycle(t *testing.T) {
 	}
 
 	// 复刻成功 → 刷新后结算。
-	status = 2
+	status = "OK"
 	identity, _ := json.Marshal(object{"id": created.(userVoice).ID})
 	if _, err = s.voices(t.Context(), actor{UserID: "u1"}, "refresh", identity); err != nil {
 		t.Fatalf("refresh to ready: %v", err)
@@ -299,7 +297,7 @@ func TestVoiceCloneCreditsLifecycle(t *testing.T) {
 	if _, held = chargeBalance(t, s, "u2"); held != 200 {
 		t.Fatal("u2 clone must hold")
 	}
-	status = 3
+	status = "UNDEPLOYED"
 	if _, err = s.voices(t.Context(), actor{UserID: "u2"}, "refresh", identity); err == nil {
 		t.Fatal("refreshing another owner's voice must fail")
 	}
@@ -312,10 +310,6 @@ func TestVoiceCloneCreditsLifecycle(t *testing.T) {
 		t.Fatalf("failed clone must release: available=%d held=%d", available, held)
 	}
 	creditInvariant(t, s, "u2")
-}
-
-func itoa(v int) string {
-	return strconv.Itoa(v)
 }
 
 func mustVoiceID(t *testing.T, s *server, owner string) string {

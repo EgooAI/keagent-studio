@@ -125,6 +125,7 @@ export interface AdminAIManagement {
     locked: boolean;
   };
   candidate: (AdminAIValues & { missing: string[]; issues: string[] }) | null;
+  verification?: AdminAIProbe | null;
   canActivate: boolean;
   ttsTestPassed?: boolean;
   reusedTtsTestAt?: string | null;

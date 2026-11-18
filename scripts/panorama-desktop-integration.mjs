@@ -62,7 +62,7 @@ try {
         return Promise.resolve(
           Response.json({
             ai: false,
-            volcTts: true,
+            bailianTts: true,
             minimaxOpening: false,
             managedVoices: true,
           }),

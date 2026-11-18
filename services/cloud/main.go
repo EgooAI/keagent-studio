@@ -186,7 +186,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/voices/create" {
 		limit = 14 << 20
 	}
-	if r.URL.Path == "/v1/admin/ai-config/test" {
+	if r.URL.Path == "/v1/admin/ai-config/test" || r.URL.Path == "/v1/admin/ai-config/verify-enable" {
 		limit = 16 << 20
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/collection/comments/import") {
@@ -385,6 +385,10 @@ func (s *server) workspace(ctx context.Context, a actor) (object, error) {
 	w, err := s.workspacePayload(ctx, a)
 	if err != nil {
 		return nil, err
+	}
+	defaults := obj(obj(w["profile"])["defaults"])
+	if voiceID := str(defaults["voiceId"]); voiceID != "" {
+		defaults["voiceId"] = currentPublicVoiceID(voiceID)
 	}
 	properties := []any{}
 	for _, property := range rows(w["properties"]) {

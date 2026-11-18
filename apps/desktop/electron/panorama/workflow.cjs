@@ -59,11 +59,25 @@ class PanoramaWorkflow {
       !fs.existsSync(file + ".pre-batch")
     )
       fs.copyFileSync(file, file + ".pre-batch", fs.constants.COPYFILE_EXCL);
-    for (const job of state.jobs)
+    for (const job of state.jobs) {
       if (job.status === "running") {
         job.status = "failed";
         job.error = "客户端退出导致中断，可重试并复用已完成素材";
       }
+      if (job.status !== "succeeded")
+        job.config = domain.currentSpeechConfig(job.config);
+    }
+    for (const record of [
+      ...state.drafts,
+      ...(state.templates || []),
+      ...(state.production?.items || []).filter(
+        (item) =>
+          !["done", "archiving", "archived", "archiveFailed"].includes(
+            item.phase,
+          ),
+      ),
+    ])
+      record.config = domain.currentSpeechConfig(record.config);
     this.stores.set(owner, state);
     state.properties ??= [];
     state.imageTasks ??= [];
@@ -206,7 +220,7 @@ class PanoramaWorkflow {
             })),
       defaultConfig: domain.defaultConfig,
       ai: !!cloud.ai,
-      volcTts: !!cloud.volcTts,
+      bailianTts: !!cloud.bailianTts,
       minimaxOpening: !!cloud.minimaxOpening,
       managedVoices: !!cloud.managedVoices,
       beike: !!cloud.beike,
@@ -720,7 +734,9 @@ class PanoramaWorkflow {
           "内置测试任务使用本机测试配音，请重新选择测试模板",
         );
       if (draft.templateSnapshot) {
-        const recipe = draft.templateSnapshot.production.config;
+        const recipe = domain.currentSpeechConfig(
+          draft.templateSnapshot.production.config,
+        );
         domain.ensure(
           Object.entries(recipe).every(
             ([key, value]) =>
@@ -1226,19 +1242,18 @@ class PanoramaWorkflow {
     else if (draft.config.ttsProvider === "personal") {
       domain.ensure(this.remote, "未连接本人音色服务");
       const catalog = await (checks.voices ??= this.remote("voice-list", {}));
+      const voice = (catalog.voices || []).find(
+        (v) => v.id === draft.config.voice,
+      );
       domain.ensure(
         catalog.cloneEnabled &&
-          catalog.voices.some(
-            (v) =>
-              v.id === draft.config.voice &&
-              v.status === "ready" &&
-              v.language === draft.config.language,
-          ),
-        "本人音色不存在或尚未就绪，请重新选择",
+          voice?.status === "ready" &&
+          voice.language === draft.config.language,
+        voice?.error || "本人音色不存在或尚未就绪，请在全景工厂选择可用音色",
       );
     } else {
       domain.ensure(
-        caps.volcTts && draft.config.voice,
+        caps.bailianTts && draft.config.voice,
         "请选择公共音色，并确认配音服务已配置",
       );
       const catalog = await (checks.voices ??= this.remote("voice-list", {}));
@@ -1248,7 +1263,7 @@ class PanoramaWorkflow {
             voice.id === draft.config.voice &&
             voice.language === draft.config.language,
         ),
-        "公共音色已下架或不存在，请重新选择",
+        "公共音色已下架或不存在，请在全景工厂重新选择可用音色",
       );
     }
     if (draft.config.openingClip) {

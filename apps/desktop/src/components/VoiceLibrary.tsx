@@ -18,7 +18,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { UploadCloud } from "lucide-react";
 import { authRequest } from "@keagent/api-client";
-import type { PersonalVoice } from "@keagent/shared-types";
+import type { PersonalVoice, VoiceUpload } from "@keagent/shared-types";
 import {
   audioBlobURL,
   encodeRecording,
@@ -102,13 +102,14 @@ export function VoiceLibraryPanel() {
     await act(async () => {
       const created = await authRequest<PersonalVoice>("voice.create", [
         {
+          provider: "bailian",
           name: name.trim(),
           language,
           authorized,
           format: voiceFormat(file),
           audio: await encodeRecording(file),
           requestKey: requestKey.current,
-        },
+        } satisfies VoiceUpload,
       ]);
       setOpen(false);
       setFile(undefined);
@@ -188,7 +189,7 @@ export function VoiceLibraryPanel() {
               type="info"
               showIcon
               title="声音复刻尚未开通"
-              description="管理员配置火山语音服务并开通声音复刻后，可上传本人录音。可选择管理员已上架的公共音色。"
+              description="管理员配置阿里云百炼并启用声音复刻后，即可上传本人录音。"
               style={{ marginBottom: 16 }}
             />
           )}
@@ -241,8 +242,8 @@ export function VoiceLibraryPanel() {
                   试听本人音色
                 </Button>
                 <Popconfirm
-                  title="从本应用移除此音色？"
-                  description="以后无法再选择它制作；已有成片保留。供应商音色槽位需要管理员另行释放。"
+                  title="移除这个音色？"
+                  description="此音色将无法用于新的配音。已有成片仍可播放。"
                   onConfirm={() =>
                     act(async () => {
                       await authRequest("voice.remove", [{ id: voice.id }]);
@@ -285,7 +286,7 @@ export function VoiceLibraryPanel() {
           type="info"
           showIcon
           title="准备5–30秒的清晰单人录音"
-          description="建议10–15秒，无音乐和明显噪声。录音将发送至火山进行声音复刻，本应用数据库只保留音色信息。复刻及后续使用可能产生供应商音色槽位和合成费用。"
+          description="建议10–20秒，录音中应有至少5秒连续清晰的人声。录音会发送给阿里云百炼复刻，本应用数据库仅保存音色信息。百炼创建音色免费，试听和正式配音按合成用量计费。"
           style={{ marginBottom: 20 }}
         />
         <Form layout="vertical" disabled={busy}>
@@ -346,7 +347,7 @@ export function VoiceLibraryPanel() {
             checked={authorized}
             onChange={(event) => setAuthorized(event.target.checked)}
           >
-            我确认这是本人声音或已获得明确授权，并同意提交火山进行声音复刻。
+            我确认这是本人声音或已获得明确授权，并同意将录音提交给阿里云百炼进行声音复刻。
           </Checkbox>
         </Form>
       </Modal>

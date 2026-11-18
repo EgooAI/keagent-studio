@@ -5,6 +5,7 @@ import { serviceRequest } from "@keagent/api-client";
 import type {
   AdminAIConfig,
   AdminAIManagement,
+  AdminAIProbe,
   AdminAIService,
 } from "@keagent/shared-types";
 import { dateTime, useAdminParams } from "./admin-api";
@@ -20,9 +21,9 @@ const configLabels: Record<string, string> = {
   AI_MODEL: "文案模型名称",
   AI_BASE_URL: "文案服务地址",
   AI_ALLOWED_HOSTS: "文案服务域名白名单",
-  VOLC_TTS_API_KEY: "火山语音服务密钥",
-  VOLC_VOICE_CLONE_ENABLED: "声音复刻启用开关",
-  VOLC_VOICE_CLONE_RESOURCE_ID: "声音复刻资源编号",
+  DASHSCOPE_API_KEY: "百炼 API Key",
+  DASHSCOPE_WORKSPACE_ID: "百炼业务空间 ID",
+  DASHSCOPE_VOICE_CLONE_ENABLED: "声音复刻启用开关",
   BEIKE_ACCESS_TOKEN: "贝壳 Access Token",
   BEIKE_MCP_API_KEY: "贝壳找房 MCP Key",
   BEIKE_CLI_PATH: "贝壳 CLI 可执行文件路径",
@@ -56,18 +57,41 @@ const serviceOrder: AdminAIService["id"][] = [
   "script",
   "tts",
   "opening",
-  "voice-clone",
   "beike",
   "beike-cli",
 ];
 
+export const speechUpgradeTitle = "云端语音服务需要更新";
+export const bailianSpeechLabel = "百炼语音";
+export const speechUpgradeMessage =
+  "当前连接的云端版本尚未支持百炼配音和声音复刻。请更新云端服务后刷新。";
+
+export function isSpeechService(service: AdminAIService) {
+  return service.id === "tts" || service.id === "voice-clone";
+}
+
+export function isBailianSpeech(service: AdminAIService) {
+  return (
+    service.provider === "阿里云百炼" &&
+    service.model === "qwen-audio-3.1-tts-plus"
+  );
+}
+
+function needsSpeechUpgrade(config: AdminAIConfig) {
+  return (
+    !config.services?.some(
+      (service) => service.id === "tts" && isBailianSpeech(service),
+    ) ||
+    (config.management ?? []).some(
+      ({ group, summary }) =>
+        isSpeechService(summary) &&
+        (group !== "bailian-speech" || !isBailianSpeech(summary)),
+    )
+  );
+}
+
 function ConfigState({ row }: { row: AdminAIManagement }) {
   if (row.active.locked) return <Tag color="red">配置无法解密</Tag>;
-  if (
-    row.summary.id === "voice-clone" &&
-    !row.active.fields.VOLC_VOICE_CLONE_ENABLED
-  )
-    return <Tag>已关闭</Tag>;
   return row.summary.state === "configured" ? (
     <Tag color="green">已启用</Tag>
   ) : (
@@ -78,37 +102,45 @@ function ConfigState({ row }: { row: AdminAIManagement }) {
 export default function AdminAI() {
   const { params, setParams } = useAdminParams();
   const { modal } = App.useApp();
+  const serviceParam = params.get("service");
+  const requested = serviceParam === "voice-clone" ? "tts" : serviceParam;
   const [dirty, setDirty] = useState(false);
-  const [dialogId, setDialogId] = useState(params.get("service"));
+  const [dialogId, setDialogId] = useState(requested);
   const serviceButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastService = useRef<string | null>(null);
   const prompted = useRef(false);
-  const requested = params.get("service");
   const activeTab = params.get("tab") === "voices" ? "voices" : "services";
   const query = useQuery({
     queryKey: ["admin", "ai-config"],
     queryFn: () => serviceRequest<AdminAIConfig>("/v1/admin/ai-config"),
-    enabled: activeTab === "services",
-    refetchInterval: (state) =>
-      state.state.data?.management?.some(
+    refetchInterval: ({ state: { data } }) => {
+      if (activeTab !== "services" || !data) return false;
+      const needsUpgrade = needsSpeechUpgrade(data);
+      return data.management?.some(
         (row) =>
-          probeRunning(row.candidate?.test) || probeRunning(row.active.test),
+          (!needsUpgrade || !isSpeechService(row.summary)) &&
+          (probeRunning(row.verification) ||
+            probeRunning(row.active.test) ||
+            probeRunning(row.candidate?.test)),
       )
         ? 2000
-        : false,
+        : false;
+    },
   });
-  const rows = (query.data?.management ?? [])
-    .slice()
+  const management = query.data?.management ?? [];
+  const speechUpgradeRequired = !!query.data && needsSpeechUpgrade(query.data);
+  const voiceClone = management.find((row) => row.summary.id === "voice-clone");
+  const rows = management
+    .filter(
+      ({ summary }) =>
+        summary.id !== "voice-clone" &&
+        (!speechUpgradeRequired || !isSpeechService(summary)),
+    )
     .sort(
       (a, b) =>
         serviceOrder.indexOf(a.summary.id) - serviceOrder.indexOf(b.summary.id),
     );
   const selected = rows.find((row) => row.summary.id === dialogId);
-  const cloneTrainingRequired = rows.some(
-    (row) =>
-      row.summary.id === "voice-clone" &&
-      row.candidate?.fields.VOLC_VOICE_CLONE_ENABLED === true,
-  );
 
   useEffect(() => {
     if (dialogId) lastService.current = dialogId;
@@ -181,7 +213,7 @@ export default function AdminAI() {
               >
                 <div className="admin-toolbar">
                   <p className="admin-secondary">
-                    可直接测试生效配置。保存修改并通过真实样例测试后，可启用新配置。
+                    查看当前服务状态。更新配置时，验证通过后自动启用。
                   </p>
                   <Button
                     loading={query.isFetching}
@@ -198,6 +230,15 @@ export default function AdminAI() {
                     description={query.error.message}
                   />
                 )}
+                {speechUpgradeRequired && (
+                  <Alert
+                    className="admin-block"
+                    type="warning"
+                    showIcon
+                    title={speechUpgradeTitle}
+                    description={speechUpgradeMessage}
+                  />
+                )}
                 {query.data && !query.data.writable && (
                   <Alert
                     className="admin-block"
@@ -207,7 +248,7 @@ export default function AdminAI() {
                     description="请部署人员设置服务端加密密钥，以保存配置和提交需要素材的测试。"
                   />
                 )}
-                {query.data && rows.length === 0 && (
+                {query.data && management.length === 0 && (
                   <Empty description="当前服务端未返回配置管理数据" />
                 )}
                 {query.isPending ? (
@@ -227,33 +268,42 @@ export default function AdminAI() {
                       </thead>
                       <tbody>
                         {rows.map((row) => {
-                          const activeTest = row.active.test;
-                          const candidateTest = row.candidate?.test;
-                          const test =
-                            activeTest &&
-                            (!candidateTest ||
-                              Date.parse(activeTest.createdAt) >
-                                Date.parse(candidateTest.createdAt))
-                              ? activeTest
-                              : candidateTest;
+                          const speech = row.summary.id === "tts";
+                          const label = speech
+                            ? bailianSpeechLabel
+                            : row.summary.label;
+                          const test = [
+                            row.active.test,
+                            speech ? voiceClone?.active.test : undefined,
+                          ]
+                            .filter((item): item is AdminAIProbe => !!item)
+                            .sort(
+                              (a, b) =>
+                                Date.parse(b.createdAt) -
+                                Date.parse(a.createdAt),
+                            )[0];
                           return (
                             <tr key={row.summary.id}>
                               <th scope="row">
-                                <strong>{row.summary.label}</strong>
+                                <strong>{label}</strong>
                                 <span className="admin-secondary ai-provider">
-                                  {row.summary.provider}
+                                  {speech
+                                    ? "配音与声音复刻"
+                                    : row.summary.provider}
                                 </span>
                               </th>
                               <td>
                                 <ConfigState row={row} />
-                                {row.candidate && !row.active.locked && (
+                                {speech && voiceClone && !row.active.locked && (
                                   <span className="admin-secondary ai-test-meta">
-                                    {row.canActivate
-                                      ? "待启用配置 · 可启用"
-                                      : row.summary.id === "tts" &&
-                                          cloneTrainingRequired
-                                        ? "共享配置待验证声音复刻"
-                                        : "待启用配置 · 待测试"}
+                                    {voiceClone.summary.state === "configured"
+                                      ? "声音复刻已启用"
+                                      : "声音复刻尚未启用"}
+                                  </span>
+                                )}
+                                {row.active.activatedAt && (
+                                  <span className="admin-secondary ai-test-meta">
+                                    更新于 {dateTime(row.active.activatedAt)}
                                   </span>
                                 )}
                               </td>
@@ -261,10 +311,7 @@ export default function AdminAI() {
                                 <AIProbeState test={test} />
                                 {test && (
                                   <span className="admin-secondary ai-test-meta">
-                                    {test.version === row.active.version
-                                      ? "生效配置"
-                                      : "待启用配置"}{" "}
-                                    · {probeModeLabel(test.mode)} ·{" "}
+                                    {probeModeLabel(test.mode)} ·{" "}
                                     {dateTime(
                                       test.finishedAt ?? test.createdAt,
                                     )}
@@ -274,7 +321,7 @@ export default function AdminAI() {
                               <td>
                                 <Button
                                   type="link"
-                                  aria-label={"管理" + row.summary.label}
+                                  aria-label={"管理" + label}
                                   ref={(button) => {
                                     if (button instanceof HTMLButtonElement)
                                       serviceButtons.current.set(
@@ -308,7 +355,9 @@ export default function AdminAI() {
                 <AIConfigDialog
                   key={selected.summary.id}
                   row={selected}
-                  cloneTrainingRequired={cloneTrainingRequired}
+                  voiceClone={
+                    selected.summary.id === "tts" ? voiceClone : undefined
+                  }
                   voices={query.data.voices}
                   writable={query.data.writable}
                   onDirty={setDirty}
@@ -318,7 +367,30 @@ export default function AdminAI() {
             </>
           ),
         },
-        { key: "voices", label: "公共音色", children: <AdminPublicVoices /> },
+        {
+          key: "voices",
+          label: "公共音色",
+          children: query.isPending ? (
+            <Skeleton active paragraph={{ rows: 4 }} />
+          ) : query.error || speechUpgradeRequired ? (
+            <Alert
+              type={query.error ? "error" : "warning"}
+              showIcon
+              title={query.error ? "无法读取云端语音状态" : speechUpgradeTitle}
+              description={query.error?.message ?? speechUpgradeMessage}
+              action={
+                <Button
+                  loading={query.isFetching}
+                  onClick={() => void query.refetch()}
+                >
+                  刷新状态
+                </Button>
+              }
+            />
+          ) : (
+            <AdminPublicVoices />
+          ),
+        },
       ]}
     />
   );

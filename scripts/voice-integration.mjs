@@ -90,6 +90,7 @@ try {
       try {
         await window.desktop.request("voice.create", [
           {
+            provider: "bailian",
             name: "Upload envelope check",
             language: "zh-CN",
             authorized: true,
@@ -190,6 +191,7 @@ try {
       });
     if (operation === "create") {
       creates++;
+      assert.equal(input.provider, "bailian");
       assert.equal(input.authorized, true);
       assert.equal(input.format, "wav");
       assert.ok(input.audio.length > 1000);
@@ -283,8 +285,8 @@ try {
   const editor = admin.getByRole("dialog");
   await editor.getByLabel("音色名称", { exact: true }).fill("后台公共音色夹具");
   await editor
-    .getByLabel("火山公共音色编号", { exact: true })
-    .fill("zh_female_fixture");
+    .getByLabel("百炼公共音色编号", { exact: true })
+    .fill("longanlingxin_v3.1");
   await editor.getByRole("button", { name: "确 定" }).click();
   const row = admin.getByRole("row").filter({ hasText: "后台公共音色夹具" });
   await row.getByRole("button", { name: /^上\s*架$/ }).click();
@@ -293,7 +295,7 @@ try {
   assert.equal(
     await admin
       .getByRole("dialog")
-      .getByLabel("火山公共音色编号", { exact: true })
+      .getByLabel("百炼公共音色编号", { exact: true })
       .isDisabled(),
     true,
   );

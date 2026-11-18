@@ -3,11 +3,8 @@ package main
 import (
 	"context"
 	"net/url"
-	"regexp"
 	"strings"
 )
-
-var speechResourceID = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,150}$`)
 
 type aiService struct {
 	ID       string   `json:"id"`
@@ -43,15 +40,15 @@ func aiServicesFor(ctx context.Context) []aiService {
 			service.Model = values["AI_MODEL"]
 			service.Endpoint = strings.TrimRight(publicAIURL(values["AI_BASE_URL"]), "/")
 		case "tts":
-			service.Purpose = "公共音色语音合成"
-			service.Model = "由公共音色指定"
-			service.Endpoint = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+			service.Purpose = "公共音色与本人音色语音合成"
+			service.Model = qwenAudioModel
+			service.Endpoint = qwenSpeechEndpoint(values["DASHSCOPE_WORKSPACE_ID"], qwenSynthesis)
 		case "voice-clone":
-			service.Purpose = "本人音色训练和查询"
-			service.Model = values["VOLC_VOICE_CLONE_RESOURCE_ID"]
-			service.Endpoint = "https://openspeech.bytedance.com/api/v3/tts/get_voice"
-			if values["VOLC_VOICE_CLONE_ENABLED"] != "true" {
-				service.Missing = append(service.Missing, "VOLC_VOICE_CLONE_ENABLED")
+			service.Purpose = "本人音色复刻和查询"
+			service.Model = qwenAudioModel
+			service.Endpoint = qwenSpeechEndpoint(values["DASHSCOPE_WORKSPACE_ID"], "customization")
+			if values["DASHSCOPE_VOICE_CLONE_ENABLED"] != "true" {
+				service.Missing = append(service.Missing, "DASHSCOPE_VOICE_CLONE_ENABLED")
 			}
 		case "beike":
 			service.Purpose = "查询房屋档案与室内照片"
@@ -65,7 +62,7 @@ func aiServicesFor(ctx context.Context) []aiService {
 			service.State = "incomplete"
 		}
 		if spec.Fields[len(spec.Fields)-1].Kind == "secret" && values[spec.Fields[len(spec.Fields)-1].Key] == "" ||
-			spec.Group == "speech" && values["VOLC_TTS_API_KEY"] == "" {
+			spec.Group == speechAIGroup && values["DASHSCOPE_API_KEY"] == "" {
 			service.State = "missing"
 		}
 		if snapshot.locked[spec.Group] {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -70,6 +71,27 @@ func TestBeikeCLIConcurrency(t *testing.T) {
 		if got := beikeCLIConcurrency(); got != 2 {
 			t.Fatalf("invalid %q = %d", v, got)
 		}
+	}
+}
+
+func TestBeikeCLICacheIsScopedToCredentialsAndSkippedForProbes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-beike.exe")
+	args, err := beikeCLIArgs("search", "北京", "望京")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheKey := path + "\x00" + digestBytes([]byte(beikeCLITestKey)) + "\x00" + beikeCLISessionID() + "\x00" + strings.Join(args, "\x00")
+	beikeCacheStore.put(cacheKey, []byte(beikeCLITestFrame))
+	ctx := t.Context()
+	if got, err := runBeikeCLIArgs(ctx, path, beikeCLITestKey, args, true); err != nil || string(got) != beikeCLITestFrame {
+		t.Fatalf("ordinary call missed its own cached result: %v", err)
+	}
+	if _, err := runBeikeCLIArgs(ctx, path, "another-test-key", args, true); err == nil {
+		t.Fatal("different key reused the cached result")
+	}
+	ctx = context.WithValue(ctx, beikeSkipCacheKey{}, true)
+	if _, err := runBeikeCLIArgs(ctx, path, beikeCLITestKey, args, true); err == nil {
+		t.Fatal("validation reused the cached result instead of attempting a real call")
 	}
 }
 

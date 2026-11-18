@@ -25,7 +25,7 @@ export function voiceFormat(
 }
 export function validateRecordingDuration(duration: number) {
   if (!Number.isFinite(duration) || duration < 5 || duration > 30)
-    throw new Error("录音需要5–30秒，建议使用10–15秒的清晰单人讲话");
+    throw new Error("录音需要5–30秒，建议使用10–20秒的清晰单人讲话");
 }
 export async function validateRecording(file: File) {
   voiceFormat(file);

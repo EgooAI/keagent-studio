@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -187,7 +188,8 @@ func beikeSearch(ctx context.Context, city, query string) (object, error) {
 		Data string `json:"data"`
 		OK   bool   `json:"ok"`
 	}
-	if json.Unmarshal(raw, &envelope) != nil || !envelope.OK {
+	// runBeikeCLI already validated the frame and any identical duplicate.
+	if json.NewDecoder(bytes.NewReader(raw)).Decode(&envelope) != nil || !envelope.OK {
 		return nil, fail(502, "贝壳返回格式不受支持")
 	}
 	houses, err := parseBeikeHouses(envelope.Data)

@@ -98,4 +98,4 @@
 
 “设置 → 制作服务状态”显示 AI 文案、云端配音、MiniMax 开场、贝壳房源接入的配置状态，以及桌面端本机合成工具的就绪情况。供应商配置由管理员维护。
 
-初次部署还会添加“公共讲解女声 · VV 2.0”，使用火山官方示例音色 `zh_female_vv_uranus_bigtts` 与匹配的 `seed-tts-2.0` 资源（[官方配置说明](https://docs.volcengine.com/docs/real-time-communication/configure-tts?lang=zh)）。该目录不包含密钥，仍需要服务端已配置有效语音鉴权与资源权限。管理员可在 AI 服务中下架；重复启动不会覆盖上下架状态。
+部署时会添加 `qwen-audio-3.1-tts-plus` 的四个普通话系统音色：龙安灵心、许南川、龙安欢、龙安风悦。服务端需要有效的百炼凭证，管理员可在 AI 服务中上下架，重启服务时保留该状态。 [百炼音色列表](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list)

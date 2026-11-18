@@ -4,17 +4,18 @@ import {
   App,
   Button,
   Checkbox,
+  Descriptions,
   Form,
   Input,
   Modal,
-  Radio,
   Select,
   Space,
   Switch,
   Tag,
+  type DescriptionsProps,
 } from "antd";
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { serviceRequest } from "@keagent/api-client";
 import type {
   AdminAIConfig,
@@ -64,10 +65,59 @@ export function AIProbeState({ test }: { test?: AdminAIProbe | null }) {
   );
 }
 
+function ProbeDetails({ test }: { test?: AdminAIProbe | null }) {
+  if (!test) return null;
+  return (
+    <>
+      <p className="admin-secondary">
+        {probeModeLabel(test.mode)} ·{" "}
+        {dateTime(test.finishedAt ?? test.createdAt)}
+      </p>
+      {test.steps.length > 0 && (
+        <ol className="ai-probe-steps" aria-live="polite">
+          {test.steps.map((step) => (
+            <li key={step.name}>
+              <span>{step.name}</span>
+              <Tag
+                color={
+                  step.state === "passed"
+                    ? "green"
+                    : step.state === "failed"
+                      ? "red"
+                      : step.state === "unknown"
+                        ? "orange"
+                        : "processing"
+                }
+              >
+                {
+                  {
+                    passed: "通过",
+                    failed: "失败",
+                    unknown: "待核对",
+                    running: "进行中",
+                    queued: "等待中",
+                  }[step.state]
+                }
+              </Tag>
+            </li>
+          ))}
+        </ol>
+      )}
+      {test.message && (
+        <Alert
+          type={test.status === "passed" ? "info" : "warning"}
+          showIcon
+          title={test.message}
+        />
+      )}
+    </>
+  );
+}
+
 type Fields = Record<string, string | boolean>;
 type Props = {
   row: AdminAIManagement;
-  cloneTrainingRequired: boolean;
+  voiceClone?: AdminAIManagement;
   voices: AdminAIConfig["voices"];
   writable: boolean;
   onDirty: (dirty: boolean) => void;
@@ -98,9 +148,14 @@ async function fixtureImages(count: number) {
   );
 }
 
+type TestDialog = {
+  mode: "sample" | "training";
+  version: number;
+};
+
 export default function AIConfigDialog({
   row,
-  cloneTrainingRequired,
+  voiceClone,
   voices,
   writable,
   onDirty,
@@ -110,230 +165,348 @@ export default function AIConfigDialog({
   const client = useQueryClient();
   const [form] = Form.useForm<Fields>();
   const [sampleForm] = Form.useForm<Fields>();
+  const [edit, setEdit] = useState<{
+    settings: AdminAIManagement;
+    useSaved: boolean;
+  }>();
+  const [verifyClone, setVerifyClone] = useState(false);
+  const [testDialog, setTestDialog] = useState<TestDialog>();
   const [dirty, setDirty] = useState(false);
+  const [sampleDirty, setSampleDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [testDialog, setTestDialog] = useState<{
-    mode: AdminAIProbeMode;
-    version: number;
-    label: string;
-  }>();
-  const [testSource, setTestSource] = useState<"active" | "candidate">(
-    "candidate",
-  );
-  const [sampleDirty, setSampleDirty] = useState(false);
-  const dialogTitle = useRef<HTMLSpanElement>(null);
-  const testing = useRef(false);
   const [file, setFile] = useState<File>();
   const [openingLocation, setOpeningLocation] = useState<File>();
-  const revision = useRef(row.revision);
+  const [verification, setVerification] = useState<AdminAIProbe>();
+  const [verificationRequest, setVerificationRequest] = useState<string>();
+  const dialogTitle = useRef<HTMLSpanElement>(null);
   const action = useRef(false);
-  const request = useRef<{ key: string; id: string } | null>(null);
+  const testRequest = useRef<{ key: string; id: string } | undefined>(
+    undefined,
+  );
   const service = row.summary.id;
-  const candidate = row.candidate;
-  const testingCandidate = testSource === "candidate" && !!candidate;
-  const testConfig = testingCandidate ? candidate : row.active;
-  const test = testConfig.test;
-  const testMode = testDialog?.mode;
+  const sharedSpeech = !!voiceClone;
+  const settingsRow = voiceClone ?? row;
+  const active = settingsRow.active;
+  const activeClone = active.fields.DASHSCOPE_VOICE_CLONE_ENABLED === true;
+  const title = sharedSpeech ? "百炼语音" : row.summary.label;
+  const hasKey = Object.values(active.secrets).some(Boolean);
+  const editLabel = hasKey ? "更换密钥" : "设置密钥";
+  const editConfig = edit?.useSaved
+    ? edit.settings.candidate
+    : edit?.settings.active;
+  const editMode =
+    service === "voice-clone" || (sharedSpeech && verifyClone)
+      ? "training"
+      : "sample";
+  const sampleMode = edit ? editMode : testDialog?.mode;
+  const locked = row.active.locked || active.locked;
   const running =
-    probeRunning(candidate?.test) || probeRunning(row.active.test);
-  const locked = !writable || row.active.locked;
-
-  useEffect(() => {
-    if (!dirty) {
-      revision.current = row.revision;
-      form.resetFields();
-      form.setFieldsValue(row.candidate?.fields ?? row.active.fields);
-    }
-  }, [row, dirty, form]);
+    probeRunning(row.active.test) ||
+    probeRunning(voiceClone?.active.test) ||
+    probeRunning(row.candidate?.test) ||
+    probeRunning(voiceClone?.candidate?.test) ||
+    probeRunning(row.verification);
+  const submitted =
+    verification ??
+    (verificationRequest && row.verification?.id === verificationRequest
+      ? row.verification
+      : undefined);
+  const verificationResult = useQuery({
+    queryKey: ["admin", "ai-verification", submitted?.id],
+    queryFn: submitted
+      ? () =>
+          serviceRequest<AdminAIProbe>(
+            root + "/test?id=" + encodeURIComponent(submitted.id),
+          )
+      : skipToken,
+    enabled: probeRunning(submitted),
+    initialData: submitted,
+    refetchInterval: ({ state }) => (probeRunning(state.data) ? 2000 : false),
+  });
+  const checked = probeRunning(submitted)
+    ? (verificationResult.data ?? submitted)
+    : submitted;
+  const checking = probeRunning(checked) || checked?.status === "passed";
+  const blocked = busy || checking;
+  const lastVerification = edit?.settings.verification;
+  const updateStatus =
+    checked ??
+    (!dirty &&
+    !sampleDirty &&
+    lastVerification?.version === edit?.settings.revision &&
+    (lastVerification?.status === "failed" ||
+      lastVerification?.status === "unknown")
+      ? lastVerification
+      : undefined);
 
   useEffect(() => {
     dialogTitle.current?.focus({ preventScroll: true });
-  }, [testMode]);
+  }, [!!edit, testDialog?.mode]);
 
-  function markDirty(value: boolean) {
-    setDirty(value);
-    onDirty(value);
+  useEffect(() => {
+    if (!editConfig) return;
+    form.resetFields();
+    form.setFieldsValue(editConfig.fields);
+  }, [editConfig, form]);
+
+  useEffect(() => {
+    const reserved = submitted?.version;
+    if (reserved === undefined) return;
+    setEdit((current) => {
+      if (!current || current.settings.revision + 1 !== reserved)
+        return current;
+      return {
+        ...current,
+        settings: { ...current.settings, revision: reserved },
+      };
+    });
+  }, [submitted?.id, submitted?.version]);
+
+  useEffect(() => {
+    if (!submitted || checked?.status !== "passed") return;
+    let cancelled = false;
+    void client.invalidateQueries({ queryKey: ["admin"] }).then(() => {
+      if (cancelled) return;
+      form.resetFields();
+      setVerification(undefined);
+      setVerificationRequest(undefined);
+      setEdit(undefined);
+      setDirty(false);
+      setSampleDirty(false);
+      setFile(undefined);
+      setOpeningLocation(undefined);
+      setError("");
+      onDirty(false);
+      void message.success("配置已验证并启用");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [submitted?.id, checked?.status, client, form, message, onDirty]);
+
+  function openEditor() {
+    const { candidate } = settingsRow;
+    setEdit({ settings: settingsRow, useSaved: !!candidate });
+    setVerifyClone(
+      (candidate ?? active).fields.DASHSCOPE_VOICE_CLONE_ENABLED === true,
+    );
+    setError("");
   }
 
-  async function submit(
-    path: string,
-    body: Record<string, unknown>,
-    success: string | ((changed: boolean) => string),
-  ) {
-    if (action.current) return false;
+  function updateSampleMode(clone: boolean) {
+    if (clone === verifyClone) return sampleDirty;
+    setVerifyClone(clone);
+    sampleForm.resetFields();
+    setFile(undefined);
+    setOpeningLocation(undefined);
+    setSampleDirty(false);
+    return false;
+  }
+
+  function setSaved(useSaved: boolean) {
+    if (!edit) return;
+    const config = useSaved ? edit.settings.candidate : edit.settings.active;
+    setEdit({ ...edit, useSaved });
+    setDirty(false);
+    onDirty(
+      updateSampleMode(config?.fields.DASHSCOPE_VOICE_CLONE_ENABLED === true),
+    );
+    setVerification(undefined);
+    setVerificationRequest(undefined);
+    setError("");
+  }
+
+  function editChanged(_: Partial<Fields>, values: Fields) {
+    const changed = settingsRow.fields.some(({ key, kind }) => {
+      const value = values[key];
+      const original = editConfig?.fields[key];
+      if (kind === "toggle") return (value === true) !== (original === true);
+      const typed = typeof value === "string" ? value.trim() : "";
+      return typed !== (typeof original === "string" ? original.trim() : "");
+    });
+    const editedSample = updateSampleMode(
+      values.DASHSCOPE_VOICE_CLONE_ENABLED === true,
+    );
+    setDirty(changed);
+    onDirty(changed || editedSample);
+    setVerification(undefined);
+    setVerificationRequest(undefined);
+    setError("");
+  }
+
+  function sampleChanged() {
+    setSampleDirty(true);
+    onDirty(true);
+    setVerification(undefined);
+    setVerificationRequest(undefined);
+    setError("");
+  }
+
+  function returnToStatus() {
+    if (edit) form.resetFields();
+    setEdit(undefined);
+    setTestDialog(undefined);
+    setVerification(undefined);
+    setDirty(false);
+    setSampleDirty(false);
+    onDirty(false);
+    setFile(undefined);
+    setOpeningLocation(undefined);
+    setVerificationRequest(undefined);
+    setError("");
+  }
+
+  function close() {
+    if (busy || action.current) return;
+    if (!edit && !testDialog) {
+      onClose();
+      return;
+    }
+    if (checking || (!dirty && !sampleDirty)) {
+      returnToStatus();
+      return;
+    }
+    modal.confirm({
+      title: "放弃未提交的修改？",
+      okText: "放弃修改",
+      cancelText: "继续填写",
+      onOk: returnToStatus,
+    });
+  }
+
+  async function beginRequest(operation: () => Promise<void>) {
+    if (action.current || blocked || running) return;
     action.current = true;
     setBusy(true);
     setError("");
     try {
-      const result = await serviceRequest<{ changed?: boolean }>(root + path, {
-        service,
-        ...body,
-      });
-      await client.invalidateQueries({ queryKey: ["admin"] });
-      void message.success(
-        typeof success === "string"
-          ? success
-          : success(result?.changed !== false),
-      );
-      return true;
+      await operation();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "操作失败，请稍后重试");
-      await client.invalidateQueries({ queryKey: ["admin", "ai-config"] });
-      return false;
+      void client.invalidateQueries({ queryKey: ["admin", "ai-config"] });
     } finally {
       action.current = false;
       setBusy(false);
     }
   }
-  async function save() {
-    let fields;
-    try {
-      fields = await form.validateFields();
-    } catch {
-      return;
+
+  async function prepareSample(mode: "sample" | "training", values: Fields) {
+    const sample: Record<string, unknown> = { ...values };
+    if (mode === "sample" && service === "script") {
+      sample.images = await fixtureImages(2);
     }
-    if (
-      await submit(
-        "/save",
-        { revision: revision.current, fields },
-        (changed) => (changed ? "配置已保存，请完成可用性测试" : "配置未改动"),
-      )
-    ) {
-      markDirty(false);
+    if (mode === "training") {
+      const max = 10;
+      const format = file?.name.split(".").at(-1)?.toLowerCase();
+      if (!file || file.size > max * 1024 * 1024) {
+        throw new Error(`请选择不超过 ${max} MB 的测试文件`);
+      }
+      sample.audio = await encodeFile(file);
+      sample.format = format;
     }
-  }
-  function activate() {
-    if (!candidate) return;
-    modal.confirm({
-      title: "启用当前配置？",
-      content:
-        row.group === "speech"
-          ? "配音与声音复刻的新请求将使用这份共享配置。"
-          : "新请求将使用这份配置，已提交的异步任务会继续使用提交时的配置。",
-      okText: "确认启用",
-      cancelText: "取消",
-      onOk: () =>
-        submit(
-          "/activate",
-          { revision: row.revision, version: candidate.version },
-          "新配置已启用",
-        ),
-    });
-  }
-  function markSampleDirty(value: boolean) {
-    setSampleDirty(value);
-    onDirty(value || dirty);
-  }
-  function returnToConfiguration() {
-    setTestDialog(undefined);
-    setFile(undefined);
-    setOpeningLocation(undefined);
-    setError("");
-    markSampleDirty(false);
-  }
-  function close() {
-    if (action.current || testing.current) return;
-    if (!testMode) {
-      onClose();
-      return;
+    if (mode === "sample" && service === "opening") {
+      if (!openingLocation || !file || file.size > 3 * 1024 * 1024) {
+        throw new Error("请选择测试地点图和 3 MB 以内的经纪人照片");
+      }
+      [sample.location, sample.photo] = await Promise.all([
+        encodeOpeningLocation(openingLocation),
+        encodeFile(file),
+      ]);
     }
-    if (sampleDirty) {
-      modal.confirm({
-        title: "放弃未提交的样例？",
-        okText: "放弃修改",
-        cancelText: "继续填写",
-        onOk: returnToConfiguration,
-      });
-    } else returnToConfiguration();
+    return sample;
   }
 
-  function openTest(mode: AdminAIProbeMode) {
-    if (mode === "connection") {
-      void runTest(mode, testConfig.version);
-      return;
-    }
-    setError("");
-    setFile(undefined);
-    setOpeningLocation(undefined);
-    setTestDialog({
-      mode,
-      version: testConfig.version,
-      label: testingCandidate ? "待启用配置" : "生效配置",
+  async function runTest(mode: AdminAIProbeMode, version: number) {
+    await beginRequest(async () => {
+      const testService =
+        sharedSpeech && mode === "training" ? "voice-clone" : service;
+      let values: Fields = {};
+      if (mode !== "connection") {
+        try {
+          values = await sampleForm.validateFields();
+        } catch {
+          return;
+        }
+      }
+      // Keep the same request ID if a response is lost before the administrator retries.
+      const key = JSON.stringify([
+        testService,
+        version,
+        mode,
+        values,
+        file?.name,
+        file?.size,
+        file?.lastModified,
+        openingLocation?.name,
+        openingLocation?.size,
+        openingLocation?.lastModified,
+      ]);
+      if (testRequest.current?.key !== key) {
+        testRequest.current = { key, id: crypto.randomUUID() };
+      }
+      const sample =
+        mode === "connection" ? {} : await prepareSample(mode, values);
+      await serviceRequest(root + "/test", {
+        service: testService,
+        version,
+        mode,
+        confirmed: mode !== "connection",
+        requestId: testRequest.current.id,
+        sample,
+      });
+      testRequest.current = undefined;
+      await client.invalidateQueries({ queryKey: ["admin"] });
+      if (testDialog) returnToStatus();
+      void message.success("测试已开始");
     });
   }
-  async function runTest(mode: AdminAIProbeMode, version: number) {
-    if (running || action.current || testing.current) return;
-    testing.current = true;
-    setBusy(true);
-    const sample: Record<string, unknown> = {};
-    if (mode !== "connection") {
+
+  function openTest(mode: "sample" | "training") {
+    setError("");
+    setTestDialog({ mode, version: row.active.version });
+  }
+
+  async function verifyAndEnable() {
+    if (!edit || !(dirty || edit.useSaved)) return;
+    await beginRequest(async () => {
+      let fields: Fields | undefined;
+      let sampleValues: Fields;
       try {
-        Object.assign(sample, await sampleForm.validateFields());
+        fields = edit.useSaved ? undefined : await form.validateFields();
+        sampleValues = await sampleForm.validateFields();
       } catch {
-        testing.current = false;
-        setBusy(false);
         return;
       }
-    }
-    // Keep the same request ID when a response is lost and the administrator retries.
-    const key = JSON.stringify([
-      service,
-      version,
-      mode,
-      sample,
-      file?.name,
-      file?.size,
-      file?.lastModified,
-      openingLocation?.name,
-      openingLocation?.size,
-      openingLocation?.lastModified,
-    ]);
-    if (request.current?.key !== key)
-      request.current = { key, id: crypto.randomUUID() };
-    const requestId = request.current.id;
-    try {
-      if (mode !== "connection" && service === "script") {
-        sample.images = await fixtureImages(2);
-      }
-      if (mode === "training") {
-        const max = 10;
-        if (!file || file.size > max * 1024 * 1024)
-          throw new Error(`请选择不超过 ${max} MB 的测试文件`);
-        sample.audio = await encodeFile(file);
-        sample.format = file.name.split(".").at(-1)?.toLowerCase();
-      }
-      if (mode === "sample" && service === "opening") {
-        if (!openingLocation || !file || file.size > 3 * 1024 * 1024)
-          throw new Error("请选择测试地点图和 3 MB 以内的经纪人照片");
-        [sample.location, sample.photo] = await Promise.all([
-          encodeOpeningLocation(openingLocation),
-          encodeFile(file),
-        ]);
-      }
-      if (
-        await submit(
-          "/test",
-          {
-            version,
-            mode,
-            requestId,
-            confirmed: mode !== "connection",
-            sample,
-          },
-          "测试已开始",
-        )
-      ) {
-        request.current = null;
-        if (testMode) returnToConfiguration();
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "无法准备测试素材");
-    } finally {
-      testing.current = false;
-      setBusy(false);
-    }
+      const sample = await prepareSample(editMode, sampleValues);
+      const requestId = verificationRequest ?? crypto.randomUUID();
+      setVerificationRequest(requestId);
+      const probe = await serviceRequest<AdminAIProbe>(
+        root + "/verify-enable",
+        {
+          service: settingsRow.summary.id,
+          revision: edit.settings.revision,
+          requestId,
+          confirmed: true,
+          ...(edit.useSaved ? { useSaved: true } : { fields }),
+          sample,
+        },
+      );
+      setVerification(probe);
+      setVerificationRequest(undefined);
+      void client.invalidateQueries({ queryKey: ["admin", "ai-config"] });
+    });
   }
+
+  const dialogName = edit
+    ? editLabel
+    : testDialog?.mode === "training"
+      ? "确认测试复刻训练"
+      : testDialog
+        ? sharedSpeech
+          ? "测试百炼配音"
+          : `测试${title}`
+        : title;
 
   return (
     <Modal
@@ -343,11 +516,7 @@ export default function AIConfigDialog({
       classNames={{ body: "workbench-form-body" }}
       title={
         <span ref={dialogTitle} tabIndex={-1}>
-          {testMode === "training"
-            ? "确认测试复刻训练"
-            : testMode
-              ? `测试${row.summary.label}`
-              : row.summary.label}
+          {dialogName}
         </span>
       }
       closable={!busy}
@@ -355,76 +524,201 @@ export default function AIConfigDialog({
       mask={{ closable: false }}
       onCancel={close}
       footer={
-        testDialog ? (
-          <div className="ai-config-actions">
-            <Button disabled={busy} onClick={close}>
-              返回配置
-            </Button>
+        <div className="ai-config-actions">
+          <Button disabled={busy} onClick={close}>
+            {edit || testDialog ? "返回配置" : "关闭"}
+          </Button>
+          {edit ? (
             <Button
+              aria-label="验证并启用"
+              type="primary"
+              loading={blocked}
+              disabled={
+                locked ||
+                !writable ||
+                blocked ||
+                running ||
+                !(dirty || edit.useSaved)
+              }
+              onClick={() => void verifyAndEnable()}
+            >
+              验证并启用
+            </Button>
+          ) : testDialog ? (
+            <Button
+              aria-label="确认运行测试"
               type="primary"
               loading={busy}
-              disabled={running}
+              disabled={running || busy}
               onClick={() => void runTest(testDialog.mode, testDialog.version)}
             >
               确认运行测试
             </Button>
-          </div>
-        ) : (
-          <div className="ai-config-actions">
-            <Button disabled={busy} onClick={close}>
-              关闭
-            </Button>
+          ) : (
             <Button
-              type={!row.canActivate || dirty ? "primary" : "default"}
-              loading={busy}
-              disabled={locked}
-              onClick={() => void save()}
+              type="primary"
+              disabled={!writable || locked || running || busy}
+              onClick={openEditor}
             >
-              保存配置
+              {editLabel}
             </Button>
-            {candidate && (
-              <Button
-                type="primary"
-                loading={busy}
-                disabled={
-                  !row.canActivate ||
-                  locked ||
-                  probeRunning(candidate.test) ||
-                  dirty
-                }
-                onClick={activate}
-              >
-                {row.group === "speech" ? "启用共享配置" : "启用配置"}
-              </Button>
-            )}
-          </div>
-        )
+          )}
+        </div>
       }
     >
-      <div hidden={!!testMode}>
-        <section className="ai-config-section">
-          <h3>服务配置</h3>
-          {row.group === "speech" && (
-            <p className="admin-secondary">
-              配音与声音复刻共用 API Key。启用共享配置会同时应用两项服务的设置。
-            </p>
-          )}
-          {service === "tts" &&
-            candidate &&
-            row.summary.state === "configured" &&
-            !row.active.locked && (
+      {!edit && !testDialog && (
+        <>
+          <section className="ai-config-section">
+            <h3>当前配置</h3>
+            {sharedSpeech && (
               <p className="admin-secondary">
-                当前火山配音已启用，可以继续使用公共音色。
+                配音与声音复刻共用百炼北京地域的 API Key 和业务空间 ID，使用千问
+                3.1 Plus。
               </p>
             )}
+            <Descriptions
+              size="small"
+              column={1}
+              items={[
+                ...settingsRow.fields.flatMap<
+                  NonNullable<DescriptionsProps["items"]>[number]
+                >(({ key, kind, label }) => {
+                  if (kind === "secret") {
+                    const enabled = active.secrets[key];
+                    return [
+                      {
+                        key,
+                        label,
+                        children: (
+                          <Tag color={enabled ? "green" : undefined}>
+                            {locked
+                              ? "无法读取"
+                              : enabled
+                                ? "已启用"
+                                : "未设置"}
+                          </Tag>
+                        ),
+                      },
+                    ];
+                  }
+                  const value = active.fields[key];
+                  if (kind === "toggle") {
+                    return [
+                      {
+                        key,
+                        label,
+                        children: value === true ? "已开启" : "已关闭",
+                      },
+                    ];
+                  }
+                  return value ? [{ key, label, children: value }] : [];
+                }),
+                ...(active.activatedAt
+                  ? [
+                      {
+                        key: "activated",
+                        label: "启用时间",
+                        children: dateTime(active.activatedAt),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+            {locked && <Alert type="error" showIcon title="当前配置无法解密" />}
+            {row.summary.issues.map((issue) => (
+              <Alert key={issue} type="warning" title={issue} showIcon />
+            ))}
+            {probeRunning(row.verification) && (
+              <Alert type="info" showIcon title="正在验证提交的配置" />
+            )}
+          </section>
+          <section className="ai-config-section">
+            <div className="admin-section-heading">
+              <h3>当前配置测试</h3>
+              {!sharedSpeech && <AIProbeState test={row.active.test} />}
+            </div>
+            {sharedSpeech ? (
+              <>
+                <div className="admin-section-heading">
+                  <strong>配音测试</strong>
+                  <AIProbeState test={row.active.test} />
+                </div>
+                <ProbeDetails test={row.active.test} />
+                {activeClone && (
+                  <>
+                    <div className="admin-section-heading">
+                      <strong>声音复刻测试</strong>
+                      <AIProbeState test={voiceClone.active.test} />
+                    </div>
+                    <ProbeDetails test={voiceClone.active.test} />
+                  </>
+                )}
+              </>
+            ) : (
+              <ProbeDetails test={row.active.test} />
+            )}
+            <Space wrap>
+              <Button
+                disabled={
+                  busy ||
+                  running ||
+                  locked ||
+                  (service === "beike-cli" && !hasKey)
+                }
+                onClick={() => void runTest("connection", row.active.version)}
+              >
+                测试当前连接
+              </Button>
+              {service !== "voice-clone" && service !== "beike-cli" && (
+                <Button
+                  disabled={
+                    busy ||
+                    running ||
+                    locked ||
+                    row.summary.state !== "configured"
+                  }
+                  onClick={() => openTest("sample")}
+                >
+                  {sharedSpeech ? "测试配音样例" : "运行真实样例"}
+                </Button>
+              )}
+              {(sharedSpeech || service === "voice-clone") && activeClone && (
+                <Button
+                  disabled={busy || running || locked}
+                  onClick={() => openTest("training")}
+                >
+                  测试复刻训练
+                </Button>
+              )}
+            </Space>
+          </section>
+        </>
+      )}
+      {edit && (
+        <section className="ai-config-section">
+          {edit.settings.candidate && (
+            <div className="admin-section-heading">
+              <Space>
+                使用已保存的配置
+                <Switch
+                  aria-label="使用已保存的配置"
+                  checked={edit.useSaved}
+                  disabled={blocked}
+                  onChange={setSaved}
+                />
+              </Space>
+              {edit.useSaved && <Tag color="blue">已保存，待验证</Tag>}
+            </div>
+          )}
           <Form
             form={form}
             layout="vertical"
-            disabled={locked || busy}
-            onValuesChange={() => markDirty(true)}
+            initialValues={editConfig?.fields}
+            disabled={locked || blocked || edit.useSaved}
+            onValuesChange={editChanged}
             autoComplete="off"
           >
-            {row.fields.map((field) => (
+            {settingsRow.fields.map((field) => (
               <Form.Item
                 key={field.key}
                 name={field.key}
@@ -432,22 +726,14 @@ export default function AIConfigDialog({
                 valuePropName={field.kind === "toggle" ? "checked" : "value"}
                 extra={
                   field.kind === "secret"
-                    ? (candidate?.secrets ?? row.active.secrets)[field.key]
-                      ? "已设置，留空沿用原密钥"
+                    ? editConfig?.secrets[field.key]
+                      ? edit.useSaved
+                        ? "已设置"
+                        : "已设置，留空沿用原密钥"
                       : "未设置"
-                    : undefined
-                }
-                help={
-                  !dirty &&
-                  (candidate ?? row.summary).missing.includes(field.key)
-                    ? "请补充该字段后测试"
-                    : undefined
-                }
-                validateStatus={
-                  !dirty &&
-                  (candidate ?? row.summary).missing.includes(field.key)
-                    ? "warning"
-                    : undefined
+                    : field.key === "DASHSCOPE_WORKSPACE_ID"
+                      ? "填写北京地域以 ws- 或 llm- 开头的业务空间 ID"
+                      : undefined
                 }
                 rules={
                   field.kind === "url"
@@ -476,14 +762,22 @@ export default function AIConfigDialog({
                           },
                         },
                       ]
-                    : undefined
+                    : field.kind === "secret" && !editConfig?.secrets[field.key]
+                      ? [
+                          {
+                            required: true,
+                            whitespace: true,
+                            message: `请填写${field.label}`,
+                          },
+                        ]
+                      : undefined
                 }
               >
                 {field.kind === "secret" ? (
                   <Input.Password
                     maxLength={2048}
                     autoComplete="new-password"
-                    placeholder="输入新密钥"
+                    placeholder={edit.useSaved ? undefined : "输入新密钥"}
                   />
                 ) : field.kind === "toggle" ? (
                   <Switch aria-label={field.label} />
@@ -496,164 +790,27 @@ export default function AIConfigDialog({
               </Form.Item>
             ))}
           </Form>
-          {(candidate ?? row.summary).issues.map((issue) => (
-            <Alert key={issue} type="warning" title={issue} showIcon />
-          ))}
-          {error && !testMode && (
-            <Alert
-              type="error"
-              title={error}
-              showIcon
-              action={
-                dirty ? (
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      setError("");
-                      markDirty(false);
-                    }}
-                  >
-                    放弃编辑并刷新
-                  </Button>
-                ) : undefined
-              }
-            />
-          )}
         </section>
+      )}
+      {sampleMode && (
         <section className="ai-config-section">
-          <div className="admin-section-heading">
-            <h3>可用性测试</h3>
-            {testingCandidate &&
-            service === "tts" &&
-            !test &&
-            row.reusedTtsTestAt ? (
-              <Tag color="green">配音样例已复用</Tag>
-            ) : (
-              <AIProbeState test={test} />
-            )}
-          </div>
-          {candidate ? (
-            <Radio.Group
-              aria-label="测试配置"
-              value={testSource}
-              onChange={(event) => setTestSource(event.target.value)}
-              options={[
-                { value: "active", label: "生效配置" },
-                { value: "candidate", label: "待启用配置" },
-              ]}
-            />
-          ) : (
-            <p className="admin-secondary">测试对象：生效配置</p>
-          )}
-          {dirty && (
-            <p className="admin-secondary">
-              当前测试使用已保存的配置。保存修改后即可测试新配置。
-            </p>
-          )}
-          {running && !probeRunning(test) && (
-            <p className="admin-secondary">此服务的另一个配置正在测试。</p>
-          )}
-          {test && (
-            <>
-              <p className="admin-secondary">
-                {probeModeLabel(test.mode)} ·{" "}
-                {dateTime(test.finishedAt ?? test.createdAt)}
-              </p>
-              {test.steps.length > 0 && (
-                <ol className="ai-probe-steps" aria-live="polite">
-                  {test.steps.map((step) => (
-                    <li key={step.name}>
-                      <span>{step.name}</span>
-                      <Tag
-                        color={
-                          step.state === "passed"
-                            ? "green"
-                            : step.state === "failed"
-                              ? "red"
-                              : step.state === "unknown"
-                                ? "orange"
-                                : "processing"
-                        }
-                      >
-                        {
-                          {
-                            passed: "通过",
-                            failed: "失败",
-                            unknown: "待核对",
-                            running: "进行中",
-                            queued: "等待中",
-                          }[step.state]
-                        }
-                      </Tag>
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {test.message && (
-                <Alert
-                  type={test.status === "passed" ? "info" : "warning"}
-                  showIcon
-                  title={test.message}
-                />
-              )}
-            </>
-          )}
-          {candidate && service === "tts" && row.reusedTtsTestAt && (
-            <p className="admin-secondary">
-              待启用配置已复用生效配置的火山配音样例（
-              {dateTime(row.reusedTtsTestAt)}）。
-            </p>
-          )}
-          {candidate && !row.canActivate && !running && (
-            <p className="admin-secondary">
-              {row.group === "speech"
-                ? cloneTrainingRequired
-                  ? "待启用配置在「声音复刻」中通过最近 24 小时内的复刻训练后即可启用。"
-                  : "仅启用配音的配置需要最近 24 小时内通过配音样例。"
-                : "启用需要此配置最近 24 小时内通过真实样例测试。"}
-            </p>
-          )}
-          <Space wrap>
-            <Button
-              disabled={busy || running}
-              onClick={() => openTest("connection")}
-            >
-              检查连通性
-            </Button>
-            {service !== "voice-clone" && (
-              <Button
-                disabled={busy || running}
-                onClick={() => openTest("sample")}
-              >
-                运行真实样例
-              </Button>
-            )}
-            {service === "voice-clone" && (
-              <Button
-                disabled={busy || running}
-                onClick={() => openTest("training")}
-              >
-                测试复刻训练
-              </Button>
-            )}
-          </Space>
-        </section>
-      </div>
-      {testDialog && (
-        <div>
           <p className="admin-secondary">
-            {testMode === "training"
-              ? `本次会使用${testDialog.label}提交训练并查询音色状态。生成试听音频时可能收取试听字符费。`
-              : `本次会使用${testDialog.label}向供应商发起真实调用，可能计费或消耗额度。`}
+            {sampleMode === "training"
+              ? edit
+                ? "本次会将录音提交至阿里云百炼，创建临时音色并验证配音。验证通过后立即启用，合成按字符计费。"
+                : "本次会使用当前配置将录音提交至阿里云百炼，创建临时音色并验证配音。合成按字符计费。"
+              : edit
+                ? "后台会向供应商发起真实调用，验证通过后立即启用。测试可能计费或消耗额度。"
+                : "本次会使用当前配置向供应商发起真实调用，可能计费或消耗额度。"}
           </p>
           <Form
             layout="vertical"
             form={sampleForm}
             clearOnDestroy
-            disabled={busy}
-            onValuesChange={() => markSampleDirty(true)}
+            disabled={blocked}
+            onValuesChange={sampleChanged}
           >
-            {service === "tts" && (
+            {service === "tts" && sampleMode === "sample" && (
               <Form.Item
                 name="voiceId"
                 label="测试用公共音色"
@@ -689,14 +846,14 @@ export default function AIConfigDialog({
                   <Input maxLength={300} />
                 </Form.Item>
               ))}
-            {testMode === "training" && (
+            {sampleMode === "training" && (
               <Form.Item label="测试录音" required>
                 <Input
                   type="file"
                   accept=".wav,.mp3,.m4a"
                   onChange={(event) => {
                     setFile(event.target.files?.[0]);
-                    markSampleDirty(true);
+                    sampleChanged();
                   }}
                 />
               </Form.Item>
@@ -712,10 +869,10 @@ export default function AIConfigDialog({
                     id="opening-test-location"
                     type="file"
                     accept=".jpg,.jpeg,.png"
-                    disabled={busy}
+                    disabled={blocked}
                     onChange={(event) => {
                       setOpeningLocation(event.target.files?.[0]);
-                      markSampleDirty(true);
+                      sampleChanged();
                     }}
                   />
                 </Form.Item>
@@ -728,10 +885,10 @@ export default function AIConfigDialog({
                     id="opening-test-photo"
                     type="file"
                     accept=".jpg,.jpeg,.png"
-                    disabled={busy}
+                    disabled={blocked}
                     onChange={(event) => {
                       setFile(event.target.files?.[0]);
-                      markSampleDirty(true);
+                      sampleChanged();
                     }}
                   />
                 </Form.Item>
@@ -739,7 +896,7 @@ export default function AIConfigDialog({
             )}
             {(service === "opening" ||
               service === "beike" ||
-              testMode === "training") && (
+              sampleMode === "training") && (
               <Form.Item
                 name="authorized"
                 valuePropName="checked"
@@ -756,9 +913,22 @@ export default function AIConfigDialog({
               </Form.Item>
             )}
           </Form>
-          {error && testMode && <Alert type="error" title={error} showIcon />}
-        </div>
+          {updateStatus && (
+            <>
+              <AIProbeState test={updateStatus} />
+              <ProbeDetails test={updateStatus} />
+            </>
+          )}
+          {submitted && verificationResult.isError && (
+            <Alert
+              type="warning"
+              showIcon
+              title="暂时无法读取验证结果，后台仍在核对。"
+            />
+          )}
+        </section>
       )}
+      {error && <Alert type="error" title={error} showIcon />}
     </Modal>
   );
 }

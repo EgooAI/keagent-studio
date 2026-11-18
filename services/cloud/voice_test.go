@@ -15,17 +15,27 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
+const qwenSpeechFixture = "data: {\"output\":{\"audio\":{\"data\":\"AQIDBA==\"}}}\n\ndata: {\"output\":{\"finish_reason\":\"stop\"}}\n\n"
+
+func qwenVoiceCreated(prefix any) []byte {
+	return []byte(`{"output":{"voice_id":"` + qwenAudioModel + "-" + str(prefix) + `-synthetic"}}`)
+}
+
+func qwenVoiceStatus(status string) []byte {
+	return []byte(`{"output":{"status":"` + status + `","target_model":"` + qwenAudioModel + `"}}`)
+}
+
 func uploadFixture() object {
 	data := make([]byte, 128)
 	copy(data, "RIFF")
 	copy(data[8:], "WAVE")
-	return object{"name": "我的声音", "language": "zh-CN", "authorized": true, "format": "wav", "audio": base64.StdEncoding.EncodeToString(data), "requestKey": id()}
+	return object{"name": "我的声音", "language": "zh-CN", "authorized": true, "provider": "bailian", "format": "wav", "audio": base64.StdEncoding.EncodeToString(data), "requestKey": id()}
 }
 func TestVoiceUploadValidation(t *testing.T) {
 	if _, err := validateVoiceUpload(uploadFixture()); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range (object{"authorized": false, "language": "bad", "name": "", "requestKey": "short", "format": "mp3", "audio": "%%%"}) {
+	for key, value := range (object{"authorized": false, "provider": "", "language": "bad", "name": "", "requestKey": "short", "format": "mp3", "audio": "%%%"}) {
 		input := uploadFixture()
 		input[key] = value
 		if _, err := validateVoiceUpload(input); err == nil {
@@ -39,7 +49,7 @@ func TestVoiceUploadValidation(t *testing.T) {
 	}
 	s := &server{}
 	body, _ := json.Marshal(uploadFixture())
-	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "false")
+	t.Setenv("DASHSCOPE_VOICE_CLONE_ENABLED", "false")
 	if _, err := s.voices(t.Context(), actor{UserID: "a"}, "create", body); err == nil {
 		t.Fatal("unconfigured training accepted")
 	}
@@ -48,21 +58,19 @@ func TestVoiceUploadValidation(t *testing.T) {
 	}
 }
 func TestVoiceProviderStates(t *testing.T) {
-	for status, want := range map[int]string{0: "unknown", 1: "processing", 2: "ready", 3: "failed", 4: "ready"} {
-		raw, _ := json.Marshal(object{"status": status, "speaker_status": []object{{"model_type": 4, "demo_audio": "https://example.test/audio.wav"}}})
+	for status, want := range map[string]string{"DEPLOYING": "processing", "OK": "ready", "UNDEPLOYED": "failed"} {
 		v := storedVoice{}
-		if err := voiceResult(&v, raw); err != nil || v.Status != want {
-			t.Fatalf("status %d: %#v %v", status, v, err)
+		if err := voiceResult(&v, status); err != nil || v.Status != want {
+			t.Fatalf("status %s: %#v %v", status, v, err)
 		}
 	}
-	for _, raw := range []string{`{}`, `{"status":"ready"}`, `{"status":`} {
-		if voiceResult(&storedVoice{}, []byte(raw)) == nil {
-			t.Fatal("malformed provider status accepted")
+	for _, raw := range []string{`{}`, `{"code":"InvalidParameter"}`, `{"output":`} {
+		if _, err := parseQwenVoiceResponse([]byte(raw)); err == nil {
+			t.Fatal("malformed provider response accepted")
 		}
 	}
-	v := storedVoice{}
-	if err := voiceResult(&v, []byte(`{"code":45001127}`)); err != nil || v.Status != "failed" {
-		t.Fatal("provider rejection ignored")
+	if voiceResult(&storedVoice{}, "invalid") == nil {
+		t.Fatal("unknown status accepted")
 	}
 }
 func voiceTestServer(t *testing.T) *server {
@@ -95,29 +103,39 @@ func voiceTestServer(t *testing.T) *server {
 	if _, err = db.Exec(schema + voiceSchema + publicVoiceSchema); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("VOLC_VOICE_CLONE_ENABLED", "true")
-	t.Setenv("VOLC_TTS_API_KEY", "server-only-test-key")
+	configureBailianTest(t)
 	return &server{db: db}
 }
+
+func configureBailianTest(t *testing.T) {
+	t.Helper()
+	t.Setenv("DASHSCOPE_VOICE_CLONE_ENABLED", "true")
+	t.Setenv("DASHSCOPE_API_KEY", "server-only-test-key")
+	t.Setenv("DASHSCOPE_WORKSPACE_ID", "llm-voicetest")
+}
+
 func TestVoiceIsolationIdempotencyAndSynthesis(t *testing.T) {
 	s := voiceTestServer(t)
 	grantForTest(t, s, "a", creditKindPurchased, 500, 0)
 	var training atomic.Int32
 	s.speech = func(ctx context.Context, operation string, payload object, resource string) ([]byte, error) {
 		switch operation {
-		case "voice_clone":
+		case "create_voice":
 			training.Add(1)
-			if payload["speaker_id"] != "custom_speaker_id" || !strings.HasPrefix(str(payload["custom_speaker_id"]), "keagent") {
-				t.Error("client controlled provider identity")
+			hints, ok := payload["language_hints"].([]string)
+			if len(str(payload["prefix"])) != 10 || payload["target_model"] != qwenAudioModel || !strings.HasPrefix(str(payload["audio"]), "data:audio/wav;base64,") || !ok || len(hints) != 1 || hints[0] != "zh" {
+				t.Errorf("invalid enrollment parameters: %v", payload)
 			}
-			return []byte(`{"status":1}`), nil
-		case "get_voice":
-			return []byte(`{"status":2}`), nil
-		case "unidirectional":
-			if resource != "seed-icl-2.0" || !strings.HasPrefix(str(obj(payload["req_params"])["speaker"]), "keagent") {
-				t.Error("wrong cloned voice synthesis resource")
+			return qwenVoiceCreated(payload["prefix"]), nil
+		case "query_voice":
+			return qwenVoiceStatus("OK"), nil
+		case qwenSynthesis:
+			if resource != qwenAudioModel || !strings.HasPrefix(str(payload["voice"]), qwenAudioModel+"-") || payload["rate"] != float64(1) || payload["format"] != "pcm" || payload["sample_rate"] != 24000 {
+				t.Errorf("wrong cloned voice synthesis parameters: %v", payload)
 			}
-			return []byte(`{"code":0,"data":"AQIDBA=="}`), nil
+			return []byte(qwenSpeechFixture), nil
+		case "delete_voice":
+			return nil, providerHTTPError{fault: fault{502, "音色已删除"}, httpStatus: 400, name: "BadRequest.VoiceNotFound"}
 		}
 		return nil, errors.New("unexpected operation")
 	}
@@ -158,6 +176,9 @@ func TestVoiceIsolationIdempotencyAndSynthesis(t *testing.T) {
 	}
 	if _, err = s.synthesizeVoice(t.Context(), a, speech); err != nil {
 		t.Fatal(err)
+	}
+	if preview, err := s.voices(t.Context(), a, "preview", identity); err != nil || obj(preview)["mime"] != "audio/wav" {
+		t.Fatalf("personal preview was not WAV: %v %v", preview, err)
 	}
 	if _, err = s.synthesizeVoice(t.Context(), b, speech); err == nil {
 		t.Fatal("cross-user synthesis accepted")
@@ -200,19 +221,70 @@ func TestVoiceUnknownSubmissionIsNotRepeated(t *testing.T) {
 	s := voiceTestServer(t)
 	grantForTest(t, s, "a", creditKindPurchased, 500, 0)
 	var calls int
-	s.speech = func(context.Context, string, object, string) ([]byte, error) {
-		calls++
-		return nil, context.DeadlineExceeded
+	var prefix string
+	s.speech = func(_ context.Context, operation string, payload object, _ string) ([]byte, error) {
+		switch operation {
+		case "create_voice":
+			calls++
+			prefix = str(payload["prefix"])
+			return nil, context.DeadlineExceeded
+		case "list_voice":
+			if payload["prefix"] != prefix {
+				t.Fatal("recovery queried a different enrollment")
+			}
+			return []byte(`{"output":{"voice_list":[{"voice_id":"` + qwenAudioModel + "-" + prefix + `-recovered"}]}}`), nil
+		case "query_voice":
+			if payload["voice_id"] != qwenAudioModel+"-"+prefix+"-recovered" {
+				t.Fatal("recovery queried a different speaker")
+			}
+			return qwenVoiceStatus("OK"), nil
+		}
+		return nil, errors.New("unexpected operation")
 	}
 	body, _ := json.Marshal(uploadFixture())
+	owner := actor{UserID: "a"}
+	var voiceID string
 	for range 2 {
-		value, err := s.voices(t.Context(), actor{UserID: "a"}, "create", body)
+		value, err := s.voices(t.Context(), owner, "create", body)
 		if err != nil || value.(userVoice).Status != "unknown" {
 			t.Fatal(value, err)
 		}
+		voiceID = value.(userVoice).ID
+	}
+	identity, _ := json.Marshal(object{"id": voiceID})
+	value, err := s.voices(t.Context(), owner, "refresh", identity)
+	if err != nil || value.(userVoice).Status != "ready" {
+		t.Fatalf("unknown submission could not be recovered: %v %v", value, err)
 	}
 	if calls != 1 {
-		t.Fatal("unknown paid submission replayed")
+		t.Fatal("unknown submission replayed")
+	}
+}
+
+func TestRetiredPersonalVoiceRequiresReEnrollment(t *testing.T) {
+	s := voiceTestServer(t)
+	a := actor{UserID: "a"}
+	_, err := s.db.Exec(`INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload)
+		VALUES('retired',$1,'old-request','old-fingerprint','{"id":"retired","status":"ready","resource":"seed-icl-2.0","speaker":"retired-speaker"}')`, a.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.speech = func(context.Context, string, object, string) ([]byte, error) {
+		t.Fatal("retired voice routed to a provider")
+		return nil, nil
+	}
+	list, err := s.voices(t.Context(), a, "list", []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := obj(list)["voices"].([]userVoice); len(got) != 1 || got[0].Status != "failed" || got[0].Error != retiredVoiceMessage {
+		t.Fatalf("retired voice advertised as usable: %+v", got)
+	}
+	if _, err = s.synthesizeVoice(t.Context(), a, object{"kind": "personal", "voice": "retired", "text": "文案", "rate": float64(1)}); err == nil || err.Error() != retiredVoiceMessage {
+		t.Fatalf("retired voice synthesis: %v", err)
+	}
+	if _, err = s.voices(t.Context(), a, "remove", []byte(`{"id":"retired"}`)); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -221,11 +293,11 @@ func TestVoiceConcurrentSubmitAndDisconnectedCheckpoint(t *testing.T) {
 	grantForTest(t, s, "a", creditKindPurchased, 500, 0)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	s.speech = func(context.Context, string, object, string) ([]byte, error) {
+	s.speech = func(_ context.Context, _ string, payload object, _ string) ([]byte, error) {
 		calls.Add(1)
 		close(entered)
 		<-release
-		return []byte(`{"status":2}`), nil
+		return qwenVoiceCreated(payload["prefix"]), nil
 	}
 	body, _ := json.Marshal(uploadFixture())
 	type outcome struct {
@@ -242,9 +314,9 @@ func TestVoiceConcurrentSubmitAndDisconnectedCheckpoint(t *testing.T) {
 		t.Fatal("concurrent request duplicated training", err, original.err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	s.speech = func(context.Context, string, object, string) ([]byte, error) {
+	s.speech = func(_ context.Context, _ string, payload object, _ string) ([]byte, error) {
 		cancel()
-		return []byte(`{"status":2}`), nil
+		return qwenVoiceCreated(payload["prefix"]), nil
 	}
 	body, _ = json.Marshal(uploadFixture())
 	v, err := s.voices(ctx, actor{UserID: "a"}, "create", body)
@@ -252,7 +324,7 @@ func TestVoiceConcurrentSubmitAndDisconnectedCheckpoint(t *testing.T) {
 		t.Fatal("disconnected submission lost checkpoint", err)
 	}
 	saved, err := s.ownedVoice(t.Context(), "a", v.(userVoice).ID)
-	if err != nil || saved.Status != "ready" {
+	if err != nil || saved.Status != "processing" || saved.Speaker == "" {
 		t.Fatal("checkpoint not persisted", err)
 	}
 }

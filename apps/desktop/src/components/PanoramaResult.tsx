@@ -61,7 +61,7 @@ export function PanoramaResult({
           {job.duration && (
             <p className="muted">
               实际成片 {job.duration.toFixed(2)} 秒 ·{" "}
-              {job.config.ttsProvider === "system" ? "本机配音" : "火山 TTS"}
+              {job.config.ttsProvider === "system" ? "本机配音" : "云端配音"}
             </p>
           )}
           <Space wrap>

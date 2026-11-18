@@ -52,7 +52,7 @@ it("routes voice uploads through authenticated business transport without replay
     .mockResolvedValueOnce(json({ error: { message: "声音服务未配置" } }, 503));
   await expect(
     authRequest("voice.create", [
-      { requestKey: "stable-key", audio: "sample" },
+      { provider: "bailian", requestKey: "stable-key", audio: "sample" },
     ]),
   ).rejects.toThrow("声音服务未配置");
   expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -60,6 +60,7 @@ it("routes voice uploads through authenticated business transport without replay
     "http://127.0.0.1:18081/v1/voices/create",
   );
   expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
+    provider: "bailian",
     requestKey: "stable-key",
   });
 });

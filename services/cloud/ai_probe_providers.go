@@ -4,8 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -40,11 +39,14 @@ func validateAIProbeInput(service, mode string, input object) error {
 		}
 	case "voice-clone":
 		if mode == "training" {
-			_, err := validateVoiceUpload(object{"name": "管理员复刻测试", "language": "zh-CN", "requestKey": "admin-voice-probe", "authorized": input["authorized"], "format": input["format"], "audio": input["audio"]})
+			if input["authorized"] != true {
+				return fail(422, "请确认已获得这份测试录音的使用授权")
+			}
+			_, err := decodeVoiceSample(str(input["audio"]), str(input["format"]))
 			return err
 		}
-		if !resourceID.MatchString(str(input["speaker"])) {
-			return fail(422, "请填写专用测试音色 ID")
+		if speaker := str(input["speaker"]); !qwenVoiceID.MatchString(speaker) || !strings.HasPrefix(speaker, qwenAudioModel+"-") {
+			return fail(422, "请填写千问 3.1 Plus 的专用测试音色 ID")
 		}
 	case "opening":
 		_, err := minimaxProbePayload(input)
@@ -67,7 +69,7 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 		return ctx.Err()
 	}
 	spec, ok := specFor(p.Service)
-	if !ok {
+	if !ok || p.Group != spec.Group {
 		return fail(422, "测试服务无效")
 	}
 	values, err := readAIValues(ctx, s.db, p.Group, p.Version)
@@ -81,7 +83,7 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 		}
 		missing, issues := aiConfigIssues(spec, values)
 		needsCredentials := p.Mode != "connection" || spec.ID == "beike-cli"
-		if len(issues) > 0 && (needsCredentials || spec.ID == "script") {
+		if len(issues) > 0 && (needsCredentials || spec.ID == "script" || spec.Group == speechAIGroup) {
 			return fail(422, issues[0])
 		}
 		if len(missing) > 0 && needsCredentials {
@@ -122,13 +124,17 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 		if voice.Language == "en-US" {
 			sentence = "This is a voice service test."
 		}
-		_, err = s.synthesizePCM(ctx, "keagent-ai-probe", sentence, voice.Speaker, voice.Resource, 1)
+		_, err = s.synthesizePCM(ctx, voice.Language, sentence, voice.Speaker, voice.Resource, 1)
 		if err == nil {
-			p.Progress.TTSKeyFingerprint = ttsKeyFingerprint(aiValue(ctx, "VOLC_TTS_API_KEY"))
+			p.Progress.SpeechConfigFingerprint = speechConfigFingerprint(values)
 		}
 		return err
 	case "voice-clone":
-		return s.probeAIClone(ctx, p, input)
+		if err = s.probeAIClone(ctx, p, input); err != nil {
+			return err
+		}
+		p.Progress.SpeechConfigFingerprint = speechConfigFingerprint(values)
+		return nil
 	case "beike":
 		_, err = s.lookupBeike(ctx, input, func(step string) error { return s.aiStep(ctx, p, step) })
 		return err
@@ -230,65 +236,113 @@ func (s *server) probeBeikeCLI(ctx context.Context, p *aiProbe) error {
 	if err := s.aiStep(ctx, p, "验证贝壳 CLI 与 API Key"); err != nil {
 		return err
 	}
+	ctx = context.WithValue(ctx, beikeSkipCacheKey{}, true)
 	if _, err := beikeSearch(ctx, "北京", "望京"); err != nil {
 		return err
 	}
 	p.Progress.Message = "贝壳 CLI 连通，已返回房源数据"
 	return nil
 }
-func (s *server) probeAIClone(ctx context.Context, p *aiProbe, input object) error {
+func (s *server) probeAIClone(ctx context.Context, p *aiProbe, input object) (err error) {
 	if !cloneConfigured(ctx) {
 		return fail(422, "请先打开声音复刻并保存配置")
 	}
 	speaker := str(input["speaker"])
 	if p.Mode == "training" {
-		speaker = "keagentprobe" + strings.ReplaceAll(p.ID, "-", "")
-		if p.Progress.Task == "" {
-			if err := s.aiStep(ctx, p, "提交专用样本训练"); err != nil {
-				return err
-			}
-			raw, err := s.speechCall(ctx, "voice_clone", object{"speaker_id": "custom_speaker_id", "custom_speaker_id": speaker, "language": 0, "audio": object{"data": input["audio"], "format": input["format"]}}, "")
-			if err != nil {
-				return err
-			}
-			var result struct {
-				Code   *int `json:"code"`
-				Status *int `json:"status"`
-			}
-			if json.Unmarshal(raw, &result) != nil || result.Code == nil && result.Status == nil {
-				return fail(502, "训练提交结果未知，请核对供应商")
-			}
-			if result.Code != nil && *result.Code != 0 {
-				return fail(502, fmt.Sprintf("火山拒绝测试训练（错误码 %d）", *result.Code))
-			}
-			p.Progress.Task = speaker
-			if err = s.saveAIProgress(ctx, p); err != nil {
-				return err
-			}
+		speaker, err = s.prepareAICloneProbe(ctx, p, input)
+		if speaker != "" {
+			defer func() {
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+				defer cancel()
+				deleteErr := s.deleteQwenVoice(cleanup, speaker)
+				if err == nil && deleteErr != nil {
+					err = fail(502, "试听合成通过，临时音色删除未确认，请在百炼控制台核对")
+				}
+			}()
+		}
+		if err != nil {
+			return err
 		}
 	}
 	for {
 		if err := s.aiStep(ctx, p, "查询专用测试音色状态"); err != nil {
 			return err
 		}
-		raw, err := s.speechCall(ctx, "get_voice", object{"speaker_id": "custom_speaker_id", "custom_speaker_id": speaker}, "")
+		raw, err := s.qwenVoiceCall(ctx, "query_voice", object{"voice_id": speaker})
 		if err != nil {
 			return err
 		}
-		var voice storedVoice
-		if err = voiceResult(&voice, raw); err != nil {
+		voice, err := parseQwenVoiceResponse(raw)
+		if err != nil {
 			return err
 		}
-		if voice.Status == "ready" {
-			return nil
+		if voice.TargetModel != qwenAudioModel {
+			return fail(502, "测试音色与千问 3.1 Plus 模型不匹配")
 		}
-		if p.Mode != "training" || voice.Status == "failed" {
-			return fail(422, "专用测试音色未就绪，请在火山控制台核对")
+		if voice.Status == "OK" {
+			break
+		}
+		if p.Mode != "training" || voice.Status != "DEPLOYING" {
+			return fail(422, "专用测试音色未就绪，请在百炼控制台核对")
 		}
 		if err = waitAIProbe(ctx); err != nil {
 			return err
 		}
 	}
+	if err = s.aiStep(ctx, p, "用复刻音色合成并校验音频"); err != nil {
+		return err
+	}
+	_, err = s.synthesizePCM(ctx, "zh-CN", "您好，这是本人音色合成测试。", speaker, qwenAudioModel, 1)
+	return err
+}
+
+func (s *server) prepareAICloneProbe(ctx context.Context, p *aiProbe, input object) (string, error) {
+	prefix := "p" + digestBytes([]byte(p.ID))[:9]
+	voicePrefix := qwenAudioModel + "-" + prefix + "-"
+	validSpeaker := func(voiceID string) bool {
+		return strings.HasPrefix(voiceID, voicePrefix) && qwenVoiceID.MatchString(voiceID)
+	}
+	if validSpeaker(p.Progress.Task) {
+		return p.Progress.Task, nil
+	}
+	if p.Progress.Task == "" {
+		// Save the prefix before submitting so a resumed probe can only look up the existing attempt.
+		p.Progress.Task = prefix
+		if err := s.aiStep(ctx, p, "提交测试录音并创建临时音色"); err != nil {
+			return "", err
+		}
+		raw, submitErr := s.qwenVoiceCall(ctx, "create_voice",
+			qwenEnrollmentInput(prefix, str(input["audio"]), str(input["format"]), "zh-CN"))
+		if submitErr == nil {
+			voice, parseErr := parseQwenVoiceResponse(raw)
+			if parseErr == nil && validSpeaker(voice.VoiceID) {
+				p.Progress.Task = voice.VoiceID
+				return voice.VoiceID, s.saveAIProgress(ctx, p)
+			}
+		} else {
+			var upstream providerHTTPError
+			if ctx.Err() != nil || errors.As(submitErr, &upstream) {
+				return "", submitErr
+			}
+		}
+	}
+	if err := s.aiStep(ctx, p, "核对临时音色创建结果"); err != nil {
+		return "", err
+	}
+	raw, err := s.qwenVoiceCall(ctx, "list_voice", object{"prefix": prefix, "page_index": 0, "page_size": 2})
+	if err != nil {
+		return "", err
+	}
+	result, err := parseQwenVoiceResponse(raw)
+	if err != nil {
+		return "", err
+	}
+	if len(result.VoiceList) != 1 || !validSpeaker(result.VoiceList[0].VoiceID) {
+		return "", fail(502, "测试音色创建结果未知，请在百炼控制台核对")
+	}
+	speaker := result.VoiceList[0].VoiceID
+	p.Progress.Task = speaker
+	return speaker, s.saveAIProgress(ctx, p)
 }
 func waitAIProbe(ctx context.Context) error {
 	timer := time.NewTimer(5 * time.Second)

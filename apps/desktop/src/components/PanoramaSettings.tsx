@@ -96,11 +96,11 @@ export function PanoramaSettings({
             value={config.ttsProvider}
             options={[
               {
-                value: "volcengine",
-                label: caps.volcTts
+                value: "bailian",
+                label: caps.bailianTts
                   ? "管理员提供的公共音色"
                   : "公共音色（服务待配置）",
-                disabled: !caps.volcTts || publicVoices.length === 0,
+                disabled: !caps.bailianTts || publicVoices.length === 0,
               },
               {
                 value: "personal",
@@ -176,7 +176,6 @@ export function PanoramaSettings({
       )}
       <p>
         <Link to="/settings/voices">管理或上传我的声音</Link>
-        。本人音色首次用于合成可能启用供应商付费音色槽位。
       </p>
       {library.isError && (
         <Alert

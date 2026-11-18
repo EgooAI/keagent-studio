@@ -9,25 +9,27 @@ import (
 func TestSpeechChunks(t *testing.T) {
 	first := base64.StdEncoding.EncodeToString([]byte{1, 2})
 	second := base64.StdEncoding.EncodeToString([]byte{3, 4})
-	for _, payload := range []string{`{"code":0,"data":"` + first + `"}` + "\n" + `{"code":0,"data":"` + second + `"}`, "{\n\"code\":0,\n\"data\":\"" + first + "\"\n}"} {
-		pcm, err := decodeSpeech([]byte(payload))
-		if err != nil || len(pcm) < 2 {
-			t.Fatal("valid speech rejected", err)
-		}
+	event := func(audio string) string {
+		return "event: result\r\ndata: " + `{"output":{"finish_reason":"null","audio":{"data":"` + audio + `"}}}` + "\r\n\r\n"
 	}
-	for _, payload := range []string{`{}`, `{"code":1}`, `{"code":0,"data":"%%%"}`, `{"code":0,"data":"` + first + `"}` + "\n" + `{"code":42}`, `{"code":0`} {
-		if _, err := decodeSpeech([]byte(payload)); err == nil {
-			t.Fatal("invalid or incomplete speech accepted")
+	end := "data: {\"output\":\ndata: {\"finish_reason\":\"stop\"}}\n\n"
+	pcm, err := decodeQwenSpeech([]byte(": heartbeat\n\n" + event(first) + event(second) + end))
+	if err != nil || string(pcm) != "\x01\x02\x03\x04" {
+		t.Fatalf("valid PCM stream rejected: %x %v", pcm, err)
+	}
+	for _, payload := range []string{`{}`, end, event("%%%") + end, event(first), event("AQ==") + end, event(first) + "data: {\"code\":\"InternalError\"}\n\n", event(first) + "data: {\"output\":"} {
+		if _, err := decodeQwenSpeech([]byte(payload)); err == nil {
+			t.Fatalf("invalid or incomplete stream accepted: %q", payload)
 		}
 	}
 }
 func TestPanoramaValidationAndCapabilities(t *testing.T) {
-	for _, key := range []string{"AI_API_KEY", "VOLC_TTS_API_KEY", "MINIMAX_API_KEY"} {
+	for _, key := range []string{"AI_API_KEY", "DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID", "MINIMAX_API_KEY"} {
 		t.Setenv(key, "")
 	}
 	s := &server{}
 	value, err := s.panorama(t.Context(), actor{UserID: "a"}, "capabilities", []byte(`{}`))
-	if err != nil || value.(object)["minimaxOpening"] != false || value.(object)["volcAvatar"] != nil {
+	if err != nil || value.(object)["minimaxOpening"] != false || value.(object)["bailianTts"] != false {
 		t.Fatal("invalid capabilities")
 	}
 	for _, operation := range []string{"script", "tts", "other"} {

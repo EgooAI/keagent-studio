@@ -5,7 +5,15 @@ import { ArrowUpRight, CircleAlert } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import { stageLabels, type AdminOverview } from "@keagent/shared-types";
 import { dateTime, userLabel } from "./admin-api";
-import { AIState, configLabel } from "./AdminAI";
+import {
+  AIState,
+  bailianSpeechLabel,
+  configLabel,
+  isBailianSpeech,
+  isSpeechService,
+  speechUpgradeMessage,
+  speechUpgradeTitle,
+} from "./AdminAI";
 
 export default function AdminDashboard() {
   const query = useQuery({
@@ -34,8 +42,14 @@ export default function AdminDashboard() {
     );
   const data = query.data;
   if (!data) return null;
+  const speechUpgradeRequired = data.services.some(
+    (service) => isSpeechService(service) && !isBailianSpeech(service),
+  );
   const serviceIssues = data.services.filter(
-    (service) => service.state !== "configured",
+    (service) =>
+      service.state !== "configured" &&
+      service.id !== "voice-clone" &&
+      (!isSpeechService(service) || isBailianSpeech(service)),
   );
   return (
     <div className="admin-workbench-grid">
@@ -160,7 +174,15 @@ export default function AdminDashboard() {
             <h2 id="admin-workbench-ai">AI 配置缺项</h2>
             <Link to="/admin/ai">查看 AI 服务</Link>
           </div>
-          {serviceIssues.length === 0 ? (
+          {speechUpgradeRequired && (
+            <Alert
+              type="warning"
+              showIcon
+              title={speechUpgradeTitle}
+              description={speechUpgradeMessage}
+            />
+          )}
+          {serviceIssues.length === 0 && !speechUpgradeRequired ? (
             <p className="admin-secondary">
               各项配置已齐全；实际连接和生成结果仍需在业务中验证。
             </p>
@@ -171,7 +193,11 @@ export default function AdminDashboard() {
                   <Link
                     to={`/admin/ai?service=${encodeURIComponent(service.id)}`}
                   >
-                    <strong>{service.label}</strong>
+                    <strong>
+                      {service.id === "tts"
+                        ? bailianSpeechLabel
+                        : service.label}
+                    </strong>
                   </Link>
                   <p className="admin-secondary">
                     {[

@@ -30,7 +30,9 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -Action status
 
 管理员登录管理后台；普通用户登录客户端。统一使用 `127.0.0.1`，避免与 `localhost` 混用导致 Cookie 和 Origin 不一致。
 
-AI、豆包语音和 MiniMax 供应商密钥需要在 `.env.local` 中填入自己的有效凭证并重启后端。未配置时可以登录、管理账号、维护房源及配置公共音色目录；真实客户端配音和 MiniMax 开场需对应服务凭证。独立开发样片脚本仍可使用 Windows 系统声音验证 FFmpeg。
+文案、百炼语音和 MiniMax 可在管理后台「AI 服务 → 服务配置」中配置，也可用 `.env.local` 提供启动配置。百炼语音使用同一北京地域的 API Key 和业务空间 ID。未配置时可以登录、管理账号、维护房源及管理公共音色目录。独立开发样片脚本可以使用 Windows 系统声音验证 FFmpeg。
+
+Vite 会热更新后台页面。修改 `services/cloud` 中的服务实现或供应商后，需要重启 Go 业务服务，再刷新管理后台。若后台提示「云端语音服务需要更新」，检查 `VITE_GO_API_URL` 指向的是新启动的服务。
 
 ## 依赖和检查
 

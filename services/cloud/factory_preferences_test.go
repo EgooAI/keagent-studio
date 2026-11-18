@@ -21,10 +21,14 @@ func TestFactoryPreferencesWithoutBuiltinProperty(t *testing.T) {
 			t.Fatal("builtin sample must not reappear", w, err)
 		}
 	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_public_voice(id,payload) VALUES('public-zh','{"id":"public-zh","name":"中文公共音色","language":"zh-CN","enabled":true}'),('public-en','{"id":"public-en","language":"en-US","enabled":true}')`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_public_voice(id,payload) VALUES
+		('public-zh',jsonb_build_object('id','public-zh','name','中文公共音色','language','zh-CN','enabled',true,'speakerId','longanlingxin_v3.1','resourceId',$1::text)),
+		('public-en',jsonb_build_object('id','public-en','language','en-US','enabled',true,'speakerId','xunanchuan_v3.1','resourceId',$1::text))`, qwenAudioModel); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload) VALUES('own','preference-owner','own','test','{"id":"own","language":"zh-CN","status":"ready"}'),('other','different-owner','other','test','{"id":"other","language":"zh-CN","status":"ready"}')`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO keagent_voice(id,owner_id,request_key,fingerprint,payload) VALUES
+		('own','preference-owner','own','test',jsonb_build_object('id','own','language','zh-CN','status','ready','resource',$1::text)),
+		('other','different-owner','other','test',jsonb_build_object('id','other','language','zh-CN','status','ready','resource',$1::text))`, qwenAudioModel); err != nil {
 		t.Fatal(err)
 	}
 	input := object{"templateId": "standard-tour", "templateVersion": "1.0.0", "voiceId": "public-zh"}
@@ -83,16 +87,16 @@ func TestFactoryPreferencesWithoutBuiltinProperty(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.activePublicVoice(t.Context(), "builtin-public-zh-vv-v2"); err != nil {
+	if _, err := s.activePublicVoice(t.Context(), defaultPublicVoiceID); err != nil {
 		t.Fatal("default public voice missing", err)
 	}
-	if _, err := db.ExecContext(t.Context(), `UPDATE keagent_public_voice SET payload=jsonb_set(payload,'{enabled}','false') WHERE id='builtin-public-zh-vv-v2'`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE keagent_public_voice SET payload=jsonb_set(payload,'{enabled}','false') WHERE id=$1`, defaultPublicVoiceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := seedDefaultPublicVoice(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.activePublicVoice(t.Context(), "builtin-public-zh-vv-v2"); err == nil {
+	if _, err := s.activePublicVoice(t.Context(), defaultPublicVoiceID); err == nil {
 		t.Fatal("restart republished administrator's unlisted voice")
 	}
 }

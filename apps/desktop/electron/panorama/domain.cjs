@@ -116,8 +116,24 @@ function renderOverrides(input) {
     });
   return entries.length ? Object.fromEntries(entries) : undefined;
 }
+function currentVoiceId(voice) {
+  return ["builtin-public-zh-vv-v2", "builtin-public-zh-qwen-plus"].includes(
+    voice,
+  )
+    ? "builtin-public-zh-qwen-lingxin"
+    : voice;
+}
+function currentSpeechConfig(config) {
+  if (!["volcengine", "bailian"].includes(config?.ttsProvider)) return config;
+  const voice = currentVoiceId(config.voice);
+  if (config.ttsProvider === "bailian" && voice === config.voice) return config;
+  const next = { ...config, ttsProvider: "bailian" };
+  if (Object.hasOwn(next, "voice")) next.voice = voice;
+  return next;
+}
 function config(input, personalTemplates = []) {
   ensure(input && typeof input === "object", "缺少制作配置");
+  input = currentSpeechConfig(input);
   const c = Object.fromEntries(
     Object.keys(defaultConfig).map((key) => [
       key,
@@ -139,7 +155,7 @@ function config(input, personalTemplates = []) {
   );
   ensure(["template", "ai"].includes(c.scriptProvider), "文案生成方式无效");
   ensure(
-    ["system", "volcengine", "personal"].includes(c.ttsProvider),
+    ["system", "bailian", "personal"].includes(c.ttsProvider),
     "配音服务无效",
   );
   ensure(["voiceover", "avatar"].includes(c.videoMode), "视频模板无效");
@@ -161,7 +177,7 @@ function config(input, personalTemplates = []) {
         c.ttsProvider !== "system" &&
         typeof input.openingPhoto === "string" &&
         /^[a-f0-9]{64}$/.test(input.openingPhoto),
-      "MiniMax 开场需要参考素材、经纪人照片和豆包语音",
+      "MiniMax 开场需要参考素材、经纪人照片和百炼配音",
     );
     c.openingPhoto = input.openingPhoto;
   }
@@ -313,7 +329,7 @@ function motion(start, duration, c) {
 }
 function audioKey(segment, c) {
   return hash([
-    "tts-v2",
+    c.ttsProvider === "system" ? "tts-v2" : "qwen-audio-3.1-tts-plus",
     segment.text,
     c.ttsProvider,
     c.voice,
@@ -324,6 +340,8 @@ function audioKey(segment, c) {
 module.exports = {
   templates,
   defaultConfig,
+  currentVoiceId,
+  currentSpeechConfig,
   config,
   renderOverrides,
   renderOverrideKeys,

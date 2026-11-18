@@ -289,12 +289,17 @@ try {
   const ai = await ok("/v1/admin/ai-config");
   assert.deepEqual(ai.services.map((service) => service.id).sort(), [
     "beike",
-    "expansion",
+    "beike-cli",
     "opening",
     "script",
     "tts",
     "voice-clone",
   ]);
+  for (const id of ["tts", "voice-clone"]) {
+    const service = ai.services.find((item) => item.id === id);
+    assert.equal(service.provider, "阿里云百炼");
+    assert.equal(service.model, "qwen-audio-3.1-tts-plus");
+  }
   const publicData = JSON.stringify({
     users,
     detail,
@@ -308,7 +313,7 @@ try {
   );
   for (const key of [
     "AI_API_KEY",
-    "VOLC_TTS_API_KEY",
+    "DASHSCOPE_API_KEY",
     "MINIMAX_API_KEY",
     "BETTER_AUTH_SECRET",
   ])

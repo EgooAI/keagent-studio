@@ -6,6 +6,7 @@ import type {
   AdminAIService,
   AdminAudit,
   AdminDevice,
+  AdminPublicVoice,
   AdminTaskSummary,
   AdminUser,
   ProductionConfig,
@@ -124,11 +125,15 @@ async function fixture(page: Page) {
       purpose: ["生成房源讲解文案", "将文案转换为配音", "生成经纪人露脸开场"][
         i
       ],
-      provider: ["DeepSeek", "火山引擎", "MiniMax"][i],
-      model: i ? "" : "deepseek-flash",
+      provider: ["DeepSeek", "阿里云百炼", "MiniMax"][i],
+      model: ["deepseek-flash", "qwen-audio-3.1-tts-plus", ""][i],
       endpoint: i ? "" : "https://api.deepseek.com",
       state: "incomplete",
-      missing: [["AI_API_KEY", "VOLC_TTS_API_KEY", "MINIMAX_API_KEY"][i]],
+      missing: [
+        ["AI_API_KEY"],
+        ["DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID"],
+        ["MINIMAX_API_KEY"],
+      ][i],
       issues: [],
       note: "配置检查不验证供应商连接或付费调用",
     }),
@@ -372,11 +377,170 @@ async function fixture(page: Page) {
   return { users, owner, task, resources, requests, writes, state };
 }
 
-test("AI 服务只有一个配置入口，原样保存保留测试结果", async ({ page }) => {
+test("旧版云端暂停语音管理并提示更新", async ({ page }) => {
+  const { requests, task } = await fixture(page);
+  const management = (
+    [
+      ["script", "多模态文案", "DeepSeek", "deepseek-flash", "script"],
+      ["tts", "火山配音", "火山引擎", "seed-tts-2.0", "speech"],
+      ["voice-clone", "声音复刻", "火山引擎", "seed-icl-2.0", "speech"],
+    ] as const
+  ).map(([id, label, provider, model, group]): AdminAIManagement => ({
+    group,
+    summary: {
+      id,
+      label,
+      provider,
+      model,
+      purpose: "",
+      endpoint: "",
+      state: "configured",
+      missing: [],
+      issues: [],
+      note: "",
+    },
+    revision: 2,
+    fields: [
+      {
+        key: id === "script" ? "AI_API_KEY" : "VOLC_TTS_API_KEY",
+        label: "API Key",
+        kind: "secret",
+      },
+    ],
+    active: {
+      version: 1,
+      source: "managed",
+      activatedAt: null,
+      locked: false,
+      fields: {},
+      secrets: {},
+      test: null,
+    },
+    candidate: {
+      version: 2,
+      fields: {},
+      secrets: {},
+      test: null,
+      missing: [],
+      issues: [],
+    },
+    canActivate: true,
+  }));
+  const services = management.map((row) => row.summary);
+  const headers = {
+    "access-control-allow-origin": adminBase,
+    "access-control-allow-methods": "GET, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type",
+  };
+  await page.route(/\/v1\/admin\/(ai-config|overview)(\?.*)?$/, (route) => {
+    if (route.request().method() === "OPTIONS")
+      return route.fulfill({ status: 204, headers });
+    return route.fulfill({
+      headers,
+      json: route.request().url().includes("/overview")
+        ? {
+            users: 123,
+            devices: 1,
+            publishedResources: 1,
+            failedTasks: 1,
+            recentFailedTasks: [task],
+            services,
+          }
+        : { management, services, writable: true, voices: [] },
+    });
+  });
+
+  const upgrade = page.getByText("云端语音服务需要更新");
+  await page.goto(adminBase + "/#/admin/dashboard");
+  await expect(upgrade).toBeVisible();
+  await expect(page.getByText(/各项配置已齐全/)).toHaveCount(0);
+  await expect(page.getByText(/火山配音|火山引擎/)).toHaveCount(0);
+
+  // A saved link from the former configuration cannot open its obsolete editor.
+  await page.goto(adminBase + "/#/admin/ai?service=voice-clone");
+  await expect(upgrade).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "管理声音复刻" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/火山配音|火山引擎/)).toHaveCount(0);
+  await expect(page.getByText("待启用配置 · 可启用")).toHaveCount(0);
+  await page.getByRole("button", { name: "管理多模态文案" }).click();
+  const scriptDialog = page.getByRole("dialog", { name: "多模态文案" });
+  await expect(scriptDialog).toBeVisible();
+  await scriptDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(scriptDialog).not.toBeVisible();
+  await page.getByRole("tab", { name: "公共音色" }).click();
+  await expect(upgrade).toBeVisible();
+  await expect(page.getByRole("button", { name: "新增公共音色" })).toHaveCount(
+    0,
+  );
+  expect(requests.some((path) => path.includes("/v1/admin/voices"))).toBe(
+    false,
+  );
+});
+
+test("公共音色使用百炼模型，历史音色只能查看", async ({ page }) => {
+  await fixture(page);
+  const legacyVoice: AdminPublicVoice = {
+    id: "legacy-existing",
+    name: "历史配音",
+    speakerId: "legacy-example",
+    resourceId: "legacy-resource",
+    language: "zh-CN",
+    enabled: false,
+    publishedOnce: true,
+  };
+  const retiredFlashVoice: AdminPublicVoice = {
+    ...legacyVoice,
+    id: "builtin-public-zh-qwen-plus",
+    name: "公共讲解女声 · 温怀清",
+    speakerId: "wenhuaiqing_v3.1",
+    resourceId: "qwen-audio-3.1-tts-plus",
+    retired: true,
+  };
+  await page.route("**/v1/admin/voices", async (route) => {
+    const headers = {
+      "access-control-allow-origin": adminBase,
+      "access-control-allow-headers": "authorization,content-type",
+      "access-control-allow-methods": "GET,POST,OPTIONS",
+    };
+    if (route.request().method() === "OPTIONS")
+      return route.fulfill({ status: 204, headers });
+    return route.fulfill({ json: [legacyVoice, retiredFlashVoice], headers });
+  });
+  await page.goto(adminBase + "/#/admin/ai?tab=voices");
+  const legacy = page.getByRole("row", { name: /历史配音/ });
+  await expect(legacy.getByText("已停用")).toBeVisible();
+  await expect(legacy.getByRole("button")).toHaveCount(0);
+  const retired = page.getByRole("row", { name: /温怀清/ });
+  await expect(retired.getByText("已停用")).toBeVisible();
+  await expect(retired.getByRole("button")).toHaveCount(0);
+  await page.getByRole("button", { name: "新增公共音色" }).click();
+  const dialog = page.getByRole("dialog", { name: "新增公共音色" });
+  await dialog.getByLabel("音色名称").fill("公共讲解");
+  await dialog.getByLabel("百炼公共音色编号").fill("longanlingxin_v3.1");
+  const model = dialog.getByLabel("合成模型");
+  await expect(model).toHaveValue("qwen-audio-3.1-tts-plus");
+  await expect(model).not.toBeEditable();
+  const save = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/v1/admin/voices") && request.method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "确 定" }).click();
+  expect((await save).postDataJSON()).toMatchObject({
+    speakerId: "longanlingxin_v3.1",
+    resourceId: "qwen-audio-3.1-tts-plus",
+    enabled: false,
+  });
+  await expect(dialog).toBeHidden();
+});
+
+async function aiConfigFixture(page: Page) {
   await fixture(page);
   const labels = {
     script: "多模态文案",
-    tts: "火山配音",
+    tts: "百炼配音",
     opening: "MiniMax 开场",
     "voice-clone": "声音复刻",
     beike: "贝壳取材",
@@ -414,6 +578,7 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
       },
       candidate: null,
       canActivate: false,
+      verification: null,
     }),
   );
   const script = management[0];
@@ -428,7 +593,15 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     steps: [],
   };
   const tts = management[1];
-  tts.group = "speech";
+  tts.group = "bailian-speech";
+  tts.summary.provider = "阿里云百炼";
+  tts.summary.model = "qwen-audio-3.1-tts-plus";
+  tts.fields = [
+    { key: "DASHSCOPE_API_KEY", label: "共享 API Key", kind: "secret" },
+    { key: "DASHSCOPE_WORKSPACE_ID", label: "业务空间 ID", kind: "text" },
+  ];
+  tts.active.fields = { DASHSCOPE_WORKSPACE_ID: "llm-keagent" };
+  tts.active.secrets = { DASHSCOPE_API_KEY: true };
   tts.active.test = { ...script.active.test, id: "tts-sample", service: "tts" };
   tts.candidate = {
     version: 4,
@@ -441,10 +614,66 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
   tts.ttsTestPassed = true;
   tts.reusedTtsTestAt = stamp;
   const clone = management.find((row) => row.summary.id === "voice-clone")!;
-  clone.group = "speech";
+  clone.group = tts.group;
+  clone.summary.provider = tts.summary.provider;
+  clone.summary.model = tts.summary.model;
+  clone.fields = [
+    ...tts.fields,
+    {
+      key: "DASHSCOPE_VOICE_CLONE_ENABLED",
+      label: "启用声音复刻",
+      kind: "toggle",
+    },
+  ];
+  clone.active.fields = {
+    ...tts.active.fields,
+    DASHSCOPE_VOICE_CLONE_ENABLED: false,
+  };
+  clone.active.secrets = tts.active.secrets;
+  clone.summary.state = "incomplete";
+  clone.summary.missing = ["DASHSCOPE_VOICE_CLONE_ENABLED"];
   clone.candidate = {
     ...tts.candidate,
-    fields: { VOLC_VOICE_CLONE_ENABLED: true },
+    fields: { ...tts.candidate.fields, DASHSCOPE_VOICE_CLONE_ENABLED: true },
+  };
+  const beikeCLI = management.find((row) => row.summary.id === "beike-cli")!;
+  beikeCLI.summary.state = "missing";
+  beikeCLI.summary.missing = ["BEIKE_MCP_API_KEY"];
+  beikeCLI.fields = [
+    { key: "BEIKE_MCP_API_KEY", label: "MCP API Key", kind: "secret" },
+    {
+      key: "BEIKE_CLI_PATH",
+      label: "CLI 可执行文件路径（可选，留空自动检测）",
+      kind: "text",
+    },
+  ];
+  beikeCLI.revision = 1;
+  beikeCLI.active = {
+    version: 0,
+    source: "environment",
+    activatedAt: null,
+    locked: false,
+    fields: { BEIKE_CLI_PATH: "" },
+    secrets: { BEIKE_MCP_API_KEY: false },
+    test: {
+      id: "beike-active-sample",
+      service: "beike-cli",
+      version: 0,
+      mode: "sample",
+      status: "failed",
+      createdAt: stamp,
+      finishedAt: stamp,
+      steps: [{ name: "检查已保存的配置", state: "failed" }],
+      message: "缺少配置：BEIKE_MCP_API_KEY",
+    },
+  };
+  beikeCLI.candidate = {
+    version: 1,
+    fields: { BEIKE_CLI_PATH: "" },
+    secrets: { BEIKE_MCP_API_KEY: true },
+    test: null,
+    missing: [],
+    issues: [],
   };
   const data: AdminAIConfig = {
     configured: true,
@@ -454,10 +683,44 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
     checkedAt: stamp,
     services: management.map((r) => r.summary),
     management,
-    voices: [],
+    voices: [{ id: "public-test", name: "公共讲解女声 · 龙安灵心" }],
     writable: true,
   };
   const writes: { path: string; input: Record<string, unknown> }[] = [];
+  const probes = new Map<string, AdminAIProbe>();
+  let verification: {
+    probe: AdminAIProbe;
+    rows: typeof management;
+    fields: AdminAIManagement["active"]["fields"];
+    secrets: AdminAIManagement["active"]["secrets"];
+  } | null = null;
+  function finishVerification(status: "passed" | "failed", message?: string) {
+    if (!verification) throw new Error("预期存在验证任务");
+    const { probe, rows, fields, secrets } = verification;
+    probe.status = status;
+    probe.finishedAt = stamp;
+    probe.message = message;
+    if (status === "failed") return;
+    for (const row of rows) {
+      row.revision = probe.version + 1;
+      row.active = {
+        version: probe.version,
+        source: "managed",
+        activatedAt: stamp,
+        locked: false,
+        fields,
+        secrets,
+        test: row.summary.id === probe.service ? probe : null,
+      };
+      row.candidate = null;
+      row.summary.state =
+        row.summary.id === "voice-clone" &&
+        fields.DASHSCOPE_VOICE_CLONE_ENABLED !== true
+          ? "incomplete"
+          : "configured";
+      row.summary.missing = [];
+    }
+  }
   await page.route(
     /\/v1\/admin\/ai-config(?:\/[^?]*)?(?:\?.*)?$/,
     async (route) => {
@@ -471,288 +734,329 @@ test("AI 服务只有一个配置入口，原样保存保留测试结果", async
         return route.fulfill({ status: 204, headers });
       if (path.endsWith("/ai-config"))
         return route.fulfill({ json: data, headers });
+      if (route.request().method() === "GET" && path.endsWith("/test")) {
+        const id = new URL(route.request().url()).searchParams.get("id") ?? "";
+        const probe = probes.get(id);
+        if (!probe) throw new Error("收到意外的任务状态请求");
+        return route.fulfill({ json: probe, headers });
+      }
       const input = route.request().postDataJSON();
       writes.push({ path, input });
-      if (path.endsWith("/save")) {
-        const saved = script.candidate ?? script.active;
-        if (
-          input.fields.AI_MODEL === saved.fields.AI_MODEL &&
-          !input.fields.AI_API_KEY
-        )
-          return route.fulfill({ json: { changed: false }, headers });
-        script.revision++;
-        script.candidate = {
-          version: script.revision,
-          fields: {
-            AI_MODEL: input.fields.AI_MODEL,
-          },
-          secrets: { AI_API_KEY: true },
-          test: null,
-          missing: [],
-          issues: [],
-        };
-        script.canActivate = false;
-      }
-      if (path.endsWith("/test")) {
-        if (input.service === "voice-clone" && input.mode === "training") {
-          expect(input.version).toBe(clone.candidate!.version);
-          clone.candidate!.test = {
-            ...script.active.test!,
-            id: input.requestId,
-            service: "voice-clone",
-            version: input.version,
-            mode: "training",
-          };
-          clone.canActivate = true;
-          return route.fulfill({ json: {}, headers });
+      const row = management.find(
+        ({ summary }) => summary.id === input.service,
+      );
+      if (!row) throw new Error("收到意外的 AI 服务请求");
+      if (path.endsWith("/verify-enable")) {
+        expect(input.revision).toBe(row.revision);
+        expect(input.confirmed).toBe(true);
+        const saved = input.useSaved ? row.candidate : row.active;
+        if (!saved) throw new Error("收到意外的已保存配置请求");
+        if (input.useSaved) expect(input.fields).toBeUndefined();
+        const fields = { ...saved.fields };
+        const secrets = { ...saved.secrets };
+        for (const { key, kind } of row.fields) {
+          const value = input.fields?.[key];
+          if (kind === "secret") {
+            if (value) secrets[key] = true;
+          } else if (value !== undefined) {
+            fields[key] = value;
+          }
         }
-        const target =
-          input.version === script.active.version
-            ? script.active
-            : script.candidate!;
-        expect(input.version).toBe(target.version);
-        target.test = {
+        const service =
+          row.group === tts.group
+            ? fields.DASHSCOPE_VOICE_CLONE_ENABLED
+              ? "voice-clone"
+              : "tts"
+            : row.summary.id;
+        const probe: AdminAIProbe = {
           id: input.requestId,
-          service: "script",
-          version: target.version,
-          mode: input.mode,
-          status: input.mode === "connection" ? "passed" : "running",
+          service,
+          version: row.revision + 1,
+          mode: service === "voice-clone" ? "training" : "sample",
+          status: "running",
           createdAt: stamp,
           finishedAt: null,
           steps: [],
         };
-      }
-      if (path.endsWith("/activate")) {
-        const row = input.service === "voice-clone" ? clone : script;
-        if (row.candidate) {
-          row.revision++;
-          row.active = { ...row.active, ...row.candidate };
-          row.candidate = null;
-          row.canActivate = false;
+        const rows = management.filter((item) => item.group === row.group);
+        verification = { probe, rows, fields, secrets };
+        probes.set(probe.id, probe);
+        for (const item of rows) {
+          item.revision = probe.version;
+          item.verification = probe;
         }
+        return route.fulfill({ json: probe, headers });
       }
-      return route.fulfill({ json: {}, headers });
+      if (path.endsWith("/test")) {
+        expect(input.version).toBe(row.active.version);
+        row.active.test = {
+          id: input.requestId,
+          service: row.summary.id,
+          version: row.active.version,
+          mode: input.mode,
+          status: "passed",
+          createdAt: stamp,
+          finishedAt: stamp,
+          steps: [],
+        };
+        probes.set(row.active.test.id, row.active.test);
+        return route.fulfill({ json: row.active.test, headers });
+      }
+      throw new Error("收到意外的 AI 管理接口请求");
     },
   );
+  return { beikeCLI, clone, script, tts, writes, finishVerification };
+}
+
+test("贝壳找房沿用已保存的密钥并在换密钥失败时保留生效配置", async ({
+  page,
+}) => {
+  const { beikeCLI, finishVerification, writes } = await aiConfigFixture(page);
+  await page.goto(adminBase + "/#/admin/ai?service=beike-cli");
+  const status = page.getByRole("dialog", { name: "贝壳找房", exact: true });
+  await expect(status.getByText("未设置", { exact: true })).toBeVisible();
+  await expect(status.getByRole("radio")).toHaveCount(0);
+  await expect(status.getByLabel("MCP API Key", { exact: true })).toHaveCount(
+    0,
+  );
+  await status.getByRole("button", { name: "设置密钥", exact: true }).click();
+
+  const setup = page.getByRole("dialog", { name: "设置密钥", exact: true });
+  await expect(
+    setup.getByText("已保存，待验证", { exact: true }),
+  ).toBeVisible();
+  await expect(setup.getByLabel("MCP API Key", { exact: true })).toHaveValue(
+    "",
+  );
+  await setup.getByRole("button", { name: "验证并启用", exact: true }).click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/verify-enable",
+      input: {
+        service: "beike-cli",
+        useSaved: true,
+        revision: 1,
+        confirmed: true,
+      },
+    });
+  expect(beikeCLI.active.secrets.BEIKE_MCP_API_KEY).toBe(false);
+  expect(writes.at(-1)?.input).not.toHaveProperty("fields");
+  finishVerification("passed");
+  await expect(status.getByText("已启用", { exact: true })).toBeVisible();
+  expect(beikeCLI.candidate).toBeNull();
+  const previous = beikeCLI.active;
+  const revision = beikeCLI.revision;
+
+  await status.getByRole("button", { name: "更换密钥", exact: true }).click();
+  const replacement = page.getByRole("dialog", {
+    name: "更换密钥",
+    exact: true,
+  });
+  const key = replacement.getByLabel("MCP API Key", { exact: true });
+  const verify = replacement.getByRole("button", {
+    name: "验证并启用",
+    exact: true,
+  });
+  await expect(key).toHaveValue("");
+  await key.fill("rejected-fixture-key");
+  await verify.click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/verify-enable",
+      input: {
+        service: "beike-cli",
+        fields: { BEIKE_MCP_API_KEY: "rejected-fixture-key" },
+        revision,
+      },
+    });
+  const failure = "贝壳拒绝此密钥，请检查后重试";
+  finishVerification("failed", failure);
+  await expect(replacement.getByText(failure, { exact: true })).toBeVisible();
+  expect(beikeCLI.active).toBe(previous);
+  expect(beikeCLI.candidate).toBeNull();
+  const retryRevision = beikeCLI.revision;
+
+  await key.fill("replacement-fixture-key");
+  await verify.click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/verify-enable",
+      input: {
+        service: "beike-cli",
+        fields: { BEIKE_MCP_API_KEY: "replacement-fixture-key" },
+        revision: retryRevision,
+      },
+    });
+  finishVerification("passed");
+  await expect(status.getByText("已启用", { exact: true })).toBeVisible();
+  await expect(status.getByText("replacement-fixture-key")).toHaveCount(0);
+  await status
+    .getByRole("button", { name: "测试当前连接", exact: true })
+    .click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/test",
+      input: {
+        service: "beike-cli",
+        mode: "connection",
+        version: retryRevision + 1,
+      },
+    });
+  await expect(status.getByText("连通性通过", { exact: true })).toBeVisible();
+});
+
+test("百炼语音保持一个配置入口并验证共享密钥", async ({ page }) => {
+  const { clone, tts, finishVerification, writes } =
+    await aiConfigFixture(page);
   await page.goto(adminBase + "/#/admin/ai");
   const table = page.getByRole("table");
-  await expect(table.getByRole("row")).toHaveCount(7);
-  const ttsRow = table.getByRole("row", { name: /火山配音/ });
-  await expect(ttsRow.getByText("已启用", { exact: true })).toBeVisible();
-  await expect(ttsRow.getByText("共享配置待验证声音复刻")).toBeVisible();
-  await ttsRow.getByRole("button", { name: "管理火山配音" }).click();
-  const ttsDialog = page.getByRole("dialog", { name: "火山配音", exact: true });
-  await expect(
-    ttsDialog.getByText("当前火山配音已启用，可以继续使用公共音色。"),
-  ).toBeVisible();
-  await expect(
-    ttsDialog.getByText("配音样例已复用", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    ttsDialog.getByRole("button", { name: "启用共享配置", exact: true }),
-  ).toBeDisabled();
-  await page.keyboard.press("Escape");
-  await expect(ttsDialog).toBeHidden();
-  tts.active.test = null;
-  tts.ttsTestPassed = false;
-  tts.reusedTtsTestAt = null;
-  await page.getByRole("button", { name: "管理声音复刻" }).click();
-  const cloneDialog = page.getByRole("dialog", {
-    name: "声音复刻",
+  await expect(table.getByRole("row")).toHaveCount(6);
+  await expect(table.getByRole("button", { name: "管理百炼语音" })).toHaveCount(
+    1,
+  );
+  await expect(table.getByRole("button", { name: "管理声音复刻" })).toHaveCount(
+    0,
+  );
+  await page.goto(adminBase + "/#/admin/ai?service=voice-clone");
+  const speech = page.getByRole("dialog", { name: "百炼语音", exact: true });
+  await expect(speech.getByRole("radio")).toHaveCount(0);
+
+  await speech
+    .getByRole("button", { name: "测试配音样例", exact: true })
+    .click();
+  const sample = page.getByRole("dialog", {
+    name: "测试百炼配音",
     exact: true,
   });
-  const enableClone = cloneDialog.getByRole("button", {
-    name: "启用共享配置",
-    exact: true,
-  });
-  await expect(enableClone).toBeDisabled();
+  const voice = sample.getByRole("combobox", { name: "测试用公共音色" });
+  await voice.press("ArrowDown");
+  await voice.press("Enter");
   await expect(
-    cloneDialog.getByRole("button", { name: "运行真实样例", exact: true }),
-  ).toHaveCount(0);
-  await cloneDialog.getByRole("button", { name: "测试复刻训练" }).click();
-  const training = page.getByRole("dialog", { name: "确认测试复刻训练" });
-  await training.locator('input[type="file"]').setInputFiles({
+    sample.getByTitle("公共讲解女声 · 龙安灵心", { exact: true }),
+  ).toBeVisible();
+  await sample
+    .getByRole("button", { name: "确认运行测试", exact: true })
+    .click();
+  await expect(speech).toBeVisible();
+  expect(writes.at(-1)).toMatchObject({
+    path: "/v1/admin/ai-config/test",
+    input: {
+      service: "tts",
+      mode: "sample",
+      version: 3,
+      sample: { voiceId: "public-test" },
+    },
+  });
+
+  await speech.getByRole("button", { name: "更换密钥", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "更换密钥", exact: true });
+  await expect(editor.getByLabel("共享 API Key", { exact: true })).toHaveValue(
+    "",
+  );
+  await expect(editor.getByLabel("业务空间 ID", { exact: true })).toHaveValue(
+    "llm-keagent",
+  );
+  await expect(
+    editor.getByRole("switch", { name: "启用声音复刻", exact: true }),
+  ).toBeChecked();
+  await editor.locator('input[type="file"]').setInputFiles({
     name: "training.wav",
     mimeType: "audio/wav",
     buffer: Buffer.from("mock training audio"),
   });
-  await training.getByRole("checkbox").check();
-  await training.getByRole("button", { name: "确认运行测试" }).click();
-  await expect(cloneDialog.getByText("复刻训练通过")).toBeVisible();
-  expect(writes.at(-1)?.input).toMatchObject({
-    service: "voice-clone",
-    version: 4,
-    mode: "training",
-    confirmed: true,
-  });
-  await enableClone.click();
-  await page.getByRole("button", { name: "确认启用", exact: true }).click();
-  await expect(enableClone).toHaveCount(0);
-  expect(writes.at(-1)).toMatchObject({
-    path: "/v1/admin/ai-config/activate",
-    input: { service: "voice-clone", version: 4 },
-  });
-  await cloneDialog.getByRole("button", { name: "关闭", exact: true }).click();
-  await expect(cloneDialog).toBeHidden();
-  const manage = page.getByRole("button", { name: "管理多模态文案" });
+  await editor.getByRole("checkbox").check();
+  await editor.getByRole("button", { name: "验证并启用", exact: true }).click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/verify-enable",
+      input: {
+        service: "voice-clone",
+        useSaved: true,
+        confirmed: true,
+        sample: {
+          format: "wav",
+          audio: Buffer.from("mock training audio").toString("base64"),
+        },
+      },
+    });
+  expect(clone.active.fields.DASHSCOPE_VOICE_CLONE_ENABLED).toBe(false);
+  finishVerification("passed");
+  await expect(speech).toBeVisible();
+  await expect(
+    speech.getByRole("button", { name: "测试复刻训练", exact: true }),
+  ).toBeEnabled();
+  expect(clone.active.fields.DASHSCOPE_VOICE_CLONE_ENABLED).toBe(true);
+  expect(clone.active.version).toBe(tts.active.version);
+  expect(clone.candidate).toBeNull();
+});
+
+test("文案配置验证期间保留生效模型并在验证通过后更新", async ({ page }) => {
+  const { script, finishVerification, writes } = await aiConfigFixture(page);
+  await page.goto(adminBase + "/#/admin/ai?service=script");
+  const status = page.getByRole("dialog", { name: "多模态文案", exact: true });
   for (const width of [1440, 1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    await expect(manage).toBeVisible();
+    await expect(status).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
-    await page.screenshot({
-      path: `output/ai-config-ui/list-${width}.png`,
-      animations: "disabled",
-    });
   }
-  await manage.click();
-  const configDialog = page.getByRole("dialog", {
-    name: "多模态文案",
-    exact: true,
-  });
-  await expect(configDialog).toBeVisible();
-  await expect(configDialog.getByLabel("API Key", { exact: true })).toHaveValue(
-    "",
-  );
-  await page.screenshot({
-    path: "output/ai-config-ui/dialog-390.png",
-    animations: "disabled",
-  });
-  await configDialog
-    .getByLabel("模型名", { exact: true })
-    .fill("vision-candidate");
-  await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("dialog", { name: "放弃未保存的修改？" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "继续编辑", exact: true }).click();
-  await expect(configDialog.getByLabel("模型名", { exact: true })).toHaveValue(
-    "vision-candidate",
-  );
+  await status.getByRole("button", { name: "更换密钥", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "更换密钥", exact: true });
+  const model = editor.getByLabel("模型名", { exact: true });
+  await expect(model).toHaveValue("vision-active");
+  await editor
+    .getByLabel("API Key", { exact: true })
+    .fill("script-fixture-key");
+  await model.fill("vision-updated");
   await page.setViewportSize({ width: 1440, height: 900 });
-  const save = configDialog.getByRole("button", {
-    name: "保存配置",
-    exact: true,
-  });
-  const enable = configDialog.getByRole("button", {
-    name: /启用配置$/,
-  });
-  const runSample = configDialog.getByRole("button", {
-    name: "运行真实样例",
-    exact: true,
-  });
-  const connection = configDialog.getByRole("button", {
-    name: "检查连通性",
-    exact: true,
-  });
-  const scriptRow = table.getByRole("row", { name: /多模态文案/ });
-  await expect(runSample).toBeEnabled();
-  await connection.click();
-  await expect(
-    configDialog.getByText("连通性通过", { exact: true }),
-  ).toBeVisible();
-  expect(writes.at(-1)?.input).toMatchObject({
-    mode: "connection",
-    version: 3,
-  });
-  await expect(configDialog.getByLabel("模型名", { exact: true })).toHaveValue(
-    "vision-candidate",
-  );
-
-  await save.click();
-  await expect(scriptRow.getByText("已启用", { exact: true })).toBeVisible();
-  await expect(
-    scriptRow.getByText("待启用配置 · 待测试", { exact: true }),
-  ).toBeVisible();
-  await expect(scriptRow.getByText(/^生效配置 · 仅连通性 · /)).toBeVisible();
-  await expect(configDialog.getByText("未测试", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "验证并启用", exact: true }).click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/verify-enable",
+      input: {
+        service: "script",
+        revision: 3,
+        confirmed: true,
+        fields: {
+          AI_MODEL: "vision-updated",
+          AI_API_KEY: "script-fixture-key",
+        },
+        sample: { images: [expect.any(String), expect.any(String)] },
+      },
+    });
   expect(script.active.fields.AI_MODEL).toBe("vision-active");
-  await configDialog
-    .getByRole("radio", { name: "生效配置", exact: true })
-    .check();
-  await expect(
-    configDialog.getByText("连通性通过", { exact: true }),
-  ).toBeVisible();
-  await configDialog
-    .getByRole("radio", { name: "待启用配置", exact: true })
-    .check();
-  await connection.click();
-  await expect(
-    configDialog.getByText("连通性通过", { exact: true }),
-  ).toBeVisible();
-  await expect(runSample).toBeEnabled();
-  await expect(enable).toBeDisabled();
-  await runSample.click();
-  const sampleDialog = page.getByRole("dialog", {
-    name: "测试多模态文案",
-    exact: true,
-  });
-  await expect(sampleDialog).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(1);
-  await sampleDialog
-    .getByRole("button", { name: "返回配置", exact: true })
-    .click();
-  await expect(configDialog).toBeVisible();
-  await runSample.click();
-  await sampleDialog
-    .getByRole("button", { name: "确认运行测试", exact: true })
-    .click();
-  await expect(configDialog.getByText("测试中", { exact: true })).toBeVisible();
-  expect(writes.at(-1)?.input).toMatchObject({
-    mode: "sample",
-    version: 4,
-    confirmed: true,
-  });
-  const probe = script.candidate?.test as AdminAIProbe;
-  expect(probe.status).toBe("running");
   await page.reload();
-  await expect(configDialog.getByText("测试中", { exact: true })).toBeVisible();
-  probe.status = "failed";
-  probe.message = "供应商鉴权失败，请检查凭证";
-  await expect(configDialog.getByText(probe.message)).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(manage).toBeFocused();
   await expect(
-    scriptRow.getByText("待启用配置 · 待测试", { exact: true }),
+    status.getByText("正在验证提交的配置", { exact: true }),
   ).toBeVisible();
-  await expect(scriptRow.getByText("测试失败")).toBeVisible();
-  await expect(scriptRow.getByText(/^待启用配置 · 真实样例 · /)).toBeVisible();
-  await manage.click();
-  await runSample.click();
-  await page.getByRole("button", { name: "确认运行测试", exact: true }).click();
-  await expect(configDialog.getByText("测试中", { exact: true })).toBeVisible();
-  const retry = script.candidate?.test as AdminAIProbe;
-  retry.status = "passed";
-  retry.finishedAt = stamp;
-  script.canActivate = true;
-  await expect(enable).toBeEnabled();
-  await save.click();
-  await expect(page.getByText("配置未改动", { exact: true })).toBeVisible();
-  await expect(enable).toBeEnabled();
   await expect(
-    configDialog.getByText("样例通过", { exact: true }),
+    status.getByText("vision-active", { exact: true }),
   ).toBeVisible();
-  await page.screenshot({
-    path: "output/ai-config-ui/dialog-1440.png",
-    animations: "disabled",
-  });
-  await enable.click();
-  await page.getByRole("button", { name: "确认启用", exact: true }).click();
-  await expect(scriptRow.getByText("已启用", { exact: true })).toBeVisible();
-  await expect(enable).toHaveCount(0);
-  await expect(configDialog.getByText("版本记录", { exact: true })).toHaveCount(
-    0,
-  );
-  expect(script.active.fields.AI_MODEL).toBe("vision-candidate");
-  await connection.click();
   await expect(
-    configDialog.getByText("连通性通过", { exact: true }),
+    status.getByRole("button", { name: "更换密钥", exact: true }),
+  ).toBeDisabled();
+  expect(writes).toHaveLength(1);
+  finishVerification("passed");
+  await expect(
+    status.getByText("vision-updated", { exact: true }),
   ).toBeVisible();
-  expect(writes.at(-1)?.input).toMatchObject({
-    mode: "connection",
-    version: 4,
-  });
+  await expect(status.getByText("script-fixture-key")).toHaveCount(0);
+  await status
+    .getByRole("button", { name: "测试当前连接", exact: true })
+    .click();
+  await expect
+    .poll(() => writes.at(-1))
+    .toMatchObject({
+      path: "/v1/admin/ai-config/test",
+      input: { service: "script", version: 4, mode: "connection" },
+    });
 });
 
 test("管理入口职责明确，真实路由和旧入口可恢复", async ({ page }) => {

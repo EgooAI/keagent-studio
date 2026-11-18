@@ -5,6 +5,8 @@ const {
   hash,
   validateSegments,
   config,
+  currentSpeechConfig,
+  currentVoiceId,
   renderOverrides,
 } = require("../panorama/domain.cjs");
 
@@ -470,6 +472,10 @@ class ProductionQueue {
       caps.templates.map((t) => [JSON.stringify([t.id, t.version]), t]),
     );
     const defaults = propertyData.defaults || {};
+    const publicVoices = voices.publicVoices || [];
+    const personalVoices = voices.cloneEnabled
+      ? (voices.voices || []).filter((voice) => voice.status === "ready")
+      : [];
     const state = this.workflow.store(owner);
     const openingClip = state.openingClip?.id;
     const fixedOpenings = new Map();
@@ -526,16 +532,20 @@ class ProductionQueue {
         templateOpening || input.openingRecipe !== true
           ? input.openingPhoto
           : undefined;
-      const voiceId = input.voiceId || defaults.voiceId;
-      const own = (voices.voices || []).filter(
-        (v) =>
-          v.status === "ready" &&
-          voices.cloneEnabled &&
-          v.language === recipe.language,
-      );
-      const pub = (voices.publicVoices || []).filter(
-        (v) => v.language === recipe.language,
-      );
+      const voiceId = currentVoiceId(input.voiceId || defaults.voiceId);
+      if (
+        !sample &&
+        caps.managedVoices &&
+        !input.voiceId &&
+        voiceId &&
+        !publicVoices.some((voice) => voice.id === voiceId) &&
+        !personalVoices.some((voice) => voice.id === voiceId)
+      ) {
+        issue("默认音色已不可用，请重新选择音色后提交");
+        continue;
+      }
+      const own = personalVoices.filter((v) => v.language === recipe.language);
+      const pub = publicVoices.filter((v) => v.language === recipe.language);
       const personal =
         own.find((v) => v.id === voiceId) ||
         (!input.voiceId && recipe.ttsProvider === "personal"
@@ -563,10 +573,10 @@ class ProductionQueue {
           continue;
         }
       } else if (!personal && !publicVoice) {
-        issue("所选音色不可用或与模板语言不匹配");
+        issue("所选音色不可用或与模板语言不匹配，请重新选择音色");
         continue;
       }
-      if (!sample && caps.managedVoices && !personal && !caps.volcTts) {
+      if (!sample && caps.managedVoices && !personal && !caps.bailianTts) {
         issue("公共配音服务未配置");
         continue;
       }
@@ -574,7 +584,7 @@ class ProductionQueue {
         (templateOpening || openingPhoto) &&
         (!caps.minimaxOpening || !caps.managedVoices)
       ) {
-        issue("请在管理后台启用 MiniMax 开场和豆包语音");
+        issue("请在管理后台启用 MiniMax 开场和百炼配音");
         continue;
       }
       if (
@@ -664,7 +674,7 @@ class ProductionQueue {
               ? "system"
               : personal
                 ? "personal"
-                : "volcengine",
+                : "bailian",
           voice:
             sample || !caps.managedVoices
               ? system.name
@@ -864,6 +874,7 @@ class ProductionQueue {
       const original = state.drafts.find((value) => value.id === item.draftId);
       const copy = {
         ...item,
+        config: currentSpeechConfig(item.config),
         id: randomUUID(),
         batchId: undefined,
         createdAt: now(),
@@ -882,6 +893,7 @@ class ProductionQueue {
         createdAt: copy.createdAt,
       };
       if (draft) {
+        draft.config = currentSpeechConfig(draft.config);
         copy.draftId = draft.id;
         state.drafts.unshift(draft);
       }

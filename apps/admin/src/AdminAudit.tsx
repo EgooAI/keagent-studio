@@ -53,6 +53,7 @@ export const auditActionLabels: Record<string, string> = {
   "credit.welcome.update": "修改欢迎赠送配置",
   "ai.save": "保存 AI 服务配置",
   "ai.test": "发起 AI 服务测试",
+  "ai.verify-enable": "验证并启用 AI 服务配置",
   "ai.test.result": "记录 AI 服务测试结果",
   "ai.activate": "启用 AI 服务配置",
   "ai.rollback": "恢复上一版 AI 服务配置为候选",

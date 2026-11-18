@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +15,8 @@ import (
 )
 
 var resourceID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,150}$`)
-var providerLogID = regexp.MustCompile(`^[a-fA-F0-9]{16,64}$`)
+var providerLogID = regexp.MustCompile(`^[a-fA-F0-9-]{16,64}$`)
+var providerErrorName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$`)
 
 func digestBytes(b []byte) string { d := sha256.Sum256(b); return hex.EncodeToString(d[:]) }
 
@@ -25,6 +24,7 @@ type providerHTTPError struct {
 	fault
 	httpStatus, code int
 	logID            string
+	name             string
 }
 
 func (e providerHTTPError) Unwrap() error { return e.fault }
@@ -32,12 +32,9 @@ func (e providerHTTPError) Unwrap() error { return e.fault }
 func providerResponseFailure(response *http.Response) providerHTTPError {
 	status := response.StatusCode
 	err := providerHTTPError{fault: fault{502, fmt.Sprintf("供应商 HTTP %d；请检查云端配置，提交结果请先核对", status)}, httpStatus: status}
-	if logID := response.Header.Get("X-Tt-Logid"); providerLogID.MatchString(logID) {
-		err.logID = logID
-	}
 	var payload struct {
-		Code      int    `json:"code"`
-		RequestID string `json:"request_id"`
+		Code      json.RawMessage `json:"code"`
+		RequestID string          `json:"request_id"`
 		Header    struct {
 			Code int `json:"code"`
 		} `json:"header"`
@@ -46,7 +43,11 @@ func providerResponseFailure(response *http.Response) providerHTTPError {
 		if err.logID == "" && providerLogID.MatchString(payload.RequestID) {
 			err.logID = payload.RequestID
 		}
-		err.code = payload.Code
+		_ = json.Unmarshal(payload.Code, &err.code)
+		_ = json.Unmarshal(payload.Code, &err.name)
+		if !providerErrorName.MatchString(err.name) {
+			err.name = ""
+		}
 		if err.code == 0 {
 			err.code = payload.Header.Code
 		}
@@ -81,37 +82,6 @@ func providerBody(ctx context.Context, method, endpoint string, headers http.Hea
 		return nil, fail(502, "供应商响应不完整或过大")
 	}
 	return data, nil
-}
-func decodeSpeech(data []byte) ([]byte, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var audio bytes.Buffer
-	for {
-		var chunk struct {
-			Code int    `json:"code"`
-			Data string `json:"data"`
-		}
-		err := decoder.Decode(&chunk)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, fail(502, "火山 TTS 响应不完整")
-		}
-		if chunk.Code != 0 && chunk.Code != 20000000 {
-			return nil, fail(502, fmt.Sprintf("火山 TTS code=%d", chunk.Code))
-		}
-		if chunk.Data != "" {
-			part, err := base64.StdEncoding.DecodeString(chunk.Data)
-			if err != nil {
-				return nil, fail(502, "TTS 音频编码无效")
-			}
-			audio.Write(part)
-		}
-	}
-	if audio.Len() == 0 || audio.Len()%2 != 0 {
-		return nil, fail(502, "TTS 返回空音频或无效 PCM")
-	}
-	return audio.Bytes(), nil
 }
 func validOpeningWAV(data []byte) bool {
 	return openingWAVBytes(data) > 0
@@ -193,7 +163,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 				templates[i] = summary
 			}
 		}
-		return object{"templates": templates, "ai": services[0].State == "configured", "volcTts": services[1].State == "configured", "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": minimaxConfigured(ctx)}, nil
+		return object{"templates": templates, "ai": services[0].State == "configured", "bailianTts": qwenSpeechConfigured(ctx), "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": minimaxConfigured(ctx)}, nil
 	case "template":
 		template, err := s.productionTemplate(ctx, input)
 		if err == nil && obj(obj(template["production"])["opening"]) != nil && input["openingRecipe"] != true {
