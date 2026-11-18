@@ -490,7 +490,7 @@ func TestCreditPricingConfig(t *testing.T) {
 	if err != nil || version != "default" || prices["opening"] != 100 {
 		t.Fatalf("default pricing: %#v %s %v", prices, version, err)
 	}
-	if _, err = s.db.ExecContext(t.Context(), `INSERT INTO keagent_setting(id,payload) VALUES('credit_pricing',$1)`, []byte(`{"version":2,"prices":{"opening":150,"script":0,"bogus":99}}`)); err != nil {
+	if _, err = s.db.ExecContext(t.Context(), `INSERT INTO keagent_setting(id,payload) VALUES('credit_pricing',$1)`, []byte(`{"version":2,"prices":{"opening":150,"script":0,"image_expand":99}}`)); err != nil {
 		t.Fatal(err)
 	}
 	prices, version, err = readCreditPricing(t.Context(), s.db)
@@ -499,6 +499,9 @@ func TestCreditPricingConfig(t *testing.T) {
 	}
 	if prices["opening"] != 150 || prices["script"] != 0 || prices["voice_clone"] != 200 {
 		t.Fatalf("configured pricing merge wrong: %#v", prices)
+	}
+	if _, exists := prices["image_expand"]; exists {
+		t.Fatalf("retired image expansion price returned: %#v", prices)
 	}
 	if _, _, err = readCreditPricing(t.Context(), s.db); err != nil {
 		t.Fatal(err)

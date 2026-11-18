@@ -33,7 +33,7 @@ const opLabels: Record<string, string> = {
   voice_clone: "声音复刻",
   script: "AI 文案",
   tts: "云端配音",
-  image_expand: "AI 扩图",
+  image_expand: "AI 扩图（已下线）",
 };
 
 export function CreditsPanel() {

@@ -4,7 +4,7 @@ const adminBase = process.env.KEAGENT_ADMIN_TEST_URL || "http://127.0.0.1:5174";
 
 async function fixture(page: Page) {
   const requests: URL[] = [];
-  const state = { failUsage: false, empty: false };
+  const state = { failUsage: false, empty: false, historicalExpansion: 0 };
   await page.route("**/api/auth/**", (route) =>
     route.fulfill({ json: { token: "fixture-access-token" } }),
   );
@@ -28,11 +28,13 @@ async function fixture(page: Page) {
         items: [
           { op: "opening", spent: 0 },
           { op: "voice_clone", spent: 0 },
-          { op: "image_expand", spent: 0 },
           { op: "script", spent: state.empty ? 0 : 15 },
           { op: "tts", spent: state.empty ? 0 : 30 },
+          ...(state.historicalExpansion > 0
+            ? [{ op: "image_expand", spent: state.historicalExpansion }]
+            : []),
         ],
-        total: state.empty ? 0 : 45,
+        total: (state.empty ? 0 : 45) + state.historicalExpansion,
       });
     }
     if (url.pathname === "/v1/admin/credits/list") {
@@ -100,6 +102,7 @@ test("服务消耗按北京时间默认最近30天，支持范围、空结果和
   await expect(
     page.getByRole("row", { name: "MiniMax 开场 0", exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("AI 扩图", { exact: false })).toHaveCount(0);
 
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -150,6 +153,12 @@ test("服务消耗按北京时间默认最近30天，支持范围、空结果和
   await page.getByRole("button", { name: /^重\s*试$/ }).click();
   await expect(
     page.getByText("合计消耗 45 积分", { exact: true }),
+  ).toBeVisible();
+
+  state.historicalExpansion = 8;
+  await page.getByRole("button", { name: /^刷\s*新$/ }).click();
+  await expect(
+    page.getByRole("row", { name: "AI 扩图（已下线） 8", exact: true }),
   ).toBeVisible();
 });
 

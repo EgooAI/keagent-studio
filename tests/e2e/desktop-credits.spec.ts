@@ -35,7 +35,6 @@ test("桌面端可按日期查看本人服务消耗，并显示流水实际消�
           { op: "voice_clone", spent: 0 },
           { op: "script", spent: empty ? 0 : 15 },
           { op: "tts", spent: empty ? 0 : 30 },
-          { op: "image_expand", spent: 0 },
         ],
         total: empty ? 0 : 45,
       });
@@ -72,6 +71,7 @@ test("桌面端可按日期查看本人服务消耗，并显示流水实际消�
   await expect(
     usage.getByRole("row", { name: "AI 文案 15", exact: true }),
   ).toBeVisible();
+  await expect(usage.getByText("AI 扩图", { exact: false })).toHaveCount(0);
   await expect(usage.getByText(/仅统计你的实际消耗/)).toBeVisible();
   for (const width of [1440, 1280]) {
     await page.setViewportSize({ width, height: 1000 });

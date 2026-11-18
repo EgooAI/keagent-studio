@@ -79,6 +79,9 @@ func TestAdminCreditUsage(t *testing.T) {
 	settle("u1", "opening", "before", "2026-11-12T15:59:59.999999Z", 11, 11)
 	settle("u1", "opening", "after", "2026-11-13T16:00:00Z", 13, 13)
 	settle("u1", "voice_clone", "released", "2026-11-13T04:00:00Z", 15, 0)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO keagent_credit_ledger(id,owner_id,kind,amount,op,metadata,created_at) VALUES($1,'u1','capture',0,'image_expand','{"spent":8}','2026-10-30T04:00:00Z')`, id()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.holdCredits(ctx, "u2", "opening", "pending", 20, "pending", "v1", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +96,7 @@ func TestAdminCreditUsage(t *testing.T) {
 	if obj(usage)["total"] != int64(45) {
 		t.Fatalf("usage total: %#v", usage)
 	}
-	expected := map[string]int64{"script": 15, "tts": 30, "opening": 0, "voice_clone": 0, "image_expand": 0}
+	expected := map[string]int64{"script": 15, "tts": 30, "opening": 0, "voice_clone": 0}
 	items := rows(obj(usage)["items"])
 	if len(items) != len(expected) {
 		t.Fatalf("services missing: %#v", items)
@@ -105,8 +108,21 @@ func TestAdminCreditUsage(t *testing.T) {
 		}
 	}
 	empty, err := adminCall(t, s, admin, "GET", "/v1/admin/credits/usage?from=2026-12-01&to=2026-12-31", nil)
-	if err != nil || obj(empty)["total"] != int64(0) || len(rows(obj(empty)["items"])) != len(creditOps) {
+	if err != nil || obj(empty)["total"] != int64(0) || len(rows(obj(empty)["items"])) != len(expected) {
 		t.Fatalf("empty range: %#v, %v", empty, err)
+	}
+	historical, err := adminCall(t, s, admin, "GET", "/v1/admin/credits/usage?from=2026-10-30&to=2026-10-30", nil)
+	if err != nil || obj(historical)["total"] != int64(8) {
+		t.Fatalf("historical usage: %#v, %v", historical, err)
+	}
+	var expanded int64
+	for _, item := range rows(obj(historical)["items"]) {
+		if row := obj(item); row["op"] == "image_expand" {
+			expanded, _ = row["spent"].(int64)
+		}
+	}
+	if expanded != 8 {
+		t.Fatalf("historical expansion charge missing: %#v", historical)
 	}
 	detail, err := adminCall(t, s, admin, "GET", "/v1/admin/credits/list?ownerId=u1", nil)
 	if err != nil {
@@ -252,6 +268,9 @@ func TestAdminCreditPricingAndWelcome(t *testing.T) {
 	}
 	if _, err = adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"opening": 150, "bogus": 3}}); err == nil {
 		t.Fatal("unknown price key accepted")
+	}
+	if _, err = adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"image_expand": 3}}); err == nil {
+		t.Fatal("retired image expansion price accepted")
 	}
 	updated, err := adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"opening": 150}})
 	if err != nil || obj(updated)["version"] != "v1" {

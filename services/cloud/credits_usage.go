@@ -39,6 +39,7 @@ WHERE kind='capture' AND created_at >= $1 AND created_at < $2
 		return nil, err
 	}
 	defer result.Close()
+	// 仅对仍在计费的服务补零，已下线服务只显示流水中的历史消耗。
 	spentByOp := make(map[string]int64, len(creditOps))
 	for op := range creditOps {
 		spentByOp[op] = 0

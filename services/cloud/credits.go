@@ -70,11 +70,11 @@ const (
 	creditStateReleased = "released"
 )
 
-var creditOps = map[string]bool{"opening": true, "voice_clone": true, "script": true, "tts": true, "image_expand": true}
+var creditOps = map[string]bool{"opening": true, "voice_clone": true, "script": true, "tts": true}
 
 var creditSources = map[string]bool{"welcome": true, "admin_grant": true, "code": true, "order": true, "release": true}
 
-var defaultCreditPrices = map[string]int64{"opening": 100, "voice_clone": 200, "script": 5, "tts_per_kilo_char": 10, "image_expand": 0}
+var defaultCreditPrices = map[string]int64{"opening": 100, "voice_clone": 200, "script": 5, "tts_per_kilo_char": 10}
 
 var creditCodePattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9-]{7,63}$`)
 
@@ -331,7 +331,7 @@ func (s *server) chargedScript(ctx context.Context, a actor, input object, run f
 	return s.chargeSync(ctx, a.UserID, "script", "", prices["script"], digestBytes(mustJSON(input)), version, nil, run)
 }
 
-// settleHoldByKey 按幂等键收尾异步任务的冻结单（opening / voice_clone / image_expand）。
+// settleHoldByKey 按幂等键收尾异步任务的冻结单。
 // 没有在途冻结单（免费操作或已收尾）时静默跳过；capture=true 全额结算，否则释放退款。
 func (s *server) settleHoldByKey(ctx context.Context, ownerID, op, idemKey string, capture bool) error {
 	var holdID string
