@@ -145,7 +145,8 @@ func TestAdminQueriesPostgres(t *testing.T) {
 	('r3','{"id":"r3","name":"房源带看","type":"video","version":"1.0.0","published":true,"production":{"schemaVersion":1}}'),
 	('r4','{"id":"r4","name":"房源带看","type":"video","version":"2.0.0","published":true}'),
 	('r5','{"id":"r5","name":"封面","type":"cover","version":"1","published":true}'),
-	('r6','{"id":"r6","name":"字幕","type":"subtitle","version":"1","published":true}');
+	('r6','{"id":"r6","name":"字幕","type":"subtitle","version":"1","published":true}'),
+	('b1','{"id":"b1","name":"推荐搭配","type":"video","version":"1.0.0","published":true,"definition":{"kind":"bundle"}}');
 	INSERT INTO keagent_audit VALUES ('a1','u2','resources','r1','{"name":"资源一","token":"must-not-leak"}','2026-11-02T00:00:00Z');
 	INSERT INTO "adminAuditLog" VALUES ('aa1','u2','u1','admin.ban-user','2026-11-02T00:00:00Z','op1','succeeded','Admin API request'),('aa2','u2','new-user','admin.create-user','2026-11-02T00:00:00Z','op2','succeeded','Admin API request'),('aa3','u2','missing-session','admin.revoke-user-session','2026-11-02T00:00:00Z','op3','succeeded','Admin API request');`)
 	if err != nil {

@@ -54,6 +54,7 @@ import { useWorkspace } from "../lib/workspace";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryImagePicker } from "./FactoryImagePicker";
+import { FactoryMixComposer } from "./FactoryMixComposer";
 import {
   FactoryRenderSettings,
   renderKeys,
@@ -65,12 +66,16 @@ import {
 import { FactoryPhaseTag, FactoryTaskDetail } from "./FactoryResult";
 import {
   factoryRequest,
+  mixRequest,
+  mixTemplate,
+  partKinds,
   pairKey,
   phaseLabel,
   templateKey,
   type FactoryAction,
   type FactoryActionResult,
   type FactoryCatalog,
+  type FactoryBundle,
   type FactoryDetail,
   type FactoryIssue,
   type FactoryList,
@@ -178,7 +183,9 @@ export function PanoramaStudio() {
   const [propertyIds, setPropertyIds] = useState<string[]>(() =>
     initialProperty ? [initialProperty] : [],
   );
-  const [templateIds, setTemplateIds] = useState<string[]>([]);
+  const [legacyTemplateIds, setTemplateIds] = useState<string[]>([]);
+  const [chosenMix, setChosenMix] = useState<FactoryBundle>();
+  const [additionalMixes, setAdditionalMixes] = useState<string[]>([]);
   const [knownProperties, setKnownProperties] = useState<
     Record<string, string>
   >({});
@@ -303,7 +310,94 @@ export function PanoramaStudio() {
       ...current,
     }));
   }, [defaults.data, catalog.data]);
-  const templates = catalog.data?.templates || [];
+  const library = catalog.data?.library;
+  const bundles = library ? [...library.recommended, ...library.personal] : [];
+  const preferredId = defaults.data?.defaults?.videoTemplate?.id;
+  const defaultBundle =
+    bundles.find(
+      (bundle) =>
+        bundle.id === preferredId || bundle.id === "bundle:" + preferredId,
+    ) || bundles[0];
+  let currentMix: FactoryBundle | undefined = chosenMix
+    ? chosenMix.id === "free-mix" ||
+      bundles.some((b) => templateKey(b) === templateKey(chosenMix))
+      ? chosenMix
+      : undefined
+    : defaultBundle;
+  if (
+    library &&
+    !chosenMix &&
+    !currentMix &&
+    partKinds.every((k) =>
+      library.parts.some((p) => p.available && p.kind === k),
+    )
+  ) {
+    currentMix = {
+      id: "free-mix",
+      name: "自由搭配",
+      version: "1.0.0",
+      parts: Object.fromEntries(
+        partKinds.map((k) => {
+          const part = library.parts.find((p) => p.available && p.kind === k)!;
+          return [k, { id: part.id, version: part.version, name: part.name }];
+        }),
+      ) as FactoryBundle["parts"],
+    };
+  }
+  const selectedMixes = currentMix
+    ? [
+        currentMix,
+        ...bundles.filter(
+          (bundle) =>
+            bundle.id !== currentMix?.id &&
+            additionalMixes.includes(templateKey(bundle)),
+        ),
+      ]
+    : [];
+  const templates = library
+    ? selectedMixes.flatMap((bundle) => {
+        const t = mixTemplate(library.parts, bundle);
+        return t ? [t] : [];
+      })
+    : catalog.data?.templates || [];
+  const templateIds = library ? templates.map(templateKey) : legacyTemplateIds;
+  function applyMix(mix: FactoryBundle) {
+    if (
+      !currentMix ||
+      templateKey(currentMix.parts.edit) !== templateKey(mix.parts.edit)
+    ) {
+      setBatchRenderEdits({});
+      setOpeningAuthorized(false);
+    }
+    setChosenMix(mix);
+    setAdditionalMixes((ids) => ids.filter((key) => key !== templateKey(mix)));
+    setExcluded(new Set());
+    setIssues([]);
+    setPairPage(1);
+  }
+  async function saveMix(mix: FactoryBundle, name: string) {
+    const saved = await factoryRequest<FactoryBundle>("save-mix", {
+      ...mixRequest(mix),
+      name,
+    });
+    await client.cancelQueries({ queryKey: ["factory-catalog"] });
+    client.setQueryData<FactoryCatalog>(["factory-catalog"], (previous) =>
+      previous?.library
+        ? {
+            ...previous,
+            library: {
+              ...previous.library,
+              personal: [
+                saved,
+                ...previous.library.personal.filter((b) => b.id !== saved.id),
+              ],
+            },
+          }
+        : previous,
+    );
+    applyMix(saved);
+    void message.success("已保存到我的搭配");
+  }
   const firstProperty = propertyIds.length
     ? workspace?.properties.find((property) => property.id === propertyIds[0])
     : undefined;
@@ -563,6 +657,11 @@ export function PanoramaStudio() {
     const openingBackgroundId = useMiniMax
       ? catalog.data?.openingBackground?.id
       : undefined;
+    const mixes = library
+      ? selectedMixes
+          .filter((mix) => activeTemplateKeys.has(templateKey(mix)))
+          .map(mixRequest)
+      : undefined;
     const signature = JSON.stringify([
       pairs,
       selectedImages,
@@ -571,6 +670,7 @@ export function PanoramaStudio() {
       openingPhotoId,
       openingBackgroundId,
       overrides,
+      mixes,
     ]);
     if (submission.current?.signature !== signature)
       submission.current = { signature, id: crypto.randomUUID() };
@@ -580,6 +680,7 @@ export function PanoramaStudio() {
     }>("create", {
       requestId: submission.current.id,
       pairs,
+      ...(mixes ? { mixes } : {}),
       sceneIdsByProperty: selectedImages,
       voiceId,
       openingClip: openingClipId,
@@ -876,10 +977,14 @@ export function PanoramaStudio() {
     >
       <PageHeader
         title="AI 视频工厂"
-        description="选择房源、模板和图片生成文案，审核后进入视频制作队列。"
+        description={
+          creating && library
+            ? undefined
+            : "选择房源、模板和图片生成文案，审核后进入视频制作队列。"
+        }
         actions={
           <Space>
-            {desktop && (
+            {desktop && (!creating || !library) && (
               <Button
                 disabled={!list.data || busy}
                 icon={
@@ -955,92 +1060,112 @@ export function PanoramaStudio() {
             ]}
           />
           <section
-            className="panel factory-composer"
+            className={
+              library
+                ? "factory-composer factory-mix-composer"
+                : "panel factory-composer"
+            }
             aria-label="批量配置"
             hidden={!creating}
           >
-            <div className="compose-intro">
-              <h2>新建一批视频</h2>
-              <p className="muted">
-                每套房源按所选模板生成独立任务。先选 2–7
-                张图片生成文案，确认后再制作视频。
-              </p>
-            </div>
-            <div className="factory-compose-picks">
-              <div className="compose-field">
-                <h3>房源</h3>
-                <div className="compose-field-controls">
-                  <Button
-                    icon={<House size={16} />}
-                    disabled={busy}
-                    onClick={() => setPicker("property")}
-                  >
-                    {propertyIds.length
-                      ? "房源 " + propertyIds.length + " 套"
-                      : "选择房源"}
-                  </Button>
-                  {propertyName && (
-                    <span
-                      className="compose-selection-summary"
-                      title={propertyName}
-                    >
-                      {propertyName}
-                      {propertyIds.length > 1 && " 等"}
-                    </span>
-                  )}
+            {library ? (
+              <FactoryMixComposer
+                library={library}
+                current={currentMix}
+                onChange={applyMix}
+                onSave={saveMix}
+                onRefresh={() => void catalog.refetch()}
+                refreshing={catalog.isFetching}
+                property={firstProperty}
+                sceneIds={firstProperty && sceneIdsByProperty[firstProperty.id]}
+                disabled={busy}
+              />
+            ) : (
+              <>
+                <div className="compose-intro">
+                  <h2>新建一批视频</h2>
+                  <p className="muted">
+                    每套房源按所选模板生成独立任务。先选 2–7
+                    张图片生成文案，确认后再制作视频。
+                  </p>
                 </div>
-              </div>
-              <div className="compose-field">
-                <h3>视频模板</h3>
-                <div className="compose-field-controls">
-                  <Button
-                    icon={<Clapperboard size={16} />}
-                    disabled={busy || catalog.isPending}
-                    onClick={() => setPicker("template")}
-                  >
-                    {templateIds.length
-                      ? "模板 " + templateIds.length + " 个"
-                      : "选择视频模板"}
-                  </Button>
-                  {templateName && (
-                    <span
-                      className="compose-selection-summary"
-                      title={templateName}
-                    >
-                      {templateName}
-                      {templateIds.length > 1 && " 等"}
-                    </span>
-                  )}
+                <div className="factory-compose-picks">
+                  <div className="compose-field">
+                    <h3>房源</h3>
+                    <div className="compose-field-controls">
+                      <Button
+                        icon={<House size={16} />}
+                        disabled={busy}
+                        onClick={() => setPicker("property")}
+                      >
+                        {propertyIds.length
+                          ? "房源 " + propertyIds.length + " 套"
+                          : "选择房源"}
+                      </Button>
+                      {propertyName && (
+                        <span
+                          className="compose-selection-summary"
+                          title={propertyName}
+                        >
+                          {propertyName}
+                          {propertyIds.length > 1 && " 等"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="compose-field">
+                    <h3>视频模板</h3>
+                    <div className="compose-field-controls">
+                      <Button
+                        icon={<Clapperboard size={16} />}
+                        disabled={busy || catalog.isPending}
+                        onClick={() => setPicker("template")}
+                      >
+                        {templateIds.length
+                          ? "模板 " + templateIds.length + " 个"
+                          : "选择视频模板"}
+                      </Button>
+                      {templateName && (
+                        <span
+                          className="compose-selection-summary"
+                          title={templateName}
+                        >
+                          {templateName}
+                          {templateIds.length > 1 && " 等"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="compose-field">
+                    <h3>音色与组合</h3>
+                    <div className="compose-field-controls">
+                      <span
+                        className="compose-selection-summary"
+                        title={voiceSummary}
+                      >
+                        {voiceSummary}
+                      </span>
+                      <Button
+                        type="text"
+                        aria-expanded={expanded}
+                        disabled={busy}
+                        icon={
+                          expanded ? (
+                            <ChevronUp size={15} />
+                          ) : (
+                            <ChevronDown size={15} />
+                          )
+                        }
+                        onClick={() => setExpanded(!expanded)}
+                      >
+                        {expanded ? "收起配置" : "配置与组合"}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="compose-field">
-                <h3>音色与组合</h3>
-                <div className="compose-field-controls">
-                  <span
-                    className="compose-selection-summary"
-                    title={voiceSummary}
-                  >
-                    {voiceSummary}
-                  </span>
-                  <Button
-                    type="text"
-                    aria-expanded={expanded}
-                    disabled={busy}
-                    icon={
-                      expanded ? (
-                        <ChevronUp size={15} />
-                      ) : (
-                        <ChevronDown size={15} />
-                      )
-                    }
-                    onClick={() => setExpanded(!expanded)}
-                  >
-                    {expanded ? "收起配置" : "配置与组合"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-            {selectedTemplates.length > 0 && (
+              </>
+            )}
+            {(!library || expanded) && selectedTemplates.length > 0 && (
               <div className="factory-compose-note factory-compose-parameters">
                 <h3>本批制作参数</h3>
                 <p className="muted">
@@ -1069,7 +1194,7 @@ export function PanoramaStudio() {
                 />
               </div>
             )}
-            {imageProperties.length > 0 && (
+            {!library && imageProperties.length > 0 && (
               <div className="factory-compose-note factory-compose-images">
                 <Space wrap>
                   <Button disabled={busy} onClick={() => setImagePicker(true)}>
@@ -1135,7 +1260,7 @@ export function PanoramaStudio() {
                 </div>
               </div>
             )}
-            {!templates.length && catalog.isSuccess && (
+            {!library && !templates.length && catalog.isSuccess && (
               <div className="factory-compose-note">
                 暂无已上架的视频模板。
                 <Button
@@ -1181,6 +1306,32 @@ export function PanoramaStudio() {
             {expanded && (
               <div className="factory-compose-expanded">
                 <Space wrap>
+                  {library && bundles.some((b) => b.id !== currentMix?.id) && (
+                    <label>
+                      本批追加搭配{" "}
+                      <Select
+                        mode="multiple"
+                        allowClear
+                        className="factory-config-select"
+                        aria-label="本批追加搭配"
+                        placeholder="选择其他搭配"
+                        value={additionalMixes}
+                        disabled={busy}
+                        options={bundles
+                          .filter((b) => b.id !== currentMix?.id)
+                          .map((b) => ({
+                            value: templateKey(b),
+                            label: b.name,
+                          }))}
+                        onChange={(ids) => {
+                          setAdditionalMixes(ids);
+                          setExcluded(new Set());
+                          setIssues([]);
+                          setPairPage(1);
+                        }}
+                      />
+                    </label>
+                  )}
                   <label>
                     音色{" "}
                     <Select
@@ -1249,11 +1400,50 @@ export function PanoramaStudio() {
               </div>
             )}
             <div className="factory-compose-submit">
-              <span className="factory-equation">
-                {propertyIds.length} 套 × {templateIds.length} 个
-                {hasExcludedPairs ? " · 保留" : " ="}{" "}
-                <strong>{pairs.length}</strong> 条
-              </span>
+              {library && (
+                <div className="mix-batch-inputs">
+                  <strong>
+                    <House size={18} />
+                    本批房源
+                  </strong>
+                  <span>已选 {propertyIds.length} 套</span>
+                  <Button disabled={busy} onClick={() => setPicker("property")}>
+                    选择房源
+                  </Button>
+                  <Button
+                    disabled={busy || !imageProperties.length}
+                    onClick={() => setImagePicker(true)}
+                  >
+                    选择图片
+                  </Button>
+                  {imageProperties.length > 0 && (
+                    <small>
+                      选图 {selectedPropertyCount}/{imageProperties.length}
+                    </small>
+                  )}
+                  <Button
+                    type="text"
+                    size="small"
+                    aria-expanded={expanded}
+                    onClick={() => setExpanded(!expanded)}
+                  >
+                    批次设置{" "}
+                    {expanded ? (
+                      <ChevronUp size={14} />
+                    ) : (
+                      <ChevronDown size={14} />
+                    )}
+                  </Button>
+                </div>
+              )}
+              {(!library || propertyIds.length > 0) && (
+                <span className="factory-equation">
+                  {propertyIds.length} {library ? "套房源" : "套"} ×{" "}
+                  {templateIds.length} {library ? "个搭配" : "个"}
+                  {hasExcludedPairs ? " · 保留" : " ="}{" "}
+                  <strong>{pairs.length}</strong> 条
+                </span>
+              )}
               {costEstimate && (
                 <Tooltip
                   title={`${estimateSummaryText(costEstimate)}。按每条约 ${ESTIMATED_CHARS_PER_VIDEO} 字估算；实际按生成文案的千字数计费，供应商失败会退回。`}
@@ -1283,7 +1473,9 @@ export function PanoramaStudio() {
                 }
                 onClick={() => void run(create)}
               >
-                生成 {pairs.length} 条文案
+                {library && !pairs.length
+                  ? "生成文案"
+                  : `生成 ${pairs.length} 条文案`}
               </Button>
             </div>
           </section>

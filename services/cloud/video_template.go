@@ -132,7 +132,7 @@ func validScriptRule(text string) bool {
 }
 
 func productionDigest(resource object) string {
-	b, _ := json.Marshal(pickFields(resource, "name", "description", "category", "version", "type", "compatibleModes", "production"))
+	b, _ := json.Marshal(pickFields(resource, "name", "description", "category", "version", "type", "compatibleModes", "production", "definition"))
 	return digestBytes(b)
 }
 
@@ -232,20 +232,50 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 	if err = json.Unmarshal(b, &resource); err != nil {
 		return nil, err
 	}
-	if err = validateProduction(resource); err != nil {
+	definition := obj(resource["definition"])
+	if definition != nil {
+		err = validateCatalogTemplate(resource)
+	} else {
+		err = validateProduction(resource)
+	}
+	if err != nil {
 		return nil, err
 	}
 	digest := productionDigest(resource)
-	if resource["previewDigest"] == digest && len(rows(resource["previewSegments"])) > 0 {
-		return object{"template": publicProduction(resource), "segments": resource["previewSegments"]}, nil
-	}
-	if !generate {
+	cached := resource["previewDigest"] == digest && resource["previewSegments"] != nil
+	if !generate && !cached {
 		return nil, nil
 	}
-	recipe := obj(resource["production"])
+	preview := object{}
+	sample := publicProduction(resource)
+	kind := str(definition["kind"])
+	if definition != nil {
+		parts := map[string]object{"edit": previewDefaults["edit"], "script": previewDefaults["script"]}
+		if kind == "bundle" {
+			parts, err = bundleParts(ctx, s.db, definition, resource["publishedOnce"] != true)
+			if err != nil {
+				return nil, err
+			}
+			sample["parts"] = definition["parts"]
+		} else {
+			parts[kind] = definition
+		}
+		preview["definition"] = definition
+		if cover := parts["cover"]; cover != nil {
+			preview["cover"] = cover
+		}
+		sample["production"] = composeProduction(parts["edit"], parts["script"])
+	}
+	preview["template"] = sample
+	if cached {
+		preview["segments"] = resource["previewSegments"]
+		return preview, nil
+	}
+	recipe := obj(sample["production"])
 	c := obj(recipe["config"])
-	var segments []object
-	if number(recipe["schemaVersion"]) == 2 {
+	segments := []object{}
+	needsScript := kind != "cover" && kind != "edit"
+	if needsScript && number(recipe["schemaVersion"]) == 2 {
 		images := rows(input["images"])
 		if len(images) != 2 || obj(images[0])["id"] != "preview-1" || obj(images[1])["id"] != "preview-2" ||
 			obj(images[0])["kind"] != "photo" || obj(images[1])["kind"] != "photo" {
@@ -255,11 +285,11 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 		if err != nil {
 			return nil, err
 		}
-		segments, err = generateVisionScript(aiCtx, resource, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images)
+		segments, err = generateVisionScript(aiCtx, sample, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images)
 		if err != nil {
 			return nil, err
 		}
-	} else {
+	} else if needsScript {
 		values := strings.NewReplacer("{title}", "示例小区两居室", "{facts}", "建筑面积约80平方米，2室1厅。", "{sellingPoints}", "已核实的空间布局", "{room}", "客厅", "{description}", "原图展示客厅的空间布局。")
 		if c["language"] == "en-US" {
 			values = strings.NewReplacer("{title}", "Sample two-bedroom home", "{facts}", "Approximately 80 square meters, two bedrooms.", "{sellingPoints}", "Verified room layout", "{room}", "Living room", "{description}", "The original photo shows the living room layout.")
@@ -287,8 +317,9 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 	if productionDigest(current) != digest {
 		return nil, fail(409, "预览期间模板已修改，请重新预览")
 	}
-	if current["previewDigest"] == digest && len(rows(current["previewSegments"])) > 0 {
-		return object{"template": publicProduction(current), "segments": current["previewSegments"]}, nil
+	if current["previewDigest"] == digest && current["previewSegments"] != nil {
+		preview["segments"] = current["previewSegments"]
+		return preview, nil
 	}
 	current["previewDigest"] = digest
 	current["previewSegments"] = segments
@@ -297,11 +328,13 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 	if _, err = tx.ExecContext(ctx, `UPDATE keagent_resource SET payload=$2 WHERE id=$1`, resource["id"], b); err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_audit(id,actor_id,action,target_id,metadata) VALUES($1,$2,'resource.preview',$3,$4)`, id(), a.UserID, resource["id"], `{"type":"video"}`); err != nil {
+	metadata, _ := json.Marshal(resourceAuditFields(resource))
+	if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_audit(id,actor_id,action,target_id,metadata) VALUES($1,$2,'resource.preview',$3,$4)`, id(), a.UserID, resource["id"], metadata); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return object{"template": publicProduction(resource), "segments": segments}, nil
+	preview["segments"] = segments
+	return preview, nil
 }

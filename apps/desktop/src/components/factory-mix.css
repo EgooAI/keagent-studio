@@ -1,0 +1,385 @@
+.factory-composer.factory-mix-composer {
+  padding: 0;
+  border: 0;
+  gap: 14px;
+  background: transparent;
+}
+.factory-mix-composer[hidden] {
+  display: none;
+}
+.mix-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.58fr) minmax(235px, 1fr);
+  align-items: stretch;
+  gap: 14px;
+}
+.mix-workspace {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+}
+.mix-panel,
+.factory-mix-composer .factory-compose-submit,
+.factory-mix-composer .factory-compose-note,
+.factory-mix-composer .factory-compose-expanded {
+  min-width: 0;
+  padding: clamp(14px, 1.35vw, 22px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.mix-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.mix-panel h2 {
+  margin: 0;
+  font-size: clamp(17px, 1.5vw, 23px);
+}
+.mix-panel header .ant-btn {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.mix-panel header .mix-refresh {
+  color: var(--muted);
+  border-color: transparent;
+}
+.mix-panel .ant-segmented {
+  padding: 3px;
+  font-size: clamp(15px, 1.2vw, 18px);
+  border: 1px solid var(--line);
+  background: white;
+  font-weight: 600;
+}
+.mix-panel .ant-segmented-item-label {
+  padding: 3px 18px;
+}
+.mix-panel .ant-segmented-item-selected,
+.mix-panel .ant-segmented-thumb {
+  background: var(--accent);
+  color: white;
+}
+.mix-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.mix-card {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  background: white;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+}
+.mix-card:hover,
+.mix-card.selected {
+  border-color: var(--accent);
+}
+.mix-card.selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.mix-card img {
+  display: block;
+  width: 100%;
+  height: clamp(112px, 12vw, 192px);
+  object-fit: cover;
+  object-position: center 37%;
+  background: var(--canvas);
+}
+.mix-card-foot {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 12px;
+}
+.mix-card-foot strong {
+  font-size: clamp(15px, 1.28vw, 20px);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.mix-apply,
+.mix-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.mix-apply {
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 14px;
+}
+.mix-card.selected .mix-apply {
+  border-color: transparent;
+}
+.mix-library .ant-pagination {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.mix-rows {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.mix-row {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 13px;
+  border: 0;
+  color: var(--ink);
+  background: white;
+  text-align: left;
+}
+.mix-row + .mix-row {
+  border-top: 1px solid var(--line);
+}
+.mix-row:hover,
+.mix-options button:hover {
+  background: var(--accent-soft);
+}
+.mix-row-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mix-row b {
+  flex: none;
+  font-size: 15px;
+}
+.mix-part-name {
+  font-size: clamp(14px, 1.12vw, 17px);
+  border-inline-start: 1px solid var(--line);
+  padding-inline-start: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mix-swap {
+  margin-inline-start: auto;
+}
+.mix-preview {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mix-ratio {
+  padding: 3px 10px;
+  background: var(--canvas);
+  border-radius: 6px;
+  color: var(--muted);
+}
+.mix-preview-stage {
+  flex: 1;
+  min-height: 140px;
+  position: relative;
+}
+.mix-poster {
+  position: absolute;
+  margin: 0;
+  inset: 0;
+  margin-inline: auto;
+  margin-block: auto;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--canvas);
+  container-type: inline-size;
+}
+.mix-poster.landscape {
+  width: 100%;
+  height: auto;
+}
+.mix-poster img,
+.mix-poster video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mix-poster figcaption {
+  position: absolute;
+  inset-inline: 7%;
+  top: 13%;
+  display: grid;
+  gap: 0.18em;
+  color: white;
+  text-shadow: 0 1px 4px #222;
+}
+.mix-poster figcaption strong {
+  font-size: 8cqw;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+.mix-poster figcaption span {
+  font-size: 4.3cqw;
+  font-weight: 600;
+}
+.mix-poster.poster-short-tour figcaption {
+  text-align: center;
+}
+.mix-poster.poster-short-tour strong {
+  color: var(--cover-color);
+  font-weight: 900;
+  -webkit-text-stroke: 0.65px #282017;
+  paint-order: stroke fill;
+  text-shadow:
+    0 2px 2px #221e19,
+    0 0 2px black;
+}
+.mix-poster.poster-standard figcaption {
+  top: 19%;
+}
+.mix-poster.poster-standard figcaption::before {
+  content: "";
+  width: 12%;
+  height: 3px;
+  background: var(--cover-color);
+}
+.mix-poster.poster-classic figcaption {
+  top: auto;
+  bottom: 9%;
+  padding: 4% 3%;
+  color: #25252b;
+  background: #fff;
+  text-shadow: none;
+  border-bottom: 3px solid var(--cover-color);
+}
+.mix-poster.landscape figcaption strong {
+  font-size: 4.5cqw;
+}
+.mix-poster.landscape figcaption span {
+  font-size: 2.6cqw;
+}
+.mix-preview small {
+  margin-top: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+.mix-preview-pending {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+.mix-batch-inputs,
+.mix-batch-inputs strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mix-batch-inputs {
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+.mix-batch-inputs strong {
+  margin-inline-end: 4px;
+}
+.mix-batch-inputs small {
+  color: var(--muted);
+}
+.factory-create-view .factory-mix-composer .factory-compose-submit {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0;
+  gap: 10px 16px;
+}
+.factory-mix-composer .factory-equation {
+  font-size: 14px;
+  margin: 0;
+}
+.factory-mix-composer .factory-compose-note,
+.factory-mix-composer .factory-compose-expanded {
+  margin-top: 0;
+}
+.factory-mix-composer .factory-cost-estimate {
+  font-size: 13px;
+}
+.factory-mix-composer .factory-cost-estimate small {
+  font-size: 12px;
+}
+.mix-options {
+  display: grid;
+  gap: 6px;
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+  margin-top: 12px;
+}
+.mix-options button {
+  text-align: start;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+.mix-options button[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.mix-options small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.mix-name {
+  display: grid;
+  gap: 8px;
+  margin-block: 12px;
+}
+@media (max-width: 1050px) {
+  .mix-layout {
+    grid-template-columns: minmax(0, 1.65fr) minmax(185px, 1fr);
+    gap: 10px;
+  }
+  .mix-row {
+    gap: 7px;
+    padding-inline: 8px;
+  }
+  .mix-card-foot {
+    flex-wrap: wrap;
+    padding-inline: 8px;
+  }
+  .mix-apply {
+    margin-inline-start: auto;
+  }
+}
+@media (max-width: 760px) {
+  .mix-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mix-preview-stage {
+    height: 280px;
+    flex: auto;
+  }
+  .mix-poster.landscape {
+    max-width: 400px;
+  }
+}

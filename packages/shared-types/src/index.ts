@@ -77,6 +77,7 @@ export interface Resource {
   sizeMb: number;
   publishedOnce?: boolean;
   production?: import("./production-template").ProductionTemplateRecipe;
+  definition?: import("./production-template").CatalogTemplate;
   previewed?: boolean;
 }
 export interface ProductionConfig {

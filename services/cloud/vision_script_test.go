@@ -114,6 +114,17 @@ func TestShortTourScriptPacing(t *testing.T) {
 		t.Fatal(err)
 	}
 	images := []any{object{"id": "room", "kind": "panorama", "jpeg": base64.StdEncoding.EncodeToString(jpg.Bytes())}}
+	mixed := object{"parts": object{"script": object{"id": "chosen"}}, "production": object{
+		"config": object{"design": "short-tour", "language": "zh-CN"}, "scriptRules": object{"overall": "按我的讲解节奏逐室介绍。"},
+	}}
+	mixedParts, _, err := visionContent(mixed, object{"title": "测试房源"}, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mixedInput object
+	if err = json.Unmarshal([]byte(str(mixedParts[0]["text"])), &mixedInput); err != nil || obj(mixedInput["rules"])["overall"] != "按我的讲解节奏逐室介绍。" {
+		t.Fatal("edit replaced the selected script's voice or pacing")
+	}
 	for _, id := range []string{"short-tour-vision", "short-tour-avatar"} {
 		t.Run(id, func(t *testing.T) {
 			index := slices.IndexFunc(catalog, func(item object) bool { return item["id"] == id })

@@ -201,7 +201,7 @@ class PanoramaWorkflow {
           mode === "runtime"
             ? { runtimeOnly: true }
             : mode === true
-              ? { summary: true, openingRecipe: true }
+              ? { summary: true, openingRecipe: true, bundleCatalog: true }
               : mode
                 ? { ...mode, openingRecipe: true }
                 : {},
@@ -209,6 +209,7 @@ class PanoramaWorkflow {
       : {};
     return {
       ...local,
+      ...(cloud.library ? { library: cloud.library } : {}),
       templates:
         mode === true || mode === "runtime"
           ? cloud.templates || []

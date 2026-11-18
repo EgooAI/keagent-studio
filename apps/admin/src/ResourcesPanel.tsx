@@ -22,6 +22,9 @@ import type { Resource, ResourceType, VideoMode } from "@keagent/shared-types";
 import type {
   ProductionTemplatePreview,
   ProductionTemplateRecipe,
+  CatalogTemplate,
+  CoverTemplate,
+  TemplateBundle,
 } from "@keagent/shared-types";
 import {
   defaultProduction,
@@ -30,13 +33,29 @@ import {
   ProductionTemplateRules,
 } from "./ProductionTemplateEditor";
 import {
+  BundleEditor,
+  CatalogNav,
+  CatalogRules,
+  CatalogSummary,
+  CoverEditor,
+  catalogSections,
+  defaultCover,
+  type CatalogSection,
+} from "./TemplateCatalog";
+import {
   listPagination,
   useAdminAction,
   useAdminList,
   useAdminParams,
 } from "./admin-api";
 
-export const resourceTypeLabels: Record<ResourceType, string> = {
+export const resourceTypeLabels: Record<
+  ResourceType | CatalogTemplate["kind"],
+  string
+> = {
+  bundle: "推荐搭配",
+  edit: "剪辑模板",
+  script: "文案模板",
   video: "视频模板",
   style: "风格模板",
   cover: "封面模板",
@@ -47,10 +66,22 @@ const modeLabels: Record<VideoMode, string> = {
   voiceover: "纯口播",
   avatar: "经纪人露脸",
 };
-type Values = Pick<
+type TemplateMetadata = Pick<
   Resource,
   "name" | "description" | "category" | "version"
-> & { production: ProductionTemplateRecipe };
+>;
+type Values = TemplateMetadata & Pick<Resource, "production" | "definition">;
+type FormValues = TemplateMetadata & {
+  production: ProductionTemplateRecipe;
+  cover: CoverTemplate;
+  parts: TemplateBundle["parts"];
+};
+const catalogTypes = {
+  bundle: "video",
+  edit: "style",
+  cover: "cover",
+  script: "prompt",
+} as const;
 const resourceState = (r: Resource) =>
   r.published ? "已上架" : r.publishedOnce ? "已下架" : "草稿";
 const isLocked = (r: Resource) => r.published || !!r.publishedOnce;
@@ -58,11 +89,19 @@ const isLocked = (r: Resource) => r.published || !!r.publishedOnce;
 export default function ResourcesPanel() {
   const { modal } = App.useApp();
   const { params, setParams } = useAdminParams();
-  const query = useAdminList("resources");
+  const tab = params.get("catalog");
+  const section: CatalogSection =
+    tab && Object.hasOwn(catalogSections, tab)
+      ? (tab as CatalogSection)
+      : "bundle";
+  const legacy = section === "legacy";
+  const sectionInfo = catalogSections[section];
+  const createLabel = legacy ? "新建模板草稿" : "新建" + sectionInfo.label;
+  const query = useAdminList("resources", legacy ? undefined : section);
   const { busy, run } = useAdminAction();
   const [rulesOpen, setRulesOpen] = useState(false);
   const [preview, setPreview] = useState<ProductionTemplatePreview>();
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<Resource | true>();
   const [dirty, setDirty] = useState(false);
   const templateId = params.get("templateId");
   const versionId = params.get("versionId");
@@ -117,8 +156,12 @@ export default function ResourcesPanel() {
         "/v1/admin/resources",
         {
           ...values,
-          type: "video",
-          compatibleModes: [values.production.config.videoMode],
+          type: values.definition
+            ? catalogTypes[values.definition.kind]
+            : "video",
+          ...(values.production
+            ? { compatibleModes: [values.production.config.videoMode] }
+            : {}),
           ...(source && !createVersion
             ? { id: source.id }
             : { versionOf: source?.id, published: false }),
@@ -135,7 +178,19 @@ export default function ResourcesPanel() {
     setDirty(false);
     if (source) {
       setParams({ versionId: savedId, update: undefined }, false);
-    } else setCreating(false);
+    } else {
+      setCreating(undefined);
+      if (values.definition)
+        setParams(
+          {
+            catalog: values.definition.kind,
+            templateId: savedId,
+            versionId: undefined,
+            update: undefined,
+          },
+          false,
+        );
+    }
   }
   async function showPreview(resource: Resource) {
     await run(async () => {
@@ -149,7 +204,10 @@ export default function ResourcesPanel() {
         }
       }
       const images =
-        resource.production?.schemaVersion === 2
+        resource.production?.schemaVersion === 2 ||
+        resource.definition?.kind === "bundle" ||
+        (resource.definition?.kind === "script" &&
+          "scriptRules" in resource.definition)
           ? await Promise.all(
               [1, 2].map(async (index) => {
                 const response = await fetch(`/media/interior-${index}.jpg`);
@@ -188,9 +246,13 @@ export default function ResourcesPanel() {
             {resource.name} · {resource.version}
           </p>
           <p>
-            {publish
-              ? "新任务将使用此版本。同一模板的其他版本会停用，已有任务保留原版本。"
-              : "停用后，新任务无法选择此版本。已有任务保留原版本。"}
+            {resource.definition
+              ? publish
+                ? "启用此版本后，可在对应的公共目录中选用。同一模板的其他版本将停用。"
+                : "此版本会从可选目录中移除。已发布搭配保留所选版本。"
+              : publish
+                ? "新任务将使用此版本。同一模板的其他版本会停用，已有任务保留原版本。"
+                : "停用后，新任务无法选择此版本。已有任务保留原版本。"}
           </p>
         </>
       ),
@@ -213,8 +275,9 @@ export default function ResourcesPanel() {
     const page = query.data;
     modal.confirm({
       title: `删除「${resource.name}」？`,
-      content:
-        "删除后，模板的所有版本都会从目录移除，新任务将无法选择。已有任务的版本记录会保留。",
+      content: resource.definition
+        ? "该模板的所有版本都会从公共目录移除。已发布搭配仍可追溯所引用的版本。"
+        : "删除后，模板的所有版本都会从目录移除，新任务将无法选择。已有任务的版本记录会保留。",
       okText: "确认删除",
       cancelText: "取消",
       okButtonProps: { danger: true },
@@ -316,6 +379,20 @@ export default function ResourcesPanel() {
                         更新版本
                       </Button>
                     )}
+                    {readOnly && selected.definition?.kind === "bundle" && (
+                      <Button
+                        disabled={busy}
+                        onClick={() =>
+                          setCreating({
+                            ...selected,
+                            name: selected.name.slice(0, 110) + "（副本）",
+                            version: "1.0.0",
+                          })
+                        }
+                      >
+                        复制搭配
+                      </Button>
+                    )}
                     {selected.published && (
                       <Button
                         disabled={busy}
@@ -363,6 +440,7 @@ export default function ResourcesPanel() {
               )}
               <ResourceForm
                 key={`${selected.id}:${newVersion}:${readOnly}`}
+                section={selected.definition?.kind || "legacy"}
                 source={selected}
                 newVersion={newVersion}
                 readOnly={readOnly}
@@ -375,167 +453,212 @@ export default function ResourcesPanel() {
           )}
         </section>
       ) : (
-        <section
-          className="admin-panel admin-table-panel"
-          aria-labelledby="admin-template-list"
-        >
-          <div className="admin-section-heading">
-            <div>
-              <h2 id="admin-template-list">模板目录</h2>
-              <p className="admin-secondary">
-                完整视频模板启用后会同步到 AI
-                视频工厂。点击模板名称查看版本记录。
-              </p>
-            </div>
-            <Button
-              type="primary"
-              icon={<Plus size={16} />}
-              onClick={() => setCreating(true)}
-            >
-              新建模板草稿
-            </Button>
-          </div>
-          <div className="admin-toolbar">
-            <Space wrap>
-              <Input.Search
-                key={params.get("q") || ""}
-                defaultValue={params.get("q") || ""}
-                placeholder="搜索模板名称或分类"
-                aria-label="搜索模板"
-                allowClear
-                onSearch={(q) => setParams({ q })}
-                style={{ width: 260 }}
-              />
-              <Select
-                aria-label="上架状态"
-                value={params.get("state") || ""}
-                style={{ width: 130 }}
-                onChange={(state) => setParams({ state })}
-                options={[
-                  { value: "", label: "全部状态" },
-                  { value: "draft", label: "草稿" },
-                  { value: "published", label: "已上架" },
-                  { value: "unpublished", label: "已下架" },
-                ]}
-              />
-            </Space>
-            <Space>
-              <Button onClick={() => setRulesOpen(true)}>添加规则</Button>
-              <Button
-                onClick={() => void query.refetch()}
-                loading={query.isFetching}
-              >
-                刷新
-              </Button>
-            </Space>
-          </div>
-          {query.error && (
-            <Alert
-              className="admin-notice"
-              type="error"
-              showIcon
-              title="模板目录读取失败"
-              description={query.error.message}
-              action={
-                <Button onClick={() => void query.refetch()}>重试</Button>
-              }
-            />
-          )}
-          <Table<Resource>
-            rowKey="id"
-            loading={query.isPending && !query.error}
-            dataSource={query.data?.items || []}
-            scroll={{ x: 1000 }}
-            pagination={listPagination(query.data, params, setParams)}
-            locale={{
-              emptyText: (
-                <Empty description="没有符合条件的模板。可调整筛选，或新建模板草稿。" />
-              ),
-            }}
-            columns={[
-              {
-                title: "模板",
-                key: "name",
-                render: (_, r) => (
-                  <>
-                    <Button
-                      type="link"
-                      className="admin-text-button"
-                      onClick={() => openEditor(r)}
-                    >
-                      {r.name}
-                    </Button>
-                    <p className="admin-secondary">{r.category || "未分类"}</p>
-                  </>
-                ),
-              },
-              { title: "版本", dataIndex: "version", width: 100 },
-              {
-                title: "适用模式",
-                key: "modes",
-                render: (_, r) =>
-                  r.compatibleModes.map((m) => modeLabels[m]).join("、") ||
-                  "未设置",
-              },
-              {
-                title: "状态",
-                key: "state",
-                width: 100,
-                render: (_, r) => (
-                  <Tag color={r.published ? "green" : "default"}>
-                    {resourceState(r)}
-                  </Tag>
-                ),
-              },
-              {
-                title: "操作",
-                key: "actions",
-                width: 280,
-                render: (_, r) => (
-                  <Space wrap>
-                    <Button
-                      size="small"
-                      disabled={busy}
-                      onClick={() => openEditor(r, true)}
-                    >
-                      更新版本
-                    </Button>
-                    <Button
-                      size="small"
-                      disabled={busy}
-                      onClick={() => void showPreview(r)}
-                    >
-                      预览校验
-                    </Button>
-                    <Button
-                      danger
-                      size="small"
-                      disabled={busy}
-                      onClick={() => deleteTemplate(r)}
-                    >
-                      删除模板
-                    </Button>
-                  </Space>
-                ),
-              },
-            ]}
+        <>
+          <CatalogNav
+            current={section}
+            onSelect={(catalog) =>
+              setParams({ catalog, q: undefined, state: undefined })
+            }
           />
-        </section>
+          <section
+            className="admin-panel admin-table-panel"
+            aria-labelledby="admin-template-list"
+          >
+            <div className="admin-section-heading">
+              <div>
+                <h2 id="admin-template-list">{sectionInfo.label}</h2>
+                <p className="admin-secondary">{sectionInfo.description}</p>
+              </div>
+              <Button
+                type="primary"
+                icon={<Plus size={16} />}
+                onClick={() => setCreating(true)}
+              >
+                {createLabel}
+              </Button>
+            </div>
+            <div className="admin-toolbar">
+              <Space wrap>
+                <Input.Search
+                  key={params.get("q") || ""}
+                  defaultValue={params.get("q") || ""}
+                  placeholder="搜索模板名称或分类"
+                  aria-label="搜索模板"
+                  allowClear
+                  onSearch={(q) => setParams({ q })}
+                  style={{ width: 260 }}
+                />
+                <Select
+                  aria-label="上架状态"
+                  value={params.get("state") || ""}
+                  style={{ width: 130 }}
+                  onChange={(state) => setParams({ state })}
+                  options={[
+                    { value: "", label: "全部状态" },
+                    { value: "draft", label: "草稿" },
+                    { value: "published", label: "已上架" },
+                    { value: "unpublished", label: "已下架" },
+                  ]}
+                />
+              </Space>
+              <Space>
+                {!legacy && (
+                  <Button
+                    type="text"
+                    onClick={() =>
+                      setParams({
+                        catalog: "legacy",
+                        q: undefined,
+                        state: undefined,
+                      })
+                    }
+                  >
+                    旧版完整模板
+                  </Button>
+                )}
+                <Button onClick={() => setRulesOpen(true)}>
+                  {legacy ? "添加规则" : "管理规则"}
+                </Button>
+                <Button
+                  onClick={() => void query.refetch()}
+                  loading={query.isFetching}
+                >
+                  刷新
+                </Button>
+              </Space>
+            </div>
+            {query.error && (
+              <Alert
+                className="admin-notice"
+                type="error"
+                showIcon
+                title="模板目录读取失败"
+                description={query.error.message}
+                action={
+                  <Button onClick={() => void query.refetch()}>重试</Button>
+                }
+              />
+            )}
+            <Table<Resource>
+              rowKey="id"
+              loading={query.isPending && !query.error}
+              dataSource={query.data?.items || []}
+              scroll={{ x: 1000 }}
+              pagination={listPagination(query.data, params, setParams)}
+              locale={{
+                emptyText: (
+                  <Empty description="没有符合条件的模板。可调整筛选，或新建模板草稿。" />
+                ),
+              }}
+              columns={[
+                {
+                  title: "模板",
+                  key: "name",
+                  render: (_, r) => (
+                    <>
+                      <Button
+                        type="link"
+                        className="admin-text-button"
+                        onClick={() => openEditor(r)}
+                      >
+                        {r.name}
+                      </Button>
+                      <p className="admin-secondary">
+                        {r.category || "未分类"}
+                      </p>
+                    </>
+                  ),
+                },
+                { title: "版本", dataIndex: "version", width: 100 },
+                {
+                  title: legacy
+                    ? "适用模式"
+                    : section === "bundle"
+                      ? "搭配内容"
+                      : "模板内容",
+                  key: "contents",
+                  render: (_, r) =>
+                    r.definition ? (
+                      <CatalogSummary definition={r.definition} />
+                    ) : (
+                      r.compatibleModes.map((m) => modeLabels[m]).join("、") ||
+                      "未设置"
+                    ),
+                },
+                {
+                  title: "状态",
+                  key: "state",
+                  width: 100,
+                  render: (_, r) => (
+                    <Tag color={r.published ? "green" : "default"}>
+                      {resourceState(r)}
+                    </Tag>
+                  ),
+                },
+                {
+                  title: "操作",
+                  key: "actions",
+                  width: 280,
+                  render: (_, r) => (
+                    <Space wrap>
+                      <Button
+                        size="small"
+                        disabled={busy}
+                        onClick={() => openEditor(r, true)}
+                      >
+                        更新版本
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={busy}
+                        onClick={() => void showPreview(r)}
+                      >
+                        预览校验
+                      </Button>
+                      <Button
+                        danger
+                        size="small"
+                        disabled={busy}
+                        onClick={() => deleteTemplate(r)}
+                      >
+                        删除模板
+                      </Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </section>
+        </>
       )}
       <Modal
-        title="新建模板草稿"
-        open={creating}
-        onCancel={() => setCreating(false)}
+        title={typeof creating === "object" ? "复制为新搭配" : createLabel}
+        open={!!creating}
+        onCancel={() => setCreating(undefined)}
         okText="保存草稿"
         cancelText="取消"
         okButtonProps={{ htmlType: "submit", form: "new-template" }}
         confirmLoading={busy}
         closable={!busy}
         maskClosable={!busy}
+        centered={!legacy}
+        styles={
+          legacy
+            ? undefined
+            : {
+                body: {
+                  maxHeight: "calc(100dvh - 150px)",
+                  overflowY: "auto",
+                  padding: "4px 4px 0 0",
+                },
+              }
+        }
         destroyOnHidden
         width={760}
       >
         <ResourceForm
+          section={typeof creating === "object" ? "bundle" : section}
+          source={typeof creating === "object" ? creating : undefined}
           formId="new-template"
           busy={busy}
           onSave={(values) => void save(values)}
@@ -543,12 +666,12 @@ export default function ResourcesPanel() {
       </Modal>
       <Drawer
         rootClassName="admin-detail-drawer"
-        title="视频模板添加规则"
+        title={legacy ? "视频模板添加规则" : "公共模板管理规则"}
         open={rulesOpen}
         onClose={() => setRulesOpen(false)}
         width={640}
       >
-        <ProductionTemplateRules />
+        {legacy ? <ProductionTemplateRules /> : <CatalogRules />}
       </Drawer>
       <Drawer
         rootClassName="admin-detail-drawer"
@@ -564,6 +687,7 @@ export default function ResourcesPanel() {
 }
 
 function ResourceForm({
+  section,
   source,
   newVersion = false,
   readOnly = false,
@@ -573,6 +697,7 @@ function ResourceForm({
   onDirty,
   onSave,
 }: {
+  section: CatalogSection;
   source?: Resource;
   newVersion?: boolean;
   readOnly?: boolean;
@@ -583,6 +708,26 @@ function ResourceForm({
   onSave: (values: Values) => void;
 }) {
   let production = source?.production || defaultProduction;
+  const definition = source?.definition;
+  if (definition?.kind === "edit") {
+    production = {
+      ...defaultProduction,
+      config: { ...defaultProduction.config, ...definition.config },
+      opening: definition.opening,
+    };
+  } else if (definition?.kind === "script") {
+    const config = {
+      ...defaultProduction.config,
+      language: definition.language,
+    };
+    production =
+      "phrases" in definition
+        ? {
+            schemaVersion: 1,
+            config: { ...config, cameraMode: undefined, ...definition.phrases },
+          }
+        : { ...defaultProduction, config, scriptRules: definition.scriptRules };
+  }
   if (!readOnly && production.schemaVersion === 1) {
     const { openingTemplate, sceneTemplate, closingTemplate, ...config } =
       production.config;
@@ -598,7 +743,8 @@ function ResourceForm({
     };
   }
   return (
-    <Form
+    <Form<FormValues>
+      name={formId || "template-version"}
       id={formId}
       className={readOnly ? "admin-template-readonly" : undefined}
       layout="vertical"
@@ -609,49 +755,99 @@ function ResourceForm({
         version: newVersion ? "" : source?.version || "1.0.0",
         compatibleModes: source?.compatibleModes,
         production,
+        cover: definition?.kind === "cover" ? definition : defaultCover,
+        parts: definition?.kind === "bundle" ? definition.parts : undefined,
       }}
       disabled={busy || readOnly}
       onValuesChange={onDirty}
-      onFinish={onSave}
+      onFinish={({
+        name,
+        description,
+        category,
+        version,
+        production: recipe,
+        cover,
+        parts,
+      }) => {
+        const meta = { name, description, category, version };
+        if (section === "legacy")
+          return onSave({ ...meta, production: recipe });
+        let definition: CatalogTemplate;
+        switch (section) {
+          case "edit": {
+            const { language, ...config } = recipe.config;
+            definition = {
+              kind: "edit",
+              config,
+              ...(recipe.schemaVersion === 2 &&
+              config.videoMode === "avatar" &&
+              recipe.opening
+                ? { opening: recipe.opening }
+                : {}),
+            };
+            break;
+          }
+          case "script": {
+            if (recipe.schemaVersion !== 2) return;
+            definition = {
+              kind: "script",
+              language: recipe.config.language,
+              scriptRules: recipe.scriptRules,
+            };
+            break;
+          }
+          case "cover":
+            definition = { ...cover, kind: "cover" };
+            break;
+          case "bundle":
+            definition = { kind: "bundle", parts };
+            break;
+        }
+        onSave({ ...meta, definition });
+      }}
     >
-      <Form.Item
-        name="name"
-        label="模板名称"
-        rules={[{ required: true, whitespace: true, max: 120 }]}
+      <div
+        className={section === "legacy" ? undefined : "admin-template-metadata"}
       >
-        <Input maxLength={120} />
-      </Form.Item>
-      <Form.Item
-        name="category"
-        label="分类"
-        rules={[{ required: true, whitespace: true, max: 80 }]}
-      >
-        <Input maxLength={80} />
-      </Form.Item>
-      <Form.Item
-        name="version"
-        label="版本号"
-        rules={[
-          { required: true, whitespace: true, max: 40 },
-          {
-            pattern: /^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,4}$/,
-            message: "制作模板请使用 1.0.0 格式的版本号",
-          },
-          {
-            validator: (_, value: string) =>
-              versions.some(
-                (version) =>
-                  (newVersion || version.id !== source?.id) &&
-                  version.version === value?.trim(),
-              )
-                ? Promise.reject(new Error("此模板已使用该版本号"))
-                : Promise.resolve(),
-          },
-        ]}
-      >
-        <Input placeholder="例如 1.0.0" maxLength={40} />
-      </Form.Item>
-      {readOnly && (
+        <Form.Item
+          name="name"
+          label="模板名称"
+          rules={[{ required: true, whitespace: true, max: 120 }]}
+        >
+          <Input maxLength={120} />
+        </Form.Item>
+        <Form.Item
+          name="category"
+          label="分类"
+          rules={[{ required: true, whitespace: true, max: 80 }]}
+        >
+          <Input maxLength={80} />
+        </Form.Item>
+        <Form.Item
+          name="version"
+          label="版本号"
+          rules={[
+            { required: true, whitespace: true, max: 40 },
+            {
+              pattern: /^[1-9][0-9]{0,3}\.[0-9]{1,4}\.[0-9]{1,4}$/,
+              message: "制作模板请使用 1.0.0 格式的版本号",
+            },
+            {
+              validator: (_, value: string) =>
+                versions.some(
+                  (version) =>
+                    (newVersion || version.id !== source?.id) &&
+                    version.version === value?.trim(),
+                )
+                  ? Promise.reject(new Error("此模板已使用该版本号"))
+                  : Promise.resolve(),
+            },
+          ]}
+        >
+          <Input placeholder="例如 1.0.0" maxLength={40} />
+        </Form.Item>
+      </div>
+      {readOnly && section === "legacy" && (
         <Form.Item
           name="compatibleModes"
           label="适用视频模式"
@@ -673,15 +869,19 @@ function ResourceForm({
           />
         </Form.Item>
       )}
-      <Form.Item
-        name="description"
-        label="适用说明"
-        rules={[{ max: 4000 }]}
-        extra="显示给用户的适用说明。具体句式在下方制作规则中填写。"
-      >
-        <Input.TextArea rows={4} maxLength={4000} showCount />
+      <Form.Item name="description" label="适用说明" rules={[{ max: 4000 }]}>
+        <Input.TextArea rows={2} maxLength={4000} showCount />
       </Form.Item>
-      <ProductionTemplateEditor disabled={busy || readOnly} />
+      {section === "cover" ? (
+        <CoverEditor />
+      ) : section === "bundle" ? (
+        <BundleEditor readOnly={readOnly} disabled={busy} />
+      ) : (
+        <ProductionTemplateEditor
+          section={section}
+          disabled={busy || readOnly}
+        />
+      )}
       {!formId && !readOnly && (
         <Button type="primary" htmlType="submit" loading={busy}>
           保存草稿

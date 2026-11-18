@@ -15,6 +15,21 @@ function lines(value, count, limit = 2) {
   return result;
 }
 function card(job, kind) {
+  const cover = kind === "cover" && job.templateSnapshot?.cover;
+  if (cover) {
+    if (cover.imageSource === "frame") return {};
+    const opening = cover.titleSource === "opening" ? card(job, "opening") : {};
+    return {
+      design: cover.design,
+      brandColor: cover.brandColor,
+      subtitleSize: job.config.subtitleSize,
+      title: opening.title || job.property?.title || "",
+      hook: cover.design === "short-tour" ? opening.hook : "",
+      facts: cover.showFacts
+        ? domain.facts(job.property || {}, job.config.language)
+        : "",
+    };
+  }
   if (job.config.design === "short-tour") {
     const opening = kind === "opening" || kind === "cover";
     return {
@@ -68,50 +83,173 @@ function card(job, kind) {
     subtitleSize: job.config.subtitleSize,
   };
 }
-function shortCaptions(captions) {
-  const splitter = new Intl.Segmenter("zh-CN", { granularity: "word" });
+const captionWordSplitter = new Intl.Segmenter("zh-CN", {
+  granularity: "word",
+});
+const captionPhrase =
+  /(?:\d+(?:[.,]\d+)*[ \t]*(?:平方米|平米|平方|㎡|m²|m2|万元|元|万|亿|室|厅|卫|厨|层|公里|米|分钟|[%％]))+|\d+(?:[.,]\d+)+|抽油烟机|油烟机|淋浴喷头|热水器|卫生间|洗手台|洗衣机|家属院|落地窗|推拉门|中央空调|南北通透|干湿分离|实地看房/giu;
+const trailingCaptionMark = /^[\s\p{Pe}\p{Pf}，、；。！？：,;.!?:…”’"']+$/u;
+const captionPauseMark = /[，、；。！？：,;.!?:…][\s\p{Pe}\p{Pf}”’"']*$/u;
+const captionJoiner = /^(?:和|与|及|跟|或|的|地|得|都|把|在)\s*$/u;
+
+function captionWords(text) {
+  const words = [];
+  const add = (word) => {
+    if (words.length && trailingCaptionMark.test(word))
+      words[words.length - 1] += word;
+    else words.push(word);
+  };
+  let offset = 0;
+  for (const match of text.matchAll(captionPhrase)) {
+    for (const { segment } of captionWordSplitter.segment(
+      text.slice(offset, match.index),
+    ))
+      add(segment);
+    add(match[0]);
+    offset = match.index + match[0].length;
+  }
+  for (const { segment } of captionWordSplitter.segment(text.slice(offset)))
+    add(segment);
+  return words;
+}
+
+function captionChunks(text) {
+  const targetWidth = 12;
+  const maxWidth = 16;
+  const words = captionWords(text);
+  const widths = [0];
+  for (const word of words) {
+    let width = widths.at(-1);
+    for (const char of word) width += char.codePointAt(0) < 128 ? 0.55 : 1;
+    widths.push(width);
+  }
+  const totalWidth = widths.at(-1);
+  const chunks = [];
+  let start = 0;
+  while (start < words.length) {
+    if (totalWidth - widths[start] <= targetWidth) {
+      chunks.push(words.slice(start).join(""));
+      break;
+    }
+    let fitted = start;
+    let preferred = start;
+    let natural = start;
+    for (let end = start + 1; end <= words.length; end++) {
+      const width = widths[end] - widths[start];
+      if (width > maxWidth) break;
+      fitted = end;
+      if (width <= targetWidth && !captionJoiner.test(words[end - 1]))
+        preferred = end;
+      if (
+        width >= 4 &&
+        totalWidth - widths[end] >= 4 &&
+        captionPauseMark.test(words[end - 1])
+      )
+        natural = end;
+    }
+    // Preserve longer words and identifiers as a whole when there is no safe cut.
+    const end =
+      natural > start
+        ? natural
+        : fitted === words.length || totalWidth - widths[preferred] < 4
+          ? fitted
+          : Math.max(preferred, start + 1);
+    chunks.push(words.slice(start, end).join(""));
+    start = end;
+  }
+  return chunks;
+}
+
+function shortCaptions(captions, pauses = []) {
   return captions.flatMap((caption) => {
-    const total = Array.from(caption.text).length;
-    const limit = Math.ceil(total / Math.ceil(total / 12));
-    const chunks = [];
-    let current = "";
-    for (const { segment: word } of splitter.segment(caption.text)) {
-      if (!current && chunks.length && /^[\p{P}\s]+$/u.test(word)) {
-        chunks[chunks.length - 1] += word;
-        continue;
-      }
-      if (current && Array.from(current + word).length > limit) {
-        chunks.push(current);
-        current = "";
-      }
-      for (const char of word) {
-        current += char;
-        if (Array.from(current).length === limit) {
-          chunks.push(current);
-          current = "";
+    const chunks = captionChunks(caption.text);
+    if (chunks.length < 2) return [caption];
+    const weights = chunks.map((text) =>
+      Math.max(1, Array.from(text.replace(/[\s\p{P}]/gu, "")).length),
+    );
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const duration = caption.end - caption.start;
+    let used = 0;
+    const boundaries = [
+      caption.start,
+      ...weights.slice(0, -1).map((weight) => {
+        used += weight;
+        return caption.start + (duration * used) / total;
+      }),
+      caption.end,
+    ];
+    const times = [...boundaries];
+    for (let i = 1; i < boundaries.length - 1; i++) {
+      if (!captionPauseMark.test(chunks[i - 1])) continue;
+      const estimate = boundaries[i];
+      const earliest = (boundaries[i - 1] + estimate) / 2;
+      const latest = (estimate + boundaries[i + 1]) / 2;
+      let bestDistance = Math.min(0.6, duration * 0.25);
+      for (const { start, end } of pauses) {
+        if (start <= caption.start + 0.06 || end >= caption.end - 0.06)
+          continue;
+        const distance = Math.abs((start + end) / 2 - estimate);
+        const switchAt = Math.max(start, end - 0.08);
+        if (
+          distance < bestDistance &&
+          switchAt > earliest &&
+          switchAt < latest
+        ) {
+          bestDistance = distance;
+          times[i] = switchAt;
         }
       }
     }
-    if (current) chunks.push(current);
-    let used = 0;
-    // shortcut: distribute each measured sentence by character count until TTS supplies word timestamps.
-    return chunks.map((text) => {
-      const start =
-        caption.start + ((caption.end - caption.start) * used) / total;
-      used += Array.from(text).length;
-      return {
-        ...caption,
-        text,
-        start,
-        end:
-          used === total
-            ? caption.end
-            : caption.start + ((caption.end - caption.start) * used) / total,
-      };
-    });
+    return chunks.map((text, index) => ({
+      ...caption,
+      text,
+      start: times[index],
+      end: times[index + 1],
+    }));
   });
 }
 function decorate(ass, segment, width, height, theme = {}) {
+  if (theme.design === "classic" && theme.title) {
+    const x = Math.round(width * 0.07);
+    const right = width - x;
+    const pad = Math.round(width * 0.026);
+    const size = Math.round(Math.min(width, height) * 0.072);
+    const titles = lines(theme.title, width < height ? 12 : 26);
+    const facts = theme.facts
+      ? lines(theme.facts, width < height ? 22 : 48)
+      : [];
+    const lineHeight = Math.round(size * 1.22);
+    const bottom = Math.round(height * 0.91);
+    const top =
+      bottom -
+      pad * 2 -
+      titles.length * lineHeight -
+      facts.length * Math.round(lineHeight * 0.6);
+    const color = theme.brandColor.slice(1).match(/../g).reverse().join("");
+    const event = (layer, value) =>
+      `Dialogue: ${layer},0:00:00.00,0:10:00.00,Title,,0,0,0,,${value}\n`;
+    const rect = (y, end, fill) =>
+      event(
+        0,
+        `{\\an7\\pos(${x},${y})\\1c&H${fill}&\\p1}m 0 0 l ${right - x} 0 l ${right - x} ${end - y} l 0 ${end - y}{\\p0}`,
+      );
+    ass = ass.replace(
+      "[Events]",
+      `Style: Title,Microsoft YaHei,${size},&H002B2520,&H002B2520,&HFF000000,&HFF000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n[Events]`,
+    );
+    return (
+      ass +
+      rect(top, bottom, "FFFFFF") +
+      rect(bottom, bottom + 4, color) +
+      event(1, `{\\an7\\pos(${x + pad},${top + pad})}${titles.join("\\N")}`) +
+      (facts.length
+        ? event(
+            1,
+            `{\\an7\\b0\\fs${Math.round(size * 0.57)}\\pos(${x + pad},${top + pad + titles.length * lineHeight})}${facts.join("\\N")}`,
+          )
+        : "")
+    );
+  }
   if (theme.design === "short-tour") {
     const scale = Math.min(width, height) / 720;
     const captionSize = Math.round(

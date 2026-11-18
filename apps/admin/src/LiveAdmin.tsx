@@ -67,8 +67,7 @@ const pages = [
     key: "resources",
     label: "公共模板",
     icon: <Boxes size={18} />,
-    description:
-      "配置视频工厂使用的文案、镜头、字幕和封面规则，预览后发布模板版本。",
+    description: "维护剪辑、封面与文案模板，为视频创作发布推荐搭配。",
   },
   {
     key: "tasks",

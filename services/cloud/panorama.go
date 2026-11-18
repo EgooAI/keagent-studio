@@ -129,9 +129,18 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		return s.fetchBeike(ctx, input)
 	case "opening-submit", "opening-query":
 		return s.productionOpening(ctx, a, operation, input)
+	case "mix-save", "mix-resolve":
+		return s.factoryMix(ctx, a, input, operation == "mix-save")
 	case "capabilities":
 		templates := []any{}
-		if input["runtimeOnly"] != true {
+		var library object
+		if input["bundleCatalog"] == true {
+			var err error
+			library, err = s.factoryLibrary(ctx, a.UserID)
+			if err != nil {
+				return nil, err
+			}
+		} else if input["runtimeOnly"] != true {
 			var err error
 			templates, err = s.productionTemplates(ctx, input["openingRecipe"] == true)
 			if err != nil {
@@ -163,7 +172,11 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 				templates[i] = summary
 			}
 		}
-		return object{"templates": templates, "ai": services[0].State == "configured", "bailianTts": qwenSpeechConfigured(ctx), "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": minimaxConfigured(ctx)}, nil
+		caps := object{"templates": templates, "ai": services[0].State == "configured", "bailianTts": qwenSpeechConfigured(ctx), "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": minimaxConfigured(ctx)}
+		if library != nil {
+			caps["library"] = library
+		}
+		return caps, nil
 	case "template":
 		template, err := s.productionTemplate(ctx, input)
 		if err == nil && obj(obj(template["production"])["opening"]) != nil && input["openingRecipe"] != true {
@@ -171,7 +184,7 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		}
 		return template, err
 	case "script-vision":
-		template, err := s.loadProductionTemplate(ctx, object{"id": input["templateId"], "version": input["templateVersion"]}, input["openingRecipe"] == true)
+		template, err := s.jobProductionTemplate(ctx, a, input, input["openingRecipe"] == true)
 		if err != nil {
 			return nil, err
 		}

@@ -15,15 +15,24 @@ import (
 const resourceFamilySQL = `COALESCE(payload->>'familyId', 'legacy:' || jsonb_build_array(payload->>'type', lower(trim(payload->>'name')))::text)`
 const resourceVersionOrderSQL = `CASE WHEN payload->>'version' ~ '^[0-9]+(\.[0-9]+)*$' THEN string_to_array(payload->>'version', '.')::numeric[] END DESC NULLS LAST, payload->>'version' DESC, id`
 const productionResourceSQL = `payload->>'type'='video' AND payload->'production'->>'schemaVersion' IN ('1','2')`
+const managedResourceSQL = `((` + productionResourceSQL + `) OR payload ? 'definition')`
 const undeletedResourceSQL = `NOT (payload ? 'deletedAt')`
+
+func resourceAuditFields(resource object) object {
+	info := pickFields(resource, "name", "type", "version")
+	if kind := obj(resource["definition"])["kind"]; kind != nil {
+		info["type"] = kind
+	}
+	return info
+}
 
 func resourceFamily(ctx context.Context, tx *sql.Tx, target, source string, input object) (string, error) {
 	anchor := target
 	if source != "" {
 		anchor = source
 	}
-	var family, kind string
-	err := tx.QueryRowContext(ctx, `SELECT `+resourceFamilySQL+`, COALESCE(payload->>'type','') FROM keagent_resource WHERE id=$1`, anchor).Scan(&family, &kind)
+	var family, kind, definitionKind string
+	err := tx.QueryRowContext(ctx, `SELECT `+resourceFamilySQL+`, COALESCE(payload->>'type',''), COALESCE(payload->'definition'->>'kind','') FROM keagent_resource WHERE id=$1`, anchor).Scan(&family, &kind, &definitionKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		if source != "" {
 			return "", fail(404, "来源模板版本不存在")
@@ -32,7 +41,7 @@ func resourceFamily(ctx context.Context, tx *sql.Tx, target, source string, inpu
 	} else if err != nil {
 		return "", err
 	}
-	if source != "" && (input["type"] != kind || input["published"] == true) {
+	if source != "" && (input["type"] != kind || str(obj(input["definition"])["kind"]) != definitionKind || input["published"] == true) {
 		return "", fail(422, "更新版本须使用原模板类型并先保存草稿")
 	}
 	// Every write locks the family before any row, including switches across two versions.
@@ -60,7 +69,7 @@ func deleteResourceFamily(ctx context.Context, tx *sql.Tx, target string) (objec
 		return nil, err
 	}
 	var raw []byte
-	err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND `+productionResourceSQL, target).Scan(&raw)
+	err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND `+managedResourceSQL, target).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fail(404, "模板不存在")
 	}
@@ -79,12 +88,12 @@ func deleteResourceFamily(ctx context.Context, tx *sql.Tx, target string) (objec
 		'deletedAt', now(), 'published', false,
 		'publishedOnce', COALESCE(payload->>'published'='true', false) OR COALESCE(payload->>'publishedOnce'='true', false)
 	) WHERE `+resourceFamilySQL+`=$1 AND `+undeletedResourceSQL, family)
-	return pickFields(resource, "name", "type", "version"), err
+	return resourceAuditFields(resource), err
 }
 
 func queryResourceVersions(ctx context.Context, db adminQuerier, id string) ([]any, error) {
-	rr, err := db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE `+undeletedResourceSQL+` AND `+productionResourceSQL+` AND `+resourceFamilySQL+
-		`=(SELECT `+resourceFamilySQL+` FROM keagent_resource WHERE id=$1 AND `+undeletedResourceSQL+` AND `+productionResourceSQL+`) ORDER BY `+resourceVersionOrderSQL, id)
+	rr, err := db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE `+undeletedResourceSQL+` AND `+managedResourceSQL+` AND `+resourceFamilySQL+
+		`=(SELECT `+resourceFamilySQL+` FROM keagent_resource WHERE id=$1 AND `+undeletedResourceSQL+` AND `+managedResourceSQL+`) ORDER BY `+resourceVersionOrderSQL, id)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +169,9 @@ func validateResource(input object) error {
 		if !local && !remote {
 			return fail(422, "缩略图请填写公共图片地址或 /media/ 本地资源路径")
 		}
+	}
+	if input["definition"] != nil {
+		return validateCatalogTemplate(input)
 	}
 	if input["production"] != nil {
 		return validateProduction(input)

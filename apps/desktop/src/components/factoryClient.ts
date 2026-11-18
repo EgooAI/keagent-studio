@@ -4,6 +4,11 @@ import type {
   PanoramaDraft,
   PanoramaJob,
   Property,
+  CoverTemplate,
+  EditTemplate,
+  TemplatePartOption,
+  TemplatePartKind,
+  TemplateBundle,
 } from "@keagent/shared-types";
 import { request } from "./panoramaClient";
 
@@ -37,10 +42,88 @@ export type FactoryOpeningPhoto = Pick<FactoryOpeningClip, "id" | "name">;
 
 export type FactoryCatalog = Omit<PanoramaCapabilities, "templates"> & {
   templates: FactoryTemplate[];
+  library?: FactoryLibrary;
   openingClip?: FactoryOpeningClip;
   openingPhoto?: FactoryOpeningPhoto;
   openingBackground?: FactoryOpeningPhoto & { asset: string };
 };
+export type FactoryBundle = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  thumbnail?: string;
+  parts: TemplateBundle["parts"];
+};
+export type FactoryPart = TemplatePartOption & {
+  available: boolean;
+  description?: string;
+  cover?: CoverTemplate;
+  config?: EditTemplate["config"];
+  opening?: "minimax";
+  language?: PanoramaConfig["language"];
+};
+export type FactoryLibrary = {
+  recommended: FactoryBundle[];
+  personal: FactoryBundle[];
+  parts: FactoryPart[];
+};
+export const partKinds: TemplatePartKind[] = ["edit", "cover", "script"];
+export const partLabel = {
+  edit: "剪辑模板",
+  cover: "封面模板",
+  script: "文案模板",
+};
+export function matchesMix(a: FactoryBundle, b: FactoryBundle) {
+  return (
+    a.id === b.id &&
+    a.version === b.version &&
+    partKinds.every(
+      (kind) => templateKey(a.parts[kind]) === templateKey(b.parts[kind]),
+    )
+  );
+}
+export function partFor(
+  parts: FactoryPart[],
+  bundle: FactoryBundle,
+  kind: TemplatePartKind,
+) {
+  const ref = bundle.parts[kind];
+  return parts.find(
+    (part) =>
+      part.kind === kind && part.id === ref.id && part.version === ref.version,
+  );
+}
+export function mixTemplate(
+  parts: FactoryPart[],
+  bundle: FactoryBundle,
+): FactoryTemplate | undefined {
+  const edit = partFor(parts, bundle, "edit");
+  const language = partFor(parts, bundle, "script")?.language;
+  if (!edit?.config || !language || !partFor(parts, bundle, "cover")?.cover)
+    return;
+  return {
+    id: bundle.id,
+    version: bundle.version,
+    name: bundle.name,
+    description: bundle.description,
+    config: { ...edit.config, language },
+    opening: edit.opening,
+  };
+}
+export function mixRequest(bundle: FactoryBundle) {
+  const { id, version, parts } = bundle;
+  return {
+    id,
+    version,
+    parts: Object.fromEntries(
+      partKinds.map((kind) => [
+        kind,
+        { id: parts[kind].id, version: parts[kind].version },
+      ]),
+    ),
+  };
+}
 export type FactoryProperty = Pick<
   Property,
   | "id"

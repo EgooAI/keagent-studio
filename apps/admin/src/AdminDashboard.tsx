@@ -147,7 +147,7 @@ export default function AdminDashboard() {
           </Link>
           <Link to="/admin/resources?state=published">
             <span className="admin-metric-label">
-              已上架模板
+              已上架推荐搭配
               <ArrowUpRight size={16} aria-hidden="true" />
             </span>
             <strong>{data.publishedResources}</strong>

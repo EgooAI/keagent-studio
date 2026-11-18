@@ -27,7 +27,9 @@ func visionContent(template, property object, images []any) ([]object, []string,
 	}
 	rules = pickFields(rules, "overall", "opening", "scene", "closing")
 	shortTour := config["design"] == "short-tour"
-	if shortTour {
+	// Catalog scripts carry their own voice and pacing. A swapped edit must not
+	// overwrite those choices with the older full-template writing instructions.
+	if shortTour && template["parts"] == nil {
 		rules["overall"] = str(rules["overall"]) + " 整片目标 24–30 秒，中文全部段落合计约 100–130 个汉字，英文约 55–70 个单词，按出镜图数量分配篇幅。像经纪人自然带看，使用简短口语，只选有证据的卖点，不编造急售、降价、业主动机、采光或距离。"
 		rules["opening"] = str(rules["opening"]) + " 开场只说一句，约 2–3 秒；中文 10–14 字，英文 6–10 词。"
 		rules["scene"] = str(rules["scene"]) + " 每图一句，只讲当前画面一个要点，句内可用逗号自然停顿，避免逐图重复面积、价格或开场。"

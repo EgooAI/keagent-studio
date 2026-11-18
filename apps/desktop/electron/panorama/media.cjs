@@ -280,6 +280,47 @@ async function synthesize(segment, c, cwd, signal, remote) {
     );
   return { ...segment, audio, audioKey: key, duration: seconds, captions };
 }
+
+async function shortTourCaptions(narration, cwd, signal) {
+  const captions = presentation.shortCaptions(narration.captions);
+  if (captions.length === narration.captions.length) return captions;
+
+  try {
+    const metadata = await run(
+      ffmpeg(),
+      [
+        "-v",
+        "error",
+        "-i",
+        narration.audio,
+        "-af",
+        "silencedetect=n=-35dB:d=0.08,ametadata=mode=print:file=-",
+        "-f",
+        "null",
+        "-",
+      ],
+      cwd,
+      signal,
+    );
+    const pauses = [];
+    let start;
+    for (const [, mark, value] of metadata.matchAll(
+      /lavfi\.silence_(start|end)=([\d.]+)/g,
+    )) {
+      if (mark === "start") start = Number(value);
+      else if (start !== undefined) {
+        pauses.push({ start, end: Number(value) });
+        start = undefined;
+      }
+    }
+    return presentation.shortCaptions(narration.captions, pauses);
+  } catch {
+    signal?.throwIfAborted();
+    // The existing audio timing is still usable if pause detection is unavailable.
+    return captions;
+  }
+}
+
 function assTime(seconds) {
   const n = Math.max(0, Math.round(seconds * 100));
   return `${Math.floor(n / 360000)}:${String(Math.floor(n / 6000) % 60).padStart(2, "0")}:${String(Math.floor(n / 100) % 60).padStart(2, "0")}.${String(n % 100).padStart(2, "0")}`;
@@ -374,6 +415,49 @@ function spatialRuns(job, audio, hasOpeningVideo) {
   }
   return runs;
 }
+function fieldOfView(width, height, shortTour) {
+  const hFov = width < height ? (shortTour ? 84 : 70) : 100;
+  const vFov =
+    shortTour && width < height
+      ? (2 *
+          Math.atan((Math.tan((hFov * Math.PI) / 360) * height) / width) *
+          180) /
+        Math.PI
+      : width < height
+        ? 103
+        : 62;
+  return { hFov, vFov };
+}
+function coverProjection(width, height, hFov, vFov, yaw) {
+  return `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${hFov}:v_fov=${vFov}:yaw=${yaw}`;
+}
+async function previewCoverImage(ownerDir, scene, portrait, shortTour) {
+  const [w, h] = portrait ? [360, 640] : [640, 360];
+  const { hFov, vFov } = fieldOfView(w, h, shortTour);
+  const jpeg = await run(
+    ffmpeg(),
+    [
+      "-v",
+      "error",
+      "-i",
+      path.join(ownerDir, "assets", scene.asset),
+      "-vf",
+      coverProjection(w, h, hFov, vFov, scene.yaw),
+      "-frames:v",
+      "1",
+      "-f",
+      "image2pipe",
+      "-c:v",
+      "mjpeg",
+      "pipe:1",
+    ],
+    ownerDir,
+    undefined,
+    undefined,
+    "buffer",
+  );
+  return "data:image/jpeg;base64," + jpeg.toString("base64");
+}
 async function render(
   job,
   audio,
@@ -396,16 +480,7 @@ async function render(
       : c.resolution === "720p"
         ? [1280, 720]
         : [1920, 1080];
-  const hFov = width < height ? (shortTour ? 84 : 70) : 100;
-  const vFov =
-    shortTour && width < height
-      ? (2 *
-          Math.atan((Math.tan((hFov * Math.PI) / 360) * height) / width) *
-          180) /
-        Math.PI
-      : width < height
-        ? 103
-        : 62;
+  const { hFov, vFov } = fieldOfView(width, height, shortTour);
   const cameras =
     shortTour && !spatial
       ? shortTourCameras(
@@ -422,12 +497,13 @@ async function render(
   let elapsed = 0;
   let frame = 0;
   for (const [index, narration] of audio.entries()) {
-    const segment = shortTour
-      ? {
-          ...narration,
-          captions: presentation.shortCaptions(narration.captions),
-        }
-      : narration;
+    const segment =
+      shortTour && c.subtitles
+        ? {
+            ...narration,
+            captions: await shortTourCaptions(narration, cache, signal),
+          }
+        : narration;
     const scene = job.scenes.find((s) => s.id === segment.sceneId);
     ensure(scene, "素材与文案关联丢失");
     const direction = scene.direction || c.direction;
@@ -666,10 +742,16 @@ async function render(
     path.join(jobDir, "final.part.mp4"),
     path.join(jobDir, "final.mp4"),
   );
-  if (c.design === "standard" || shortTour) {
-    const scene =
-      job.scenes.find((s) => s.id === (c.coverSceneId || c.leadSceneId)) ||
-      job.scenes[0];
+  const cover = job.templateSnapshot?.cover;
+  if (
+    cover ? cover.imageSource !== "frame" : c.design === "standard" || shortTour
+  ) {
+    const scene = cover
+      ? cover.imageSource === "last"
+        ? job.scenes.at(-1)
+        : job.scenes[0]
+      : job.scenes.find((s) => s.id === (c.coverSceneId || c.leadSceneId)) ||
+        job.scenes[0];
     const caption = "cover.ass";
     const label = job.sample ? "独立测试场景，非在售房源" : "";
     await fs.writeFile(
@@ -691,7 +773,7 @@ async function render(
       ];
     const base = spatialCover
       ? `select=eq(n\\,0),scale=${width}:${height},setsar=1`
-      : `v360=input=e:output=flat:w=${width}:h=${height}:h_fov=${hFov}:v_fov=${vFov}:yaw=${scene.yaw}`;
+      : coverProjection(width, height, hFov, vFov, scene.yaw);
     await run(
       ffmpeg(),
       [
@@ -738,6 +820,7 @@ async function render(
   return { duration: elapsed, timeline };
 }
 module.exports = {
+  previewCoverImage,
   run,
   scriptImage,
   probe,

@@ -220,10 +220,11 @@ func (s *server) productionOpening(ctx context.Context, a actor, operation strin
 	key := str(input["requestKey"])
 	if operation == "opening-submit" {
 		if input["templateId"] != nil || input["location"] != nil || input["prompt"] != nil {
-			if !resourceID.MatchString(str(input["templateId"])) || !templateVersion.MatchString(str(input["templateVersion"])) || input["video"] != nil {
+			templateID := str(input["templateId"])
+			if !(resourceID.MatchString(templateID) || (strings.HasPrefix(templateID, "mix:") && minimaxHash.MatchString(strings.TrimPrefix(templateID, "mix:")))) || !templateVersion.MatchString(str(input["templateVersion"])) || input["video"] != nil {
 				return nil, fail(422, "开场模板版本无效")
 			}
-			template, err := s.loadProductionTemplate(ctx, object{"id": input["templateId"], "version": input["templateVersion"]}, true)
+			template, err := s.jobProductionTemplate(ctx, a, input, true)
 			if err != nil {
 				return nil, err
 			}

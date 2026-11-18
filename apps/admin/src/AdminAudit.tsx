@@ -24,7 +24,6 @@ import {
 } from "./admin-api";
 import AdminUserSelect from "./AdminUserSelect";
 import { resourceTypeLabels } from "./ResourcesPanel";
-import type { ResourceType } from "@keagent/shared-types";
 
 export const auditActionLabels: Record<string, string> = {
   "admin.create-user": "创建用户",
@@ -84,7 +83,9 @@ const detailLabels: Record<string, string> = {
 function detailValue(key: string, value: string) {
   if (key === "published") return value === "true" ? "已上架" : "未上架";
   if (key === "type")
-    return resourceTypeLabels[value as ResourceType] || "其他模板";
+    return (
+      resourceTypeLabels[value as keyof typeof resourceTypeLabels] || "其他模板"
+    );
   if (key === "platform")
     return (
       (

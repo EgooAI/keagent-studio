@@ -9,6 +9,7 @@ import type {
   AdminIdentity,
   AdminList,
   AdminListTypes,
+  CatalogKind,
 } from "@keagent/shared-types";
 
 export const auth = createAuthClient({
@@ -53,13 +54,19 @@ const filters: Record<keyof AdminListTypes, string[]> = {
   "auth-audit": ["q", "actorId", "targetId", "action", "status", "from", "to"],
 };
 
-export function useAdminList<K extends keyof AdminListTypes>(kind: K) {
+export function useAdminList<K extends keyof AdminListTypes>(
+  kind: K,
+  catalog?: CatalogKind,
+) {
   const { params } = useAdminParams();
   const query = new URLSearchParams({
     limit: params.get("limit") || "20",
     offset: params.get("offset") || "0",
   });
-  if (kind === "resources") query.set("productionOnly", "true");
+  if (kind === "resources") {
+    if (catalog) query.set("catalog", catalog);
+    else query.set("productionOnly", "true");
+  }
   for (const key of filters[kind]) {
     const value = params.get(key);
     if (value) query.set(key, value);

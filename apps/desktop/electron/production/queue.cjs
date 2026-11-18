@@ -1,5 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const factory = require("./factory.cjs");
+const media = require("../panorama/media.cjs");
 const {
   ensure,
   hash,
@@ -173,6 +174,28 @@ class ProductionQueue {
     const data = this.data(owner);
     const state = this.workflow.store(owner);
     const scope = { userId, owner, assertCurrent };
+    if (method === "save-mix") {
+      const saved = await this.workflow.remote("mix-save", input);
+      assertCurrent();
+      return saved;
+    }
+    if (method === "cover-image") {
+      const selected = factory.selectScenes(
+        state.imports[input.propertyId]?.scenes?.filter(
+          (s) => !s.kind || s.kind === "panorama",
+        ) || [],
+        input.sceneIds,
+      );
+      const scene = input.last ? selected.at(-1) : selected[0];
+      const image = await media.previewCoverImage(
+        this.workflow.directory(owner),
+        scene,
+        input.aspectRatio !== "16:9",
+        input.shortTour === true,
+      );
+      assertCurrent();
+      return image;
+    }
     if (method === "catalog")
       return {
         ...(await this.workflow.capabilities(true)),
@@ -431,6 +454,28 @@ class ProductionQueue {
           validID(pair.version),
         "房源或模板引用无效",
       );
+    const mixes = input.mixes;
+    if (mixes !== undefined) {
+      const required = new Set(
+        input.pairs.map((p) => JSON.stringify([p.templateId, p.version])),
+      );
+      ensure(
+        Array.isArray(mixes) &&
+          mixes.length === required.size &&
+          mixes.every(
+            (mix) =>
+              validID(mix?.id) &&
+              validID(mix.version) &&
+              required.delete(JSON.stringify([mix.id, mix.version])) &&
+              ["edit", "cover", "script"].every(
+                (kind) =>
+                  validID(mix.parts?.[kind]?.id) &&
+                  validID(mix.parts[kind].version),
+              ),
+          ),
+        "搭配版本不完整，请重新选择",
+      );
+    }
     const fingerprint = hash([
       input.pairs,
       input.sceneIdsByProperty,
@@ -440,6 +485,7 @@ class ProductionQueue {
       ...(input.openingBackground ? [input.openingBackground] : []),
       ...(input.openingRecipe === true ? ["opening-recipe"] : []),
       ...(overrides ? [{ renderOverrides: overrides }] : []),
+      ...(mixes ? [{ mixes }] : []),
     ]);
     const existing = () => {
       const previous = data.batches.find(
@@ -455,21 +501,36 @@ class ProductionQueue {
     const previous = existing();
     if (previous) return previous;
     ensure(this.workflow.factoryProperties, "房源服务未连接");
-    const [propertyData, caps, voices] = await Promise.all([
+    const [propertyData, caps, voices, resolvedMixes] = await Promise.all([
       this.workflow.factoryProperties({
         ids: [...new Set(input.pairs.map((pair) => pair.propertyId))],
       }),
-      this.workflow.capabilities({
-        templateIds: [...new Set(input.pairs.map((pair) => pair.templateId))],
-      }),
+      this.workflow.capabilities(
+        mixes
+          ? "runtime"
+          : {
+              templateIds: [
+                ...new Set(input.pairs.map((pair) => pair.templateId)),
+              ],
+            },
+      ),
       this.workflow.remote("voice-list", {}),
+      mixes
+        ? Promise.all(
+            mixes.map(async (mix) => [
+              JSON.stringify([mix.id, mix.version]),
+              await this.workflow.remote("mix-resolve", mix),
+            ]),
+          )
+        : undefined,
     ]);
     assertCurrent();
     const raced = existing();
     if (raced) return raced;
     const properties = new Map(propertyData.rows.map((p) => [p.id, p]));
     const templates = new Map(
-      caps.templates.map((t) => [JSON.stringify([t.id, t.version]), t]),
+      resolvedMixes ||
+        caps.templates.map((t) => [JSON.stringify([t.id, t.version]), t]),
     );
     const defaults = propertyData.defaults || {};
     const publicVoices = voices.publicVoices || [];

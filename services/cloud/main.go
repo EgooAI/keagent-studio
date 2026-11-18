@@ -98,6 +98,11 @@ func initial(name string) object {
 const schema = aiSettingsSchema + minimaxOpeningSchema + creditSchema + `
 CREATE TABLE IF NOT EXISTS keagent_workspace (owner_id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_resource (id text PRIMARY KEY, payload jsonb NOT NULL);
+CREATE TABLE IF NOT EXISTS keagent_factory_mix (
+  owner_id text NOT NULL, id text NOT NULL, name text NOT NULL, version text NOT NULL,
+  parts jsonb NOT NULL, saved boolean NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (owner_id, id)
+);
 CREATE TABLE IF NOT EXISTS keagent_device (id text PRIMARY KEY, owner_id text NOT NULL, session_id text NOT NULL, name text NOT NULL, platform text NOT NULL, revoked boolean NOT NULL DEFAULT false, seen_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS keagent_setting (id text PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS keagent_audit (id text PRIMARY KEY, actor_id text NOT NULL, action text NOT NULL, target_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
@@ -397,7 +402,7 @@ func (s *server) workspace(ctx context.Context, a actor) (object, error) {
 		}
 	}
 	w["properties"] = properties
-	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE payload->>'published'='true' ORDER BY id`)
+	rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_resource WHERE payload->>'published'='true' AND NOT (payload ? 'definition') ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +566,7 @@ func (s *server) command(ctx context.Context, a actor, cmd string, args []any) (
 				return nil, fail(422, "资源配置缺失")
 			}
 			var allowed bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id=$1 AND payload->>'version'=$2 AND payload->>'published'='true')`, str(ref["id"]), str(ref["version"])).Scan(&allowed); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id=$1 AND payload->>'version'=$2 AND payload->>'published'='true' AND NOT (payload ? 'definition'))`, str(ref["id"]), str(ref["version"])).Scan(&allowed); err != nil {
 				return nil, err
 			}
 			if !allowed {
@@ -672,6 +677,9 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		if kind == "resources/versions" {
 			return queryResourceVersions(ctx, s.db, r.URL.Query().Get("id"))
 		}
+		if kind == "resources/parts" {
+			return templateOptions(ctx, s.db)
+		}
 		if kind == "resources/preview" {
 			return s.previewProduction(ctx, a, object{"id": r.URL.Query().Get("id")}, false)
 		}
@@ -781,7 +789,7 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		if source != "" && target != "" {
 			return nil, fail(422, "新版本须使用独立编号")
 		}
-		input = pickFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "published", "sizeMb", "production")
+		input = pickFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "published", "sizeMb", "production", "definition")
 		if target == "" {
 			target = id()
 			input["id"] = target
@@ -837,6 +845,24 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 			input["published"] = published
 		} else if err = validateResource(input); err != nil {
 			return nil, err
+		} else if prior != nil && str(obj(prior["definition"])["kind"]) != str(obj(input["definition"])["kind"]) {
+			return nil, fail(422, "已保存的模板不能更换类型")
+		}
+		definition := obj(input["definition"])
+		definitionKind := str(definition["kind"])
+		if definition != nil && !(hasPublication && !published && prior != nil && prior["publishedOnce"] == true) {
+			modes := []any{"voiceover", "avatar"}
+			switch definitionKind {
+			case "edit":
+				modes = []any{obj(definition["config"])["videoMode"]}
+			case "bundle":
+				parts, e := bundleParts(ctx, tx, definition, prior == nil || prior["publishedOnce"] != true)
+				if e != nil {
+					return nil, e
+				}
+				modes = []any{obj(parts["edit"]["config"])["videoMode"]}
+			}
+			input["compatibleModes"] = modes
 		}
 		if input["description"] == nil {
 			input["description"] = ""
@@ -853,13 +879,13 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 				return nil, fail(409, "此模板已使用该版本号，请填写其他版本号")
 			}
 		}
-		if input["production"] != nil {
-			catalogKey := strings.ToLower(strings.TrimSpace(str(input["name"]))) + "@" + str(input["version"])
+		if input["production"] != nil || definition != nil {
+			catalogKey := definitionKind + ":" + strings.ToLower(strings.TrimSpace(str(input["name"]))) + "@" + str(input["version"])
 			if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('keagent-template-version:' || $1, 0))`, catalogKey); err != nil {
 				return nil, err
 			}
 			var duplicate bool
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id<>$1 AND lower(trim(payload->>'name'))=lower(trim($2)) AND payload->>'version'=$3 AND payload ? 'production' AND `+undeletedResourceSQL+`)`, target, str(input["name"]), str(input["version"])).Scan(&duplicate); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_resource WHERE id<>$1 AND lower(trim(payload->>'name'))=lower(trim($2)) AND payload->>'version'=$3 AND `+managedResourceSQL+` AND COALESCE(payload->'definition'->>'kind','')=$4 AND `+undeletedResourceSQL+`)`, target, str(input["name"]), str(input["version"]), definitionKind).Scan(&duplicate); err != nil {
 				return nil, err
 			}
 			if duplicate {
@@ -899,7 +925,8 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		input["downloadProgress"] = 0
 		b, _ := json.Marshal(input)
 		_, err = tx.ExecContext(ctx, `INSERT INTO keagent_resource(id,payload) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload`, target, b)
-		metadata = pickFields(input, "name", "type", "version", "published")
+		metadata = resourceAuditFields(input)
+		metadata["published"] = input["published"]
 	default:
 		return nil, fail(501, "此管理能力尚未接入，未保存模拟配置")
 	}
@@ -1127,6 +1154,9 @@ func main() {
 	}
 	if err = seedVideoTemplates(context.Background(), db); err != nil {
 		log.Fatal("video template migration failed")
+	}
+	if err = migrateTemplateLibrary(context.Background(), db); err != nil {
+		log.Fatalf("public template library migration failed: %v", err)
 	}
 	if _, err = db.Exec(voiceSchema); err != nil {
 		log.Fatal("voice migration failed")

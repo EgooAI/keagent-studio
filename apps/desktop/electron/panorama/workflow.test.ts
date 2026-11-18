@@ -957,6 +957,96 @@ describe("production queue", () => {
     };
   }
 
+  it("resolves a personal mix once per batch and sends the pinned recipe to script generation for every property", async () => {
+    const { workflow, owner, call, templates, releaseScripts } = batchFixture();
+    const source = {
+      id: "mine:test",
+      version: "1.0.0",
+      parts: Object.fromEntries(
+        ["edit", "cover", "script"].map((kind) => [
+          kind,
+          { id: kind + "-version", version: "1.0.0" },
+        ]),
+      ),
+    };
+    const snapshot = {
+      ...templates[0],
+      id: "mix:task-recipe",
+      name: "我的搭配",
+      parts: source.parts,
+      cover: {
+        kind: "cover",
+        design: "classic",
+        imageSource: "last",
+        titleSource: "property",
+        showFacts: false,
+        brandColor: "#446688",
+      },
+    };
+    const previousRemote = workflow.remote;
+    workflow.remote = vi.fn((method: string, input: unknown) =>
+      method === "mix-resolve"
+        ? Promise.resolve(snapshot)
+        : previousRemote(method, input),
+    );
+    await call("pause");
+    const input = {
+      requestId: "pinned-batch",
+      pairs: ["property-0", "property-1"].map((propertyId) => ({
+        propertyId,
+        templateId: source.id,
+        version: source.version,
+      })),
+      mixes: [source],
+    };
+    expect(await call("create", input)).toMatchObject({
+      issues: [],
+      batchId: input.requestId,
+    });
+    expect(await call("create", input)).toMatchObject({
+      batchId: input.requestId,
+    });
+    expect(
+      workflow.remote.mock.calls.filter(
+        ([method]: string[]) => method === "mix-resolve",
+      ),
+    ).toHaveLength(1);
+    await expect(
+      call("create", {
+        ...input,
+        mixes: [
+          {
+            ...source,
+            parts: {
+              ...source.parts,
+              cover: { id: "another-cover", version: "1.0.0" },
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("另一批");
+    releaseScripts();
+    await call("resume");
+    await vi.waitFor(() =>
+      expect(
+        workflow
+          .store(owner)
+          .production.items.every((i: any) => i.phase === "review"),
+      ).toBe(true),
+    );
+    const scripts = workflow.remote.mock.calls.filter(
+      ([method]: string[]) => method === "script-vision",
+    );
+    expect(scripts).toHaveLength(2);
+    for (const [, payload] of scripts)
+      expect(payload).toMatchObject({
+        templateId: snapshot.id,
+        templateVersion: snapshot.version,
+      });
+    for (const draft of workflow.store(owner).drafts)
+      expect(draft.templateSnapshot).toEqual(snapshot);
+  });
+
   it("upgrades the previous stock default and asks users to replace unavailable custom defaults", async () => {
     const { workflow, owner, call, pairs } = batchFixture();
     const selected = await workflow.factoryProperties();

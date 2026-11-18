@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strconv"
@@ -124,7 +125,7 @@ func taskSummarySQL() string {
 	CASE WHEN t.value->>'error' IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('error',t.value->>'error') END`
 }
 
-func adminSource(kind string, productionOnly bool) (string, error) {
+func adminSource(kind string, productionOnly bool, catalog string) (string, error) {
 	switch kind {
 	case "users":
 		return `SELECT jsonb_build_object('id',u.id,'name',u.name,'email',u.email,'role',COALESCE(u.role,'user'),'banned',COALESCE(u.banned,false),'banReason',u."banReason",'createdAt',u."createdAt") data, u."createdAt" sort_at, concat_ws(' ',u.id,u.name,u.email) search FROM "user" u`, nil
@@ -132,8 +133,15 @@ func adminSource(kind string, productionOnly bool) (string, error) {
 		return `SELECT jsonb_build_object('id',d.id,'ownerId',d.owner_id,'owner',` + identitySQL("u") + `,'name',d.name,'platform',d.platform,'revoked',d.revoked,'lastSeenAt',d.seen_at) data, d.seen_at sort_at, concat_ws(' ',d.id,d.name,d.platform,d.owner_id,u.name,u.email) search FROM keagent_device d LEFT JOIN "user" u ON u.id=d.owner_id`, nil
 	case "resources":
 		where := " WHERE " + undeletedResourceSQL
-		if productionOnly {
+		if catalog != "" {
+			if _, ok := catalogTypes[catalog]; !ok {
+				return "", fail(422, "公共模板类型无效")
+			}
+			where += " AND payload->'definition'->>'kind'='" + catalog + "'"
+		} else if productionOnly {
 			where += " AND " + productionResourceSQL
+		} else {
+			where += " AND NOT (payload ? 'definition')"
 		}
 		return `SELECT payload || jsonb_build_object('id',id,'state',CASE WHEN payload->>'published'='true' THEN 'published' WHEN payload->>'publishedOnce'='true' THEN 'unpublished' ELSE 'draft' END) data,
 			NULL::timestamptz sort_at, concat_ws(' ',id,payload->>'name',payload->>'category',payload->>'description',payload->>'version') search
@@ -150,7 +158,7 @@ func adminSource(kind string, productionOnly bool) (string, error) {
 }
 
 func queryAdminList(ctx context.Context, db adminQuerier, kind string, q url.Values) (object, error) {
-	source, err := adminSource(kind, q.Get("productionOnly") == "true")
+	source, err := adminSource(kind, q.Get("productionOnly") == "true", q.Get("catalog"))
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +214,8 @@ func pickFields(input object, keys ...string) object {
 
 func publicResource(input object) object {
 	out := publicFields(input, "id", "name", "description", "type", "category", "version", "thumbnail", "compatibleModes", "installed", "downloadStatus", "downloadProgress", "published", "sizeMb", "publishedOnce")
-	if input["production"] != nil {
-		out["production"] = input["production"]
+	if input["production"] != nil || input["definition"] != nil {
+		maps.Copy(out, pickFields(input, "production", "definition"))
 		out["previewed"] = input["previewDigest"] == productionDigest(input)
 	}
 	return out
@@ -284,7 +292,7 @@ func queryAdminTask(ctx context.Context, db adminQuerier, taskID string) (object
 func queryAdminOverview(ctx context.Context, db adminQuerier) (object, error) {
 	out := object{}
 	var users, devices, resources, failed int
-	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM keagent_device WHERE NOT revoked), (SELECT count(DISTINCT `+resourceFamilySQL+`) FROM keagent_resource WHERE payload->>'published'='true' AND `+productionResourceSQL+`), (SELECT count(*) FROM keagent_workspace w CROSS JOIN LATERAL jsonb_array_elements(COALESCE(w.payload->'tasks','[]'::jsonb)) t(value) WHERE t.value->>'status'='failed')`).Scan(&users, &devices, &resources, &failed)
+	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM "user"), (SELECT count(*) FROM keagent_device WHERE NOT revoked), (SELECT count(DISTINCT `+resourceFamilySQL+`) FROM keagent_resource WHERE payload->>'published'='true' AND payload->'definition'->>'kind'='bundle'), (SELECT count(*) FROM keagent_workspace w CROSS JOIN LATERAL jsonb_array_elements(COALESCE(w.payload->'tasks','[]'::jsonb)) t(value) WHERE t.value->>'status'='failed')`).Scan(&users, &devices, &resources, &failed)
 	if err != nil {
 		return nil, err
 	}

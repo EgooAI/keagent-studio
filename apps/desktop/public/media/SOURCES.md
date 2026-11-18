@@ -7,6 +7,8 @@
 - interior-3.jpg: https://images.unsplash.com/photo-1600607687920-4e2a09cf159d
 - interior-4.jpg: https://images.unsplash.com/photo-1600566753086-00f18fb6b3ea
 
+`agent-tour.webp` 由 ImageGen 生成，用作经纪人开场搭配的示意缩略图，画面中的经纪人为虚构人物。
+
 demo-property.mp4 由 interior-1.jpg 在本地生成，为九秒静音示例，不代表 AI 合成输出。agent.svg 是通用人物占位图形，不对应真实经纪人。
 
 ## 全景讲解测试素材

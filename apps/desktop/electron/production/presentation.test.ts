@@ -6,6 +6,59 @@ const presentation = require("./presentation.cjs");
 const media = require("../panorama/media.cjs");
 
 describe("short tour presentation", () => {
+  it("lets the cover pick its title, facts, layout and color separately from the movie", () => {
+    const config = {
+      design: "short-tour",
+      brandColor: "#FFD447",
+      language: "zh-CN",
+      coverTitle: "审核后的片头标题",
+    };
+    const property = {
+      title: "房源标题",
+      community: "小区名",
+      layout: "两室一厅",
+    };
+    const cover = {
+      kind: "cover",
+      imageSource: "last",
+      titleSource: "property",
+      design: "classic",
+      showFacts: false,
+      brandColor: "#123DEF",
+    };
+    const job = { config, property, templateSnapshot: { cover } };
+    expect(presentation.card(job, "cover")).toMatchObject({
+      title: "房源标题",
+      facts: "",
+      design: "classic",
+      brandColor: "#123DEF",
+    });
+    expect(presentation.card(job, "opening")).toMatchObject({
+      title: config.coverTitle,
+      design: "short-tour",
+      brandColor: config.brandColor,
+    });
+    expect(
+      presentation.card(
+        {
+          ...job,
+          templateSnapshot: {
+            cover: { ...cover, titleSource: "opening", showFacts: true },
+          },
+        },
+        "cover",
+      ),
+    ).toMatchObject({ title: config.coverTitle, facts: property.layout });
+    expect(
+      presentation.card(
+        {
+          ...job,
+          templateSnapshot: { cover: { ...cover, imageSource: "frame" } },
+        },
+        "cover",
+      ),
+    ).toEqual({});
+  });
   it("reflows measured sentences without losing text or crossing their audio boundaries", () => {
     const input = [
       {
@@ -25,15 +78,45 @@ describe("short tour presentation", () => {
     for (const [index, caption] of output.entries()) {
       expect(caption.end).toBeGreaterThan(caption.start);
       expect(caption.text).not.toMatch(/^[\p{P}\s]+$/u);
-      expect(
-        Array.from(caption.text.replace(/[\p{P}\s]/gu, "")).length,
-      ).toBeLessThanOrEqual(12);
       if (index) expect(caption.start).toBe(output[index - 1].end);
       const sentence = input.find((v) => v.file === caption.file)!;
       expect(caption.start).toBeGreaterThanOrEqual(sentence.start);
       expect(caption.end).toBeLessThanOrEqual(sentence.end);
     }
+    expect(output.at(-1).text).toBe("abcdefghijklmnopqrstuvwx。");
     expect(input[0].text).toBe("这是朝南的客厅，连接阳台，窗外的视野很开阔。");
+  });
+
+  it("switches during the spoken comma pause and keeps the bathroom terms together", () => {
+    const input = [
+      { text: "卫生间也有窗，热水器和淋浴喷头都齐。", start: 0, end: 3.345458 },
+    ];
+    const output = presentation.shortCaptions(input, [
+      { start: 0, end: 0.096667 },
+      { start: 1.18875, end: 1.577333 },
+      { start: 3.172125, end: 3.345458 },
+    ]);
+    expect(output.map((caption: { text: string }) => caption.text)).toEqual([
+      "卫生间也有窗，",
+      "热水器和淋浴喷头都齐。",
+    ]);
+    expect(output[0].end).toBeCloseTo(1.497333, 5);
+    expect(output[1].start).toBe(output[0].end);
+    expect(output[1].end).toBe(input[0].end);
+  });
+
+  it("preserves compound listing terms and numeric units when audio pauses are unavailable", () => {
+    const text =
+      "这套房面积为123.5平方米总价425 万临近公园还有洗衣机和抽油烟机。";
+    const captions = presentation.shortCaptions([{ text, start: 2, end: 7 }]);
+    const lines: string[] = captions.map(
+      (caption: { text: string }) => caption.text,
+    );
+    expect(lines.join("")).toBe(text);
+    for (const phrase of ["123.5平方米", "425 万", "洗衣机", "抽油烟机"])
+      expect(lines.some((line) => line.includes(phrase))).toBe(true);
+    expect(captions[0].start).toBe(2);
+    expect(captions.at(-1).end).toBe(7);
   });
 
   it("uses factual opening headings and keeps the closing free of title cards", () => {

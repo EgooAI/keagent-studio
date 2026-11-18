@@ -3,12 +3,17 @@ import { readFileSync } from "node:fs";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
 import type { BeikeSearchResult } from "../../packages/shared-types/src/beike";
 
-async function fixture(page: Page, large = false, miniMax = false) {
+async function fixture(
+  page: Page,
+  large = false,
+  miniMax = false,
+  withBundles = false,
+) {
   const catalog = JSON.parse(
     readFileSync("services/cloud/video_templates.json", "utf8"),
   );
   await page.addInitScript(
-    ({ workspace, catalog, large, miniMax }) => {
+    ({ workspace, catalog, large, miniMax, withBundles }) => {
       const property = {
         id: "panorama-cc0-sample",
         propertyNumber: "TEST-PANORAMA-001",
@@ -90,6 +95,56 @@ async function fixture(page: Page, large = false, miniMax = false) {
         openingBackground: undefined as
           { id: string; name: string; asset: string } | undefined,
       };
+      const mixParts = (["edit", "cover", "script"] as const).flatMap((kind) =>
+        [0, 1].map((i) => ({
+          id: kind + i,
+          version: "1.0.0",
+          name: {
+            edit: ["短视频带看", "经纪人开场"],
+            cover: ["醒目大标题", "品牌信息栏"],
+            script: ["短视频带看口播", "逐室讲解"],
+          }[kind][i],
+          kind,
+          available: true,
+          ...(kind === "edit"
+            ? {
+                config: {
+                  ...catalog[0].production.config,
+                  aspectRatio: "9:16",
+                  design: "short-tour",
+                  videoMode: i ? "avatar" : "voiceover",
+                },
+              }
+            : {}),
+          ...(kind === "cover"
+            ? {
+                cover: {
+                  kind,
+                  design: i ? "standard" : "short-tour",
+                  brandColor: "#FFD447",
+                  imageSource: i ? "last" : "first",
+                  titleSource: "opening",
+                  showFacts: !i,
+                },
+              }
+            : {}),
+          ...(kind === "script" ? { language: "zh-CN" } : {}),
+        })),
+      );
+      const ref = (id: string) => {
+        const { version, name } = mixParts.find((p) => p.id === id)!;
+        return { id, name, version };
+      };
+      const recommended = [0, 1].map((i) => ({
+        id: "bundle-" + i,
+        name: i ? "短视频带看 · 经纪人开场" : "短视频带看",
+        version: "1.0.0",
+        parts: {
+          edit: ref("edit" + i),
+          cover: ref("cover0"),
+          script: ref("script0"),
+        },
+      }));
       Object.assign(window, {
         factorySettingsTest: state,
         desktop: {
@@ -231,6 +286,17 @@ async function fixture(page: Page, large = false, miniMax = false) {
               };
             if (method === "panorama.factory-catalog")
               return {
+                ...(withBundles
+                  ? {
+                      library: {
+                        recommended,
+                        parts: mixParts,
+                        personal: JSON.parse(
+                          sessionStorage.getItem("saved-mixes") || "[]",
+                        ),
+                      },
+                    }
+                  : {}),
                 templates: state.catalog.map((t: any) => ({
                   ...t,
                   config: t.production.config,
@@ -245,6 +311,25 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 openingBackground: state.openingBackground,
                 voices: [],
               };
+            if (method === "panorama.factory-save-mix") {
+              const saved = {
+                id: "mine-1",
+                name: input.name,
+                version: "1.0.0",
+                parts: Object.fromEntries(
+                  Object.entries(input.parts).map(([k, v]) => [
+                    k,
+                    ref((v as { id: string }).id),
+                  ]),
+                ),
+              };
+              sessionStorage.setItem("saved-mixes", JSON.stringify([saved]));
+              return saved;
+            }
+            if (method === "panorama.factory-cover-image")
+              return input.last
+                ? "/media/interior-2.jpg"
+                : "/media/interior-1.jpg";
             if (method === "panorama.factory-properties") {
               const matched = state.workspace.properties.filter(
                 (p) =>
@@ -310,9 +395,11 @@ async function fixture(page: Page, large = false, miniMax = false) {
                 const p = state.workspace.properties.find(
                   (item) => item.id === pair.propertyId,
                 )!;
-                const t = state.catalog.find(
-                  (item: any) => item.id === pair.templateId,
-                );
+                const t = withBundles
+                  ? state.catalog[0]
+                  : state.catalog.find(
+                      (item: any) => item.id === pair.templateId,
+                    );
                 const id = "review-" + i;
                 const openingLocations = t.production.opening && [
                   {
@@ -444,9 +531,105 @@ async function fixture(page: Page, large = false, miniMax = false) {
         },
       });
     },
-    { workspace: createInitialWorkspace(), catalog, large, miniMax },
+    {
+      workspace: createInitialWorkspace(),
+      catalog,
+      large,
+      miniMax,
+      withBundles,
+    },
   );
 }
+
+test("推荐同款独立换三项，保存后重新打开并跨房源批量使用", async ({
+  page,
+}, info) => {
+  await fixture(page, false, false, true);
+  await page.goto("/#/studio/create");
+  await expect(
+    page.getByRole("button", { name: "短视频带看，已应用" }),
+  ).toBeVisible();
+  await page.screenshot({ path: info.outputPath("recommended.png") });
+  await page
+    .getByRole("button", { name: "短视频带看 · 经纪人开场，用同款" })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "更换剪辑模板" }),
+  ).toContainText("经纪人开场");
+  for (const [kind, name] of [
+    ["剪辑", "短视频带看"],
+    ["封面", "品牌信息栏"],
+    ["文案", "逐室讲解"],
+  ]) {
+    await page.getByRole("button", { name: "更换" + kind + "模板" }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: new RegExp("^" + name) })
+      .click();
+  }
+  await expect(page.locator(".mix-poster")).toHaveClass(/poster-standard/);
+  await expect(page.locator(".mix-poster figcaption span")).toHaveCount(0);
+  await page.getByRole("button", { name: "存为我的搭配" }).click();
+  await page.getByRole("textbox", { name: "搭配名称" }).fill("周末带看");
+  await page.getByRole("button", { name: "保存搭配", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "周末带看，已应用" }),
+  ).toBeVisible();
+  await page.reload();
+  await page.getByText("我的搭配", { exact: true }).click();
+  await page.getByRole("button", { name: "周末带看，用同款" }).click();
+  await expect(
+    page.getByRole("button", { name: "更换剪辑模板" }),
+  ).toContainText("短视频带看");
+  await expect(
+    page.getByRole("button", { name: "更换封面模板" }),
+  ).toContainText("品牌信息栏");
+  await expect(
+    page.getByRole("button", { name: "更换文案模板" }),
+  ).toContainText("逐室讲解");
+  await page.getByRole("button", { name: "选择房源", exact: true }).click();
+  const homes = page.getByRole("dialog", { name: "选择房源" });
+  await homes
+    .getByRole("checkbox", { name: "选择内置测试房源 · 全景素材", exact: true })
+    .check();
+  await homes
+    .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
+    .check();
+  await homes.getByRole("button", { name: "确认选择（2）" }).click();
+  await page.getByRole("button", { name: "选择图片", exact: true }).click();
+  const images = page.getByRole("dialog", { name: "选择视频图片" });
+  await images.getByRole("button", { name: "选择全部", exact: true }).click();
+  await images.getByRole("button", { name: "下一套房源" }).click();
+  await images.getByRole("button", { name: "选择全部", exact: true }).click();
+  await images.getByRole("button", { name: "确认选图" }).click();
+  await expect(page.locator(".mix-preview small")).toContainText(
+    "末张视频素材",
+  );
+  await page.screenshot({ path: info.outputPath("factory-mix.png") });
+  await page.getByRole("button", { name: "生成 2 条文案" }).click();
+  await expect(page.getByRole("tab", { name: "制作任务" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const submitted = await page.evaluate(
+    () =>
+      (window as any).factorySettingsTest.calls.find(
+        (c: any) => c.method === "panorama.factory-create",
+      ).input,
+  );
+  expect(submitted.pairs).toHaveLength(2);
+  expect(submitted.mixes).toEqual([
+    {
+      id: "mine-1",
+      version: "1.0.0",
+      parts: {
+        edit: { id: "edit0", version: "1.0.0" },
+        cover: { id: "cover1", version: "1.0.0" },
+        script: { id: "script1", version: "1.0.0" },
+      },
+    },
+  ]);
+});
 
 async function choose(page: Page, label: string, option: string) {
   await page.getByRole("combobox", { name: label, exact: true }).click();

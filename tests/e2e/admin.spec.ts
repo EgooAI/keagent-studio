@@ -9,6 +9,7 @@ import type {
   AdminPublicVoice,
   AdminTaskSummary,
   AdminUser,
+  CatalogTemplate,
   ProductionConfig,
   ProductionTemplatePreview,
   Resource,
@@ -118,6 +119,50 @@ async function fixture(page: Page) {
       },
     },
   ];
+  const { language, ...editConfig } = defaultProduction.config;
+  const catalogParts: {
+    name: string;
+    type: Resource["type"];
+    definition: CatalogTemplate;
+  }[] = [
+    {
+      name: "全景运镜",
+      type: "style",
+      definition: { kind: "edit", config: editConfig },
+    },
+    {
+      name: "品牌封面",
+      type: "cover",
+      definition: {
+        kind: "cover",
+        design: "standard",
+        brandColor: "#167D8D",
+        imageSource: "first",
+        titleSource: "opening",
+        showFacts: true,
+      },
+    },
+    {
+      name: "卖点先行",
+      type: "prompt",
+      definition: {
+        kind: "script",
+        language,
+        scriptRules: defaultProduction.scriptRules,
+      },
+    },
+  ];
+  for (const part of catalogParts) {
+    resources.push({
+      ...resources[0],
+      ...part,
+      id: part.definition.kind,
+      version: "1.0.0",
+      published: true,
+      publishedOnce: true,
+      previewed: true,
+    });
+  }
   const services: AdminAIService[] = ["script", "tts", "opening"].map(
     (id, i) => ({
       id: id as AdminAIService["id"],
@@ -248,6 +293,20 @@ async function fixture(page: Page) {
           productionRevision: 1,
         },
       });
+    if (url.pathname === "/v1/admin/resources/parts")
+      return json(
+        resources
+          .filter(
+            (r) =>
+              r.published && r.definition && r.definition.kind !== "bundle",
+          )
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            version: r.version,
+            kind: r.definition!.kind,
+          })),
+      );
     if (url.pathname === "/v1/admin/resources/versions") {
       const resource = resources.find(
         ({ id }) => id === url.searchParams.get("id"),
@@ -282,9 +341,12 @@ async function fixture(page: Page) {
         const existing = resources.find((resource) => resource.id === body.id);
         if (existing) {
           if (
-            body.production &&
-            JSON.stringify(body.production) !==
-              JSON.stringify(existing.production)
+            (body.definition &&
+              JSON.stringify(body.definition) !==
+                JSON.stringify(existing.definition)) ||
+            (body.production &&
+              JSON.stringify(body.production) !==
+                JSON.stringify(existing.production))
           ) {
             existing.previewed = false;
             previews.delete(existing.id);
@@ -302,8 +364,12 @@ async function fixture(page: Page) {
           const source = resources.find(
             (resource) => resource.id === body.versionOf,
           );
-          resources.push({ ...resources[0], ...body, id: "new-resource" });
-          if (source) familyIds.set("new-resource", family(source));
+          const id = resources.some((r) => r.id === "new-resource")
+            ? "new-resource-" + resources.length
+            : "new-resource";
+          resources.push({ ...resources[0], ...body, id });
+          if (source) familyIds.set(id, family(source));
+          return json({ id });
         }
         return json({ id: existing?.id || "new-resource" });
       }
@@ -311,7 +377,11 @@ async function fixture(page: Page) {
         const resource = resources.find((item) => item.id === body.id)!;
         resource.previewed = true;
         const preview: ProductionTemplatePreview = {
-          template: { ...resource, production: resource.production! },
+          template: {
+            ...resource,
+            production: resource.production || defaultProduction,
+          },
+          definition: resource.definition,
           segments: [
             {
               id: "opening",
@@ -325,6 +395,15 @@ async function fixture(page: Page) {
             },
           ],
         };
+        if (resource.definition?.kind === "cover") {
+          preview.cover = resource.definition;
+          preview.segments = [];
+        }
+        if (resource.definition?.kind === "bundle") {
+          const coverId = resource.definition.parts.cover.id;
+          const cover = resources.find((r) => r.id === coverId)?.definition;
+          if (cover?.kind === "cover") preview.cover = cover;
+        }
         previews.set(resource.id, preview);
         return json(preview);
       }
@@ -347,6 +426,11 @@ async function fixture(page: Page) {
       const current = new Map<string, Resource>();
       const type = url.searchParams.get("type");
       for (const resource of resources) {
+        if (
+          resource.definition?.kind !==
+          (url.searchParams.get("catalog") || undefined)
+        )
+          continue;
         if (type && resource.type !== type) continue;
         if (
           url.searchParams.get("productionOnly") === "true" &&
@@ -1124,7 +1208,7 @@ test("工作台指标跳转到筛选结果，近期失败任务直达详情", as
     metrics.getByRole("link", { name: /已绑定设备/ }),
   ).toHaveAttribute("href", "#/admin/users?tab=devices&revoked=false");
   await expect(
-    metrics.getByRole("link", { name: /已上架模板/ }),
+    metrics.getByRole("link", { name: /已上架推荐搭配/ }),
   ).toHaveAttribute("href", "#/admin/resources?state=published");
   await metrics.getByRole("link", { name: /失败任务/ }).click();
   await expect(page).toHaveURL(/admin\/tasks\?status=failed/);
@@ -1256,11 +1340,158 @@ test("快速切页时，迟到的用户查询不会覆盖任务列表", async ({
   await expect(page.locator('tr[data-row-key="user-0"]')).toHaveCount(0);
 });
 
+test("公共模板可独立发布封面并与已上架的剪辑和文案组合", async ({ page }) => {
+  const data = await fixture(page);
+  await page.goto(adminBase + "/#/admin/resources");
+  await expect(
+    page.getByRole("heading", { name: "推荐搭配", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "封面模板", exact: true }).click();
+  await page.getByRole("button", { name: "新建封面模板" }).click();
+  const form = page.getByRole("dialog", { name: "新建封面模板" });
+  await form.getByLabel("模板名称", { exact: true }).fill("门店统一封面");
+  await form.getByLabel("封面品牌色").fill("#336699");
+  await form.getByLabel("封面标题来源").click();
+  await page
+    .locator(".ant-select-dropdown:visible")
+    .getByText("使用房源标题", { exact: true })
+    .click();
+  await expect(form.locator("figure")).toContainText("示例小区两居室");
+  await expect(form.getByLabel("文案语言")).toHaveCount(0);
+  await form.getByRole("button", { name: "保存草稿" }).click();
+  await expect(
+    page.getByRole("button", { name: "启用版本", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "预览校验", exact: true }).click();
+  const drawer = page.getByRole("dialog", { name: "制作模板预览校验" });
+  await expect(drawer.locator("figure")).toContainText("示例小区两居室");
+  await expect(drawer.getByText("剪辑版式示意", { exact: true })).toHaveCount(
+    0,
+  );
+  await drawer.getByRole("button", { name: "关闭" }).click();
+  await page.getByRole("button", { name: "启用版本", exact: true }).click();
+  await page.getByRole("button", { name: "确认启用", exact: true }).click();
+  await page.getByRole("button", { name: "返回模板目录" }).click();
+  await page.getByRole("button", { name: "推荐搭配", exact: true }).click();
+  await page.getByRole("button", { name: "新建推荐搭配" }).click();
+  const bundle = page.getByRole("dialog", { name: "新建推荐搭配" });
+  await bundle.getByLabel("模板名称", { exact: true }).fill("门店带看");
+  for (const [label, option] of [
+    ["剪辑模板", "全景运镜"],
+    ["封面模板", "门店统一封面"],
+    ["文案模板", "卖点先行"],
+  ]) {
+    await bundle.getByLabel(label, { exact: true }).click();
+    await page
+      .getByRole("option", { name: option + " · v1.0.0", exact: true })
+      .click();
+  }
+  await bundle.getByRole("button", { name: "保存草稿" }).click();
+  await expect(
+    page.getByRole("heading", { name: "门店带看", exact: true }),
+  ).toBeVisible();
+  expect(
+    data.writes.filter((w) => w.path.endsWith("/resources")).at(-1)?.body,
+  ).toMatchObject({
+    definition: {
+      kind: "bundle",
+      parts: {
+        edit: { id: "edit", version: "1.0.0" },
+        cover: { id: "new-resource", version: "1.0.0" },
+        script: { id: "script", version: "1.0.0" },
+      },
+    },
+  });
+  await page.getByRole("button", { name: "预览校验", exact: true }).click();
+  await expect(drawer.getByText("剪辑版式示意", { exact: true })).toBeVisible();
+  await expect(drawer.locator("figure")).toContainText("示例小区两居室");
+  await expect(
+    drawer.getByText("这是另一张室内照片。", { exact: true }),
+  ).toBeVisible();
+  await drawer.getByRole("button", { name: "关闭" }).click();
+  await page.getByRole("button", { name: "启用版本", exact: true }).click();
+  await page.getByRole("button", { name: "确认启用", exact: true }).click();
+  await page.getByRole("button", { name: "返回模板目录" }).click();
+  await expect(
+    page.getByRole("row").filter({ hasText: "门店带看" }),
+  ).toContainText("门店统一封面");
+  await page.getByRole("button", { name: "门店带看", exact: true }).click();
+  await page.getByRole("button", { name: "复制搭配", exact: true }).click();
+  const copy = page.getByRole("dialog", { name: "复制为新搭配" });
+  await expect(copy.getByLabel("模板名称", { exact: true })).toHaveValue(
+    "门店带看（副本）",
+  );
+  await copy.getByLabel("封面模板", { exact: true }).click();
+  await page
+    .getByRole("option", { name: "品牌封面 · v1.0.0", exact: true })
+    .click();
+  await copy.getByRole("button", { name: "保存草稿" }).click();
+  await expect(
+    page.getByRole("heading", { name: "门店带看（副本）", exact: true }),
+  ).toBeVisible();
+  const cloned = data.writes
+    .filter((w) => w.path.endsWith("/resources"))
+    .at(-1)?.body;
+  expect(cloned).toMatchObject({
+    definition: {
+      parts: {
+        edit: { id: "edit" },
+        script: { id: "script" },
+        cover: { id: "cover" },
+      },
+    },
+  });
+  expect(cloned).not.toHaveProperty("versionOf");
+});
+
+test("剪辑和文案编辑器各自只提交本类制作规则", async ({ page }) => {
+  const data = await fixture(page);
+  await page.goto(adminBase + "/#/admin/resources?catalog=edit");
+  await page.getByRole("button", { name: "新建剪辑模板", exact: true }).click();
+  const edit = page.getByRole("dialog", { name: "新建剪辑模板" });
+  await edit.getByLabel("模板名称", { exact: true }).fill("门店竖屏");
+  await expect(edit.getByLabel("逐图文案规则")).toHaveCount(0);
+  await edit.getByRole("button", { name: "保存草稿" }).click();
+  await page.getByRole("button", { name: "返回模板目录" }).click();
+  const savedEdit = data.writes.find((w) =>
+    w.path.endsWith("/resources"),
+  )?.body;
+  expect(savedEdit).toMatchObject({
+    definition: {
+      kind: "edit",
+      config: { aspectRatio: "9:16", maxSweep: 100 },
+    },
+  });
+  expect(savedEdit).not.toHaveProperty("definition.config.language");
+  await page.getByRole("button", { name: "文案模板", exact: true }).click();
+  await page.getByRole("button", { name: "新建文案模板", exact: true }).click();
+  const script = page.getByRole("dialog", { name: "新建文案模板" });
+  await script.getByLabel("模板名称", { exact: true }).fill("轻松口播");
+  await script
+    .getByLabel("逐图文案规则")
+    .fill("每个空间讲一个可以看见的特点。");
+  await expect(script.getByLabel("画幅", { exact: true })).toHaveCount(0);
+  await script.getByRole("button", { name: "保存草稿" }).click();
+  await expect(
+    page.getByRole("heading", { name: "轻松口播", exact: true }),
+  ).toBeVisible();
+  expect(
+    data.writes.filter((w) => w.path.endsWith("/resources")).at(-1)?.body,
+  ).toMatchObject({
+    definition: {
+      kind: "script",
+      language: "zh-CN",
+      scriptRules: { scene: "每个空间讲一个可以看见的特点。" },
+    },
+  });
+});
+
 test("模板目录只显示当前版本，编辑页可更新、启用和切回旧版本", async ({
   page,
 }) => {
   const data = await fixture(page);
   await page.goto(adminBase + "/#/admin/resources");
+  await page.getByRole("button", { name: "旧版完整模板", exact: true }).click();
   const published = page.locator('tr[data-row-key="published"]');
   await published.getByRole("button", { name: "在架视频模板" }).click();
   await expect(page.getByRole("heading", { name: "版本记录" })).toBeVisible();
@@ -1332,7 +1563,7 @@ test("模板目录只显示当前版本，编辑页可更新、启用和切回�
 
 test("删除公共模板需要确认，成功后从目录移除", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto(adminBase + "/#/admin/resources");
+  await page.goto(adminBase + "/#/admin/resources?catalog=legacy");
   const row = page.locator('tr[data-row-key="published"]');
   const remove = row.getByRole("button", { name: "删除模板", exact: true });
   const dialog = page.getByRole("dialog", { name: "删除「在架视频模板」？" });
@@ -1353,7 +1584,7 @@ test("删除公共模板需要确认，成功后从目录移除", async ({ page 
 
 test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto(adminBase + "/#/admin/resources");
+  await page.goto(adminBase + "/#/admin/resources?catalog=legacy");
   await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "新建模板草稿",
@@ -1426,7 +1657,7 @@ test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async
 
 test("空间镜头模板隐藏旋转参数并保留配置完整性", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto(adminBase + "/#/admin/resources");
+  await page.goto(adminBase + "/#/admin/resources?catalog=legacy");
   await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "新建模板草稿",
@@ -1465,7 +1696,7 @@ test("空间镜头模板隐藏旋转参数并保留配置完整性", async ({ pa
 
 test("完整视频模板通过参数表单保存，预览后才允许上架", async ({ page }) => {
   const data = await fixture(page);
-  await page.goto(adminBase + "/#/admin/resources?type=prompt");
+  await page.goto(adminBase + "/#/admin/resources?catalog=legacy&type=prompt");
   await expect(
     page.getByRole("button", { name: "在架视频模板" }),
   ).toBeVisible();
