@@ -1,6 +1,21 @@
 const { app, BrowserWindow, protocol, net, dialog } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const devPort = Number(
+  (!app.isPackaged && app.commandLine.getSwitchValue("keagent-dev-port")) ||
+    5173,
+);
+if (!Number.isInteger(devPort) || devPort < 1024 || devPort > 65535)
+  throw new Error("Invalid desktop development port");
+const devOrigin = `http://127.0.0.1:${devPort}`;
+if (devPort !== 5173) {
+  const profile = path.join(
+    app.getPath("appData"),
+    `KeAgent Studio Dev ${devPort}`,
+  );
+  require("node:fs").mkdirSync(profile, { recursive: true });
+  app.setPath("userData", profile);
+}
 // One main process owns this userData's browser coordination and recovery journals.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -65,11 +80,15 @@ function returnWindowSetup(window) {
     ]),
   );
   const artifactMedia =
-    require("./artifact-media/dist/runtime.cjs").registerArtifactMedia(window, {
-      identity: () => identity.publishingIdentity(),
-      exchange,
-      producer: (jobId) => identity.completedArtifactOutput(jobId),
-    });
+    require("./artifact-media/dist/runtime.cjs").registerArtifactMedia(
+      window,
+      {
+        identity: () => identity.publishingIdentity(),
+        exchange,
+        producer: (jobId) => identity.completedArtifactOutput(jobId),
+      },
+      devOrigin,
+    );
   identity.setArchiveOutput((output, expected) =>
     artifactMedia.service.register(output, expected),
   );
@@ -81,6 +100,7 @@ function returnWindowSetup(window) {
       exchange,
       resolver: artifactMedia.registry,
     },
+    devOrigin,
   );
   identity.onInvalidated(() => publishing.stop());
 }
@@ -129,7 +149,7 @@ function createWindow() {
   });
   if (app.isPackaged || process.argv.includes("--built"))
     window.loadURL("keagent://app/index.html");
-  else window.loadURL("http://127.0.0.1:5173");
+  else window.loadURL(devOrigin);
   if (process.argv.includes("--smoke-test")) {
     window.webContents.once("did-finish-load", async () => {
       try {
@@ -151,8 +171,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  identity = require("./auth.cjs").registerAuth((runId, generation) =>
-    publishing?.targetStopped(runId, generation),
+  identity = require("./auth.cjs").registerAuth(
+    (runId, generation) => publishing?.targetStopped(runId, generation),
+    devOrigin,
   );
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);

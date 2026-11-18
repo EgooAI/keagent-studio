@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-function registerAuth(onTargetStopped) {
+function registerAuth(onTargetStopped, devOrigin = "http://127.0.0.1:5173") {
   const { PanoramaWorkflow } = require("./panorama/workflow.cjs");
   const workflow = new PanoramaWorkflow(
     path.join(app.getPath("userData"), "panorama"),
@@ -246,7 +246,7 @@ function registerAuth(onTargetStopped) {
     const trusted =
       app.isPackaged || process.argv.includes("--built")
         ? url.protocol === "keagent:" && url.hostname === "app"
-        : url.origin === "http://127.0.0.1:5173";
+        : url.origin === devOrigin;
     if (
       !trusted ||
       event.senderFrame !== event.sender.mainFrame ||

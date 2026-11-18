@@ -363,6 +363,22 @@
 .publish-artifact .douyin-record .ant-timeline {
   margin: 12px 0 0;
 }
+.publish-execution-steps .publish-step-meta,
+.publish-execution-steps .publish-step-detail {
+  color: var(--muted);
+}
+.publish-execution-steps .publish-step-detail {
+  margin-top: 4px;
+}
+.publish-artifact .douyin-record .publish-step-diagnostics {
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  padding: 8px 0 0;
+}
+.publish-step-diagnostics ul {
+  padding-inline-start: 20px;
+  margin-bottom: 0;
+}
 .publish-dialog .ant-modal-container {
   padding: 0;
   border-radius: 14px;

@@ -33,12 +33,14 @@ function AccountWorkspace() {
   const logged = useQuery({
     queryKey: ["creatorhub", "status"],
     queryFn: creatorHubApi.status,
+    enabled: platform === "douyin",
     retry: false,
     refetchInterval: 15000,
   });
-  const account = logged.data?.accounts.find(
-    (a) => (a.platform || "douyin") === platform,
-  );
+  const account =
+    platform === "douyin"
+      ? logged.data?.accounts.find((a) => (a.platform || "douyin") === "douyin")
+      : undefined;
   const requested = params.get("accountId");
   if (account && requested && requested !== account.id) {
     // Abandon actions and filters from links for a previous account.
@@ -82,56 +84,65 @@ function AccountWorkspace() {
           </Space>
         )}
       </header>
-      <nav className="lead-mobile-nav" aria-label="AI 获客子页面">
-        {(["todo", "works", "review", "queue"] as const).map((a, i) => (
-          <Link
-            key={a}
-            aria-current={a === area ? "page" : undefined}
-            to={leadUrl(a, scope)}
-          >
-            {["我的待办", "作品与评论", "线索审核", "账号队列"][i]}
-          </Link>
-        ))}
-      </nav>
-      {logged.error && (
-        <Alert
-          showIcon
-          type="warning"
-          title="读取本机登录状态失败"
-          description={logged.error.message}
-          action={<Button onClick={() => logged.refetch()}>重试</Button>}
+      {platform === "xhs" ? (
+        <Empty
+          className="lead-account-empty"
+          description="小红书 AI 获客暂未开发"
         />
-      )}
-      {logged.isPending ? (
-        <Skeleton active />
-      ) : !account ? (
+      ) : (
         <>
-          <h1>{title}</h1>
-          {!logged.isError && (
-            <Empty
-              className="lead-account-empty"
-              description="当前平台暂无已登录的账号"
-            >
-              <Link to="/settings/platforms">前往平台账号</Link>
-            </Empty>
+          <nav className="lead-mobile-nav" aria-label="AI 获客子页面">
+            {(["todo", "works", "review", "queue"] as const).map((a, i) => (
+              <Link
+                key={a}
+                aria-current={a === area ? "page" : undefined}
+                to={leadUrl(a, scope)}
+              >
+                {["我的待办", "作品与评论", "线索审核", "账号队列"][i]}
+              </Link>
+            ))}
+          </nav>
+          {logged.error && (
+            <Alert
+              showIcon
+              type="warning"
+              title="读取本机登录状态失败"
+              description={logged.error.message}
+              action={<Button onClick={() => logged.refetch()}>重试</Button>}
+            />
+          )}
+          {logged.isPending ? (
+            <Skeleton active />
+          ) : !account ? (
+            <>
+              <h1>{title}</h1>
+              {!logged.isError && (
+                <Empty
+                  className="lead-account-empty"
+                  description="当前平台暂无已登录的账号"
+                >
+                  <Link to="/settings/platforms">前往平台账号</Link>
+                </Empty>
+              )}
+            </>
+          ) : (
+            <div key={platform + account.id}>
+              {area === "works" ? (
+                <Works
+                  {...scope}
+                  accountName={account.nickname}
+                  canOperate={canOperate}
+                />
+              ) : area === "review" ? (
+                <Review {...scope} canOperate={canOperate} />
+              ) : area === "queue" ? (
+                <AccountQueue {...scope} accountName={account.nickname} />
+              ) : (
+                <Todo {...scope} canOperate={canOperate} />
+              )}
+            </div>
           )}
         </>
-      ) : (
-        <div key={platform + account.id}>
-          {area === "works" ? (
-            <Works
-              {...scope}
-              accountName={account.nickname}
-              canOperate={canOperate}
-            />
-          ) : area === "review" ? (
-            <Review {...scope} canOperate={canOperate} />
-          ) : area === "queue" ? (
-            <AccountQueue {...scope} accountName={account.nickname} />
-          ) : (
-            <Todo {...scope} canOperate={canOperate} />
-          )}
-        </div>
       )}
     </section>
   );

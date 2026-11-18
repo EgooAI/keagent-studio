@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { leadWorkspaceApi } from "@keagent/api-client";
+import { creatorHubApi, leadWorkspaceApi } from "@keagent/api-client";
 import type { DouyinQueueRow } from "@keagent/shared-types";
 import { useDouyinDesktop } from "../../lib/douyin";
 type Receipt = Awaited<
@@ -10,7 +10,6 @@ type Stage =
 export interface AccountTask {
   id: string;
   title: string;
-  kind: "message" | "video";
   stage: Stage;
   label: string;
   detail: string;
@@ -29,10 +28,10 @@ export function accountTasks(
       .filter((r) => r.method === "electron" && r.creatorhubTaskId)
       .map((r) => [r.creatorhubTaskId, r]),
   );
-  const localIds = new Set(rows.map((r) => r.id));
-  const tasks: AccountTask[] = rows.map((local) => {
+  const messages = rows.filter((row) => row.kind === "message");
+  const localIds = new Set(messages.map((r) => r.id));
+  const tasks: AccountTask[] = messages.map((local) => {
     const receipt = byLocalId.get(local.id);
-    const kind = local.kind === "message" ? "message" : "video";
     const stage: Stage = (
       {
         queued: "waiting",
@@ -47,20 +46,14 @@ export function accountTasks(
     )[local.state];
     const labels: Record<Stage, string> = {
       waiting: local.eligibleAt ? "等待发送间隔" : "排队中",
-      running: kind === "message" ? "发送中" : "发布中",
+      running: "发送中",
       uncertain: "待核实",
-      done:
-        kind === "video"
-          ? "平台已接受发布"
-          : local.resultSource === "manual"
-            ? "人工确认已发送"
-            : "发送成功",
+      done: local.resultSource === "manual" ? "人工确认已发送" : "发送成功",
       failed: local.resultSource === "manual" ? "人工确认未发送" : "执行失败",
       canceled: "已取消",
     };
     return {
       id: local.id,
-      kind,
       stage,
       label: labels[stage],
       title: local.title,
@@ -100,7 +93,6 @@ export function accountTasks(
     }[stage];
     tasks.push({
       id: receipt.id,
-      kind: "message",
       stage,
       label,
       title: "私信 · " + (receipt.commenterName || "评论者"),
@@ -111,6 +103,19 @@ export function accountTasks(
   }
   return tasks.sort((a, b) =>
     (b.createdAt || "").localeCompare(a.createdAt || ""),
+  );
+}
+
+export function needsOutreachRefresh({ local, receipt, stage }: AccountTask) {
+  if (!local || receipt?.method !== "electron") return false;
+  const pending =
+    receipt.status === "submitted" || receipt.status === "sending";
+  const uncertain = receipt.status === "uncertain";
+  return (
+    (["uncertain", "done", "failed", "canceled"].includes(stage) && pending) ||
+    (uncertain &&
+      (stage === "done" ||
+        (stage === "failed" && local.resultSource === "manual")))
   );
 }
 
@@ -138,11 +143,33 @@ export function useAccountTasks(accountId: string) {
   const rows = (desktop.data?.queue?.rows ?? []).filter(
     (r) => r.accountId === accountId,
   );
+  const tasks = accountTasks(rows, history.data ?? []);
   return {
-    tasks: accountTasks(rows, history.data ?? []),
-    paused: desktop.data?.queue?.paused,
+    tasks,
+    messageResumeAvailable: desktop.data?.queue?.messageResumeAvailable,
+    paused:
+      desktop.data?.queue?.paused &&
+      tasks.some(
+        (task) =>
+          task.local &&
+          (task.stage === "waiting" || task.stage === "uncertain"),
+      ),
     loading: desktop.isPending || history.isPending,
     error: history.error ?? desktop.error,
-    refresh: () => Promise.all([desktop.refetch(), history.refetch()]),
+    refresh: async () => {
+      await Promise.allSettled(
+        tasks.flatMap((task) =>
+          task.receipt && needsOutreachRefresh(task)
+            ? [
+                creatorHubApi.refreshOutreach(
+                  task.receipt.id,
+                  task.receipt.attempt,
+                ),
+              ]
+            : [],
+        ),
+      );
+      return Promise.all([desktop.refetch(), history.refetch()]);
+    },
   };
 }

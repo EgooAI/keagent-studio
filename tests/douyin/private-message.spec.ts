@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   sendSocialMessage,
   verifyExistingSocialMessage,
+  type MessageExecutionSteps,
   type MessageInput,
 } from "../../apps/desktop/electron/social/message";
 import type { OpenCliPage } from "../../apps/desktop/electron/publishing/runtime/browser/opencli-page";
@@ -156,13 +157,17 @@ async function fixture(
   };
   return {
     browser,
-    run: () =>
+    run: (
+      steps?: MessageExecutionSteps,
+      signal = AbortSignal.timeout(43_000),
+    ) =>
       sendSocialMessage(
         browser,
         input,
-        AbortSignal.timeout(39000),
+        signal,
         async () => {},
         history ? "self" : undefined,
+        steps,
       ),
     submits: () => submits,
     paths,
@@ -176,6 +181,50 @@ for (const platform of ["douyin", "xhs"] as const) {
     expect(f.submits()).toBe(1);
   });
 }
+test("抖音私信按步骤等待，发送后再重开会话核对", async ({ page }) => {
+  const f = await fixture(page, "douyin", "saved");
+  let finishedAt = performance.now();
+  const starts: { step: string; waitMs: number }[] = [];
+  await f.run({
+    start: (step) =>
+      starts.push({ step, waitMs: performance.now() - finishedAt }),
+    complete: () => {
+      finishedAt = performance.now();
+    },
+  });
+  expect(starts.map(({ step }) => step)).toEqual([
+    "open_conversation",
+    "fill_message",
+    "trigger_send",
+    "verify_conversation",
+  ]);
+  for (const { step, waitMs } of starts)
+    expect(waitMs).toBeGreaterThanOrEqual(
+      step === "verify_conversation" ? 2950 : 1950,
+    );
+  expect(f.submits()).toBe(1);
+});
+
+test("抖音私信在步骤间中止时不触发发送", async ({ page }) => {
+  const f = await fixture(page, "douyin", "saved");
+  const stop = new AbortController();
+  let activeStep = "";
+  await expect(
+    f.run(
+      {
+        start: (step) => {
+          activeStep = step;
+        },
+        complete: () => {
+          if (activeStep === "fill_message") stop.abort();
+        },
+      },
+      stop.signal,
+    ),
+  ).rejects.toHaveProperty("name", "AbortError");
+  expect(activeStep).toBe("fill_message");
+  expect(f.submits()).toBe(0);
+});
 test("聊天窗的乐观气泡不会被报告为发送成功", async ({ page }) => {
   const f = await fixture(page, "douyin", "optimistic");
   await expect(f.run()).rejects.toMatchObject({ code: "DM_OUTCOME_UNKNOWN" });
@@ -703,6 +752,9 @@ for (const scenario of receipts) {
     else
       await expect(f.run()).rejects.toMatchObject({
         code: "DM_OUTCOME_UNKNOWN",
+        ...(scenario.keepDraft && {
+          message: expect.stringContaining("仍保留原草稿"),
+        }),
       });
     expect(f.submits()).toBe(1);
     expect(visits).toBe(scenario.success ? scenario.history.length : 2);

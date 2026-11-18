@@ -15,10 +15,11 @@ import {
   Tag,
   Upload,
 } from "antd";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { UploadCloud } from "lucide-react";
 import { authRequest } from "@keagent/api-client";
 import type { PersonalVoice, VoiceUpload } from "@keagent/shared-types";
+import { creditPricingQuery } from "../lib/creditSummary";
 import {
   audioBlobURL,
   encodeRecording,
@@ -38,6 +39,15 @@ export function VoiceLibraryPanel() {
   const { message } = App.useApp();
   const client = useQueryClient();
   const library = useVoiceLibrary();
+  const pricing = useQuery(creditPricingQuery);
+  const clonePrice = pricing.data?.prices.voice_clone;
+  const ttsPrice = pricing.data?.prices.tts_per_kilo_char;
+  const clonePriceText =
+    clonePrice !== undefined
+      ? `复刻 ${clonePrice} 积分／次`
+      : pricing.isPending
+        ? "正在读取复刻价格"
+        : "暂时无法获取复刻价格";
   const [publicVoice, setPublicVoice] = useState<string>();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -124,13 +134,16 @@ export function VoiceLibraryPanel() {
     <>
       <header className="settings-section-head">
         <h2>声音与音色</h2>
-        <Button
-          type="primary"
-          onClick={resetUpload}
-          disabled={!library.data?.cloneEnabled || busy}
-        >
-          上传本人声音
-        </Button>
+        <Space wrap>
+          <span className="muted">{clonePriceText}</span>
+          <Button
+            type="primary"
+            onClick={resetUpload}
+            disabled={!library.data?.cloneEnabled || busy}
+          >
+            上传本人声音
+          </Button>
+        </Space>
       </header>
       <p>选择管理员提供的公共音色，或上传录音创建本人的专属声音。</p>
       <section className="settings-public-voices">
@@ -174,6 +187,12 @@ export function VoiceLibraryPanel() {
         <h3>我的专属音色</h3>
         <Button onClick={() => void library.refetch()}>刷新列表</Button>
       </div>
+      <p className="muted">
+        {ttsPrice === undefined
+          ? "使用专属音色配音按每次云端合成的字数计费。"
+          : `使用专属音色配音每千字 ${ttsPrice} 积分，每次云端合成按千字向上取整。`}
+        试听不消耗应用积分。
+      </p>
       {library.isPending ? (
         <Spin />
       ) : library.isError ? (
@@ -286,7 +305,13 @@ export function VoiceLibraryPanel() {
           type="info"
           showIcon
           title="准备5–30秒的清晰单人录音"
-          description="建议10–20秒，录音中应有至少5秒连续清晰的人声。录音会发送给阿里云百炼复刻，本应用数据库仅保存音色信息。百炼创建音色免费，试听和正式配音按合成用量计费。"
+          description={
+            <>
+              <strong>{clonePriceText}</strong>
+              <br />
+              建议10–20秒，录音中应有至少5秒连续清晰的人声。录音会发送给阿里云百炼复刻，本应用数据库仅保存音色信息。
+            </>
+          }
           style={{ marginBottom: 20 }}
         />
         <Form layout="vertical" disabled={busy}>

@@ -562,7 +562,7 @@ export class OpenCliPage {
     origin: string,
     signal: AbortSignal,
     stillReady: string,
-  ): Promise<boolean> {
+  ): Promise<boolean | "unobserved"> {
     signal.throwIfAborted();
     if (
       this.messageOrigin !== origin ||
@@ -573,9 +573,10 @@ export class OpenCliPage {
     const contents = this.contents;
     const frame = contents.focusedFrame;
     if (!frame || frame.detached || frame.origin !== origin) return false;
-    const ready = await contents.executeJavaScriptInIsolatedWorld(1001, [
-      {
-        code: `(() => {
+    const token = JSON.stringify(crypto.randomUUID());
+    const inspect = <T>(code: string): Promise<T> =>
+      contents.executeJavaScriptInIsolatedWorld(1001, [{ code }]);
+    const ready = await inspect<boolean>(`(() => {
         if (location.origin !== ${JSON.stringify(origin)}) return false;
         let field = document.activeElement;
         while (field?.tagName === "IFRAME") {
@@ -583,26 +584,54 @@ export class OpenCliPage {
           if (!doc || doc.location.origin !== location.origin) return false;
           field = doc.activeElement;
         }
-        return !!field?.matches('textarea:not(:disabled):not([readonly]),input[type=text]:not(:disabled):not([readonly]),[contenteditable=true],[contenteditable="plaintext-only"]') &&
-          !field.closest('[aria-disabled=true]') && (${stillReady}) === true;
-      })()`,
-      },
-    ]);
-    signal.throwIfAborted();
-    if (
-      !ready ||
-      contents.isDestroyed() ||
-      this.messagePopup?.isDestroyed() ||
-      contents !== this.contents ||
-      frame.detached ||
-      contents.focusedFrame !== frame ||
-      frame.origin !== origin ||
-      new URL(contents.getURL()).origin !== origin
-    )
-      return false;
-    contents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
-    contents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
-    return true;
+        if (!field?.matches('textarea:not(:disabled):not([readonly]),input[type=text]:not(:disabled):not([readonly]),[contenteditable=true],[contenteditable="plaintext-only"]') ||
+          field.closest('[aria-disabled=true]') || (${stillReady}) !== true) return false;
+        const doc = field.ownerDocument;
+        globalThis.keAgentMessageEnter?.stop();
+        const receipt = { token: ${token}, seen: false, stop: () => doc.removeEventListener('keydown', observe, true) };
+        function observe(event) {
+          if (event.isTrusted && event.key === 'Enter' &&
+              event.target instanceof doc.defaultView.Node && field.contains(event.target))
+            receipt.seen = true;
+        }
+        doc.addEventListener('keydown', observe, true);
+        globalThis.keAgentMessageEnter = receipt;
+        return true;
+      })()`);
+    if (!ready) return false;
+    try {
+      signal.throwIfAborted();
+      if (
+        contents.isDestroyed() ||
+        this.messagePopup?.isDestroyed() ||
+        contents !== this.contents ||
+        frame.detached ||
+        contents.focusedFrame !== frame ||
+        frame.origin !== origin ||
+        new URL(contents.getURL()).origin !== origin
+      )
+        return false;
+      contents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+      contents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+      // Electron can return after queuing input. Only the bound composer can acknowledge delivery.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        signal.throwIfAborted();
+        if (contents.isDestroyed()) break;
+        const seen = await inspect<boolean>(
+          `globalThis.keAgentMessageEnter?.token === ${token} && globalThis.keAgentMessageEnter.seen`,
+        ).catch(() => false);
+        if (seen) return true;
+        await delay(40);
+      }
+      return "unobserved";
+    } finally {
+      if (!contents.isDestroyed())
+        await inspect(`(() => {
+          if (globalThis.keAgentMessageEnter?.token !== ${token}) return;
+          globalThis.keAgentMessageEnter.stop();
+          delete globalThis.keAgentMessageEnter;
+        })()`).catch(() => {});
+    }
   }
 
   async capturePostResponse(

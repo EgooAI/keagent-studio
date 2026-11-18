@@ -497,7 +497,7 @@ app.whenReady().then(async () => {
             url.hostname === "www.douyin.com" &&
             url.pathname === "/video/12345"
           )
-            return html(`<div data-e2e="comment-list" style="height:90px;width:300px;overflow:auto"><p style="height:500px">分页夹具</p></div>
+            return html(`<title>上海两室一厅看房 - 抖音</title><div data-e2e="comment-list" style="height:90px;width:300px;overflow:auto"><p style="height:500px">分页夹具</p></div>
             <script>
             fetch('/aweme/v1/web/comment/list/?aweme_id=99999&cursor=0');
             fetch('/aweme/v1/web/comment/list/?aweme_id=12345&cursor=0');
@@ -1072,6 +1072,12 @@ app.whenReady().then(async () => {
       const dy = await read(accountId, "https://www.douyin.com/video/12345");
       assert.equal(dy.ok, true, JSON.stringify(dy));
       assert.equal(commentImports[0].accountId, accountId);
+      assert.equal(commentImports[0].title, "上海两室一厅看房");
+      const workHistory = await call("social.workHistory");
+      assert.equal(
+        workHistory.data?.find((work) => work.workId === "12345")?.title,
+        "上海两室一厅看房",
+      );
       assert.deepEqual(
         commentImports[0].items.map((c) => c.comment_id),
         ["first", "second"],

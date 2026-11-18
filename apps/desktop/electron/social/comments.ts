@@ -325,6 +325,50 @@ function advanceComments(platform: SocialPlatform, openPanel: boolean) {
   return "waiting";
 }
 
+function inspectDouyinTitle(workId: string) {
+  if (
+    location.origin !== "https://www.douyin.com" ||
+    location.pathname.match(/^\/(?:video|note)\/(\d+)\/?$/)?.[1] !== workId
+  )
+    return "";
+  const detail = document.querySelector(
+    '[data-e2e="video-detail"], [data-e2e="feed-active-video"]',
+  );
+  if (
+    [
+      detail?.getAttribute("data-aweme-id"),
+      detail?.getAttribute("data-item-id"),
+    ].some((id) => id && id !== workId)
+  )
+    return "";
+  const heading = '[data-e2e="detail-video-title"], h1';
+  const candidates = [
+    detail?.querySelector(heading)?.textContent,
+    document.querySelector(
+      '[data-e2e="detail-video-info"] :is(' + heading + ")",
+    )?.textContent,
+    document
+      .querySelector('meta[property="og:title"]')
+      ?.getAttribute("content"),
+    document.title,
+    detail?.querySelector('[data-e2e="video-desc"]')?.textContent,
+  ];
+  for (const candidate of candidates) {
+    const title = candidate
+      ?.replace(/\s*[-–—|｜]\s*抖音\s*$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (
+      title &&
+      title !== workId &&
+      title !== `抖音作品 ${workId}` &&
+      !/^(?:抖音作品|抖音(?:\s*[-–—|｜]\s*记录美好生活)?)$/.test(title)
+    )
+      return Array.from(title).slice(0, 200).join("");
+  }
+  return "";
+}
+
 export async function collectWorkComments(
   page: OpenCliPage,
   platform: SocialPlatform,
@@ -333,6 +377,7 @@ export async function collectWorkComments(
 ) {
   const { workId, url } = commentTarget(platform, input);
   const items = new Map<string, WorkComment>();
+  let title = "";
   let confirmedEmpty = false;
   let last = false;
   const add = (rows: WorkComment[]) => {
@@ -402,6 +447,12 @@ export async function collectWorkComments(
             if (idle >= (items.size ? 4 : 10)) break;
           }
           assertWork();
+          if (platform === "douyin")
+            title = await page
+              .inspectDocument<string>(
+                `(${inspectDouyinTitle.toString()})(${JSON.stringify(workId)})`,
+              )
+              .catch(() => "");
         },
       ),
     );
@@ -421,6 +472,7 @@ export async function collectWorkComments(
     );
   return {
     workId,
+    ...(title ? { title } : {}),
     items: [...items.values()],
     coverage: "partial" as const,
     observedAt: new Date().toISOString(),

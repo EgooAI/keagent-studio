@@ -388,9 +388,11 @@ export async function publishFromCreatorPage(
   });
   progress(80);
   const publish = button("发布");
-  await assertVideoAvailable();
-  await wait(publish, 90_000);
-  await assertVideoAvailable();
+  await steps.run("wait_publish_ready", "等待页面可提交", async () => {
+    await assertVideoAvailable();
+    await wait(publish, 90_000);
+    await assertVideoAvailable();
+  });
   progress(90);
 
   const raw = await steps.run(
@@ -415,36 +417,38 @@ export async function publishFromCreatorPage(
               Number(JSON.parse(body).item?.common?.timing) === scheduledAt,
       ),
   );
-  const receipt = JSON.parse(
-    raw,
-    (key, value, context?: { source: string }) => {
-      // The browser response may encode a 64-bit work ID as a JSON number.
-      if (
-        (key === "item_id" || key === "aweme_id") &&
-        typeof value === "number" &&
-        context
-      )
-        return context.source;
-      return value;
-    },
-  );
-  const code = receipt?.status_code;
-  if (
-    (typeof code === "number" ||
-      (typeof code === "string" && /^-?\d+$/.test(code))) &&
-    Number(code) !== 0
-  ) {
-    throw new ConfirmedPublishRejection(
-      "PLATFORM_REJECTED",
-      "抖音明确拒绝了本次提交",
+  return steps.run("verify_publish_receipt", "核验抖音提交结果", () => {
+    const receipt = JSON.parse(
+      raw,
+      (key, value, context?: { source: string }) => {
+        // The browser response may encode a 64-bit work ID as a JSON number.
+        if (
+          (key === "item_id" || key === "aweme_id") &&
+          typeof value === "number" &&
+          context
+        )
+          return context.source;
+        return value;
+      },
     );
-  }
-  if (scheduledAt !== undefined && code !== 0 && code !== "0")
-    throw new Error("The platform did not confirm scheduled submission");
-  const id = receipt?.item_id ?? receipt?.aweme_id;
-  const externalId =
-    typeof id === "string" || Number.isSafeInteger(id) ? String(id) : "";
-  if (!/^\d{5,30}$/.test(externalId))
-    throw new Error("The platform receipt did not include a valid work ID");
-  return { externalId, url: `https://www.douyin.com/video/${externalId}` };
+    const code = receipt?.status_code;
+    if (
+      (typeof code === "number" ||
+        (typeof code === "string" && /^-?\d+$/.test(code))) &&
+      Number(code) !== 0
+    ) {
+      throw new ConfirmedPublishRejection(
+        "PLATFORM_REJECTED",
+        "抖音明确拒绝了本次提交",
+      );
+    }
+    if (scheduledAt !== undefined && code !== 0 && code !== "0")
+      throw new Error("The platform did not confirm scheduled submission");
+    const id = receipt?.item_id ?? receipt?.aweme_id;
+    const externalId =
+      typeof id === "string" || Number.isSafeInteger(id) ? String(id) : "";
+    if (!/^\d{5,30}$/.test(externalId))
+      throw new Error("The platform receipt did not include a valid work ID");
+    return { externalId, url: `https://www.douyin.com/video/${externalId}` };
+  });
 }

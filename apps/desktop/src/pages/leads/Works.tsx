@@ -56,8 +56,20 @@ const grants = {
   revoked: "已撤销",
   unconfigured: "未配置",
 };
-function workTitle(work: Work) {
-  return work.cloud?.title || "作品 " + work.workId.replace(/^xhs-/, "");
+function workTitle(work: Work, title = work.cloud?.title) {
+  if (work.workId.startsWith("xhs-"))
+    return title || "作品 " + work.workId.slice(4);
+  const placeholders = [
+    work.workId,
+    `抖音作品 ${work.workId}`,
+    `作品 ${work.workId}`,
+    "抖音作品",
+  ];
+  return (
+    [title, work.local?.title]
+      .map((name) => name?.trim())
+      .find((name) => name && !placeholders.includes(name)) || "未获取作品名称"
+  );
 }
 function workMode(work: Work) {
   return work.local ? (work.local.mode ?? "monitor") : "history";
@@ -148,7 +160,10 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
     if (row.platform !== platform || row.accountId !== accountId) continue;
     const entry = records.get(row.workId);
     if (entry) entry.local = row;
-    else if (row.workId.includes(workQuery))
+    else if (
+      row.workId.includes(workQuery) ||
+      row.title?.toLowerCase().includes(workQuery.toLowerCase())
+    )
       records.set(row.workId, { workId: row.workId, local: row });
   }
   const pickedId = detailId || workId;
@@ -225,7 +240,9 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
   if (workId && !records.has(workId))
     workOptions.unshift({
       label:
-        selected && selected.workId === workId ? workTitle(selected) : workId,
+        selected && selected.workId === workId
+          ? workTitle(selected)
+          : workTitle({ workId }),
       value: workId,
     });
   const errors = [
@@ -282,9 +299,13 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
               <Input
                 allowClear
                 prefix={<Search size={15} />}
-                placeholder="搜索作品名称或编号"
+                placeholder={
+                  platform === "douyin" ? "搜索作品名称" : "搜索作品名称或编号"
+                }
                 maxLength={200}
-                aria-label="搜索作品名称或编号"
+                aria-label={
+                  platform === "douyin" ? "搜索作品名称" : "搜索作品名称或编号"
+                }
                 value={workSearch}
                 onChange={(e) => setWorkSearch(e.target.value)}
               />
@@ -334,7 +355,7 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
                       >
                         {workTitle(w)}
                       </Button>
-                      <small>{w.workId}</small>
+                      {platform === "xhs" && <small>{w.workId}</small>}
                     </div>
                   ),
                 },
@@ -520,7 +541,10 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
                     className="work-title-link"
                     onClick={() => setView("comments", c.workId)}
                   >
-                    {c.title || c.workId}
+                    {workTitle(
+                      records.get(c.workId) ?? { workId: c.workId },
+                      c.title,
+                    )}
                   </Button>
                 ),
               },

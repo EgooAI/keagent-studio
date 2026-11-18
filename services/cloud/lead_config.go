@@ -12,6 +12,16 @@ import (
 )
 
 const defaultLeadCriteria = "判断评论者是否有明确的购房、租房、卖房、出租或看房需求。有明确需求且可以合理回应时 qualified=true；不要根据昵称、头像、地区或身份特征推测。"
+const customLeadCriteriaVersion = "v2"
+
+func leadCriteriaVersion(criteria string) string {
+	switch strings.TrimSpace(criteria) {
+	case "", defaultLeadCriteria:
+		return "v1"
+	default:
+		return customLeadCriteriaVersion
+	}
+}
 
 type leadSettings struct {
 	Criteria            string     `json:"criteria"`
@@ -69,9 +79,7 @@ func (s *server) leadSettingsGet(ctx context.Context, a actor) (leadSettings, er
 	if strings.TrimSpace(row.Criteria) == "" {
 		row.Criteria = defaultLeadCriteria
 	}
-	if row.CriteriaVersion == "" {
-		row.CriteriaVersion = "v1"
-	}
+	row.CriteriaVersion = leadCriteriaVersion(row.Criteria)
 	row.CriteriaHash = criteriaHash(row.CriteriaVersion, row.Criteria)
 	row.DefaultCriteria = defaultLeadCriteria
 	utc := updated.UTC()
@@ -102,7 +110,7 @@ func (s *server) leadSettingsSave(ctx context.Context, a actor, body []byte) (le
 	if criteria == "" {
 		criteria = defaultLeadCriteria
 	}
-	version := "v1"
+	version := leadCriteriaVersion(criteria)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO keagent_lead_settings(
 		owner_id,device_id,criteria,criteria_version,max_comments,concurrency,
 		creatorhub_base_url,creatorhub_account_id,updated_at)

@@ -40,6 +40,7 @@ export interface PublishingDependencies {
 export function registerPublishing(
   window: BrowserWindow,
   dependencies: PublishingDependencies,
+  devOrigin = "http://127.0.0.1:5173",
 ) {
   let resolver = dependencies.resolver;
   let recovering = false;
@@ -167,7 +168,7 @@ export function registerPublishing(
           ),
       );
     },
-    sendMessage: async (input, identity, beforeSubmit) => {
+    sendMessage: async (input, identity, beforeSubmit, steps) => {
       const signal = AbortSignal.any([
         lifetime.signal,
         AbortSignal.timeout(120000),
@@ -179,8 +180,9 @@ export function registerPublishing(
         signal,
         (page, senderId) =>
           page.withMessagePopups(input.profileUrl, () =>
-            page.withPublishViewport(() =>
-              sendSocialMessage(
+            page.withPublishViewport(() => {
+              steps.complete();
+              return sendSocialMessage(
                 page,
                 input,
                 signal,
@@ -206,8 +208,9 @@ export function registerPublishing(
                   await beforeSubmit();
                 },
                 senderId,
-              ),
-            ),
+                steps,
+              );
+            }),
           ),
       );
     },
@@ -361,7 +364,7 @@ export function registerPublishing(
         const trusted =
           app.isPackaged || process.argv.includes("--built")
             ? url.protocol === "keagent:" && url.hostname === "app"
-            : url.origin === "http://127.0.0.1:5173";
+            : url.origin === devOrigin;
         if (
           event.sender !== window.webContents ||
           event.senderFrame !== event.sender.mainFrame ||

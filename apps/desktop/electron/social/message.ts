@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import type { DouyinMessageStep } from "@keagent/shared-types";
 import { PublishingError } from "../publishing/core";
 import {
   isNavigationEvaluationError,
@@ -16,6 +17,14 @@ export interface MessageInput {
   requestKey: string;
   source?: { workId: string; commentId: string };
 }
+
+export interface MessageExecutionSteps {
+  start(step: DouyinMessageStep): void;
+  complete(): void;
+}
+
+const MESSAGE_STEP_INTERVAL_MS = 2000;
+const MESSAGE_RECEIPT_INTERVAL_MS = 3000;
 
 export function validateMessage(input: MessageInput) {
   const profile =
@@ -188,6 +197,7 @@ function messageChat(
         stackBlank: false,
         firstOwnTimeMatches: false,
         draftCleared: false,
+        draftStillPresent: false,
         receiptTexts: [] as string[],
       };
     }
@@ -315,6 +325,7 @@ export async function sendSocialMessage(
   signal: AbortSignal,
   beforeSubmit: () => Promise<void>,
   senderId?: string,
+  steps?: MessageExecutionSteps,
 ) {
   validateMessage(input);
   const url = new URL(input.profileUrl);
@@ -331,6 +342,14 @@ export async function sendSocialMessage(
   const baselineHistory = new Set<string>(),
     freshHistory = new Set<string>();
   let readBaseline = false;
+  async function startStep(step: DouyinMessageStep) {
+    const interval =
+      step === "verify_conversation"
+        ? MESSAGE_RECEIPT_INTERVAL_MS
+        : MESSAGE_STEP_INTERVAL_MS;
+    await delay(interval, undefined, { signal });
+    steps?.start(step);
+  }
   async function observeHistory(ids: Set<string>, read: () => Promise<void>) {
     if (input.platform !== "xhs" || !senderId || page.inMessagePopup)
       return read();
@@ -356,6 +375,7 @@ export async function sendSocialMessage(
       read,
     );
   }
+  await startStep("open_conversation");
   await observeHistory(baselineHistory, async () => {
     await openChat();
     if (input.platform === "xhs" && senderId && !page.inMessagePopup)
@@ -393,6 +413,8 @@ export async function sendSocialMessage(
         : "DM_RECIPIENT_UNVERIFIED",
       "刚打开的私信窗口已切换，未输入正文。",
     );
+  steps?.complete();
+  await startStep("fill_message");
   await page.replaceText(
     input.text,
     'textarea,input[type=text],[contenteditable=true],[contenteditable="plaintext-only"]',
@@ -402,18 +424,30 @@ export async function sendSocialMessage(
       stillReady: script("focused") + ".ready",
     },
   );
+  let draft = await run("draft");
+  for (let attempt = 0; !draft.ready && attempt < 6; attempt++) {
+    await delay(250, undefined, { signal });
+    draft = await run("draft");
+  }
+  if (!draft.ready)
+    throw new PublishingError(
+      "DM_DRAFT_UNCONFIRMED",
+      "未能在目标会话的输入框中核实私信正文，已停止发送。",
+    );
+  steps?.complete();
+  await startStep("trigger_send");
   await beforeSubmit();
   clock.submittedAt = Date.now();
   const submission = await run("submit");
-  const sent =
-    submission.ready ||
-    (submission.reason === "enter" &&
-      (await page.pressMessageEnter(
-        url.origin,
-        signal,
-        script("enter") + ".ready",
-      )));
-  if (!sent)
+  const enter =
+    !submission.ready && submission.reason === "enter"
+      ? await page.pressMessageEnter(
+          url.origin,
+          signal,
+          script("enter") + ".ready",
+        )
+      : false;
+  if (!submission.ready && !enter)
     throw new PublishingError(
       "DM_NOT_DISPATCHED",
       "目标会话内没有可用的发送按钮，或草稿已改变",
@@ -454,13 +488,15 @@ export async function sendSocialMessage(
   }
   const submittedIds = new Set<string>();
   let shownDelivered = false,
-    firstShown = "";
+    firstShown = "",
+    draftStillPresent = false;
   if (!baseline.historyReady) clock.freshSince = clock.submittedAt;
   const previousCount = baseline.historyReady ? baseline.count : 0;
   const previousDelivered = baseline.historyReady ? baseline.delivered : 0;
   const historyAction = input.platform === "douyin" ? "history" : "inspect";
   for (let i = 0; i < 20; i++) {
     const shown = await run(historyAction);
+    draftStillPresent = shown.draftStillPresent;
     if (newStackRow(shown)) break;
     if (shown.draftCleared && shown.firstOwnTimeMatches)
       firstShown = firstAfterBlank(shown);
@@ -473,6 +509,8 @@ export async function sendSocialMessage(
     }
     await delay(250, undefined, { signal });
   }
+  steps?.complete();
+  await startStep("verify_conversation");
   let confirmed = false,
     reopened = false;
   await observeHistory(freshHistory, async () => {
@@ -519,13 +557,23 @@ export async function sendSocialMessage(
     (readBaseline && [...freshHistory].some((id) => !baselineHistory.has(id)))
   )
     return;
+  if (enter === "unobserved")
+    throw new PublishingError(
+      "DM_OUTCOME_UNKNOWN",
+      "应用已触发发送按键，但未观察到抖音输入框收到按键，回查也未核实消息",
+    );
+  if (draftStillPresent)
+    throw new PublishingError(
+      "DM_OUTCOME_UNKNOWN",
+      "触发发送后，抖音输入框仍保留原草稿，回查也未核实消息",
+    );
   if (!reopened)
     throw new PublishingError(
       "DM_OUTCOME_UNKNOWN",
-      "已点击发送，重新打开收件人的会话失败，请到平台核对。",
+      "已触发发送，重新打开收件人的会话失败，请到平台核对。",
     );
   throw new PublishingError(
     "DM_OUTCOME_UNKNOWN",
-    "已点击发送，重新打开目标会话后仍未核实消息，请人工核对",
+    "已触发发送，重新打开目标会话后仍未核实消息，请人工核对",
   );
 }

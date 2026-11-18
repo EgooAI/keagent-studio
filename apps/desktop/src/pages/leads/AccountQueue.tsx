@@ -8,13 +8,14 @@ import {
   Drawer,
   Empty,
   Input,
-  Select,
   Space,
   Tag,
+  Timeline,
 } from "antd";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { creatorHubApi, douyinApi } from "@keagent/api-client";
+import type { DouyinMessageStep } from "@keagent/shared-types";
 import { leadUrl, localTime, type LeadScope } from "./navigation";
 import { useAccountTasks, type AccountTask } from "./accountTasks";
 import OpenCommenterButton from "./OpenCommenterButton";
@@ -41,9 +42,29 @@ const stoppedBeforeSend = new Set([
   "DM_ENTRY_MISSING",
   "DM_CONVERSATION_MISSING",
   "DM_EDITOR_MISSING",
+  "DM_DRAFT_UNCONFIRMED",
   "DM_CONTACT_RESTRICTED",
   "DM_NOT_DISPATCHED",
 ]);
+const messageStepLabels: Record<DouyinMessageStep, string> = {
+  check_account: "核对账号登录",
+  open_conversation: "打开并核对收件人会话",
+  fill_message: "填写并核对私信正文",
+  trigger_send: "校验授权并触发发送",
+  verify_conversation: "重开会话核实消息",
+  recheck_conversation: "后台回查确认消息",
+};
+const stepResults = {
+  started: { label: "执行中", color: "blue" },
+  completed: { label: "完成", color: "green" },
+  failed: { label: "失败", color: "red" },
+};
+const stepTime = new Intl.DateTimeFormat("zh-CN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
 
 function messageEvidence(task: AccountTask, platform: LeadScope["platform"]) {
   const { local } = task;
@@ -73,10 +94,11 @@ export default function AccountQueue(
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const stage = params.get("filter") || "",
-    kind = params.get("kind") || "";
+  const [resuming, setResuming] = useState(false);
+  const stage = params.get("filter") || "";
   const id = params.get("taskId") || params.get("outreachId");
   const task = queue.tasks.find((t) => t.id === id || t.receipt?.id === id);
+  const messageSteps = task?.local?.messageSteps ?? [];
   const update = (key: string, v: string) => {
     const next = new URLSearchParams(params);
     if (v) next.set(key, v);
@@ -85,15 +107,29 @@ export default function AccountQueue(
     setParams(next, { replace: true });
     if (key !== "taskId") setPage(1);
   };
+  const query = search.trim().toLowerCase();
   const candidates = queue.tasks.filter(
-    (t) =>
-      (!kind || t.kind === kind) &&
-      (!search ||
-        [t.title, t.detail, t.receipt?.draft].some((v) =>
-          v?.toLowerCase().includes(search.trim().toLowerCase()),
-        )),
+    (task) =>
+      !query ||
+      [task.title, task.detail, task.receipt?.draft].some((value) =>
+        value?.toLowerCase().includes(query),
+      ),
   );
   const rows = candidates.filter((t) => !stage || t.stage === stage);
+  const hasUncertainMessage = queue.tasks.some(
+    (row) => row.local && row.stage === "uncertain",
+  );
+  async function resumeMessages() {
+    setResuming(true);
+    try {
+      await douyinApi.queue("resume-message");
+      await client.invalidateQueries({ queryKey: ["douyin", "desktop"] });
+    } catch (e) {
+      void message.error((e as Error).message);
+    } finally {
+      setResuming(false);
+    }
+  }
   function act(
     row: AccountTask,
     action: "cancel" | "confirm-sent" | "confirm-failed",
@@ -154,8 +190,25 @@ export default function AccountQueue(
         <Alert
           type="warning"
           showIcon
-          title="本机共用队列已暂停"
-          action={<Link to="/publish">前往发布中心</Link>}
+          title="本机私信队列已暂停"
+          description={
+            queue.messageResumeAvailable
+              ? "恢复后将继续执行本机已排队的私信。"
+              : undefined
+          }
+          action={
+            queue.messageResumeAvailable ? (
+              <Button loading={resuming} onClick={() => void resumeMessages()}>
+                恢复私信队列
+              </Button>
+            ) : hasUncertainMessage ? (
+              <Button onClick={() => update("filter", "uncertain")}>
+                查看待核实私信
+              </Button>
+            ) : (
+              <Link to="/publish">前往发布中心</Link>
+            )
+          }
         />
       )}
       <div className="lead-statuses">
@@ -175,18 +228,6 @@ export default function AccountQueue(
       </div>
       <div className="lead-box">
         <div className="lead-tools">
-          <Select
-            aria-label="队列类型"
-            value={kind}
-            options={[
-              { label: "全部类型", value: "" },
-              { label: "私信", value: "message" },
-              ...(props.platform === "douyin"
-                ? [{ label: "视频发布", value: "video" }]
-                : []),
-            ]}
-            onChange={(v) => update("kind", v)}
-          />
           <Input.Search
             allowClear
             aria-label="搜索任务"
@@ -230,7 +271,6 @@ export default function AccountQueue(
                   >
                     {r.title}
                   </button>
-                  <small>{r.kind === "message" ? "私信" : "视频发布"}</small>
                 </div>
               ),
             },
@@ -320,29 +360,54 @@ export default function AccountQueue(
                       },
                     ]
                   : []),
-                ...(task.kind === "message"
-                  ? [
-                      {
-                        key: "evidence",
-                        label: "会话核对",
-                        children: messageEvidence(task, props.platform),
-                      },
-                    ]
-                  : []),
+                {
+                  key: "evidence",
+                  label: "会话核对",
+                  children: messageEvidence(task, props.platform),
+                },
               ]}
             />
+            <section aria-labelledby="message-steps-heading">
+              <h3 id="message-steps-heading">执行步骤</h3>
+              {messageSteps.length ? (
+                <Timeline
+                  items={messageSteps.map((step) => {
+                    const result = stepResults[step.status];
+                    return {
+                      key: step.step,
+                      color: result.color,
+                      content: (
+                        <>
+                          <Space size="small" wrap>
+                            <strong>{messageStepLabels[step.step]}</strong>
+                            <Tag color={result.color}>{result.label}</Tag>
+                            <small>
+                              {stepTime.format(new Date(step.timestamp))}
+                            </small>
+                            {step.durationMs !== undefined && (
+                              <small>{step.durationMs} ms</small>
+                            )}
+                          </Space>
+                          {step.errorMessage && <div>{step.errorMessage}</div>}
+                        </>
+                      ),
+                    };
+                  })}
+                />
+              ) : (
+                <p>暂无执行步骤记录</p>
+              )}
+            </section>
             <Space wrap>
-              {task.kind === "message" &&
-                task.local?.sourceWorkId &&
-                task.local.sourceCommentId && (
-                  <OpenCommenterButton
-                    accountId={props.accountId}
-                    workId={task.local.sourceWorkId}
-                    commentId={task.local.sourceCommentId}
-                    label="查看收件人"
-                    onOpen={() => update("taskId", "")}
-                  />
-                )}
+              {task.local?.sourceWorkId && task.local.sourceCommentId && (
+                <OpenCommenterButton
+                  accountId={props.accountId}
+                  workId={task.local.sourceWorkId}
+                  commentId={task.local.sourceCommentId}
+                  label="查看收件人"
+                  onOpen={() => update("taskId", "")}
+                />
+              )}
               {task.receipt?.analysisId && (
                 <Link
                   to={leadUrl("review", props, {
@@ -362,26 +427,19 @@ export default function AccountQueue(
                   查看作品评论
                 </Link>
               )}
-              {task.local?.artifactId && (
-                <Link to={"/publish/" + task.local.artifactId}>
-                  查看视频发布详情
-                </Link>
-              )}
               {task.local?.state === "queued" && (
                 <Button onClick={() => act(task, "cancel")}>取消排队</Button>
               )}
-              {task.local &&
-                task.stage === "uncertain" &&
-                task.kind === "message" && (
-                  <>
-                    <Button onClick={() => act(task, "confirm-sent")}>
-                      人工确认已发出
-                    </Button>
-                    <Button onClick={() => act(task, "confirm-failed")}>
-                      人工确认未发出
-                    </Button>
-                  </>
-                )}
+              {task.local && task.stage === "uncertain" && (
+                <>
+                  <Button onClick={() => act(task, "confirm-sent")}>
+                    人工确认已发出
+                  </Button>
+                  <Button onClick={() => act(task, "confirm-failed")}>
+                    人工确认未发出
+                  </Button>
+                </>
+              )}
             </Space>
           </>
         ) : (

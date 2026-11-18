@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   validateDouyinInput,
   type DouyinBatchInput,
+  type DouyinMessageStepLog,
   type DouyinPublishRecord,
   type DouyinPublishInput,
   type DouyinQueue,
@@ -13,7 +14,11 @@ import {
 import { PublishingError, type PublishingIdentity } from "./core";
 import { atomicJSON } from "./files";
 
-import { validateMessage, type MessageInput } from "../social/message";
+import {
+  validateMessage,
+  type MessageExecutionSteps,
+  type MessageInput,
+} from "../social/message";
 
 type VideoEntry = DouyinQueueRow &
   DouyinQueueEntry & { kind?: "video"; direct?: DouyinPublishInput };
@@ -82,8 +87,26 @@ function publicRow(entry: Entry, data: Checkpoint): DouyinQueueRow {
     progress: entry.progress,
     errorCode: entry.errorCode,
     errorMessage: entry.errorMessage,
+    messageSteps: entry.messageSteps,
     resultSource: entry.resultSource,
   };
+}
+
+function finishMessageStep(
+  entry: MessageEntry,
+  result: Pick<DouyinMessageStepLog, "status" | "errorCode" | "errorMessage">,
+) {
+  const steps = entry.messageSteps;
+  const step = steps?.at(-1);
+  if (!steps || step?.status !== "started") return;
+  entry.messageSteps = [
+    ...steps.slice(0, -1),
+    {
+      ...step,
+      ...result,
+      durationMs: Math.max(0, Date.now() - Date.parse(step.timestamp)),
+    },
+  ];
 }
 interface Checkpoint {
   paused: boolean;
@@ -98,6 +121,43 @@ const live = (entry: Entry) =>
   ["queued", "running", "submitting"].includes(entry.state);
 const uncertain = (entry: Entry) =>
   entry.state === "unknown" || entry.state === "interrupted";
+
+function canResumeMessagePause(data: Checkpoint) {
+  return (
+    data.paused &&
+    !!data.pausedForMessage &&
+    data.entries.some(
+      (entry) =>
+        entry.id === data.pausedForMessage &&
+        entry.kind === "message" &&
+        (entry.state === "accepted" || entry.state === "failed"),
+    ) &&
+    !data.entries.some(uncertain)
+  );
+}
+
+function resumeMessagePause(data: Checkpoint) {
+  if (!canResumeMessagePause(data)) return false;
+  clearQueuePause(data);
+  return true;
+}
+
+function clearQueuePause(data: Checkpoint) {
+  delete data.pausedForMessage;
+  data.paused = false;
+}
+
+function canResumeFromAccountQueue(data: Checkpoint) {
+  return (
+    data.paused &&
+    !data.entries.some(uncertain) &&
+    data.entries.some(
+      (entry) => entry.kind === "message" && entry.state === "queued",
+    ) &&
+    !data.entries.some((entry) => entry.kind !== "message" && live(entry))
+  );
+}
+
 export const samePublisher = (a: PublishingIdentity, b: PublishingIdentity) =>
   a.userId === b.userId &&
   a.deviceId === b.deviceId &&
@@ -126,6 +186,7 @@ export class PublishQueue {
         message: MessageInput,
         identity: PublishingIdentity,
         beforeSubmit: () => Promise<void>,
+        steps: MessageExecutionSteps,
       ) => Promise<void>;
       verifyMessage?: (
         identity: PublishingIdentity,
@@ -172,12 +233,19 @@ export class PublishQueue {
     }
     if (data.entries.some(live)) {
       data.paused = true;
-      for (const entry of data.entries)
-        if (entry.state === "running" || entry.state === "submitting")
-          entry.state =
-            entry.kind === "message" && entry.state === "submitting"
-              ? "unknown"
-              : "interrupted";
+      for (const entry of data.entries) {
+        if (entry.state !== "running" && entry.state !== "submitting") continue;
+        entry.state =
+          entry.kind === "message" && entry.state === "submitting"
+            ? "unknown"
+            : "interrupted";
+        if (entry.kind === "message")
+          finishMessageStep(entry, {
+            status: "failed",
+            errorCode: "INTERRUPTED",
+            errorMessage: "桌面端在步骤完成前退出",
+          });
+      }
       atomicJSON(file, data);
     }
     this.checkpoints.set(file, data);
@@ -210,7 +278,8 @@ export class PublishQueue {
   }
 
   view(identity: PublishingIdentity): DouyinQueue {
-    const { paused, entries } = this.data(identity);
+    const data = this.data(identity);
+    const { paused, entries } = data;
     const recent = entries
       .filter((entry) => !live(entry) && !uncertain(entry))
       .slice(-100);
@@ -219,8 +288,9 @@ export class PublishQueue {
     );
     return {
       paused,
+      messageResumeAvailable: !this.worker && canResumeFromAccountQueue(data),
       rows: [...outstanding, ...recent.reverse()].map((entry) =>
-        publicRow(entry, this.data(identity)),
+        publicRow(entry, data),
       ),
     };
   }
@@ -340,22 +410,26 @@ export class PublishQueue {
       if (!confirmed) return;
       await this.assertCurrent(identity);
       if (epoch !== this.epoch || entry.state !== "unknown") return;
-      const resume =
-        data.pausedForMessage === entry.id &&
-        !data.entries.some((row) => row !== entry && uncertain(row));
+      let resumed = false;
       this.save(identity, data, () => {
         entry.state = "accepted";
         entry.resultSource = "platform";
         entry.checkedAt = new Date().toISOString();
+        entry.messageSteps = [
+          ...(entry.messageSteps ?? []),
+          {
+            step: "recheck_conversation",
+            status: "completed",
+            timestamp: new Date(now).toISOString(),
+            durationMs: Math.max(0, Date.now() - now),
+          },
+        ];
         delete entry.errorCode;
         delete entry.errorMessage;
         delete entry.message;
-        if (resume) {
-          data.paused = false;
-          delete data.pausedForMessage;
-        }
+        resumed = resumeMessagePause(data);
       });
-      if (resume) this.kick(identity);
+      if (resumed) this.kick(identity);
     } finally {
       this.checkingReceipt = false;
     }
@@ -374,6 +448,7 @@ export class PublishQueue {
     if (entry.state === state) return publicRow(entry, data);
     if (!uncertain(entry))
       throw new PublishingError("QUEUE_CONFLICT", "该私信不处于待核对状态");
+    let resumed = false;
     this.save(identity, data, () => {
       entry.state = state;
       entry.resultSource = "manual";
@@ -381,7 +456,9 @@ export class PublishQueue {
       delete entry.errorCode;
       delete entry.errorMessage;
       delete entry.message;
+      resumed = resumeMessagePause(data);
     });
+    if (resumed) this.kick(identity);
     return publicRow(entry, data);
   }
 
@@ -575,6 +652,15 @@ export class PublishQueue {
         delete data.pausedForMessage;
         data.paused = true;
       });
+    } else if (action === "resume-message") {
+      if (!data.paused) return this.view(identity);
+      if (this.worker || !canResumeFromAccountQueue(data))
+        throw new PublishingError(
+          "QUEUE_CONFLICT",
+          "当前暂停不能在账号队列恢复，请检查待核对任务或前往发布中心",
+        );
+      this.save(identity, data, () => clearQueuePause(data));
+      this.kick(identity);
     } else if (action === "resume") {
       if (this.worker)
         throw new PublishingError("DEVICE_BUSY", "请等待当前发布结束再恢复");
@@ -600,15 +686,21 @@ export class PublishQueue {
             }),
           );
       }
+      if (
+        data.entries.some(
+          (entry) => entry.kind === "message" && uncertain(entry),
+        )
+      )
+        throw new PublishingError(
+          "OUTCOME_UNRESOLVED",
+          "请先在 AI 获客的账号队列核对私信结果",
+        );
       if (data.entries.some((entry) => entry.state === "unknown"))
         throw new PublishingError(
           "OUTCOME_UNRESOLVED",
           "请先在成片详情核对未知的发布结果",
         );
-      this.save(identity, data, () => {
-        delete data.pausedForMessage;
-        data.paused = false;
-      });
+      this.save(identity, data, () => clearQueuePause(data));
       this.kick(identity);
     } else if (action === "clear-interrupted") {
       const entry = data.entries.find(
@@ -670,20 +762,50 @@ export class PublishQueue {
     };
     this.save(identity, data, () => {
       entry.state = "running";
+      if (entry.kind === "message")
+        entry.messageSteps = [
+          {
+            step: "check_account",
+            status: "started",
+            timestamp: new Date().toISOString(),
+          },
+        ];
     });
     const execute = async () => {
       if (entry.kind === "message") {
         await assertCurrent();
         if (!this.ports.sendMessage || !entry.message)
           throw new PublishingError("INVALID_INPUT", "私信内容不可用");
-        await this.ports.sendMessage(entry.message, identity, async () => {
-          await assertCurrent();
-          this.save(identity, data, () => {
-            entry.state = "submitting";
-            entry.submittedAt = Date.now();
-          });
-        });
+        await this.ports.sendMessage(
+          entry.message,
+          identity,
+          async () => {
+            await assertCurrent();
+            this.save(identity, data, () => {
+              entry.state = "submitting";
+              entry.submittedAt = Date.now();
+            });
+          },
+          {
+            start: (step) =>
+              this.save(identity, data, () => {
+                entry.messageSteps = [
+                  ...(entry.messageSteps ?? []),
+                  {
+                    step,
+                    status: "started",
+                    timestamp: new Date().toISOString(),
+                  },
+                ];
+              }),
+            complete: () =>
+              this.save(identity, data, () => {
+                finishMessageStep(entry, { status: "completed" });
+              }),
+          },
+        );
         this.save(identity, data, () => {
+          finishMessageStep(entry, { status: "completed" });
           entry.state = "accepted";
           entry.resultSource = "platform";
           entry.checkedAt = new Date().toISOString();
@@ -735,6 +857,11 @@ export class PublishQueue {
                 : error instanceof PublishingError
                   ? error.message
                   : "网页私信执行失败";
+            finishMessageStep(entry, {
+              status: "failed",
+              errorCode: code,
+              errorMessage: entry.errorMessage,
+            });
           }
           entry.errorCode = code;
           if (

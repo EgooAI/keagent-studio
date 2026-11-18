@@ -365,7 +365,7 @@ export default function LiveAdmin() {
             <Route path="/admin/douyin" element={<AdminDouyin />} />
             <Route path="/admin/ai" element={<AdminAI />} />
             <Route path="/admin/audit" element={<AdminAudit />} />
-  <Route path="/admin/credits" element={<AdminCredits />} />
+            <Route path="/admin/credits" element={<AdminCredits />} />
             <Route
               path="/admin/devices"
               element={<Navigate replace to="/admin/users?tab=devices" />}

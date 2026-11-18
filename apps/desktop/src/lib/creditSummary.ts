@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authRequest } from "@keagent/api-client";
+import type { CreditPricing } from "./creditEstimate";
 
 export interface CreditSummary {
   purchased?: { available?: number; held?: number };
@@ -19,4 +20,11 @@ export const creditSummaryQuery = queryOptions({
   queryFn: () => authRequest<CreditSummary>("credits.summary"),
   retry: false,
   staleTime: 15_000,
+});
+
+export const creditPricingQuery = queryOptions({
+  queryKey: ["credit-pricing"],
+  queryFn: () => authRequest<CreditPricing>("credits.pricing"),
+  retry: false,
+  staleTime: 60_000,
 });

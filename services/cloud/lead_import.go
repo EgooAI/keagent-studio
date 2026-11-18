@@ -12,6 +12,7 @@ import (
 type leadImportInput struct {
 	AccountID  string          `json:"accountId"`
 	WorkID     string          `json:"workId"`
+	Title      string          `json:"title,omitempty"`
 	RequestKey string          `json:"requestKey"`
 	SnapshotID string          `json:"snapshotId"`
 	ObservedAt time.Time       `json:"observedAt"`
@@ -28,6 +29,10 @@ func (s *server) importCreatorHubComments(ctx context.Context, a actor, body []b
 		!validLeadWork(in.WorkID) || !exchangeKey.MatchString(in.RequestKey) ||
 		!exchangeID.MatchString(in.SnapshotID) || in.ObservedAt.IsZero() ||
 		len(in.Items) > 500 || !validCoverage(in.Coverage) {
+		return nil, collectionInvalid()
+	}
+	in.Title = strings.TrimSpace(in.Title)
+	if in.Title != "" && !validExchangeText(in.Title, 200) {
 		return nil, collectionInvalid()
 	}
 	for i := range in.Items {
@@ -86,7 +91,7 @@ func (s *server) importCreatorHubComments(ctx context.Context, a actor, body []b
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if err = ensureLeadImportRun(ctx, tx, a, scope, in.ObservedAt, g.Kind); err != nil {
+	if err = ensureLeadImportRun(ctx, tx, a, scope, in.ObservedAt, g.Kind, in.Title); err != nil {
 		return nil, err
 	}
 	if err = verifyCommentScope(ctx, tx, a, scope); err != nil {
@@ -108,7 +113,7 @@ func validCoverage(value string) bool {
 	return value == "complete" || value == "partial" || value == "unknown"
 }
 
-func ensureLeadImportRun(ctx context.Context, tx *sql.Tx, a actor, scope commentScope, observed time.Time, kind string) error {
+func ensureLeadImportRun(ctx context.Context, tx *sql.Tx, a actor, scope commentScope, observed time.Time, kind, observedTitle string) error {
 	observed = observed.UTC().Truncate(time.Microsecond)
 	if observed.Before(time.Now().Add(-24*time.Hour)) || observed.After(time.Now().Add(5*time.Minute)) {
 		return exchangeFail(409, "COMMENT_OBSERVATION_STALE", "评论抓取时间无效，请重新抓取")
@@ -118,6 +123,9 @@ func ensureLeadImportRun(ctx context.Context, tx *sql.Tx, a actor, scope comment
 	if xhsWorkID.MatchString(scope.WorkID) {
 		value = "https://www.xiaohongshu.com/explore/" + strings.TrimPrefix(scope.WorkID, "xhs-")
 		title = "小红书笔记 " + strings.TrimPrefix(scope.WorkID, "xhs-")
+	}
+	if observedTitle != "" {
+		title = observedTitle
 	}
 	// The account scopes the key so two accounts observing the same work cannot collide.
 	targetKey := kind + "-" + exchangeFingerprint([]string{scope.AccountID, value})
@@ -176,7 +184,9 @@ func ensureLeadImportRun(ctx context.Context, tx *sql.Tx, a actor, scope comment
 			observed = storedObserved.Time.UTC()
 			break
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE keagent_collection_runs SET observed_at=$2 WHERE id=$1`, runID, observed); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE keagent_collection_runs SET observed_at=$2,
+			payload=CASE WHEN $3::text='' THEN payload ELSE payload || jsonb_build_object('title',$3::text) END
+			WHERE id=$1`, runID, observed, observedTitle); err != nil {
 			return err
 		}
 	case errors.Is(err, sql.ErrNoRows):

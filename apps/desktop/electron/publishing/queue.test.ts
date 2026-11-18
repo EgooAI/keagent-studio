@@ -189,8 +189,16 @@ it("keeps the conversation check result on an unverified message without resendi
   const detail = "重新打开目标会话后仍未核实消息";
   const sendMessage = vi.fn<
     NonNullable<ConstructorParameters<typeof PublishQueue>[0]["sendMessage"]>
-  >(async (_message, _identity, beforeSubmit) => {
+  >(async (_message, _identity, beforeSubmit, steps) => {
+    steps.complete();
+    steps.start("open_conversation");
+    steps.complete();
+    steps.start("fill_message");
+    steps.complete();
+    steps.start("trigger_send");
     await beforeSubmit();
+    steps.complete();
+    steps.start("verify_conversation");
     throw new PublishingError("DM_OUTCOME_UNKNOWN", detail);
   });
   const queue = new PublishQueue({ ...ports, sendMessage });
@@ -209,6 +217,19 @@ it("keeps the conversation check result on an unverified message without resendi
     state: "unknown",
     errorCode: "DM_OUTCOME_UNKNOWN",
     errorMessage: detail,
+    messageSteps: [
+      { step: "check_account", status: "completed" },
+      { step: "open_conversation", status: "completed" },
+      { step: "fill_message", status: "completed" },
+      { step: "trigger_send", status: "completed" },
+      {
+        step: "verify_conversation",
+        status: "failed",
+        errorCode: "DM_OUTCOME_UNKNOWN",
+        errorMessage: detail,
+        durationMs: expect.any(Number),
+      },
+    ],
   });
   expect(sendMessage).toHaveBeenCalledTimes(1);
   // A different process only has the old queue row, which contains no message text.
@@ -230,6 +251,9 @@ it("keeps the conversation check result on an unverified message without resendi
       return matches(message.profileUrl, message.text);
     },
   });
+  expect(recovered.row(identity, message.requestKey)?.messageSteps).toEqual(
+    queue.row(identity, message.requestKey)?.messageSteps,
+  );
   await recovered.recoverMessageReceipt(identity);
   expect(recovered.view(identity)).toMatchObject({
     paused: false,
@@ -244,6 +268,9 @@ it("keeps the conversation check result on an unverified message without resendi
       },
     ],
   });
+  expect(
+    recovered.row(identity, message.requestKey)?.messageSteps?.at(-1),
+  ).toMatchObject({ step: "recheck_conversation", status: "completed" });
   expect(sendMessage).toHaveBeenCalledTimes(1);
 });
 
@@ -310,6 +337,191 @@ it("reads a legacy hash-only receipt once and preserves an unattributed pause", 
   expect(sendMessage).not.toHaveBeenCalled();
   expect(ports.execute).not.toHaveBeenCalled();
 });
+
+it.each([
+  { status: "sent", state: "accepted", manualPause: false },
+  { status: "failed", state: "failed", manualPause: false },
+  { status: "sent", state: "accepted", manualPause: true },
+] as const)(
+  "handles manual confirmation $status with explicit pause $manualPause",
+  async ({ status, state, manualPause }) => {
+    const { input, ports } = setup();
+    const first = {
+      platform: "douyin" as const,
+      accountId: input.accountId,
+      profileUrl: "https://www.douyin.com/user/recipient",
+      recipientName: "收件人",
+      text: "原私信",
+      requestKey: randomUUID(),
+    };
+    const next = {
+      ...first,
+      accountId: "e".repeat(32),
+      requestKey: randomUUID(),
+    };
+    const sendMessage = vi.fn<
+      NonNullable<ConstructorParameters<typeof PublishQueue>[0]["sendMessage"]>
+    >(async (message, _scope, beforeSubmit) => {
+      await beforeSubmit();
+      if (message.requestKey === first.requestKey)
+        throw new PublishingError("DM_OUTCOME_UNKNOWN", "会话中没有发送回执");
+    });
+    const queue = new PublishQueue({ ...ports, sendMessage });
+    queue.enqueueMessage(identity, first);
+    await vi.waitFor(() => expect(queue.view(identity).paused).toBe(true));
+    await expect(
+      queue.control(identity, "resume-message", undefined),
+    ).rejects.toMatchObject({ code: "QUEUE_CONFLICT" });
+    queue.enqueueMessage(identity, next);
+    if (manualPause) await queue.control(identity, "pause", undefined);
+    queue.confirmMessage(identity, first.requestKey, status);
+    expect(queue.row(identity, first.requestKey)).toMatchObject({
+      state,
+      resultSource: "manual",
+    });
+    expect(queue.view(identity)).toMatchObject({
+      paused: manualPause,
+      messageResumeAvailable: manualPause,
+    });
+    if (manualPause) {
+      expect(queue.row(identity, next.requestKey)?.state).toBe("queued");
+    } else {
+      await vi.waitFor(() =>
+        expect(queue.row(identity, next.requestKey)?.state).toBe("accepted"),
+      );
+    }
+    expect(
+      sendMessage.mock.calls.map(([message]) => message.requestKey),
+    ).toEqual(
+      manualPause ? [first.requestKey] : [first.requestKey, next.requestKey],
+    );
+  },
+);
+
+it("allows the account queue to release a stale private-message pause", async () => {
+  const { input, ports } = setup();
+  const settledId = randomUUID();
+  const directory = ports.directory(identity);
+  fs.mkdirSync(directory);
+  fs.writeFileSync(
+    path.join(directory, "publish-queue.json"),
+    JSON.stringify({
+      paused: true,
+      pausedForMessage: settledId,
+      batches: {},
+      entries: [
+        {
+          id: settledId,
+          kind: "message",
+          state: "accepted",
+          resultSource: "manual",
+          accountId: input.accountId,
+        },
+      ],
+    }),
+  );
+  const sendMessage = vi.fn<
+    NonNullable<ConstructorParameters<typeof PublishQueue>[0]["sendMessage"]>
+  >(async (_message, _scope, beforeSubmit) => beforeSubmit());
+  const queue = new PublishQueue({ ...ports, sendMessage });
+  const queued = queue.enqueueMessage(identity, {
+    platform: "douyin",
+    accountId: input.accountId,
+    profileUrl: "https://www.douyin.com/user/recipient",
+    recipientName: "另一位收件人",
+    text: "新任务",
+    requestKey: randomUUID(),
+  });
+  expect(queue.view(identity)).toMatchObject({
+    paused: true,
+    messageResumeAvailable: true,
+  });
+  expect(sendMessage).not.toHaveBeenCalled();
+  await queue.control(identity, "resume-message", undefined);
+  await vi.waitFor(() =>
+    expect(queue.row(identity, queued.id)?.state).toBe("accepted"),
+  );
+  expect(queue.view(identity)).toMatchObject({
+    paused: false,
+    messageResumeAvailable: false,
+  });
+  expect(sendMessage.mock.calls.map(([message]) => message.requestKey)).toEqual(
+    [queued.id],
+  );
+  expect(queue.row(identity, settledId)).toMatchObject({
+    state: "accepted",
+    resultSource: "manual",
+  });
+});
+
+it.each(["message", "video"] as const)(
+  "checks interrupted private messages before resuming a waiting %s",
+  async (nextKind) => {
+    const { input, ports } = setup();
+    const firstId = randomUUID();
+    const directory = ports.directory(identity);
+    fs.mkdirSync(directory);
+    fs.writeFileSync(
+      path.join(directory, "publish-queue.json"),
+      JSON.stringify({
+        paused: false,
+        batches: {},
+        entries: [
+          {
+            id: firstId,
+            kind: "message",
+            state: "running",
+            accountId: input.accountId,
+          },
+        ],
+      }),
+    );
+    const sendMessage = vi.fn<
+      NonNullable<ConstructorParameters<typeof PublishQueue>[0]["sendMessage"]>
+    >(async (_message, _scope, before) => before());
+    const queue = new PublishQueue({ ...ports, sendMessage });
+    expect(queue.row(identity, firstId)?.state).toBe("interrupted");
+    const nextId =
+      nextKind === "message"
+        ? queue.enqueueMessage(identity, {
+            platform: "douyin",
+            accountId: input.accountId,
+            profileUrl: "https://www.douyin.com/user/recipient",
+            recipientName: "收件人",
+            text: "新任务",
+            requestKey: randomUUID(),
+          }).id
+        : queue.add(identity, input).rows.find((row) => row.state === "queued")
+            ?.id;
+    await expect(
+      queue.control(identity, "resume", undefined),
+    ).rejects.toMatchObject({ code: "OUTCOME_UNRESOLVED" });
+    expect(queue.view(identity)).toMatchObject({
+      paused: true,
+      messageResumeAvailable: false,
+    });
+    queue.confirmMessage(identity, firstId, "failed");
+    expect(queue.view(identity)).toMatchObject({
+      paused: true,
+      messageResumeAvailable: nextKind === "message",
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(ports.execute).not.toHaveBeenCalled();
+    if (nextKind === "video") {
+      await expect(
+        queue.control(identity, "resume-message", undefined),
+      ).rejects.toMatchObject({ code: "QUEUE_CONFLICT" });
+      return;
+    }
+    await queue.control(identity, "resume-message", undefined);
+    await vi.waitFor(() =>
+      expect(queue.row(identity, nextId!)?.state).toBe("accepted"),
+    );
+    expect(
+      sendMessage.mock.calls.map(([message]) => message.requestKey),
+    ).toEqual([nextId]);
+  },
+);
 
 it("recovers an unconfirmed send without replaying it or its duplicate", async () => {
   const { input, ports } = setup();

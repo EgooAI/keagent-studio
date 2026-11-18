@@ -52,6 +52,7 @@ async function desktopFixture(
   resolverAvailable = true,
   unknown = false,
   pending = false,
+  initialRecord?: Pick<DouyinPublishRecord, "state" | "logs" | "errorCode">,
 ) {
   await page.addInitScript(
     ({
@@ -62,30 +63,33 @@ async function desktopFixture(
       resolverAvailable,
       unknown,
       pending,
+      initialRecord,
     }) => {
       if (pending) fixture.artifact.review.state = "pending";
-      let records: Record<string, unknown>[] = unknown
-        ? [
-            {
-              id: "e".repeat(32),
-              requestKey: "fixture-unknown-key",
-              handoffId: fixture.id,
-              artifactId: fixture.artifact.id,
-              accountId: account.id,
-              ownerId: fixture.ownerId,
-              deviceId: fixture.deviceId,
-              title: "待核对视频",
-              description: "",
-              hashtags: [],
-              state: "unknown",
-              progress: 95,
-              createdAt: "2026-11-07T00:00:00Z",
-              updatedAt: "2026-11-07T00:00:00Z",
-              errorCode: "PUBLISH_OUTCOME_UNKNOWN",
-              logs: [],
-            },
-          ]
-        : [];
+      let records: Record<string, unknown>[] =
+        unknown || initialRecord
+          ? [
+              {
+                id: "e".repeat(32),
+                requestKey: "fixture-unknown-key",
+                handoffId: fixture.id,
+                artifactId: fixture.artifact.id,
+                accountId: account.id,
+                ownerId: fixture.ownerId,
+                deviceId: fixture.deviceId,
+                title: "待核对视频",
+                description: "",
+                hashtags: [],
+                state: "unknown",
+                progress: 95,
+                createdAt: "2026-11-07T00:00:00Z",
+                updatedAt: "2026-11-07T00:00:00Z",
+                errorCode: "PUBLISH_OUTCOME_UNKNOWN",
+                logs: [],
+                ...initialRecord,
+              },
+            ]
+          : [];
       let activeRecord: unknown;
       const observations: Record<string, unknown>[] = [];
       const artifacts = [
@@ -379,6 +383,7 @@ async function desktopFixture(
       resolverAvailable,
       unknown,
       pending,
+      initialRecord,
     },
   );
 }
@@ -892,6 +897,56 @@ test("发布工作台可在详情旁筛选成片，并在明确确认后批量�
     path: "output/publish-workbench-1280.png",
     animations: "disabled",
   });
+});
+
+test("发布记录合并步骤事件并定位发布设置失败", async ({ page }) => {
+  const events = [
+    ["check_login", "started"],
+    ["check_login", "completed"],
+    ["platform_publish", "started"],
+    ["publish_settings", "started"],
+    ["set_download", "started"],
+    ["click_page_control", "started"],
+    ["click_page_control", "failed"],
+    ["set_download", "failed"],
+    ["publish_settings", "failed"],
+    ["platform_publish", "failed"],
+  ] as const;
+  await desktopFixture(page, true, false, false, {
+    state: "failed",
+    errorCode: "EXECUTION_FAILED",
+    logs: events.map(([step, status], index) => ({
+      step,
+      status,
+      timestamp: new Date(
+        Date.UTC(2026, 10, 18, 9, 0, 0, index * 150),
+      ).toISOString(),
+      ...(status === "failed" ? { errorCode: "EXECUTION_FAILED" } : {}),
+    })),
+  });
+  await page.goto(`/#/publish/${fixture.artifact.id}`);
+  await page.getByText("发布记录", { exact: true }).click();
+  const steps = page.locator(".publish-execution-steps");
+  await expect(steps).toHaveAttribute("open", "");
+  const overview = steps.locator(".ant-timeline");
+  await expect(overview.getByText("核对抖音登录", { exact: true })).toHaveCount(
+    1,
+  );
+  await expect(overview.getByText(/150 毫秒/)).toBeVisible();
+  await expect(
+    overview.getByText("核对发布设置", { exact: true }),
+  ).toBeVisible();
+  await expect(overview.getByText("失败位置 · 设置下载权限")).toBeVisible();
+  await expect(
+    steps.getByText("click_page_control", { exact: true }),
+  ).toBeHidden();
+  await steps.getByText("技术详情", { exact: true }).click();
+  await expect(
+    steps.getByText("click_page_control", { exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => Reflect.get(window, "__publishCount"))).toBe(
+    0,
+  );
 });
 
 test("发布工作区按需显示批量操作，预览和记录独立切换", async ({ page }) => {

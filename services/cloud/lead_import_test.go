@@ -104,6 +104,19 @@ func TestCreatorHubImportCreatesSyntheticVerification(t *testing.T) {
 	if got := creatorHubImportOne(t, f); got["addedCount"] != float64(1) {
 		t.Fatal(got)
 	}
+	for i, title := range []string{"上海两室一厅看房", ""} {
+		mustCollection(t, f.server, f.actor, "comments/import", object{
+			"accountId": f.scope.AccountID, "workId": f.scope.WorkID, "title": title,
+			"requestKey": id(), "snapshotId": id(), "observedAt": time.Now().UTC().Add(time.Duration(i+1) * time.Second),
+			"coverage": "partial", "items": []object{},
+		})
+	}
+	works := mustCollection(t, f.server, f.actor, "lead/workspace/works", object{
+		"accountId": f.scope.AccountID, "search": "两室一厅",
+	})
+	if titles := rows(works["items"]); len(titles) != 1 || obj(titles[0])["title"] != "上海两室一厅看房" {
+		t.Fatal(works)
+	}
 	counts := []struct {
 		name  string
 		query string

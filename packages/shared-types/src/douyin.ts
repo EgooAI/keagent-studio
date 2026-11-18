@@ -31,6 +31,17 @@ export interface DouyinPublishLog {
   durationMs?: number;
   errorCode?: string;
 }
+export type DouyinMessageStep =
+  | "check_account"
+  | "open_conversation"
+  | "fill_message"
+  | "trigger_send"
+  | "verify_conversation"
+  | "recheck_conversation";
+export interface DouyinMessageStepLog extends DouyinPublishLog {
+  step: DouyinMessageStep;
+  errorMessage?: string;
+}
 export interface DouyinPublishRecord extends DouyinPublishInput {
   id: string;
   ownerId: string;
@@ -107,6 +118,7 @@ export interface DouyinQueueRow {
   artifactId?: string;
   title: string;
   errorMessage?: string;
+  messageSteps?: DouyinMessageStepLog[];
   resultSource?: "platform" | "manual";
   id: string;
   batchId: string;
@@ -118,6 +130,7 @@ export interface DouyinQueueRow {
 }
 export interface DouyinQueue {
   paused: boolean;
+  messageResumeAvailable?: boolean;
   rows: DouyinQueueRow[];
 }
 export const douyinStateLabels: Record<DouyinPublishState, string> = {

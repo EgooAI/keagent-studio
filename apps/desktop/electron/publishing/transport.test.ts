@@ -115,6 +115,18 @@ it("uses a same-session IM popup only for an explicit chat entry and returns to 
       [{ type: "keyDown", keyCode: "Enter" }],
       [{ type: "keyUp", keyCode: "Enter" }],
     ]);
+    child.sendInputEvent.mockClear();
+    child.executeJavaScriptInIsolatedWorld.mockImplementation(
+      async (_world, [{ code }]) =>
+        !code.startsWith("globalThis.keAgentMessageEnter?.token"),
+    );
+    expect(
+      await page.pressMessageEnter(new URL(inbox).origin, signal, "true"),
+    ).toBe("unobserved");
+    expect(child.sendInputEvent.mock.calls).toEqual([
+      [{ type: "keyDown", keyCode: "Enter" }],
+      [{ type: "keyUp", keyCode: "Enter" }],
+    ]);
     const preventDefault = vi.fn();
     child.emit("will-redirect", {
       url: "https://elsewhere.example",

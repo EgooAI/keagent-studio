@@ -166,6 +166,11 @@
   flex: none;
   font-size: 15px;
 }
+.mix-row .factory-config-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 280px;
+}
 .mix-part-name {
   font-size: clamp(14px, 1.12vw, 17px);
   border-inline-start: 1px solid var(--line);

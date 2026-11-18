@@ -211,15 +211,43 @@ export class DesktopOutreach {
     await this.current(identity);
     if (
       row.attempt !== input.attempt ||
-      row.status !== "uncertain" ||
       row.method !== "electron" ||
       !["sent", "failed"].includes(input.status)
     )
       throw new PublishingError("OUTREACH_CHANGED", "请核对当前私信任务");
-    const old = this.queue.row(identity, row.creatorhubTaskId);
-    if (!old) throw new PublishingError("OUTREACH_UNKNOWN", "无法找到本机任务");
-    if (delivery(old.state) !== input.status)
-      await this.queue.confirmMessage(identity, old.id, input.status);
-    return this.report(identity, row, this.queue.row(identity, old.id)!, true);
+    let task = this.queue.row(identity, row.creatorhubTaskId);
+    if (task?.kind !== "message")
+      throw new PublishingError("OUTREACH_UNKNOWN", "无法找到本机任务");
+    const localStatus = delivery(task.state);
+    if (localStatus === input.status) {
+      if (row.status === input.status) return row;
+      if (
+        task.resultSource === "manual" &&
+        ["submitted", "sending", "uncertain"].includes(row.status)
+      )
+        return this.report(identity, row, task);
+    }
+    if (row.status !== "uncertain") {
+      // The local queue can finish while the cloud still shows the send in progress.
+      if (
+        !["submitted", "sending"].includes(row.status) ||
+        localStatus !== "uncertain"
+      )
+        throw new PublishingError("OUTREACH_CHANGED", "请核对当前私信任务");
+      const synced = await this.report(identity, row, task);
+      if (
+        synced.status !== "uncertain" ||
+        synced.attempt !== row.attempt ||
+        synced.creatorhubTaskId !== task.id
+      )
+        throw new PublishingError("OUTREACH_CHANGED", "请核对当前私信任务");
+      await this.current(identity);
+      task = this.queue.row(identity, row.creatorhubTaskId);
+      if (task?.kind !== "message")
+        throw new PublishingError("OUTREACH_UNKNOWN", "无法找到本机任务");
+    }
+    if (delivery(task.state) !== input.status)
+      await this.queue.confirmMessage(identity, task.id, input.status);
+    return this.report(identity, row, this.queue.row(identity, task.id)!, true);
   }
 }

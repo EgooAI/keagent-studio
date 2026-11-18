@@ -10,7 +10,7 @@
     "setup:auth": "node scripts/service.mjs setup",
     "dev:backend": "concurrently -k \"pnpm dev:control\" \"pnpm dev:cloud\"",
     "dev:web": "pnpm --filter @keagent/desktop dev",
-    "dev:desktop": "pnpm build:publishing && concurrently -k \"pnpm dev:web\" \"wait-on http://127.0.0.1:5173 && electron apps/desktop/electron/main.cjs\"",
+    "dev:desktop": "pnpm build:publishing && node scripts/dev-desktop.mjs",
     "dev:admin": "pnpm --filter @keagent/admin dev",
     "build": "pnpm build:publishing && pnpm --filter @keagent/desktop build && pnpm --filter @keagent/admin build",
     "typecheck": "tsc --noEmit",

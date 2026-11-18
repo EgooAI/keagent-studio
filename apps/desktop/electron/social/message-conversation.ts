@@ -5,6 +5,7 @@ export function conversation(
     | "select"
     | "focus"
     | "focused"
+    | "draft"
     | "inspect"
     | "history"
     | "receipt"
@@ -41,6 +42,7 @@ export function conversation(
     stackPreviewMatches: false,
     stackPreviewConflict: false,
     draftCleared: false,
+    draftStillPresent: false,
     receiptTexts: [] as string[],
   };
   const here = location.pathname.replace(/\/$/, "");
@@ -369,6 +371,12 @@ export function conversation(
         ? (field as HTMLTextAreaElement).value
         : field.innerText,
     );
+  if (action === "draft")
+    return {
+      ...empty,
+      ready:
+        !!editor && focused === editor && editorText(editor) === text.trim(),
+    };
   const outgoing = visible(
     chat,
     '.MessageItemTextisFromMe,[data-direction="out"],[data-is-self="true"],[class*="message-right"],[class*="message-self"],[class*="message--self"],[class*="messageItemSelf"],[class*="bubble--right"],[class*="message-item-me"]',
@@ -609,6 +617,13 @@ export function conversation(
       }
     }
   }
+  const preparedEditor =
+    opened?.preparedText === text &&
+    opened.editor &&
+    chat.contains(opened.editor) &&
+    inViewport(opened.editor)
+      ? opened.editor
+      : undefined;
   const snapshot = {
     ready: true,
     reason: "",
@@ -638,12 +653,9 @@ export function conversation(
     firstOwnTimeMatches: !!firstOwn && latest?.time === "matches",
     stackPreviewMatches,
     stackPreviewConflict,
-    draftCleared:
-      !!opened?.editor &&
-      opened.preparedText === text &&
-      chat.contains(opened.editor) &&
-      inViewport(opened.editor) &&
-      !editorText(opened.editor),
+    draftCleared: !!preparedEditor && !editorText(preparedEditor),
+    draftStillPresent:
+      !!preparedEditor && editorText(preparedEditor) === text.trim(),
   };
   if (action === "focus") editor?.focus();
   if (action === "submit" || action === "enter") {

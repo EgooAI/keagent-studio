@@ -16,7 +16,6 @@ import {
   Select,
   Space,
   Tag,
-  Timeline,
   type MenuProps,
 } from "antd";
 import { ArrowLeft, ChevronDown, Film, RotateCcw, Send } from "lucide-react";
@@ -31,6 +30,7 @@ import {
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
+import PublishExecutionSteps from "../components/PublishExecutionSteps";
 import {
   PublishWorkbench,
   reviewLabels,
@@ -666,15 +666,7 @@ function ArtifactPublishDetail({
                 </Button>
               </Space>
             )}
-            <details>
-              <summary>执行步骤</summary>
-              <Timeline
-                items={record.logs.map((log, index) => ({
-                  key: index,
-                  children: `${log.step} · ${log.status}${log.durationMs === undefined ? "" : ` · ${log.durationMs}ms`}`,
-                }))}
-              />
-            </details>
+            <PublishExecutionSteps record={record} />
           </article>
         ))}
         {(records.data?.total || 0) > 20 && (

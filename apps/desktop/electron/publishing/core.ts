@@ -298,6 +298,7 @@ export class DirectPublisher {
             step,
             status: "failed",
             timestamp: new Date().toISOString(),
+            durationMs: Date.now() - started,
             errorCode:
               error instanceof PublishingError
                 ? error.code

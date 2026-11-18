@@ -90,6 +90,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
     refetchInterval: 30_000,
   });
   const location = useLocation();
+  const socialScope = new URLSearchParams(location.search);
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -169,31 +170,33 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
               )}
             </NavLink>
           ))}
-          {isLive && location.pathname.startsWith("/leads") && (
-            <div className="lead-subnav">
-              {[
-                ["/leads", "我的待办"],
-                ["/leads/works", "作品与评论"],
-                ["/leads/review", "线索审核"],
-                ["/leads/queue", "账号队列"],
-              ].map(([path, label]) => {
-                const scope = new URLSearchParams(location.search);
-                const search = new URLSearchParams();
-                for (const key of ["platform", "accountId"])
-                  if (scope.get(key)) search.set(key, scope.get(key)!);
-                return (
-                  <NavLink
-                    key={path}
-                    end
-                    to={{ pathname: path, search: search.toString() }}
-                    title={label}
-                  >
-                    {label}
-                  </NavLink>
-                );
-              })}
-            </div>
-          )}
+          {isLive &&
+            location.pathname.startsWith("/leads") &&
+            socialScope.get("platform") !== "xhs" && (
+              <div className="lead-subnav">
+                {[
+                  ["/leads", "我的待办"],
+                  ["/leads/works", "作品与评论"],
+                  ["/leads/review", "线索审核"],
+                  ["/leads/queue", "账号队列"],
+                ].map(([path, label]) => {
+                  const search = new URLSearchParams();
+                  for (const key of ["platform", "accountId"])
+                    if (socialScope.get(key))
+                      search.set(key, socialScope.get(key)!);
+                  return (
+                    <NavLink
+                      key={path}
+                      end
+                      to={{ pathname: path, search: search.toString() }}
+                      title={label}
+                    >
+                      {label}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            )}
         </nav>
         <div className="sidebar-bottom">
           <NavLink

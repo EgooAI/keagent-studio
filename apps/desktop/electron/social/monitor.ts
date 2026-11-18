@@ -116,6 +116,7 @@ export class WorkMonitor {
           ? "monitor"
           : "once",
       workId,
+      title: existing?.title,
       url: target.url,
       lastScan: existing?.lastScan,
       readCount: existing?.readCount ?? 0,
@@ -201,6 +202,7 @@ export class WorkMonitor {
         throw new PublishingError("WORK_CHANGED", "平台返回了其他作品");
       const result = (await this.request("/v1/collection/comments/import", {
         ...scope,
+        title: snapshot.title,
         requestKey: key,
         snapshotId: randomUUID().replaceAll("-", ""),
         observedAt: snapshot.observedAt,
@@ -210,6 +212,7 @@ export class WorkMonitor {
       await this.current(identity, signal);
       this.save(identity, {
         ...watch,
+        title: snapshot.title || watch.title,
         lastScan: snapshot.observedAt,
         nextScan: monitor ? Date.now() + interval : 0,
         readCount: result.readCount,

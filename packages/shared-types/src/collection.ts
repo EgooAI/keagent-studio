@@ -134,6 +134,7 @@ export interface WorkMonitorSummary {
   id: string;
   accountId: string;
   workId: string;
+  title?: string;
   platform: "douyin" | "xhs";
   lastScan?: string;
   readCount: number;

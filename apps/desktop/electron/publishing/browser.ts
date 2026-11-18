@@ -485,35 +485,44 @@ export class DouyinBrowser {
       accountId,
       false,
       async () => {
-        const account = await this.owned(accountId);
-        if (account.platform === "xhs")
-          throw new PublishingError(
-            "INVALID_INPUT",
-            "视频发布只支持抖音账号",
-            422,
-          );
-        const { view, profile } = await this.ensure(accountId);
-        const login = await steps.run("check_login", "检查抖音登录", () =>
-          this.detection.check(profile, "douyin", "task_execution"),
+        const view = await steps.run(
+          "check_login",
+          "检查抖音登录",
+          async () => {
+            const account = await this.owned(accountId);
+            if (account.platform === "xhs")
+              throw new PublishingError(
+                "INVALID_INPUT",
+                "视频发布只支持抖音账号",
+                422,
+              );
+            const { view, profile } = await this.ensure(accountId);
+            const login = await this.detection.check(
+              profile,
+              "douyin",
+              "task_execution",
+            );
+            if (login.status !== "logged_in")
+              throw new PublishingError(
+                "LOGIN_REQUIRED",
+                "抖音登录失效或需要人工验证",
+              );
+            if (
+              account.platformUserId &&
+              login.checks?.account_api?.accountId !== account.platformUserId
+            )
+              throw new PublishingError(
+                "ACCOUNT_CHANGED",
+                "浏览器中的抖音账号已改变，请重新添加账号",
+              );
+            if (!this.profiles.isSaved(profile))
+              throw new PublishingError(
+                "ACCOUNT_NOT_SAVED",
+                "请先在账号浏览器点击保存账号",
+              );
+            return view;
+          },
         );
-        if (login.status !== "logged_in")
-          throw new PublishingError(
-            "LOGIN_REQUIRED",
-            "抖音登录失效或需要人工验证",
-          );
-        if (
-          account.platformUserId &&
-          login.checks?.account_api?.accountId !== account.platformUserId
-        )
-          throw new PublishingError(
-            "ACCOUNT_CHANGED",
-            "浏览器中的抖音账号已改变，请重新添加账号",
-          );
-        if (!this.profiles.isSaved(profile))
-          throw new PublishingError(
-            "ACCOUNT_NOT_SAVED",
-            "请先在账号浏览器点击保存账号",
-          );
 
         view.setVisible(false);
         this.changed();

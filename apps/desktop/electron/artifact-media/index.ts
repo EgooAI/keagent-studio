@@ -24,6 +24,7 @@ export function registerArtifactMedia(
     producer: (jobId: string) => Promise<CompletedArtifactOutput>;
     probe?: MediaProbe;
   },
+  devOrigin = "http://127.0.0.1:5173",
 ) {
   const registry = new LocalMediaRegistry(
     path.join(app.getPath("userData"), "artifact-media"),
@@ -42,7 +43,7 @@ export function registerArtifactMedia(
         const trusted =
           app.isPackaged || process.argv.includes("--built")
             ? url.protocol === "keagent:" && url.hostname === "app"
-            : url.origin === "http://127.0.0.1:5173";
+            : url.origin === devOrigin;
         if (
           !trusted ||
           event.sender !== window.webContents ||

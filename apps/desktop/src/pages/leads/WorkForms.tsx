@@ -239,7 +239,10 @@ export function WorkAnalyze({
         ) : (
           <p className="work-account">{title}</p>
         )}
-        <Form.Item label="筛选条件">
+        <Form.Item
+          label="筛选条件"
+          extra="默认筛选房产需求，填写自定义条件后按该条件匹配评论。"
+        >
           <Select
             aria-label="选择筛选条件"
             value={value || undefined}

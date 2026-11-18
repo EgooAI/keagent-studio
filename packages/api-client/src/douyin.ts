@@ -99,6 +99,7 @@ export const douyinApi = {
     action:
       | "pause"
       | "resume"
+      | "resume-message"
       | "cancel"
       | "clear-interrupted"
       | "confirm-sent"

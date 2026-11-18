@@ -87,6 +87,9 @@ async function fixture(
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
         ],
+        voiceCloneEnabled: false,
+        creditPricing: undefined as
+          { version: string; prices: Record<string, number> } | undefined,
         calls: [] as { method: string; input: any }[],
         rows: [] as any[],
         batches: [] as { id: string; createdAt: string; count: number }[],
@@ -162,11 +165,13 @@ async function fixture(
               };
             if (method === "getWorkspace")
               return structuredClone(state.workspace);
+            if (method === "credits.pricing" && state.creditPricing)
+              return { ok: true, data: state.creditPricing };
             if (method === "voice.list")
               return {
                 voices: [],
                 publicVoices: state.publicVoices,
-                cloneEnabled: false,
+                cloneEnabled: state.voiceCloneEnabled,
                 cloudEnabled: true,
               };
             if (method === "panorama.capabilities")
@@ -546,6 +551,30 @@ async function fixture(
   );
 }
 
+test("声音设置展示当前声音复刻及配音价目", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/settings");
+  await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    state.voiceCloneEnabled = true;
+    state.creditPricing = {
+      version: "v2",
+      prices: { voice_clone: 240, tts_per_kilo_char: 12 },
+    };
+  });
+  await page.getByRole("tab", { name: "声音与音色", exact: true }).click();
+  await expect(
+    page.getByText("复刻 240 积分／次", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/配音每千字 12 积分/)).toBeVisible();
+  await page.getByRole("button", { name: "上传本人声音", exact: true }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "上传本人声音" })
+      .getByText("复刻 240 积分／次"),
+  ).toBeVisible();
+});
+
 test("推荐同款独立换三项，保存后重新打开并跨房源批量使用", async ({
   page,
 }, info) => {
@@ -592,6 +621,16 @@ test("推荐同款独立换三项，保存后重新打开并跨房源批量使�
   await expect(
     page.getByRole("button", { name: "更换文案模板" }),
   ).toContainText("逐室讲解");
+  const voice = page.getByRole("combobox", { name: "批次音色" });
+  const currentMix = page.getByRole("region", { name: "当前搭配" });
+  await expect(
+    currentMix
+      .locator(".mix-row")
+      .first()
+      .getByRole("combobox", { name: "批次音色" }),
+  ).toBeVisible();
+  await voice.click();
+  await page.getByText("公共讲解音色 · zh-CN", { exact: true }).click();
   await page.getByRole("button", { name: "选择房源", exact: true }).click();
   const homes = page.getByRole("dialog", { name: "选择房源" });
   await homes
@@ -623,6 +662,7 @@ test("推荐同款独立换三项，保存后重新打开并跨房源批量使�
       ).input,
   );
   expect(submitted.pairs).toHaveLength(2);
+  expect(submitted.voiceId).toBe("public-zh");
   expect(submitted.mixes).toEqual([
     {
       id: "mine-1",

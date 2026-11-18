@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
@@ -11,6 +11,7 @@ import {
   Spin,
 } from "antd";
 import {
+  AudioLines,
   Bookmark,
   Check,
   ChevronRight,
@@ -211,6 +212,7 @@ export function FactoryMixComposer({
   property,
   sceneIds,
   disabled,
+  voiceSelect,
 }: {
   library: FactoryLibrary;
   current?: FactoryBundle;
@@ -221,6 +223,7 @@ export function FactoryMixComposer({
   property?: Property;
   sceneIds?: string[];
   disabled: boolean;
+  voiceSelect: ReactNode;
 }) {
   const [tab, setTab] = useState<"recommended" | "personal">(
     !library.recommended.length && library.personal.length
@@ -371,9 +374,16 @@ export function FactoryMixComposer({
               存为我的搭配
             </Button>
           </header>
-          {current ? (
-            <div className="mix-rows">
-              {partKinds.map((k) => {
+          <div className="mix-rows">
+            <div className="mix-row">
+              <span className="mix-row-icon" aria-hidden="true">
+                <AudioLines size={19} />
+              </span>
+              <b>配音音色</b>
+              {voiceSelect}
+            </div>
+            {current &&
+              partKinds.map((k) => {
                 const Icon = partIcons[k];
                 return (
                   <button
@@ -401,8 +411,8 @@ export function FactoryMixComposer({
                   </button>
                 );
               })}
-            </div>
-          ) : (
+          </div>
+          {!current && (
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description="请选择可用的搭配"

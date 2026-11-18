@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { WorkspaceOutreach } from "@keagent/shared-types";
-import { accountTasks } from "./accountTasks";
+import { accountTasks, needsOutreachRefresh } from "./accountTasks";
 
 const receipt: WorkspaceOutreach = {
   id: "cloud-task",
@@ -69,3 +69,81 @@ it("shows a platform-confirmed message as sent even while the cloud receipt is u
     checkedAt,
   });
 });
+
+it("excludes publishing tasks from lead account history and status counts", () => {
+  const tasks = accountTasks(
+    [
+      {
+        id: "publish",
+        batchId: "batch",
+        accountId: "old",
+        title: "发布房源视频",
+        state: "accepted",
+      },
+      {
+        id: "local-task",
+        batchId: "batch",
+        accountId: "old",
+        kind: "message",
+        title: "私信 · 评论者",
+        state: "queued",
+      },
+    ],
+    [{ ...receipt, method: "electron" }],
+  );
+  expect(tasks.map(({ id, stage }) => [id, stage])).toEqual([
+    ["local-task", "waiting"],
+  ]);
+});
+
+it.each([
+  {
+    state: "failed",
+    status: "uncertain",
+    resultSource: "manual",
+    refresh: true,
+  },
+  {
+    state: "failed",
+    status: "uncertain",
+    resultSource: undefined,
+    refresh: false,
+  },
+  {
+    state: "failed",
+    status: "sending",
+    resultSource: undefined,
+    refresh: true,
+  },
+  {
+    state: "canceled",
+    status: "submitted",
+    resultSource: undefined,
+    refresh: true,
+  },
+  {
+    state: "canceled",
+    status: "canceled",
+    resultSource: undefined,
+    refresh: false,
+  },
+] as const)(
+  "syncs $state to a compatible cloud status $status",
+  ({ state, status, resultSource, refresh }) => {
+    const [task] = accountTasks(
+      [
+        {
+          id: "local-task",
+          batchId: "local-task",
+          accountId: "old",
+          kind: "message",
+          title: "私信",
+          state,
+          resultSource,
+        },
+      ],
+      [{ ...receipt, method: "electron", status }],
+    );
+    expect(needsOutreachRefresh(task)).toBe(refresh);
+  },
+);

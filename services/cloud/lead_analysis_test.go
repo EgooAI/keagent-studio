@@ -98,17 +98,55 @@ func TestAnalysisJobProducesQualifiedRows(t *testing.T) {
 	}
 }
 
+func TestAnalysisJobHonorsCustomNonRealEstateCriteria(t *testing.T) {
+	f := analysisScenario(t)
+	const comment = "这条视频拍得真好"
+	const customCriteria = "筛选出谁给作品表达赞意的"
+	analysisImport(t, f, []object{{"comment_id": "praise", "comment_text": comment}})
+	var drafts int
+	f.server.leadComplete = func(_ context.Context, content any, prompt string) (string, error) {
+		if prompt == leadDraftPrompt {
+			drafts++
+			return `{"draft":"谢谢你喜欢这条视频！"}`, nil
+		}
+		var input object
+		if err := json.Unmarshal([]byte(content.(string)), &input); err != nil {
+			return "", err
+		}
+		if criterion := input["criteria"]; prompt != leadAnalysisPrompt || input["comment_text"] != comment ||
+			(criterion != defaultLeadCriteria && criterion != customCriteria) ||
+			input["require_real_estate"] != (criterion == defaultLeadCriteria) {
+			t.Errorf("unexpected analysis request: %v", input)
+		}
+		return `{"intent":"unrelated","evidence":"拍得真好","qualified":true,"reason":"明确夸赞视频"}`, nil
+	}
+	for _, criteria := range []string{"", customCriteria} {
+		job := mustCollection(t, f.server, f.actor, "comments/analyze-batch", object{
+			"accountId": f.scope.AccountID, "workId": f.scope.WorkID,
+			"criteria": criteria, "requestKey": id(),
+		})
+		analysisRun(t, f, job["id"].(string))
+	}
+	list := mustCollection(t, f.server, f.actor, "lead/workspace/leads", object{
+		"accountId": f.scope.AccountID, "status": "pending",
+	})
+	items := rows(list["items"])
+	if len(items) != 1 || obj(items[0])["evidence"] != "拍得真好" || obj(items[0])["intent"] != "unrelated" || drafts != 1 {
+		t.Fatalf("expected one custom match and one draft, got %v and %d drafts", list, drafts)
+	}
+}
+
 func TestLeadAnalysisRejectsUngroundedEvidence(t *testing.T) {
 	original := "想在上海买房"
 	raw := `{"intent":"buy","evidence":"原文没有这句","qualified":true,"reason":"x","draft":""}`
-	if _, err := parseLeadAnalysis(original, raw, true); err == nil {
+	if _, err := parseLeadAnalysis(original, raw, true, true); err == nil {
 		t.Fatal("ungrounded evidence accepted")
 	}
 }
 
 func TestLeadAnalysisRejectsUnknownFieldWithoutPartialResult(t *testing.T) {
 	raw := `{"intent":"buy","evidence":"想在上海买房","qualified":true,"reason":"x","draft":"d","extra":1}`
-	result, err := parseLeadAnalysis("想在上海买房", raw, true)
+	result, err := parseLeadAnalysis("想在上海买房", raw, true, true)
 	if err == nil {
 		t.Fatal("unknown field accepted")
 	}
@@ -143,17 +181,24 @@ func TestAnalysisJobPersistsFailureWithoutPartialResult(t *testing.T) {
 	}
 }
 
-func TestLeadAnalysisUnrelatedAndUnclearCannotQualify(t *testing.T) {
+func TestLeadAnalysisDefaultRejectsUnrelatedAndUnclear(t *testing.T) {
 	const original = "想在上海买房"
 	for _, intent := range []string{"unrelated", "unclear"} {
 		raw := `{"intent":"` + intent + `","evidence":"想在上海买房","qualified":true,"reason":"明确","draft":"您好"}`
-		result, err := parseLeadAnalysis(original, raw, true)
+		result, err := parseLeadAnalysis(original, raw, true, true)
 		if err != nil {
 			t.Fatalf("%s: %v", intent, err)
 		}
 		if result.Qualified || result.Draft != "" {
 			t.Fatalf("%s: %+v", intent, result)
 		}
+	}
+}
+
+func TestLeadAnalysisCustomMatchNeedsGroundedEvidence(t *testing.T) {
+	raw := `{"intent":"unclear","evidence":"","qualified":true,"reason":"明确表达赞意"}`
+	if _, err := parseLeadAnalysis("拍得真好", raw, false, true); err == nil {
+		t.Fatal("custom match without evidence accepted")
 	}
 }
 

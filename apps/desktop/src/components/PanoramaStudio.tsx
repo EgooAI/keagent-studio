@@ -41,14 +41,14 @@ import type {
   PanoramaScene,
   PanoramaSegment,
 } from "@keagent/shared-types";
-import { authRequest, isLive } from "@keagent/api-client";
+import { isLive } from "@keagent/api-client";
 import {
   estimateBatchCost,
   estimateBreakdownText,
   estimateSummaryText,
   ESTIMATED_CHARS_PER_VIDEO,
-  type CreditPricing,
 } from "../lib/creditEstimate";
+import { creditPricingQuery } from "../lib/creditSummary";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { useWorkspace } from "../lib/workspace";
 import { PageHeader, formatDate } from "./common";
@@ -289,11 +289,8 @@ export function PanoramaStudio() {
     staleTime: 30_000,
   });
   const pricing = useQuery({
-    queryKey: ["credit-pricing"],
-    queryFn: () => authRequest<CreditPricing>("credits.pricing"),
+    ...creditPricingQuery,
     enabled: desktop && isLive,
-    retry: false,
-    staleTime: 60_000,
   });
   const defaults = useQuery({
     queryKey: ["factory-preferences"],
@@ -868,6 +865,23 @@ export function PanoramaStudio() {
     (value) => currentRows.find((current) => current.id === value.id) || value,
   );
   const shownPairs = pairs.slice((pairPage - 1) * 8, pairPage * 8);
+  const voiceSelect = (
+    <Select
+      aria-label="批次音色"
+      className="factory-config-select"
+      allowClear
+      showSearch
+      optionFilterProp="label"
+      placeholder="使用默认配置"
+      value={voiceId}
+      disabled={busy}
+      onChange={(value) => {
+        setVoiceId(value);
+        setIssues([]);
+      }}
+      options={voiceOptions}
+    />
+  );
   const detailPanel = row ? (
     <FactoryTaskDetail
       row={row}
@@ -1093,6 +1107,7 @@ export function PanoramaStudio() {
                 property={firstProperty}
                 sceneIds={firstProperty && sceneIdsByProperty[firstProperty.id]}
                 disabled={busy}
+                voiceSelect={voiceSelect}
               />
             ) : (
               <>
@@ -1346,24 +1361,7 @@ export function PanoramaStudio() {
                       />
                     </label>
                   )}
-                  <label>
-                    音色{" "}
-                    <Select
-                      aria-label="批次音色"
-                      className="factory-config-select"
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder="使用默认配置"
-                      value={voiceId}
-                      disabled={busy}
-                      onChange={(value) => {
-                        setVoiceId(value);
-                        setIssues([]);
-                      }}
-                      options={voiceOptions}
-                    />
-                  </label>
+                  {!library && <label>音色 {voiceSelect}</label>}
                   <Link to="/properties">管理房源素材</Link>
                   {!!excluded.size && (
                     <Button

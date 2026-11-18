@@ -40,9 +40,7 @@ export default function Todo(
       leadWorkspaceApi.leads({ ...input, status: "missingDraft", limit: 3 }),
   });
   const queue = useAccountTasks(accountId);
-  const unverified = queue.tasks.filter(
-    (t) => t.kind === "message" && t.stage === "uncertain",
-  );
+  const unverified = queue.tasks.filter((t) => t.stage === "uncertain");
   const metrics = [
     {
       label: "待审核线索",
@@ -60,7 +58,7 @@ export default function Todo(
       label: "私信待核实",
       icon: MessageCircle,
       n: queue.loading || queue.error ? undefined : unverified.length,
-      link: leadUrl("queue", props, { filter: "uncertain", kind: "message" }),
+      link: leadUrl("queue", props, { filter: "uncertain" }),
     },
   ];
   const items = [
@@ -82,7 +80,7 @@ export default function Todo(
       .filter((l) => !missing.data?.items.some((s) => s.id === l.id))
       .map((l) => ({
         key: l.id,
-        title: "审核" + (l.commenterName || "评论者") + "的需求",
+        title: "审核" + (l.commenterName || "评论者") + "的评论线索",
         detail: l.commentText,
         action: "看原评论",
         url: leadUrl("review", props, { analysisId: l.id }),

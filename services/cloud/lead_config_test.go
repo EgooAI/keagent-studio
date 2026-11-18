@@ -44,7 +44,7 @@ func TestLeadSettingsDefaultsAndValidation(t *testing.T) {
 	if updated, _ := saved["updatedAt"].(string); updated == "" || strings.HasPrefix(updated, "0001-01-01") {
 		t.Fatalf("updatedAt = %v", saved["updatedAt"])
 	}
-	if saved["criteriaHash"] != criteriaHash("v1", "只找上海购房客户") {
+	if saved["criteriaHash"] != criteriaHash(customLeadCriteriaVersion, "只找上海购房客户") {
 		t.Fatal(saved)
 	}
 

@@ -146,6 +146,9 @@ async function leadFixture(
   const cancelInputs: Record<string, unknown>[] = [];
   const contacts: Record<string, unknown>[] = [];
   const queueRows: DouyinQueueRow[] = [];
+  let queuePaused = false;
+  let messageResumeAvailable = false;
+  const queueActions: unknown[] = [];
   const submittedKeys: string[] = [];
   const submittedDrafts: string[] = [];
   const outreachItems: OutreachTask[] = [];
@@ -158,8 +161,18 @@ async function leadFixture(
           deviceId: "lead-test-device",
           resolverAvailable: true,
           tabs: [],
-          queue: { paused: false, rows: queueRows },
+          queue: {
+            paused: queuePaused,
+            rows: queueRows,
+            messageResumeAvailable,
+          },
         });
+      if (method === "publish.queue" && input.action === "resume-message") {
+        queueActions.push(input.action);
+        queuePaused = false;
+        messageResumeAvailable = false;
+        return okay({ paused: false, rows: queueRows });
+      }
       if (method === "collection.contact") {
         contacts.push(input);
         const platform =
@@ -593,6 +606,11 @@ async function leadFixture(
     replies,
     contacts,
     queueRows,
+    queueActions,
+    setQueuePause: (paused: boolean, canResumeMessages = false) => {
+      queuePaused = paused;
+      messageResumeAvailable = canResumeMessages;
+    },
     startInputs,
     analysisListInputs,
     analysisInputs,
@@ -1297,12 +1315,79 @@ test("作品与评论从当前账号打开评论者主页，只提交来源引�
   expect(fixture.replies).toEqual([]);
 });
 
-test("账号队列按评论引用打开小红书收件人，缺少来源的旧任务能回到作品评论", async ({
-  page,
-}) => {
-  const account = { ...activeAccount(), platform: "xhs" as const };
+test("抖音账号队列可恢复已人工核对的私信暂停", async ({ page }) => {
+  const account = activeAccount();
+  const fixture = await leadFixture(page);
+  fixture.setQueuePause(true, true);
+  fixture.queueRows.push({
+    id: "next-message",
+    batchId: "batch1",
+    accountId: account.id,
+    kind: "message",
+    state: "queued",
+    title: "私信 · 待执行",
+  });
+  await page.goto("/#/leads/queue?platform=douyin&accountId=" + account.id);
+  await expect(
+    page.getByText("恢复后将继续执行本机已排队的私信。"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "恢复私信队列" }).click();
+  await expect(page.getByText("本机私信队列已暂停")).toHaveCount(0);
+  expect(fixture.queueActions).toEqual(["resume-message"]);
+});
+
+test("抖音账号队列显示私信失败步骤及旧任务的空记录", async ({ page }) => {
+  const account = activeAccount();
+  const fixture = await leadFixture(page);
+  const row: DouyinQueueRow = {
+    id: "legacy",
+    batchId: "batch1",
+    accountId: account.id,
+    kind: "message",
+    state: "unknown",
+    title: "私信 · 测试用户",
+    errorCode: "DM_OUTCOME_UNKNOWN",
+  };
+  fixture.queueRows.push(row, {
+    ...row,
+    id: "tracked",
+    messageSteps: [
+      {
+        step: "trigger_send",
+        status: "completed",
+        timestamp: "2026-11-18T10:55:18Z",
+        durationMs: 333,
+      },
+      {
+        step: "verify_conversation",
+        status: "failed",
+        timestamp: "2026-11-18T10:55:22Z",
+        errorMessage: "重开会话后仍未核实消息",
+      },
+    ],
+  });
+  await page.goto(
+    "/#/leads/queue?platform=douyin&accountId=" +
+      account.id +
+      "&taskId=tracked",
+  );
+  const steps = page.getByRole("region", { name: "执行步骤" });
+  await expect(steps).toContainText("校验授权并触发发送");
+  await expect(steps).toContainText("完成");
+  await expect(steps).toContainText("333 ms");
+  await expect(steps).toContainText("重开会话核实消息");
+  await expect(steps).toContainText("失败");
+  await expect(steps).toContainText("重开会话后仍未核实消息");
+  await page.goto(
+    "/#/leads/queue?platform=douyin&accountId=" + account.id + "&taskId=legacy",
+  );
+  await expect(steps).toContainText("暂无执行步骤记录");
+});
+
+test("账号队列可打开抖音收件人，未开放的小红书只显示提示", async ({ page }) => {
+  const account = activeAccount();
   const fixture = await leadFixture(page, [account]);
-  const workId = "xhs-" + "b".repeat(24),
+  const workId = "7392457264415722767",
     commentId = "c".repeat(32);
   const row: DouyinQueueRow = {
     id: "old",
@@ -1320,13 +1405,16 @@ test("账号队列按评论引用打开小红书收件人，缺少来源的旧�
     sourceCommentId: commentId,
   });
   await page.goto("/#/leads/queue?platform=xhs&taskId=old");
+  await expect(page.getByText("小红书 AI 获客暂未开发")).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看收件人" })).toHaveCount(0);
+  await page.goto("/#/leads/queue?platform=douyin&taskId=old");
   await expect(page.getByRole("link", { name: "查看作品评论" })).toBeVisible();
   await expect(page.getByRole("button", { name: "查看收件人" })).toHaveCount(0);
   await expect(page.getByText("在发送前停止，未点击发送。")).toBeVisible();
-  await page.goto("/#/leads/queue?platform=xhs&taskId=new");
+  await page.goto("/#/leads/queue?platform=douyin&taskId=new");
   await page.getByRole("button", { name: "查看收件人" }).click();
   await expect(
-    page.getByRole("region", { name: "小红书账号浏览器" }),
+    page.getByRole("region", { name: "抖音账号浏览器" }),
   ).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(fixture.contacts).toEqual([
