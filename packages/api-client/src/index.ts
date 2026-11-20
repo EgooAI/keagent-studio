@@ -1129,8 +1129,12 @@ export const demoApi: typeof mockApi = isLive
             if (name !== "getWorkspace") remoteListeners.forEach((fn) => fn());
             return value;
           } catch (error) {
-            if (error instanceof Error && error.message.includes("重新登录"))
-              window.dispatchEvent(new Event("keagent:unauthorized"));
+            if (
+              window.desktop?.request &&
+              error instanceof Error &&
+              error.message.includes("重新登录")
+            )
+              window.dispatchEvent(new Event("keagent:check-session"));
             throw error;
           }
         };

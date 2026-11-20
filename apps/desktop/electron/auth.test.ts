@@ -3,17 +3,11 @@ import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
 
-it("forwards authenticated credit usage and property deletion through Electron", async () => {
+function desktopIdentity() {
   const require = createRequire(import.meta.url);
   const handle = vi.fn();
-  const usage = { items: [{ op: "script", spent: 5 }], total: 5 };
-  const fetch = vi
-    .fn()
-    .mockResolvedValueOnce(Response.json({ token: "access-token" }))
-    .mockResolvedValueOnce(Response.json(usage))
-    .mockResolvedValueOnce(
-      Response.json({ error: { message: "日期无效" } }, { status: 422 }),
-    );
+  const fetch = vi.fn();
+  const unlinkSync = vi.fn();
   const targetStopped = vi.fn();
   const exports = {
     exports: {} as { registerAuth: (onStop: typeof targetStopped) => unknown },
@@ -48,9 +42,14 @@ it("forwards authenticated credit usage and property deletion through Electron",
             existsSync: (file: string) => file.endsWith("identity.enc"),
             readFileSync: () => "encrypted-test-identity",
             writeFileSync: vi.fn(),
+            unlinkSync,
           };
         if (name === "./panorama/workflow.cjs")
-          return { PanoramaWorkflow: class {} };
+          return {
+            PanoramaWorkflow: class {
+              stop() {}
+            },
+          };
         return require(name);
       },
     },
@@ -61,6 +60,44 @@ it("forwards authenticated credit usage and property deletion through Electron",
   )![1];
   const frame = { url: "http://127.0.0.1:5173" };
   const event = { senderFrame: frame, sender: { mainFrame: frame } };
+  return { handler, event, fetch, targetStopped, unlinkSync };
+}
+
+it("keeps desktop credentials on a transient session error and reports confirmed rejection across IPC", async () => {
+  const { handler, event, fetch, unlinkSync } = desktopIdentity();
+  const session = () => handler(event, "session");
+  fetch
+    .mockResolvedValueOnce(Response.json({ token: "access-token" }))
+    .mockRejectedValueOnce(new TypeError("fetch failed"));
+  await expect(session()).resolves.toMatchObject({ error: { status: 0 } });
+  fetch
+    .mockResolvedValueOnce(Response.json({ id: "test-device" }))
+    .mockResolvedValueOnce(Response.json({}, { status: 503 }));
+  await expect(session()).resolves.toMatchObject({ error: { status: 503 } });
+  fetch
+    .mockResolvedValueOnce(Response.json({ id: "test-device" }))
+    .mockResolvedValueOnce(Response.json({ userId: "user" }));
+  await expect(session()).resolves.toEqual({ userId: "user" });
+  expect(unlinkSync).not.toHaveBeenCalled();
+  fetch
+    .mockResolvedValueOnce(Response.json({}, { status: 401 }))
+    .mockResolvedValueOnce(Response.json({}, { status: 401 }));
+  await expect(session()).resolves.toMatchObject({ error: { status: 401 } });
+  expect(unlinkSync).toHaveBeenCalledTimes(1);
+  const calls = fetch.mock.calls.length;
+  await expect(session()).resolves.toMatchObject({ error: { status: 401 } });
+  expect(fetch).toHaveBeenCalledTimes(calls);
+});
+
+it("forwards authenticated credit usage and property deletion through Electron", async () => {
+  const { handler, event, fetch, targetStopped } = desktopIdentity();
+  const usage = { items: [{ op: "script", spent: 5 }], total: 5 };
+  fetch
+    .mockResolvedValueOnce(Response.json({ token: "access-token" }))
+    .mockResolvedValueOnce(Response.json(usage))
+    .mockResolvedValueOnce(
+      Response.json({ error: { message: "日期无效" } }, { status: 422 }),
+    );
   const args = [{ from: "2026-11-01", to: "2026-11-13" }];
   await expect(handler(event, "credits.usage", args)).resolves.toEqual({
     ok: true,

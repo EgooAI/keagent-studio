@@ -182,6 +182,15 @@ export async function authRequest<T>(
   };
   if (window.desktop?.request) {
     const reply = await window.desktop.request(method, args);
+    if (
+      method === "session" &&
+      reply &&
+      typeof reply === "object" &&
+      "error" in reply
+    ) {
+      const error = reply.error as { message: string; status: number };
+      throw new ServiceRequestError(error.message, error.status);
+    }
     if (Object.hasOwn(creditRoutes, method)) {
       // Credits IPC uses the same envelope as the exchange routes to keep the
       // business error code alive across the IPC boundary.

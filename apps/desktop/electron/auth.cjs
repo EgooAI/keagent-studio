@@ -188,6 +188,7 @@ function registerAuth(
     }
     if (business && response.status === 401 && retry) {
       await response.body?.cancel();
+      if (generation !== identityGeneration) throw new Error("登录状态已变更");
       if (accessToken === credential) accessToken = "";
       return request(route, body, false, signal);
     }
@@ -295,6 +296,23 @@ function registerAuth(
         throw error;
       }
       return (await request("/v1/session")).data;
+    }
+    if (method === "session") {
+      if (!token) return { error: { status: 401, message: "请重新登录" } };
+      const generation = identityGeneration;
+      try {
+        await request("/v1/devices/register", {
+          id: deviceId,
+          name: require("node:os").hostname(),
+          platform: process.platform,
+        });
+        if (generation !== identityGeneration)
+          throw new Error("登录状态已变更");
+        return (await request("/v1/session")).data;
+      } catch (error) {
+        // Electron discards custom fields on exceptions crossing IPC.
+        return { error: { status: error.status || 0, message: error.message } };
+      }
     }
     if (!token) throw new Error("请重新登录");
     if (method === "beikeCli.status")
@@ -494,14 +512,6 @@ function registerAuth(
       );
       if (generation !== identityGeneration) throw new Error("请重新登录");
       return result;
-    }
-    if (method === "session") {
-      await request("/v1/devices/register", {
-        id: deviceId,
-        name: require("node:os").hostname(),
-        platform: process.platform,
-      });
-      return (await request("/v1/session")).data;
     }
     if (method === "logout") {
       clearAccess();
