@@ -51,9 +51,11 @@
       "main": "apps/desktop/electron/main.cjs"
     },
     "win": {
+      "icon": "build/icon.png",
       "target": "nsis"
     },
     "mac": {
+      "icon": "build/icon.png",
       "target": "dmg"
     },
     "beforeBuild": "scripts/desktop-before-build.cjs"

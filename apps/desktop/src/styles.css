@@ -12,6 +12,45 @@
   --line: #e1e5eb;
   --surface: #ffffff;
   --canvas: #f5f6f8;
+  --sidebar-width: clamp(205px, 16.4vw, 236px);
+}
+:root[data-window-chrome] {
+  --caption-height: env(titlebar-area-height, 28px);
+}
+:root[data-window-chrome]:has(.sidebar) {
+  background: linear-gradient(
+    to right,
+    #f0f1f6 calc(var(--sidebar-width) - 1px),
+    #dce0e9 0 var(--sidebar-width),
+    var(--canvas) 0
+  );
+}
+:root[data-window-chrome]::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: env(titlebar-area-x, 0px);
+  width: env(titlebar-area-width, 100%);
+  height: var(--caption-height);
+  -webkit-app-region: drag;
+}
+:root[data-window-chrome] body {
+  position: fixed;
+  inset: var(--caption-height) 0 0;
+  /* Keep fixed drawers and modals inside the usable window area. */
+  transform: translateZ(0);
+  background: var(--canvas);
+}
+:root[data-window-chrome] #root {
+  height: 100%;
+  overflow: auto;
+}
+:root[data-window-chrome] body.ant-scrolling-effect #root {
+  overflow: hidden;
+}
+:root[data-window-chrome]
+  :is(.app-shell, .login-page, .app-main:has(> .property-detail-page)) {
+  min-height: calc(100dvh - var(--caption-height));
 }
 * {
   box-sizing: border-box;
@@ -119,7 +158,6 @@ svg {
   top: 5px;
 }
 .app-shell {
-  --sidebar-width: clamp(205px, 16.4vw, 236px);
   display: flex;
   min-height: 100vh;
 }
@@ -141,11 +179,6 @@ svg {
   gap: 10px;
   margin: 0 8px 40px;
   color: #191c24;
-}
-.brand-mark {
-  display: grid;
-  place-items: center;
-  color: var(--accent);
 }
 .brand strong {
   display: block;
@@ -1287,7 +1320,7 @@ svg {
   }
 }
 @media (max-width: 1080px) {
-  .app-shell {
+  :root {
     --sidebar-width: 190px;
   }
   .brand {
@@ -1339,7 +1372,7 @@ svg {
   }
 }
 @media (max-width: 760px) {
-  .app-shell {
+  :root {
     --sidebar-width: 65px;
   }
   .sidebar {

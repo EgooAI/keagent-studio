@@ -144,9 +144,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
           className="brand"
           aria-label="KeAgent Studio 工作台"
         >
-          <span className="brand-mark">
-            <House size={38} strokeWidth={2.1} aria-hidden="true" />
-          </span>
+          <img src="./keagent-icon.png" width="38" height="38" alt="" />
           <span>
             <strong>KeAgent Studio</strong>
             <small>房产创作工作台</small>

@@ -14,9 +14,6 @@
 .login-checking {
   text-align: center;
 }
-.login-panel header > svg {
-  color: var(--accent);
-}
 .login-gate .login-panel h1 {
   margin: 12px 0 6px;
   color: var(--ink);

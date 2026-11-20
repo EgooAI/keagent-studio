@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Form, Input, Spin } from "antd";
-import { House } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { authRequest, type SessionUser } from "@keagent/api-client";
 import App from "./App";
@@ -65,7 +64,7 @@ export default function LoginGate() {
     <main className="login-page login-gate">
       <section className="login-panel" aria-labelledby="login-title">
         <header>
-          <House aria-hidden="true" size={48} strokeWidth={1.9} />
+          <img src="./keagent-icon.png" width="48" height="48" alt="" />
           <h1 id="login-title">登录 KeAgent Studio</h1>
           <p>使用管理员开通的账号登录。</p>
         </header>

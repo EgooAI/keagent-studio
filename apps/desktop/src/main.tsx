@@ -11,6 +11,10 @@ import { ThemeProvider } from "@keagent/theme";
 import "antd/dist/reset.css";
 import "./styles.css";
 
+const platform = window.desktop?.platform;
+if (platform === "win32" || platform === "darwin")
+  document.documentElement.dataset.windowChrome = platform;
+
 const queryClient = new QueryClient();
 const router = createHashRouter([
   { path: "*", element: isLive ? <LoginGate /> : <App /> },

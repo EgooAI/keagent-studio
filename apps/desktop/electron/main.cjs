@@ -137,6 +137,7 @@ function returnWindowSetup(window) {
 }
 
 function createWindow() {
+  const integratedTitle = ["win32", "darwin"].includes(process.platform);
   const window = new BrowserWindow({
     show:
       !process.argv.includes("--smoke-test") &&
@@ -146,6 +147,17 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 720,
     title: "KeAgent Studio",
+    icon: path.join(
+      __dirname,
+      app.isPackaged
+        ? "../dist/keagent-icon.png"
+        : "../public/keagent-icon.png",
+    ),
+    titleBarStyle: integratedTitle ? "hidden" : "default",
+    titleBarOverlay:
+      process.platform === "win32"
+        ? { color: "#00000000", symbolColor: "#414756", height: 28 }
+        : process.platform === "darwin",
     backgroundColor: "#f6f8fb",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
