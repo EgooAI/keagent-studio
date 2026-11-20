@@ -3,7 +3,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-function registerAuth(onTargetStopped, devOrigin = "http://127.0.0.1:5173") {
+function registerAuth(
+  onTargetStopped,
+  devOrigin = "http://127.0.0.1:5173",
+  onReconciled,
+) {
   const { PanoramaWorkflow } = require("./panorama/workflow.cjs");
   const workflow = new PanoramaWorkflow(
     path.join(app.getPath("userData"), "panorama"),
@@ -372,6 +376,14 @@ function registerAuth(onTargetStopped, devOrigin = "http://127.0.0.1:5173") {
           `/v1/${service}/${args[0]}`,
           args[1] || {},
         );
+        if (!isCollection && args[0] === "records/reconcile")
+          try {
+            await onReconciled?.(data, generation);
+          } catch {
+            console.warn(
+              "Published result saved remotely; local queue sync deferred",
+            );
+          }
         if (
           isCollection &&
           (args[0] === "targets/pause" || args[0] === "targets/archive")

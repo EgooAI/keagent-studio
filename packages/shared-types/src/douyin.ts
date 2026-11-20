@@ -88,6 +88,7 @@ export interface DouyinWorkspaceRow {
   status: DouyinWorkspaceStatus;
   recordState?: DouyinPublishState | null;
   recordId?: string | null;
+  resultSource?: DouyinPublishRecord["resultSource"] | null;
   scheduledAt?: number | null;
   progress?: number | null;
   deviceReady: boolean;
@@ -142,8 +143,10 @@ export const douyinStateLabels: Record<DouyinPublishState, string> = {
   canceled: "已取消",
 };
 export function douyinRecordLabel(record: DouyinPublishRecord): string {
-  if (record.state === "accepted" && record.scheduledAt)
-    return record.resultSource === "manual" ? "已发布" : "已排期";
+  if (record.state === "accepted") {
+    if (record.resultSource === "manual") return "已发布";
+    if (record.scheduledAt) return "已排期";
+  }
   return douyinStateLabels[record.state];
 }
 

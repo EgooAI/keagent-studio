@@ -52,7 +52,10 @@ async function desktopFixture(
   resolverAvailable = true,
   unknown = false,
   pending = false,
-  initialRecord?: Pick<DouyinPublishRecord, "state" | "logs" | "errorCode">,
+  initialRecord?: Pick<
+    DouyinPublishRecord,
+    "state" | "logs" | "errorCode" | "resultSource"
+  >,
 ) {
   await page.addInitScript(
     ({
@@ -91,6 +94,7 @@ async function desktopFixture(
             ]
           : [];
       let activeRecord: unknown;
+      let activeAccountId: string | undefined;
       const observations: Record<string, unknown>[] = [];
       const artifacts = [
         fixture.artifact,
@@ -101,9 +105,25 @@ async function desktopFixture(
         },
       ];
       const queue = { paused: false, rows: [] as Record<string, unknown>[] };
+      const manuallyPublished =
+        initialRecord?.resultSource === "manual" &&
+        initialRecord.state === "accepted";
+      if (manuallyPublished) {
+        queue.paused = true;
+        queue.rows.push({
+          id: records[0].requestKey,
+          recordId: records[0].id,
+          artifactId: fixture.artifact.id,
+          state: "accepted",
+          resultSource: "manual",
+          title: records[0].title,
+          accountId: account.id,
+        });
+      }
       const okay = (data: unknown) => ({ ok: true, data });
       Object.assign(window, {
         __publishCount: 0,
+        __reconcileRequests: [] as unknown[],
         __batchRequests: [] as unknown[],
         __source: fixture,
         __restores: 0,
@@ -206,16 +226,30 @@ async function desktopFixture(
                     sourceRevision: artifact.source.revision,
                     review: artifact.review,
                     createdAt: artifact.createdAt,
-                    status: "unpublished",
+                    ...(manuallyPublished && artifact.id === fixture.artifact.id
+                      ? {
+                          status: "accepted",
+                          recordState: "accepted",
+                          resultSource: "manual",
+                          recordId: records[0].id,
+                        }
+                      : { status: "unpublished" }),
                     deviceReady: resolverAvailable,
                   })),
-                  counts: { unpublished: matched.length },
+                  counts:
+                    manuallyPublished &&
+                    matched.some((row) => row.id === fixture.artifact.id)
+                      ? { accepted: 1, unpublished: matched.length - 1 }
+                      : { unpublished: matched.length },
                   total: matched.length,
                 });
               }
               if (op === "records/list")
                 return okay({ items: records, total: records.length });
               if (op === "records/reconcile") {
+                (
+                  window as unknown as { __reconcileRequests: unknown[] }
+                ).__reconcileRequests.push(input);
                 records = records.map((record) =>
                   record.id === input.id
                     ? {
@@ -287,7 +321,16 @@ async function desktopFixture(
                 return okay({
                   deviceId: fixture.deviceId,
                   resolverAvailable,
-                  tabs: [],
+                  tabs: activeAccountId
+                    ? [
+                        {
+                          accountId: activeAccountId,
+                          title: account.name,
+                          url: "https://creator.douyin.com/creator-micro/content/upload",
+                        },
+                      ]
+                    : [],
+                  activeAccountId,
                   activeRecord,
                   queue,
                 });
@@ -367,6 +410,11 @@ async function desktopFixture(
                 records = [activeRecord as Record<string, unknown>];
                 return okay(activeRecord);
               }
+              if (method === "account.open") {
+                activeAccountId = String(input.accountId);
+                return okay(null);
+              }
+              if (method === "browser.hide") activeAccountId = undefined;
               if (method === "browser.hide" || method === "browser.viewport")
                 return okay(null);
               throw new Error(`Unexpected desktop fixture method ${method}`);
@@ -678,22 +726,61 @@ test("a new acceptance revision requires reopening configuration even after auto
     fixture.artifact.review.revision + 1,
   ]);
 });
-test("an unknown result is resolved explicitly in the artifact detail", async ({
-  page,
-}) => {
-  await desktopFixture(page, true, true);
-  await page.goto(`/#/publish/${fixture.artifact.id}`);
-  await page.getByText("发布记录", { exact: true }).click();
-  await page.getByRole("button", { name: "记录核对结果" }).click();
-  await page.getByRole("button", { name: "确认未发布", exact: true }).click();
-  await page
-    .getByRole("button", { name: "我已核对，确认未发布", exact: true })
-    .click();
-  await expect(page.getByText("用户人工核对", { exact: true })).toBeVisible();
+test("刷新后成片列表和本机队列都显示人工确认已发布", async ({ page }) => {
+  await desktopFixture(page, true, false, false, {
+    state: "accepted",
+    errorCode: "",
+    resultSource: "manual",
+    logs: [],
+  });
+  await page.goto("/#/publish");
+  const list = page.getByRole("region", { name: "成片列表" });
+  await expect(list.getByText("已发布", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(list.getByText("已发布", { exact: true })).toBeVisible();
+  await page.getByText("本机队列", { exact: true }).click();
   await expect(
-    page.getByText("你已确认该视频未发布，可以重新操作。", { exact: true }),
+    page
+      .getByRole("region", { name: "本机发布队列" })
+      .getByText("已发布", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("有任务的结果待核对，队列已暂停", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "恢复发布队列" }),
   ).toBeVisible();
 });
+for (const published of [false, true]) {
+  const button = published ? "确认已发布" : "确认未发布";
+  test(`发布核对可一次点击${button}`, async ({ page }) => {
+    await desktopFixture(page, true, true);
+    await page.goto(`/#/publish/${fixture.artifact.id}`);
+    await page.getByText("发布记录", { exact: true }).click();
+    await page.getByRole("button", { name: "记录核对结果" }).click();
+    const dialog = page.getByRole("dialog", { name: "记录人工核对结果" });
+    await expect(dialog.locator(".ant-modal-footer button")).toHaveText([
+      "确认未发布",
+      "确认已发布",
+    ]);
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    await dialog.getByRole("button", { name: button, exact: true }).click();
+    await expect(dialog).toBeHidden();
+    const record = page.locator(".douyin-record");
+    await expect(
+      record.getByText("用户人工核对", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      record.getByText(
+        published ? "已发布" : "你已确认该视频未发布，可以重新操作。",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => Reflect.get(window, "__reconcileRequests")),
+    ).toEqual([{ id: "e".repeat(32), published }]);
+  });
+}
 test("admin publishing diagnostics link to mail settings with retry and recipient removal", async ({
   page,
 }) => {
@@ -948,6 +1035,39 @@ test("发布记录合并步骤事件并定位发布设置失败", async ({ page 
     0,
   );
 });
+
+for (const state of ["failed", "unknown"] as const) {
+  test(`发布遇到验证码时可打开原账号浏览器（${state}）`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await desktopFixture(page, true, false, false, {
+      state,
+      errorCode: "VERIFICATION_REQUIRED",
+      logs: [],
+    });
+    await page.goto(`/#/publish/${fixture.artifact.id}`);
+    await page.getByText("发布记录", { exact: true }).click();
+    await expect(
+      page.getByText("需要输入验证码", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        state === "unknown"
+          ? /先到创作者中心核对发布结果/
+          : /返回工作台重新发布/,
+      ),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "打开抖音账号浏览器" }).click();
+    const browser = page.getByRole("region", { name: "抖音账号浏览器" });
+    await expect(
+      browser.getByRole("tab", { name: account.name }),
+    ).toBeVisible();
+    await browser.getByRole("button", { name: "返回工作台" }).click();
+    await expect(browser).toBeHidden();
+    expect(
+      await page.evaluate(() => Reflect.get(window, "__publishCount")),
+    ).toBe(0);
+  });
+}
 
 test("发布工作区按需显示批量操作，预览和记录独立切换", async ({ page }) => {
   await desktopFixture(page);

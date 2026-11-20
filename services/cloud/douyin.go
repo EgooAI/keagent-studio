@@ -498,12 +498,16 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 	case "records/reconcile":
 		var in struct {
 			ID        string `json:"id"`
-			Published bool   `json:"published"`
+			Published *bool  `json:"published"`
 			URL       string `json:"url"`
 		}
 		if err = decodeExchange(body, &in); err != nil {
 			return nil, err
 		}
+		if in.Published == nil || (!*in.Published && in.URL != "") {
+			return nil, exchangeFail(422, "INVALID_INPUT", "请选择已发布或未发布")
+		}
+		published := *in.Published
 		v, e := readDouyinRecord(ctx, tx, a.UserID, in.ID, true)
 		if e != nil {
 			return nil, e
@@ -512,8 +516,8 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			return nil, exchangeFail(409, "WRONG_DEVICE", "请在原设备核对")
 		}
 		if v.ResultSource == "manual" {
-			if (in.Published && v.State == "accepted" && in.URL == v.URL) ||
-				(!in.Published && in.URL == "" && (v.ErrorCode == "USER_CONFIRMED_NOT_PUBLISHED" || v.ErrorCode == "USER_CONFIRMED_SCHEDULE_CANCELED")) {
+			if (published && v.State == "accepted" && (in.URL == "" || in.URL == v.URL)) ||
+				(!published && (v.ErrorCode == "USER_CONFIRMED_NOT_PUBLISHED" || v.ErrorCode == "USER_CONFIRMED_SCHEDULE_CANCELED")) {
 				return v, nil
 			}
 			return nil, exchangeFail(409, "STATE_CONFLICT", "人工核对结论已保存，不能改写")
@@ -524,19 +528,20 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		}
 		v.ResultSource = "manual"
 		v.UpdatedAt = now()
-		if in.Published {
-			priorExternalID := v.ExternalID
-			u, e := url.Parse(in.URL)
-			if e != nil {
-				return nil, exchangeFail(422, "INVALID_INPUT", "作品链接无效")
-			}
-			v.ExternalID = strings.TrimPrefix(u.Path, "/video/")
-			v.URL = in.URL
-			if !validDouyinResult(v.ExternalID, v.URL) {
-				return nil, exchangeFail(422, "INVALID_INPUT", "请输入抖音作品的完整视频链接")
-			}
-			if scheduledConfirmation && v.ExternalID != priorExternalID {
-				return nil, exchangeFail(422, "INVALID_INPUT", "作品链接与预约回执不一致")
+		if published {
+			if in.URL != "" {
+				u, e := url.Parse(in.URL)
+				if e != nil {
+					return nil, exchangeFail(422, "INVALID_INPUT", "作品链接无效")
+				}
+				externalID := strings.TrimPrefix(u.Path, "/video/")
+				if !validDouyinResult(externalID, in.URL) {
+					return nil, exchangeFail(422, "INVALID_INPUT", "请输入抖音作品的完整视频链接")
+				}
+				if scheduledConfirmation && externalID != v.ExternalID {
+					return nil, exchangeFail(422, "INVALID_INPUT", "作品链接与预约回执不一致")
+				}
+				v.ExternalID, v.URL = externalID, in.URL
 			}
 			v.State = "accepted"
 			v.Progress = 100

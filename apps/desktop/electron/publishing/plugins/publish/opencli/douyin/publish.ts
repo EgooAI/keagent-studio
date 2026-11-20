@@ -24,6 +24,64 @@ const caption = '[contenteditable="true"][data-placeholder="添加作品简介"]
 const dateInput =
   'input[placeholder="日期和时间"]:not([disabled]):not([readonly])';
 
+const creatorVerificationVisible = `(() => {
+  if (location.protocol !== 'https:' ||
+      !['creator.douyin.com', 'sso.douyin.com', 'login.douyin.com'].includes(location.hostname)) return false;
+  if (/(?:^|\\/)(?:verify|verification|captcha|challenge|check_login)(?:\\/|$)/i.test(location.pathname))
+    return true;
+  const visible = (element) => element.checkVisibility({
+    opacityProperty: true,
+    visibilityProperty: true,
+  }) && !element.closest('[aria-hidden="true"], [inert]');
+  const controls = document.querySelectorAll([
+    'input[placeholder*="验证码"]',
+    'input[aria-label*="验证码"]',
+    'input[autocomplete="one-time-code"]',
+    '#captcha-verify-container',
+    'iframe[src*="captcha" i]',
+  ].join(','));
+  if ([...controls].some(visible)) return true;
+  return [...document.querySelectorAll('dialog, [role="dialog"], [aria-modal="true"]')]
+    .some((dialog) => visible(dialog) &&
+      /安全验证|身份验证|短信验证|手机验证|接收验证码|输入验证码|获取验证码|发送验证码|拖动滑块|扫码确认/.test(dialog.innerText));
+})()`;
+
+export async function withCreatorVerification<T>(
+  page: OpenCliPage,
+  signal: AbortSignal,
+  publish: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const interrupt = new AbortController();
+  const publishing = AbortSignal.any([signal, interrupt.signal]);
+  const detect = () =>
+    page.evaluate<boolean>(creatorVerificationVisible).catch(() => false);
+  const verificationError = () =>
+    new PublishingError("VERIFICATION_REQUIRED", "抖音需要完成安全验证");
+  const monitor = async () => {
+    while (!publishing.aborted) {
+      if ((await detect()) && !publishing.aborted) {
+        interrupt.abort(verificationError());
+        return;
+      }
+      await delay(300, undefined, { signal: publishing }).catch(() => {});
+    }
+  };
+
+  if (await detect()) throw verificationError();
+  publishing.throwIfAborted();
+  void monitor();
+  try {
+    return await publish(publishing);
+  } catch (error) {
+    publishing.throwIfAborted();
+    if (!(error instanceof ConfirmedPublishRejection) && (await detect()))
+      throw verificationError();
+    throw error;
+  } finally {
+    interrupt.abort();
+  }
+}
+
 const button = (text: string): PublishPageElementQuery => ({
   selector: 'button:not([disabled]):not([aria-disabled="true"])',
   text,

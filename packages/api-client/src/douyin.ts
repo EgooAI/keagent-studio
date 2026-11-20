@@ -88,8 +88,12 @@ export const douyinApi = {
       limit: 20,
     }),
   record: (id: string) => cloud<DouyinPublishRecord>("records/get", { id }),
-  reconcile: (id: string, published: boolean, url = "") =>
-    cloud<DouyinPublishRecord>("records/reconcile", { id, published, url }),
+  reconcile: (id: string, published: boolean, url?: string) =>
+    cloud<DouyinPublishRecord>("records/reconcile", {
+      id,
+      published,
+      ...(url ? { url } : {}),
+    }),
   state: () => douyinDesktop<DouyinDesktopState>("state"),
   start: (input: DouyinPublishInput) =>
     douyinDesktop<DouyinPublishRecord>("publish.start", input),

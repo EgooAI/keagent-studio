@@ -20,7 +20,11 @@ import {
 } from "antd";
 import { ArrowLeft, ChevronDown, Film, RotateCcw, Send } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { artifactExchange, isLive } from "@keagent/api-client";
+import {
+  artifactExchange,
+  isLive,
+  ServiceRequestError,
+} from "@keagent/api-client";
 import {
   douyinRecordLabel,
   formatDouyinSchedule,
@@ -43,6 +47,8 @@ import {
   desktopPublishingAvailable,
   publishingMessage,
   publishingFailureText,
+  publishVerificationCode,
+  publishVerificationLabel,
   useDouyinDesktop,
 } from "../lib/douyin";
 import DemoPublishPage, {
@@ -125,10 +131,8 @@ function ArtifactPublishDetail({
   const inFlight = useRef(false);
   const [unplayableAt, setUnplayableAt] = useState<number>();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; code?: string }>();
   const [reconciling, setReconciling] = useState<DouyinPublishRecord>();
-  const [resultUrl, setResultUrl] = useState("");
-  const [confirmAbsent, setConfirmAbsent] = useState(false);
   const publishKey = useRef(crypto.randomUUID());
   useEffect(() => {
     if (blocker.state !== "blocked") return;
@@ -170,7 +174,7 @@ function ArtifactPublishDetail({
   function resetConfiguration() {
     setDirty(false);
     setConfigurationRevision(undefined);
-    setError("");
+    setError(undefined);
   }
   useEffect(() => {
     setRecordOffset(0);
@@ -179,8 +183,9 @@ function ArtifactPublishDetail({
     publishKey.current = crypto.randomUUID();
   }, [artifactId, artifact.data?.review.revision]);
   const current = artifact.data;
+  const browserOpen = !!desktop.data?.activeAccountId;
   const localRecord = desktop.data?.activeRecord;
-  const active = localRecord?.scheduledAt
+  const active = localRecord
     ? (records.data?.items.find(
         (record) =>
           record.id === localRecord.id && record.resultSource === "manual",
@@ -261,11 +266,15 @@ function ArtifactPublishDetail({
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
-    setError("");
+    setError(undefined);
     try {
       await action();
     } catch (error) {
-      setError(publishingMessage(error));
+      const code =
+        error instanceof ServiceRequestError ? error.code : undefined;
+      if (configuring && code === publishVerificationCode)
+        publishKey.current = crypto.randomUUID();
+      setError({ message: publishingMessage(error), code });
     } finally {
       void client.invalidateQueries({ queryKey: ["douyin"] });
       inFlight.current = false;
@@ -324,6 +333,17 @@ function ArtifactPublishDetail({
     await douyinDesktop("browser.action", {
       accountId: record.accountId,
       action: "manage",
+    });
+  }
+  function saveReconciliation(published: boolean) {
+    if (!reconciling) return;
+    void act(async () => {
+      await douyinApi.reconcile(
+        reconciling.id,
+        published,
+        published ? reconciling.url : undefined,
+      );
+      setReconciling(undefined);
     });
   }
   useEffect(() => {
@@ -426,9 +446,9 @@ function ArtifactPublishDetail({
         <Alert
           type="error"
           title="操作未完成"
-          description={error}
+          description={error.message}
           closable
-          onClose={() => setError("")}
+          onClose={() => setError(undefined)}
         />
       )}
       {assets.error && (
@@ -497,7 +517,7 @@ function ArtifactPublishDetail({
                       description: current.content.script,
                       hashtags: [],
                     });
-                    setError("");
+                    setError(undefined);
                     setConfigurationRevision(current.review.revision);
                   }}
                 >
@@ -590,14 +610,18 @@ function ArtifactPublishDetail({
             <Space wrap className="publish-record-heading">
               <Tag
                 color={
-                  record.state === "accepted"
-                    ? "green"
-                    : record.state === "unknown"
-                      ? "orange"
-                      : "default"
+                  record.errorCode === publishVerificationCode
+                    ? "warning"
+                    : record.state === "accepted"
+                      ? "green"
+                      : record.state === "unknown"
+                        ? "orange"
+                        : "default"
                 }
               >
-                {douyinRecordLabel(record)}
+                {record.errorCode === publishVerificationCode
+                  ? publishVerificationLabel
+                  : douyinRecordLabel(record)}
               </Tag>
               <span>{record.title}</span>
               <small>
@@ -638,8 +662,22 @@ function ArtifactPublishDetail({
             )}
             {record.errorCode && (
               <p className="error-text">
-                {publishingFailureText(record.errorCode)}
+                {publishingFailureText(record.errorCode, record.state)}
               </p>
+            )}
+            {record.errorCode === publishVerificationCode && (
+              <Button
+                disabled={busy || !deviceId || record.deviceId !== deviceId}
+                onClick={() =>
+                  void act(() =>
+                    douyinDesktop("account.open", {
+                      accountId: record.accountId,
+                    }),
+                  )
+                }
+              >
+                打开抖音账号浏览器
+              </Button>
             )}
             {(record.state === "unknown" ||
               douyinRecordLabel(record) === "已排期") && (
@@ -655,11 +693,8 @@ function ArtifactPublishDetail({
                 <Button
                   disabled={record.deviceId !== desktop.data?.deviceId}
                   onClick={() => {
+                    setError(undefined);
                     setReconciling(record);
-                    setResultUrl(
-                      record.state === "accepted" ? record.url || "" : "",
-                    );
-                    setConfirmAbsent(false);
                   }}
                 >
                   记录核对结果
@@ -683,7 +718,9 @@ function ArtifactPublishDetail({
   );
   return (
     <>
-      {surface ? surface(content, configuring || !!reconciling) : content}
+      {surface
+        ? surface(content, configuring || !!reconciling || browserOpen)
+        : content}
       <Modal
         centered
         forceRender
@@ -691,7 +728,7 @@ function ArtifactPublishDetail({
         classNames={{ body: "workbench-form-body" }}
         className="publish-dialog"
         title="配置发布"
-        open={configuring}
+        open={configuring && !browserOpen}
         closable={!busy}
         keyboard={!busy}
         mask={{ closable: false }}
@@ -815,9 +852,36 @@ function ArtifactPublishDetail({
           </div>
           {invalid && <Alert type="warning" title={invalid} />}
           {scheduleIssue && <Alert type="warning" title={scheduleIssue} />}
-          {configuring && error && (
-            <Alert type="error" showIcon title={error} />
-          )}
+          {configuring &&
+            error &&
+            (error.code === publishVerificationCode ? (
+              <Alert
+                type="warning"
+                showIcon
+                title={publishVerificationLabel}
+                description={publishingFailureText(
+                  publishVerificationCode,
+                  "failed",
+                )}
+                action={
+                  <Button
+                    size="small"
+                    disabled={busy || !values?.accountId}
+                    onClick={() => {
+                      const accountId = values?.accountId;
+                      if (accountId)
+                        void act(() =>
+                          douyinDesktop("account.open", { accountId }),
+                        );
+                    }}
+                  >
+                    打开抖音账号浏览器
+                  </Button>
+                }
+              />
+            ) : (
+              <Alert type="error" showIcon title={error.message} />
+            ))}
           {configuring && !canSubmit && (
             <Alert
               type="warning"
@@ -830,63 +894,37 @@ function ArtifactPublishDetail({
       <Modal
         className="publish-dialog publish-reconcile-dialog"
         centered
-        title={confirmAbsent ? "核对后允许重新安排发布" : "记录人工核对结果"}
-        open={!!reconciling}
+        title="记录人工核对结果"
+        open={!!reconciling && !browserOpen}
+        closable={!busy}
+        keyboard={!busy}
+        mask={{ closable: false }}
         onCancel={() => setReconciling(undefined)}
         footer={
           <Space>
-            <Button onClick={() => setReconciling(undefined)}>取消</Button>
             <Button
               danger
-              onClick={() => {
-                if (!confirmAbsent) {
-                  setConfirmAbsent(true);
-                  return;
-                }
-                void act(async () => {
-                  await douyinApi.reconcile(reconciling!.id, false);
-                  setReconciling(undefined);
-                });
-              }}
+              disabled={busy}
+              onClick={() => saveReconciliation(false)}
             >
-              {reconciling?.state === "accepted"
-                ? confirmAbsent
-                  ? "我已核对，预约已取消"
-                  : "确认预约已取消"
-                : confirmAbsent
-                  ? "我已核对，确认未发布"
-                  : "确认未发布"}
+              确认未发布
             </Button>
             <Button
               type="primary"
-              disabled={!resultUrl || busy}
-              onClick={() =>
-                void act(async () => {
-                  await douyinApi.reconcile(reconciling!.id, true, resultUrl);
-                  setReconciling(undefined);
-                })
-              }
+              disabled={busy}
+              onClick={() => saveReconciliation(true)}
             >
-              {reconciling?.scheduledAt ? "确认作品已公开" : "确认已有作品"}
+              确认已发布
             </Button>
           </Space>
         }
       >
-        {error && <Alert type="error" title={error} />}
+        {error && <Alert type="error" title={error.message} />}
         <p>
           {reconciling?.scheduledAt
-            ? "请先在抖音创作者中心核对该作品的排期和公开状态。排期仍在时请保留原记录。"
-            : "请先在创作者中心核对。仅凭网络错误不能判断未发布，错误判断后再次操作可能产生重复作品。"}
+            ? "请先在抖音创作者中心核对。预约仍有效时，请关闭此窗口。"
+            : "请先在抖音创作者中心核对作品状态。"}
         </p>
-        <label className="publish-reconcile-field">
-          已发布的抖音作品链接
-          <Input
-            aria-label="已发布的抖音作品链接"
-            placeholder="https://www.douyin.com/video/作品ID"
-            value={resultUrl}
-            onChange={(event) => setResultUrl(event.target.value)}
-          />
-        </label>
       </Modal>
     </>
   );

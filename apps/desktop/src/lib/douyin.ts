@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { CommentPanelStatus } from "@keagent/shared-types";
+import type { CommentPanelStatus, DouyinQueueRow } from "@keagent/shared-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   douyinApi,
@@ -17,7 +17,18 @@ export const panelLabels: Record<CommentPanelStatus, string> = {
   restricted: "访问受限",
   unknown: "无法判断",
 };
-export function publishingFailureText(code: string): string {
+export const publishVerificationCode = "VERIFICATION_REQUIRED";
+export const publishVerificationLabel = "需要输入验证码";
+export function publishingFailureText(
+  code: string,
+  state?: DouyinQueueRow["state"],
+): string {
+  if (code === publishVerificationCode)
+    return state === "unknown"
+      ? "请在抖音账号浏览器按页面提示接收并输入验证码，或完成其他安全验证。验证后，先到创作者中心核对发布结果。"
+      : state === "failed"
+        ? "请在抖音账号浏览器按页面提示接收并输入验证码，或完成其他安全验证。验证后，返回工作台重新发布。"
+        : "请在抖音账号浏览器按页面提示完成安全验证。";
   const labels: Record<string, string> = {
     EXECUTION_FAILED: "发布执行失败，请查看账号浏览器后重新操作。",
     VIDEO_UPLOAD_FAILED: "抖音网页报告视频上传失败，请查看账号浏览器中的提示。",
@@ -52,6 +63,8 @@ export function publishingFailureText(code: string): string {
 }
 export function publishingMessage(error: unknown): string {
   if (error instanceof ServiceRequestError) {
+    if (error.code === publishVerificationCode)
+      return publishingFailureText(error.code);
     const messages: Record<string, string> = {
       RESOLVER_UNAVAILABLE:
         "制作侧本机文件解析器尚未接入。可以查看成片信息，真实预览与发布将在接入后启用。",

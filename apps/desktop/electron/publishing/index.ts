@@ -124,10 +124,15 @@ export function registerPublishing(
   const queue = new PublishQueue({
     identity: dependencies.identity,
     directory: (identity) => files.directoryFor(identity),
-    record: (id) =>
-      publisher.active?.id === id
-        ? Promise.resolve(publisher.active)
-        : cloud("records/get", { id }),
+    record: async (id) => {
+      const record = await cloud<DouyinPublishRecord>("records/get", { id });
+      if (
+        publisher.active?.id === record.id &&
+        record.resultSource === "manual"
+      )
+        publisher.active = record;
+      return record;
+    },
     changed: emit,
     verifyMessage: async (
       identity,
@@ -219,6 +224,11 @@ export function registerPublishing(
       await assertCurrent();
       const account = await browser.check(entry.accountId);
       await assertCurrent();
+      if (account.loginStatus === "verification_required")
+        throw new PublishingError(
+          "VERIFICATION_REQUIRED",
+          "抖音需要完成安全验证",
+        );
       if (account.loginStatus !== "logged_in")
         throw new PublishingError("LOGIN_REQUIRED", "批次账号需要重新登录");
       let input = entry.direct;
@@ -463,6 +473,7 @@ export function registerPublishing(
           data = observations.screenshot(requestIdentity, String(value.id));
         else if (method === "state") {
           await recover();
+          await queue.refreshVideoResults(requestIdentity);
           data = await state();
         } else if (method === "account.add") {
           const platform = value.platform ?? "douyin";
@@ -625,6 +636,17 @@ export function registerPublishing(
   });
   return {
     stop,
+    async reconciled(record: DouyinPublishRecord, generation: number) {
+      const identity = await dependencies.identity();
+      if (
+        identity.generation !== generation ||
+        record.ownerId !== identity.userId ||
+        record.deviceId !== identity.deviceId
+      )
+        return;
+      queue.applyVideoResult(identity, record);
+      if (publisher.active?.id === record.id) publisher.active = record;
+    },
     async targetStopped(runId: string, expectedGeneration: number) {
       const identity = await dependencies.identity();
       if (identity.generation === expectedGeneration)

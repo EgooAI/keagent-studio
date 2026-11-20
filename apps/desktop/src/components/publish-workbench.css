@@ -405,8 +405,7 @@
 }
 .publish-dialog .ant-form-item-label > label,
 .publish-batch-account label,
-.publish-batch-entries label,
-.publish-reconcile-field {
+.publish-batch-entries label {
   font-weight: 600;
 }
 .publish-dialog .ant-form-item {
@@ -453,8 +452,7 @@
   color: var(--accent);
   font-weight: 700;
 }
-.publish-batch-entries label,
-.publish-reconcile-field {
+.publish-batch-entries label {
   display: grid;
   gap: 5px;
   margin-top: 10px;

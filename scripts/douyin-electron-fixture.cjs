@@ -25,6 +25,7 @@ const failVideo = process.env.DOUYIN_TEST_UPLOAD_FAILURE === "1";
 const failCover = process.env.DOUYIN_TEST_COVER_FAILURE === "1";
 const directCover = process.env.DOUYIN_TEST_DIRECT_COVER === "1";
 const scheduleTest = process.env.DOUYIN_TEST_SCHEDULE;
+const verificationStage = process.env.DOUYIN_TEST_VERIFICATION;
 const scheduledAt = scheduleTest
   ? Math.ceil((Date.now() / 1000 + 86400) / 60) * 60
   : undefined;
@@ -135,6 +136,7 @@ function creatorForm(videoHash, coverHash) {
     #cover-upload { display: block; height: 42px; }
     .bg-fixture { width: 90px; height: 60px; background-size: cover; }
     #cover-layer.closing, #cover-mask { position: fixed; inset: 0; z-index: 2; background: #fff9; }
+    #verification { position: fixed; inset: 0; z-index: 3; background: #fff; padding: 40px; }
     @keyframes cover-leave { from { opacity: 1; } to { opacity: 0; } }
     .dy-creator-content-modal-content-animate-hide, .dy-creator-content-modal-mask-animate-hide { animation: cover-leave 1s paused both; }
     label { position: relative; display: inline-block; padding: 8px; }
@@ -188,11 +190,20 @@ function creatorForm(videoHash, coverHash) {
     <button id="submit" disabled>发布</button>
     </section>
   </section>
+  <section id="verification" role="dialog" aria-modal="true" hidden>
+    <h2>安全验证</h2>
+    <input placeholder="请输入短信验证码" autocomplete="one-time-code">
+  </section>
   <script>
     const el = id => document.getElementById(id);
     const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), n => n.toString(16).padStart(2, '0')).join('');
     let video, caption, selectedCover, appliedCover, imageURL, skipClicks = 0;
     let uploaded = false;
+    if (${verificationStage === "before_submit"}) {
+      document.querySelector('input[value="不同时发布"]').onchange = () => {
+        el('verification').hidden = false;
+      };
+    }
     el('schedule').onchange = () => { el('schedule-date').hidden = !el('schedule').checked; };
     el('schedule-date').oninput = () => {
       if (${scheduleTest === "readback_mismatch"}) el('schedule-date').value = '2099-01-01 10:00';
@@ -265,6 +276,10 @@ function creatorForm(videoHash, coverHash) {
     };
     el('submit').onclick = async () => {
       el('submit').disabled = true;
+      if (${verificationStage === "after_click"}) {
+        el('verification').hidden = false;
+        return;
+      }
       if (${directCover} && skipClicks !== 1) throw new Error('Cover confirmation must be clicked once');
       const response = await fetch('/web/api/media/aweme/create_v2/?read_aid=2906', {
         method: 'POST',
@@ -451,6 +466,13 @@ app.whenReady().then(async () => {
           };
           records.set(input.requestKey, structuredClone(record));
           return { record, created: true };
+        }
+        if (op === "records/get") {
+          const record = [...records.values()].find(
+            (row) => row.id === input.id,
+          );
+          assert.ok(record);
+          return structuredClone(record);
         }
         if (op === "records/report") {
           if (input.state === "accepted" && dropTerminal) {
@@ -1118,6 +1140,65 @@ app.whenReady().then(async () => {
     const started = await call("publish.start", input);
     assert.equal(started.ok, true, JSON.stringify(started));
     await service.publisher.idle();
+    if (verificationStage) {
+      const record = service.publisher.active;
+      const clicked = verificationStage === "after_click";
+      assert.equal(record.state, clicked ? "unknown" : "failed");
+      assert.equal(record.errorCode, "VERIFICATION_REQUIRED");
+      assert.equal(records.get(input.requestKey).errorCode, record.errorCode);
+      assert.ok(
+        record.logs.some(
+          (log) => log.step === "upload_cover" && log.status === "completed",
+        ),
+      );
+      assert.equal(
+        record.logs.some((log) => log.step === "submit_page_request"),
+        clicked,
+      );
+      const opened = await call("account.open", { accountId });
+      assert.equal(opened.ok, true, JSON.stringify(opened));
+      assert.equal(opened.data.activeAccountId, accountId);
+      assert.equal(
+        await nativeView.webContents.executeJavaScript(
+          'document.querySelector("#verification")?.checkVisibility()',
+        ),
+        true,
+      );
+      const replay = await call("publish.start", input);
+      assert.equal(replay.data?.id, record.id, JSON.stringify(replay));
+      if (clicked && !testBase) {
+        const previous = await call("state");
+        assert.equal(
+          previous.data.queue.rows.find((row) => row.recordId === record.id)
+            .state,
+          "unknown",
+        );
+        records.set(input.requestKey, {
+          ...record,
+          state: "accepted",
+          resultSource: "manual",
+          errorCode: "",
+          progress: 100,
+        });
+        const refreshed = await call("state");
+        assert.equal(refreshed.ok, true, JSON.stringify(refreshed));
+        const row = refreshed.data.queue.rows.find(
+          (row) => row.recordId === record.id,
+        );
+        assert.equal(row.state, "accepted");
+        assert.equal(row.resultSource, "manual");
+        assert.equal(refreshed.data.activeRecord.state, "accepted");
+        assert.equal(refreshed.data.queue.paused, true);
+      }
+      assert.equal(submits, 0);
+      service.stop();
+      window.destroy();
+      console.log(
+        `Hidden Electron verified: ${verificationStage} requests manual verification, preserves the dialog, and avoids replay.`,
+      );
+      app.exit(0);
+      return;
+    }
     if (failVideo || failCover || scheduleTest?.endsWith("mismatch")) {
       const record = service.publisher.active;
       assert.equal(

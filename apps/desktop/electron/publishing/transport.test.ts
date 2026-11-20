@@ -40,6 +40,44 @@ function context(transport: typeof fetch): UploadContext {
   };
 }
 
+it("reads a comment response without trying to decode its CORS preflight", async () => {
+  const sendCommand = vi.fn(async (command, params) => {
+    if (command !== "Network.getResponseBody") return {};
+    if (params.requestId === "Preflight") throw new Error("No response body");
+    return { body: '{"comments":[]}' };
+  });
+  const network = Object.assign(new EventEmitter(), {
+    isAttached: () => true,
+    sendCommand,
+  });
+  const page = new OpenCliPage(
+    { debugger: network, isDestroyed: () => false } as never,
+    async () => {},
+  );
+  const consume = vi.fn();
+  const url =
+    "https://www-hj.douyin.com/aweme/v1/web/comment/list/?aweme_id=12345";
+  await page.observeJsonResponses(
+    (address) => address.href === url,
+    consume,
+    async () => {
+      for (const type of ["Preflight", "XHR"]) {
+        network.emit("message", {}, "Network.responseReceived", {
+          requestId: type,
+          type,
+          response: { url, status: 200 },
+        });
+        network.emit("message", {}, "Network.loadingFinished", {
+          requestId: type,
+        });
+      }
+    },
+  );
+  expect(consume).toHaveBeenCalledExactlyOnceWith(new URL(url), {
+    comments: [],
+  });
+});
+
 it("uses a same-session IM popup only for an explicit chat entry and returns to the opener on reload", async () => {
   const profile = "https://www.douyin.com/user/test";
   const inbox = "https://www.douyin.com/chat";

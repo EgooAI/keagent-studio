@@ -3,7 +3,10 @@ import { App, Button, Space, Tabs, Alert } from "antd";
 import { ArrowLeft, ArrowRight, ChevronLeft, RotateCw, X } from "lucide-react";
 import {
   douyinDesktop,
+  publishingFailureText,
   publishingMessage,
+  publishVerificationCode,
+  publishVerificationLabel,
   useDouyinDesktop,
 } from "../lib/douyin";
 /** React owns chrome and measured geometry; the native view has no application preload. */
@@ -19,6 +22,12 @@ export default function DouyinBrowserWorkspace() {
     !!tab &&
     data?.activeRecord?.accountId === tab.accountId &&
     ["running", "submitting"].includes(data.activeRecord.state);
+  const publishTask =
+    data?.activeRecord?.accountId === tab?.accountId
+      ? data?.activeRecord
+      : data?.queue?.rows.find(
+          (row) => row.kind !== "message" && row.accountId === tab?.accountId,
+        );
   async function action(method: string, input: unknown) {
     setBusy(true);
     try {
@@ -176,6 +185,17 @@ export default function DouyinBrowserWorkspace() {
         <Alert
           type="info"
           title="正在通过抖音网页发布，可返回工作台查看进度。"
+        />
+      )}
+      {!locked && publishTask?.errorCode === publishVerificationCode && (
+        <Alert
+          type="warning"
+          showIcon
+          title={publishVerificationLabel}
+          description={publishingFailureText(
+            publishVerificationCode,
+            publishTask.state,
+          )}
         />
       )}
       <div ref={viewport} className="douyin-browser-viewport" />

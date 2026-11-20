@@ -217,8 +217,20 @@ function messageChat(
     afterProfileClick = false;
     await page.goto(target);
     if (platform === "douyin") {
-      for (let i = 0; i < 48; i++) {
+      let retried = false;
+      let sawChatSurface = false;
+      let lastReason = "";
+      let idleChecks = 0;
+      let remaining = 48;
+      while (remaining-- > 0) {
         const state = await run(afterProfileClick ? read : "open");
+        lastReason = state.reason;
+        if (
+          afterProfileClick &&
+          lastReason !== "profile-idle" &&
+          lastReason !== "loading"
+        )
+          sawChatSurface = true;
         if (
           (state.reason === "origin" &&
             !["", "about:blank"].includes(page.getUrl())) ||
@@ -233,12 +245,35 @@ function messageChat(
           if (afterProfileClick) return;
           afterProfileClick = true;
         }
+        idleChecks = state.reason === "profile-idle" ? idleChecks + 1 : 0;
+        if (
+          idleChecks >= 24 &&
+          !retried &&
+          !sawChatSurface &&
+          !page.inMessagePopup &&
+          !clock.submittedAt &&
+          read === "inspect"
+        ) {
+          // Only reopen the target profile before drafting, with no chat surface on screen.
+          retried = true;
+          afterProfileClick = false;
+          idleChecks = 0;
+          await page.goto(target);
+          remaining = 48;
+        }
         await delay(250, undefined, { signal });
       }
+      if (afterProfileClick && lastReason === "recipient")
+        throw new PublishingError(
+          "DM_RECIPIENT_UNVERIFIED",
+          "页面同时出现多个聊天输入框，无法确认收件人。",
+        );
       throw afterProfileClick
         ? new PublishingError(
             "DM_EDITOR_MISSING",
-            "已打开主页私信入口，但未找到此次打开的聊天输入框。",
+            lastReason === "profile-idle"
+              ? "已点击收件人主页的私信入口，等待后仍未出现聊天面板。"
+              : "已点击私信入口，但未能核对此次会话的输入框。",
           )
         : new PublishingError(
             "DM_ENTRY_MISSING",

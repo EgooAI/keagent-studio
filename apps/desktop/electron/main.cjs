@@ -216,6 +216,7 @@ app.whenReady().then(() => {
   identity = require("./auth.cjs").registerAuth(
     (runId, generation) => publishing?.targetStopped(runId, generation),
     devOrigin,
+    (record, generation) => publishing?.reconciled(record, generation),
   );
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);

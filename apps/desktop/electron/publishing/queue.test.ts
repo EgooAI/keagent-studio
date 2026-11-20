@@ -94,6 +94,62 @@ it("runs each confirmed item once and pauses for unknown results", async () => {
   expect(ports.execute).toHaveBeenCalledTimes(2);
 });
 
+it.each(["accepted", "failed"] as const)(
+  "refreshes a saved unknown video to %s without resuming or changing other tasks",
+  async (state) => {
+    const { input, ports, record } = setup();
+    const folder = ports.directory(identity);
+    fs.mkdirSync(folder);
+    const id = input.entries[0].artifactId;
+    const stale = {
+      id: "old-job",
+      artifactId: id,
+      recordId: id,
+      state: "unknown",
+      errorCode: "PUBLISH_OUTCOME_UNKNOWN",
+      errorMessage: "旧结果",
+    };
+    const others = [
+      { id: "message", kind: "message", state: "unknown" },
+      { ...stale, id: "other-attempt", recordId: "other" },
+    ];
+    fs.writeFileSync(
+      path.join(folder, "publish-queue.json"),
+      JSON.stringify({
+        paused: true,
+        batches: {},
+        entries: [stale, ...others],
+      }),
+    );
+    const queue = new PublishQueue(ports);
+    ports.record.mockRejectedValue(new Error("offline"));
+    await queue.refreshVideoResults(identity);
+    expect(queue.row(identity, stale.id)?.state).toBe("unknown");
+    const result = {
+      ...record(id, state),
+      resultSource: "manual" as const,
+      errorCode:
+        state === "accepted" ? undefined : "USER_CONFIRMED_NOT_PUBLISHED",
+    };
+    ports.record.mockImplementation(async (key) =>
+      key === id ? result : record(key, "unknown"),
+    );
+    await queue.refreshVideoResults(identity);
+    const restarted = new PublishQueue(ports);
+    expect(restarted.row(identity, stale.id)).toMatchObject({
+      state,
+      resultSource: "manual",
+      errorCode: result.errorCode,
+      progress: 100,
+      errorMessage: undefined,
+    });
+    for (const other of others)
+      expect(restarted.row(identity, other.id)?.state).toBe("unknown");
+    expect(restarted.view(identity).paused).toBe(true);
+    expect(ports.execute).not.toHaveBeenCalled();
+  },
+);
+
 it("recovers a persisted queue without replaying its interrupted item", async () => {
   const { input, ports } = setup();
   ports.execute.mockReturnValueOnce(new Promise(() => {}));

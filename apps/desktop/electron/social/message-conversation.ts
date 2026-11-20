@@ -332,10 +332,23 @@ export function conversation(
       if (top.length || root.matches(pane)) break;
     }
   }
+  if (
+    !xhs &&
+    action === "inspect" &&
+    !contexts.length &&
+    opened?.profile === profile &&
+    here === target.pathname &&
+    !find(stackPage + "," + pane + ',.chat,[data-e2e="msg-input"]').some(
+      inViewport,
+    ) &&
+    !editors.some((el) => inViewport(el) && !opened.previous.has(el))
+  )
+    return { ...empty, reason: "profile-idle" };
   if (contexts.length !== 1)
     return {
       ...empty,
-      reason: xhs && (sawComposer || contexts.length) ? "recipient" : "editor",
+      reason:
+        contexts.length > 1 || (xhs && sawComposer) ? "recipient" : "editor",
     };
   const { editor, chat } = contexts[0];
   if (!xhs) {

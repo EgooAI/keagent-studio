@@ -629,6 +629,61 @@ export class PublishQueue {
     return this.view(identity);
   }
 
+  applyVideoResult(identity: PublishingIdentity, record: DouyinPublishRecord) {
+    if (
+      record.ownerId !== identity.userId ||
+      record.deviceId !== identity.deviceId ||
+      !["accepted", "failed", "canceled"].includes(record.state)
+    )
+      return;
+    const data = this.data(identity);
+    const entry = data.entries.find(
+      (row) =>
+        row.kind !== "message" &&
+        row.recordId === record.id &&
+        row.artifactId === record.artifactId,
+    );
+    if (
+      !entry ||
+      (!uncertain(entry) &&
+        (record.resultSource !== "manual" ||
+          entry.resultSource === "manual" ||
+          live(entry)))
+    )
+      return;
+    this.save(identity, data, () => {
+      entry.state = record.state;
+      entry.resultSource = record.resultSource;
+      entry.progress = record.progress;
+      entry.errorCode = record.errorCode;
+      delete entry.errorMessage;
+    });
+  }
+
+  async refreshVideoResults(identity: PublishingIdentity, resuming = false) {
+    for (const entry of this.data(identity).entries.filter(uncertain)) {
+      if (entry.kind === "message" || !entry.recordId) continue;
+      let record: DouyinPublishRecord;
+      try {
+        record = await this.ports.record(entry.recordId);
+      } catch (error) {
+        if (resuming) throw error;
+        continue;
+      }
+      await this.assertCurrent(identity);
+      if (
+        resuming &&
+        (record.state === "running" || record.state === "submitting")
+      )
+        throw new PublishingError(
+          "DEVICE_BUSY",
+          "请等待上次发布记录完成恢复，再恢复队列",
+        );
+      if (record.id === entry.recordId && uncertain(entry))
+        this.applyVideoResult(identity, record);
+    }
+  }
+
   async control(identity: PublishingIdentity, action: unknown, id: unknown) {
     const data = this.data(identity);
     if (action === "confirm-sent" || action === "confirm-failed") {
@@ -664,28 +719,7 @@ export class PublishQueue {
     } else if (action === "resume") {
       if (this.worker)
         throw new PublishingError("DEVICE_BUSY", "请等待当前发布结束再恢复");
-      const review = data.entries.filter(uncertain);
-      for (const entry of review) {
-        if (!entry.recordId) continue;
-        const record = await this.ports.record(entry.recordId);
-        await this.assertCurrent(identity);
-        if (record.state === "running" || record.state === "submitting")
-          throw new PublishingError(
-            "DEVICE_BUSY",
-            "请等待上次发布记录完成恢复，再恢复队列",
-          );
-        if (
-          record.state === "accepted" ||
-          record.state === "failed" ||
-          record.state === "canceled"
-        )
-          this.save(identity, data, () =>
-            Object.assign(entry, {
-              state: record.state,
-              errorCode: record.errorCode,
-            }),
-          );
-      }
+      await this.refreshVideoResults(identity, true);
       if (
         data.entries.some(
           (entry) => entry.kind === "message" && uncertain(entry),
@@ -830,7 +864,12 @@ export class PublishQueue {
           errorCode: record.errorCode,
           progress: record.progress,
         });
-        if (record.state === "unknown") data.paused = true;
+        if (
+          record.state === "unknown" ||
+          (record.errorCode === "VERIFICATION_REQUIRED" &&
+            data.entries.some((row) => row.state === "queued"))
+        )
+          data.paused = true;
       });
     };
     this.worker = execute()
@@ -864,6 +903,12 @@ export class PublishQueue {
             });
           }
           entry.errorCode = code;
+          if (
+            entry.kind !== "message" &&
+            code === "VERIFICATION_REQUIRED" &&
+            data.entries.some((row) => row.state === "queued")
+          )
+            data.paused = true;
           if (
             entry.kind === "message" &&
             entry.state === "unknown" &&

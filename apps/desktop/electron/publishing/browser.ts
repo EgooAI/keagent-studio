@@ -23,7 +23,10 @@ import {
   DOUYIN_LOGIN_CONFIG,
   createDouyinLoginDetector,
 } from "./plugins/checkLogin/douyin";
-import { publishFromCreatorPage } from "./plugins/publish/opencli/douyin/publish";
+import {
+  publishFromCreatorPage,
+  withCreatorVerification,
+} from "./plugins/publish/opencli/douyin/publish";
 import {
   PublishingError,
   type PublishFiles,
@@ -502,6 +505,11 @@ export class DouyinBrowser {
               "douyin",
               "task_execution",
             );
+            if (login.status === "verification_required")
+              throw new PublishingError(
+                "VERIFICATION_REQUIRED",
+                "抖音需要完成安全验证",
+              );
             if (login.status !== "logged_in")
               throw new PublishingError(
                 "LOGIN_REQUIRED",
@@ -532,14 +540,16 @@ export class DouyinBrowser {
           "执行抖音网页发布",
           () =>
             page.withPublishViewport(() =>
-              publishFromCreatorPage(
-                page,
-                input,
-                files,
-                signal,
-                steps,
-                beforeSubmit,
-                onProgress,
+              withCreatorVerification(page, signal, (publishingSignal) =>
+                publishFromCreatorPage(
+                  page,
+                  input,
+                  files,
+                  publishingSignal,
+                  steps,
+                  beforeSubmit,
+                  onProgress,
+                ),
               ),
             ),
         );

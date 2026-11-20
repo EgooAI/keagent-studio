@@ -36,7 +36,7 @@ WITH matches AS (
       WHEN r.state='submitting' THEN 'running' WHEN r.state='canceled' THEN 'failed'
       ELSE COALESCE(r.state,'unpublished') END AS status,
     r.state AS "recordState", r.id AS "recordId", r.payload->'progress' AS progress,
-    r.payload->'scheduledAt' AS "scheduledAt",
+    r.payload->'scheduledAt' AS "scheduledAt", r.payload->>'resultSource' AS "resultSource",
     COALESCE($6<>'' AND v.device_id=$6 AND c.device_id=$6
       AND v.payload->'availability'->>'state'='available'
       AND c.payload->'availability'->>'state'='available'

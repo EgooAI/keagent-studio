@@ -352,16 +352,18 @@ export class DirectPublisher {
       record.state = "accepted";
       record.progress = 100;
     } catch (error) {
+      const code =
+        error instanceof PublishingError ? error.code : "EXECUTION_FAILED";
       if (
         record.state === "submitting" &&
         !(error instanceof ConfirmedPublishRejection)
       ) {
         record.state = "unknown";
-        record.errorCode = "PUBLISH_OUTCOME_UNKNOWN";
+        record.errorCode =
+          code === "VERIFICATION_REQUIRED" ? code : "PUBLISH_OUTCOME_UNKNOWN";
       } else {
         record.state = signal.aborted ? "canceled" : "failed";
-        record.errorCode =
-          error instanceof PublishingError ? error.code : "EXECUTION_FAILED";
+        record.errorCode = code;
       }
     } finally {
       clearInterval(heartbeat);

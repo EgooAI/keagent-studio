@@ -454,6 +454,35 @@ test("个人主页已有聊天编辑器但没有主页私信入口时不发送",
   await expect(page.locator("textarea")).toHaveValue("");
 });
 
+test("抖音主页首次点击没有出现聊天面板时，重开同一主页且仅发送一次", async ({
+  page,
+}) => {
+  let visits = 0;
+  const f = await fixture(page, "douyin", "saved", ({ chat, path }) => {
+    if (path === "/user/recipient" && ++visits === 1)
+      return '<main data-e2e="user-detail"><button>私信</button></main>';
+    return profileChat(chat());
+  });
+  await f.run();
+  expect(visits).toBe(3);
+  expect(f.submits()).toBe(1);
+});
+
+test("抖音主页两次都没有出现聊天面板时停止", async ({ page }) => {
+  const f = await fixture(
+    page,
+    "douyin",
+    "saved",
+    () => '<main data-e2e="user-detail"><button>私信</button></main>',
+  );
+  await expect(f.run()).rejects.toMatchObject({
+    code: "DM_EDITOR_MISSING",
+    message: expect.stringContaining("仍未出现聊天面板"),
+  });
+  expect(f.paths.filter((path) => path === "/user/recipient")).toHaveLength(2);
+  expect(f.submits()).toBe(0);
+});
+
 test("主页私信按钮没有打开新窗口时，不向原有输入框写入", async ({ page }) => {
   const f = await fixture(
     page,
@@ -463,6 +492,7 @@ test("主页私信按钮没有打开新窗口时，不向原有输入框写入",
       `<main data-e2e="user-detail"><button>私信</button></main>${chat()}`,
   );
   await expect(f.run()).rejects.toMatchObject({ code: "DM_EDITOR_MISSING" });
+  expect(f.paths.filter((path) => path === "/user/recipient")).toHaveLength(1);
   expect(f.submits()).toBe(0);
   await expect(page.locator("textarea")).toHaveValue("");
 });

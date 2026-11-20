@@ -783,11 +783,13 @@ export class OpenCliPage {
         method: string,
         params: {
           requestId: string;
+          type?: string;
           response?: { url: string; status: number };
         },
       ) => {
         const { requestId, response } = params;
         if (method === "Network.responseReceived" && response) {
+          if (params.type === "Preflight") return;
           const url = URL.canParse(response.url) ? new URL(response.url) : null;
           if (!url || !matches(url)) return;
           if (response.status !== 200) {

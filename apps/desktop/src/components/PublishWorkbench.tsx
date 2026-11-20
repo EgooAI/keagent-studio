@@ -44,8 +44,11 @@ import {
 } from "@keagent/shared-types";
 import {
   douyinApi,
+  douyinDesktop,
   publishingFailureText,
   publishingMessage,
+  publishVerificationCode,
+  publishVerificationLabel,
   useDouyinDesktop,
 } from "../lib/douyin";
 import { PageHeader, formatDate } from "./common";
@@ -80,6 +83,14 @@ const selectable = (row: DouyinWorkspaceRow) =>
   row.review.state === "approved" &&
   row.deviceReady &&
   (row.status === "unpublished" || row.status === "failed");
+const needsPublishVerification = (row: DouyinQueueRow) =>
+  row.kind !== "message" && row.errorCode === publishVerificationCode;
+const queueFailureText = (row: DouyinQueueRow) =>
+  row.errorMessage ||
+  publishingFailureText(
+    row.errorCode || "",
+    row.kind === "message" ? undefined : row.state,
+  );
 const queueStatus = (row: DouyinQueueRow) =>
   row.state === "queued"
     ? row.eligibleAt
@@ -97,7 +108,9 @@ const queueStatus = (row: DouyinQueueRow) =>
             unknown: "结果待核对",
             canceled: "已取消",
           }[row.state]
-        : douyinStateLabels[row.state];
+        : row.resultSource === "manual" && row.state === "accepted"
+          ? "已发布"
+          : douyinStateLabels[row.state];
 
 export type PublishDetailSurface = (
   content: ReactNode,
@@ -179,7 +192,11 @@ export function PublishWorkbench({
           已排期 · {formatDouyinSchedule(row.scheduledAt).slice(5)}
         </Tag>
       );
-    if (!task && row.status === "accepted" && row.scheduledAt)
+    if (
+      !task &&
+      row.status === "accepted" &&
+      (row.scheduledAt || row.resultSource === "manual")
+    )
       return <Tag color={colors.accepted}>已发布</Tag>;
     return (
       <Tag color={colors[task?.state || row.status]}>
@@ -192,7 +209,10 @@ export function PublishWorkbench({
     );
   }
   function queueTag(row: DouyinQueueRow) {
-    const record = active?.requestKey === row.id ? active : undefined;
+    const record =
+      pending(row) && active?.requestKey === row.id ? active : undefined;
+    if (needsPublishVerification(row))
+      return <Tag color="warning">{publishVerificationLabel}</Tag>;
     return (
       <Tag color={colors[record?.state || row.state]}>
         {record && ["running", "submitting"].includes(record.state)
@@ -609,10 +629,7 @@ export function PublishWorkbench({
                           {queueTag(row)}
                           <small>{accountName(row.accountId)}</small>
                           {row.errorCode && (
-                            <small>
-                              {row.errorMessage ||
-                                publishingFailureText(row.errorCode)}
-                            </small>
+                            <small>{queueFailureText(row)}</small>
                           )}
                         </div>
                       )}
@@ -639,14 +656,8 @@ export function PublishWorkbench({
                   ellipsis: true,
                   render: (_, row) =>
                     row.errorCode ? (
-                      <span
-                        title={
-                          row.errorMessage ||
-                          publishingFailureText(row.errorCode)
-                        }
-                      >
-                        {row.errorMessage ||
-                          publishingFailureText(row.errorCode)}
+                      <span title={queueFailureText(row)}>
+                        {queueFailureText(row)}
                       </span>
                     ) : (
                       "—"
@@ -656,7 +667,24 @@ export function PublishWorkbench({
                   title: "操作",
                   width: compact ? 82 : 120,
                   render: (_, row) => (
-                    <Space size={4}>
+                    <Space size={4} wrap={needsPublishVerification(row)}>
+                      {needsPublishVerification(row) && (
+                        <Button
+                          size="small"
+                          type="link"
+                          aria-label="输入验证码，打开抖音账号浏览器"
+                          disabled={busy}
+                          onClick={() => {
+                            void douyinDesktop("account.open", {
+                              accountId: row.accountId,
+                            }).catch((error: unknown) =>
+                              message.error(publishingMessage(error)),
+                            );
+                          }}
+                        >
+                          输入验证码
+                        </Button>
+                      )}
                       {row.artifactId && (
                         <Button
                           size="small"

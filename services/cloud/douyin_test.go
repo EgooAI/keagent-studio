@@ -81,6 +81,52 @@ func TestDouyinScheduledPublishRecord(t *testing.T) {
 	}
 	createdDouyin(t, s, a, retry)
 }
+
+func TestDouyinConfirmPublishedWithoutLink(t *testing.T) {
+	for _, scenario := range []string{"unknown", "scheduled"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, a, input := douyinFixture(t)
+			if scenario == "scheduled" {
+				input.ScheduledAt = time.Now().Add(24 * time.Hour).Truncate(time.Minute).Unix()
+			}
+			record := createdDouyin(t, s, a, input)
+			record.State = "submitting"
+			mustDouyin(t, s, a, "records/report", record)
+			record.State = "unknown"
+			record.ErrorCode = "PUBLISH_OUTCOME_UNKNOWN"
+			if scenario == "scheduled" {
+				record.State, record.ResultSource, record.ErrorCode = "accepted", "platform", ""
+				record.ExternalID, record.URL, record.Progress = "123456789", "https://www.douyin.com/video/123456789", 100
+			}
+			mustDouyin(t, s, a, "records/report", record)
+
+			_, err := douyinCall(s, a, "records/reconcile", object{"id": record.ID})
+			expectExchangeStatus(t, err, 422)
+			_, err = douyinCall(s, a, "records/reconcile", object{"id": record.ID, "published": true, "url": "https://evil.test/video/123456789"})
+			expectExchangeStatus(t, err, 422)
+			for range 2 {
+				result := mustDouyin(t, s, a, "records/reconcile", object{"id": record.ID, "published": true}).(douyinRecord)
+				if result.State != "accepted" || result.ResultSource != "manual" || result.Progress != 100 || result.ErrorCode != "" ||
+					result.URL != record.URL || result.ExternalID != record.ExternalID {
+					t.Fatalf("unexpected manual result: %+v", result)
+				}
+			}
+			_, err = douyinCall(s, a, "records/reconcile", object{"id": record.ID, "published": false})
+			expectExchangeStatus(t, err, 409)
+			workspace := mustDouyin(t, s, a, "workspace", object{"status": "accepted"}).(object)
+			items := rows(workspace["items"])
+			if len(items) != 1 || obj(items[0])["resultSource"] != "manual" {
+				t.Fatal("manually published work missing from workspace", workspace)
+			}
+			input.RequestKey, input.Batch, input.ScheduledAt = id(), true, 0
+			_, err = douyinCall(s, a, "records/create", input)
+			if fault, ok := err.(exchangeFault); !ok || fault.ErrorCode() != "ARTIFACT_ALREADY_SUBMITTED" {
+				t.Fatal("batch may repeat a known published work", err)
+			}
+		})
+	}
+}
+
 func TestDouyinValidationAndTransitions(t *testing.T) {
 	valid := douyinInput{RequestKey: id(), HandoffID: id(), AccountID: id(), Title: "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀", Hashtags: []string{"上海"}}
 	if err := validateDouyinInput(valid); err != nil {

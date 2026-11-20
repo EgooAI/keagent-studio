@@ -231,7 +231,9 @@ export function matchesCommentPage(
   if (url.username || url.password) return false;
   if (platform === "douyin")
     return (
-      url.origin === "https://www.douyin.com" &&
+      ["https://www.douyin.com", "https://www-hj.douyin.com"].includes(
+        url.origin,
+      ) &&
       url.pathname.replace(/\/$/, "") === "/aweme/v1/web/comment/list" &&
       url.searchParams.get("aweme_id") === workId
     );

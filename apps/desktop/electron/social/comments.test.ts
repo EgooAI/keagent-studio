@@ -104,6 +104,12 @@ describe("works read through the selected Electron profile", () => {
     ).toThrow();
     expect(() => commentTarget("douyin", noteUrl)).toThrow();
     expect(matchesCommentPage("douyin", id, api)).toBe(true);
+    const routed = new URL(api);
+    routed.hostname = "www-hj.douyin.com";
+    expect(matchesCommentPage("douyin", id, routed)).toBe(true);
+    expect(matchesCommentPage("douyin", id + "1", routed)).toBe(false);
+    routed.hostname += ".example";
+    expect(matchesCommentPage("douyin", id, routed)).toBe(false);
     expect(matchesCommentPage("douyin", id + "1", api)).toBe(false);
     expect(
       matchesCommentPage(
