@@ -1,7 +1,8 @@
 [Unit]
 Description=KeAgent authentication service
 Wants=network-online.target
-After=network-online.target postgresql.service
+Requires=keagent-db.service
+After=network-online.target keagent-db.service
 
 [Service]
 Type=exec
@@ -10,7 +11,7 @@ Group=keagent
 WorkingDirectory=/opt/keagent/current/services/control
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/keagent/keagent.env
-ExecStart=/usr/bin/env node ../../node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 18080
+ExecStart=/usr/bin/env node ../../node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 18180
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true

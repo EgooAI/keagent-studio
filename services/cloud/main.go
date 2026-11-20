@@ -1220,6 +1220,11 @@ func main() {
 	go s.creditExpireSweeper(context.Background())
 	go s.commentRetentionWorker(context.Background())
 	go s.leadAnalysisWorker(context.Background())
-	log.Println("Go business API listening on 127.0.0.1:18081")
-	log.Fatal((&http.Server{Addr: "127.0.0.1:18081", Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
+	port := os.Getenv("GO_LISTEN_PORT")
+	if port == "" {
+		port = "18081"
+	}
+	addr := net.JoinHostPort("127.0.0.1", port)
+	log.Printf("Go business API listening on %s", addr)
+	log.Fatal((&http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second}).ListenAndServe())
 }

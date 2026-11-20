@@ -1,0 +1,11 @@
+[Unit]
+Description=KeAgent PostgreSQL container
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker compose -f /etc/keagent/compose.postgres.yaml up -d --wait --wait-timeout 60
+ExecStop=/usr/bin/docker compose -f /etc/keagent/compose.postgres.yaml stop
+TimeoutStartSec=5min

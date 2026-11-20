@@ -1,0 +1,20 @@
+name: keagent-postgres
+
+services:
+  postgres:
+    image: postgres:16.15
+    restart: unless-stopped
+    env_file: postgres.env
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  data:

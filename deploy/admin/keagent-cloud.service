@@ -1,13 +1,15 @@
 [Unit]
 Description=KeAgent cloud business API and workers
 Wants=network-online.target
-After=network-online.target postgresql.service
+Requires=keagent-db.service
+After=network-online.target keagent-db.service
 
 [Service]
 Type=exec
 User=keagent
 Group=keagent
 WorkingDirectory=/opt/keagent/current/services/cloud
+Environment=GO_LISTEN_PORT=18181
 EnvironmentFile=/etc/keagent/keagent.env
 ExecStart=/opt/keagent/current/output/keagent-cloud
 Restart=on-failure
