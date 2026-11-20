@@ -207,25 +207,29 @@ it("serializes messages, direct publishing and batch publishing, including idemp
     started(record(entry.artifactId, "running"));
     return record(entry.artifactId, "accepted");
   });
-  const direct = queue.direct(
-    identity,
-    {
-      requestKey: randomUUID(),
-      accountId: input.accountId,
-      handoffId: "d".repeat(32),
-      hashtags: [],
-      title: "单条视频",
-      description: "正文",
-    },
-    "e".repeat(32),
-  );
-  queue.add(identity, input);
   await vi.waitFor(() =>
     expect(queue.row(identity, row.id)?.state).toBe("submitting"),
   );
+  const video = {
+    requestKey: randomUUID(),
+    accountId: input.accountId,
+    handoffId: "d".repeat(32),
+    hashtags: [],
+    title: "单条视频",
+    description: "正文",
+  };
+  const artifactId = "e".repeat(32);
+  const acknowledgement = { id: video.requestKey, state: "queued" };
+  await expect(queue.direct(identity, video, artifactId)).resolves.toEqual(
+    acknowledgement,
+  );
+  await expect(queue.direct(identity, video, artifactId)).resolves.toEqual(
+    acknowledgement,
+  );
+  expect(queue.row(identity, video.requestKey)?.state).toBe("queued");
+  queue.add(identity, input);
   expect(order).toEqual(["dm"]);
   finishMessage();
-  await direct;
   await vi.waitFor(() =>
     expect(
       queue.view(identity).rows.every((row) => row.state === "accepted"),

@@ -5,6 +5,7 @@ import type {
   DouyinDesktopState,
   DouyinPublishInput,
   DouyinPublishRecord,
+  DouyinPublishStartResult,
   DouyinWorkspace,
   DouyinWorkspaceStatus,
   ArtifactReviewState,
@@ -96,7 +97,7 @@ export const douyinApi = {
     }),
   state: () => douyinDesktop<DouyinDesktopState>("state"),
   start: (input: DouyinPublishInput) =>
-    douyinDesktop<DouyinPublishRecord>("publish.start", input),
+    douyinDesktop<DouyinPublishStartResult>("publish.start", input),
   batch: (input: DouyinBatchInput) =>
     douyinDesktop<DouyinQueue>("publish.batch", input),
   queue: (

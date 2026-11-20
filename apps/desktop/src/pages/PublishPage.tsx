@@ -191,11 +191,21 @@ function ArtifactPublishDetail({
           record.id === localRecord.id && record.resultSource === "manual",
       ) ?? localRecord)
     : localRecord;
-  const running =
-    (!!active && ["running", "submitting"].includes(active.state)) ||
-    !!desktop.data?.queue?.rows.some((row) =>
-      ["running", "submitting"].includes(row.state),
+  const queue = desktop.data?.queue;
+  const isExecuting = (state: string) =>
+    state === "running" || state === "submitting";
+  const publishing =
+    (!!active && isExecuting(active.state)) ||
+    !!queue?.rows.some(
+      (row) => row.kind !== "message" && isExecuting(row.state),
     );
+  const sendingMessage = !!queue?.rows.some(
+    (row) => row.kind === "message" && isExecuting(row.state),
+  );
+  const queued = !!queue?.rows.some(
+    (row) => row.artifactId === artifactId && row.state === "queued",
+  );
+  const running = publishing || sendingMessage;
   const invalid = values
     ? validateDouyinInput({
         title: values.title || "",
@@ -211,11 +221,14 @@ function ArtifactPublishDetail({
     scheduled && scheduledAt !== undefined
       ? validateDouyinSchedule(scheduledAt)
       : undefined;
-  const publishAction = scheduled
-    ? scheduledAt && !scheduleIssue
-      ? `预约 ${formatDouyinSchedule(scheduledAt).slice(5)} 发布`
-      : "确认定时发布"
-    : "立即发布到抖音";
+  const publishAction =
+    sendingMessage || queue?.paused
+      ? "加入发布队列"
+      : scheduled
+        ? scheduledAt && !scheduleIssue
+          ? `预约 ${formatDouyinSchedule(scheduledAt).slice(5)} 发布`
+          : "确认定时发布"
+        : "立即发布到抖音";
   const deviceId = desktop.data?.deviceId;
   const local =
     !!deviceId &&
@@ -313,7 +326,7 @@ function ArtifactPublishDetail({
       const invalid = validateDouyinSchedule(scheduledAt);
       if (invalid) throw new Error(invalid);
     }
-    const record = await douyinApi.start({
+    const result = await douyinApi.start({
       requestKey: publishKey.current,
       handoffId: handoff.id,
       accountId: edit.accountId,
@@ -322,11 +335,12 @@ function ArtifactPublishDetail({
       hashtags: edit.hashtags || [],
       scheduledAt,
     });
-    if (!["running", "submitting"].includes(record.state))
-      publishKey.current = crypto.randomUUID();
+    if (!isExecuting(result.state)) publishKey.current = crypto.randomUUID();
     resetConfiguration();
     setDetailTab("records");
-    message.info(douyinRecordLabel(record));
+    message.info(
+      result.state === "queued" ? "已加入发布队列" : douyinRecordLabel(result),
+    );
   }
   async function openCreatorManage(record: DouyinPublishRecord) {
     await douyinDesktop("account.open", { accountId: record.accountId });
@@ -366,7 +380,7 @@ function ArtifactPublishDetail({
     );
     return surface ? surface(status, false) : status;
   }
-  const canConfigure = !!handoff && !!previewSource && approved;
+  const canConfigure = !!handoff && !!previewSource && approved && !queued;
   // A configuration that was opened for a different review must be closed and reopened.
   const canSubmit = canConfigure && configurationRevision === reviewRevision;
   let previewStatus = "正在加载视频预览…";
@@ -509,7 +523,7 @@ function ArtifactPublishDetail({
                   aria-label="配置发布"
                   aria-busy={handoffQuery.isFetching}
                   loading={handoffQuery.isFetching}
-                  disabled={!canConfigure || busy || running}
+                  disabled={!canConfigure || busy || publishing}
                   onClick={() => {
                     form.resetFields();
                     form.setFieldsValue({
@@ -598,13 +612,27 @@ function ArtifactPublishDetail({
         hidden={detailTab !== "records"}
       >
         <h2>这份成片的发布记录</h2>
+        {queued && (
+          <Alert
+            showIcon
+            type="info"
+            title="已加入发布队列"
+            description={
+              queue?.paused
+                ? "队列恢复后会继续执行。"
+                : "轮到这份成片时会自动提交。"
+            }
+          />
+        )}
         {records.error && (
           <Alert type="error" title={publishingMessage(records.error)} />
         )}
         <p className="muted">
           “已提交抖音”表示获得提交回执，不代表作品已通过审核或在线状态已核验。
         </p>
-        {!records.data?.items.length && <Empty description="暂无发布记录" />}
+        {!queued && !records.data?.items.length && (
+          <Empty description="暂无发布记录" />
+        )}
         {records.data?.items.map((record) => (
           <article className="douyin-record" key={record.id}>
             <Space wrap className="publish-record-heading">
@@ -741,7 +769,7 @@ function ArtifactPublishDetail({
           disabled:
             busy ||
             !canSubmit ||
-            running ||
+            publishing ||
             !!invalid ||
             (scheduled && (!scheduledAt || !!scheduleIssue)),
         }}
@@ -769,7 +797,8 @@ function ArtifactPublishDetail({
           layout="vertical"
           disabled={busy}
           onFinish={(edit) => {
-            if (canSubmit && !running && !invalid) void act(() => start(edit));
+            if (canSubmit && !publishing && !invalid)
+              void act(() => start(edit));
           }}
           initialValues={{ hashtags: [], description: "", timing: "immediate" }}
           onValuesChange={() => {

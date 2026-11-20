@@ -56,6 +56,7 @@ async function desktopFixture(
     DouyinPublishRecord,
     "state" | "logs" | "errorCode" | "resultSource"
   >,
+  sendingMessage = false,
 ) {
   await page.addInitScript(
     ({
@@ -67,6 +68,7 @@ async function desktopFixture(
       unknown,
       pending,
       initialRecord,
+      sendingMessage,
     }) => {
       if (pending) fixture.artifact.review.state = "pending";
       let records: Record<string, unknown>[] =
@@ -105,6 +107,15 @@ async function desktopFixture(
         },
       ];
       const queue = { paused: false, rows: [] as Record<string, unknown>[] };
+      if (sendingMessage)
+        queue.rows.push({
+          id: "sending-message",
+          batchId: "sending-message",
+          accountId: account.id,
+          title: "测试私信",
+          kind: "message",
+          state: "submitting",
+        });
       const manuallyPublished =
         initialRecord?.resultSource === "manual" &&
         initialRecord.state === "accepted";
@@ -390,6 +401,16 @@ async function desktopFixture(
                       message: "请先核对上次发布",
                     },
                   };
+                if (sendingMessage) {
+                  const queued = { id: input.requestKey, state: "queued" };
+                  queue.rows.push({
+                    ...queued,
+                    accountId: input.accountId,
+                    artifactId: fixture.artifact.id,
+                    title: input.title,
+                  });
+                  return okay(queued);
+                }
                 (window as unknown as { __publishCount: number })
                   .__publishCount++;
                 activeRecord = {
@@ -432,6 +453,7 @@ async function desktopFixture(
       unknown,
       pending,
       initialRecord,
+      sendingMessage,
     },
   );
 }
@@ -511,6 +533,20 @@ test("fixture UI prepares an approved artifact automatically, edits consumer fie
   ).toEqual(fixture);
   await expect(page.getByText(/平台回执|提交回执/).first()).toBeVisible();
   await page.screenshot({ path: "output/douyin-user.png", fullPage: true });
+});
+test("发私信时可提交单条视频到发布队列", async ({ page }) => {
+  await desktopFixture(page, true, false, false, undefined, true);
+  await page.goto(`/#/publish/${fixture.artifact.id}`);
+  await page.getByRole("button", { name: "配置发布" }).click();
+  const config = page.getByRole("dialog", { name: "配置发布" });
+  await config.getByLabel("发布账号").click();
+  await page.getByText(account.name, { exact: true }).click();
+  await config.getByRole("button", { name: "加入发布队列" }).click();
+  await expect(config).toBeHidden();
+  await expect(page.getByText("轮到这份成片时会自动提交。")).toBeVisible();
+  expect(await page.evaluate(() => Reflect.get(window, "__publishCount"))).toBe(
+    0,
+  );
 });
 test("single-video scheduling validates Beijing time and displays a scheduled receipt", async ({
   page,

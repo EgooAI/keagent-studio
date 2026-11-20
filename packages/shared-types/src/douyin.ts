@@ -57,6 +57,8 @@ export interface DouyinPublishRecord extends DouyinPublishInput {
   errorCode?: string;
   logs: DouyinPublishLog[];
 }
+export type DouyinPublishStartResult =
+  DouyinPublishRecord | { id: string; state: "queued" };
 export interface DouyinBrowserTab {
   platform?: SocialPlatform;
   accountId: string;

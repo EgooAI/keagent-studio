@@ -7,6 +7,7 @@ import {
   type DouyinMessageStepLog,
   type DouyinPublishRecord,
   type DouyinPublishInput,
+  type DouyinPublishStartResult,
   type DouyinQueue,
   type DouyinQueueEntry,
   type DouyinQueueRow,
@@ -466,7 +467,7 @@ export class PublishQueue {
     identity: PublishingIdentity,
     input: DouyinPublishInput,
     artifactId: string,
-  ): Promise<DouyinPublishRecord> {
+  ): Promise<DouyinPublishStartResult> {
     const data = this.data(identity);
     let entry = data.entries.find((row) => row.id === input.requestKey);
     if (
@@ -488,8 +489,6 @@ export class PublishQueue {
           "该请求编号已关联其他任务",
         );
     } else {
-      if (data.paused)
-        throw new PublishingError("QUEUE_PAUSED", "请在本机队列恢复执行后重试");
       this.assertRoom(identity, data);
       if (
         data.entries.some(
@@ -517,17 +516,13 @@ export class PublishQueue {
       entry = created;
       this.kick(identity);
     }
+    if (entry.state === "queued") return { id: entry.id, state: "queued" };
     while (!entry.recordId) {
       await this.assertCurrent(identity);
       if (!live(entry))
         throw new PublishingError(
           entry.errorCode || "EXECUTION_FAILED",
           entry.errorMessage || "发布未启动，请检查队列记录",
-        );
-      if (data.paused && entry.state === "queued")
-        throw new PublishingError(
-          "QUEUE_PAUSED",
-          "任务已入队，请在本机队列恢复执行",
         );
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
