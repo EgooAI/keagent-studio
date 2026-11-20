@@ -1,7 +1,8 @@
-import { betterAuth } from "@app/auth-sdk/server";
+import { APIError, BASE_ERROR_CODES, betterAuth } from "@app/auth-sdk/server";
 import { admin, bearer, jwt } from "@app/auth-sdk/plugins";
 import { Pool } from "pg";
 
+const minPasswordLength = 8;
 let instance;
 export function getAuth() {
   if (instance) return instance;
@@ -23,8 +24,23 @@ export function getAuth() {
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
-      minPasswordLength: 12,
+      minPasswordLength,
       revokeSessionsOnPasswordReset: true,
+    },
+    hooks: {
+      async before(ctx) {
+        const password = ctx.body?.password;
+        if (
+          ctx.path === "/admin/create-user" &&
+          typeof password === "string" &&
+          [...password].length < minPasswordLength
+        ) {
+          throw APIError.from(
+            "BAD_REQUEST",
+            BASE_ERROR_CODES.PASSWORD_TOO_SHORT,
+          );
+        }
+      },
     },
     session: { cookieCache: { enabled: false } },
     plugins: [
