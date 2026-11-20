@@ -1,8 +1,23 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const stage = path.resolve(root, "output", "desktop-app");
+const mediaTools = path.join(root, "output", "desktop-media-tools");
+const installer = process.argv.includes("--installer");
+let publicOrigin;
+if (installer) {
+  const url = URL.parse(process.env.KEAGENT_PUBLIC_ORIGIN ?? "");
+  if (!url || url.protocol !== "https:" || url.href !== `${url.origin}/`)
+    throw new Error("Set KEAGENT_PUBLIC_ORIGIN to an HTTPS origin");
+  if (process.env.VITE_API_MODE !== "live")
+    throw new Error("Set VITE_API_MODE=live to build a connected installer");
+  publicOrigin = url.origin;
+  const executableSuffix = process.platform === "win32" ? ".exe" : "";
+  for (const name of ["ffmpeg", "ffprobe"]) {
+    await access(path.join(mediaTools, name + executableSuffix));
+  }
+}
 // Only this generated app directory can be replaced; never traverse another worktree or user data.
 if (
   path.dirname(stage) !== path.join(root, "output") ||
@@ -29,6 +44,15 @@ for (const file of [
   await readFile(path.join(root, file));
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
+const bundledTools = path.join(stage, "media-tools");
+await mkdir(bundledTools);
+if (installer) {
+  await cp(mediaTools, bundledTools, { recursive: true });
+  await writeFile(
+    path.join(stage, "desktop-release.json"),
+    JSON.stringify({ publicOrigin }) + "\n",
+  );
+}
 for (const file of files) {
   const target = path.join(stage, file);
   await mkdir(path.dirname(target), { recursive: true });

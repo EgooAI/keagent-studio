@@ -1,4 +1,6 @@
 const domain = require("../panorama/domain.cjs");
+const subtitleFont =
+  process.platform === "darwin" ? "PingFang SC" : "Microsoft YaHei";
 const escape = (value) =>
   String(value || "")
     .replaceAll("\\", "＼")
@@ -235,7 +237,7 @@ function decorate(ass, segment, width, height, theme = {}) {
       );
     ass = ass.replace(
       "[Events]",
-      `Style: Title,Microsoft YaHei,${size},&H002B2520,&H002B2520,&HFF000000,&HFF000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n[Events]`,
+      `Style: Title,${subtitleFont},${size},&H002B2520,&H002B2520,&HFF000000,&HFF000000,-1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n[Events]`,
     );
     return (
       ass +
@@ -258,7 +260,7 @@ function decorate(ass, segment, width, height, theme = {}) {
     const outline = Math.max(2, Math.round(3 * scale));
     ass = ass.replace(
       /^Style: Caption,.*$/m,
-      `Style: Caption,Microsoft YaHei,${captionSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outline},0,2,40,40,${Math.round(height * 0.28)},1`,
+      `Style: Caption,${subtitleFont},${captionSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outline},0,2,40,40,${Math.round(height * 0.28)},1`,
     );
     if (!theme.title) return ass;
     const titleLines = /\r?\n/.test(theme.title)
@@ -278,7 +280,7 @@ function decorate(ass, segment, width, height, theme = {}) {
       titleLines.length * Math.round(titleSize * 1.25) +
       Math.round(12 * scale);
     const color = theme.brandColor.slice(1).match(/../g).reverse().join("");
-    const styles = `Style: Hook,Microsoft YaHei,${titleSize},&H00${color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${Math.round(4 * scale)},0,8,35,35,0,1\nStyle: Facts,Microsoft YaHei,${Math.round(34 * scale)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outline},0,8,35,35,0,1\n`;
+    const styles = `Style: Hook,${subtitleFont},${titleSize},&H00${color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${Math.round(4 * scale)},0,8,35,35,0,1\nStyle: Facts,${subtitleFont},${Math.round(34 * scale)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outline},0,8,35,35,0,1\n`;
     ass = ass.replace("[Events]", styles + "\n[Events]");
     return (
       ass +
@@ -299,8 +301,8 @@ function decorate(ass, segment, width, height, theme = {}) {
       (theme.subtitleSize === "large" ? 1.25 : 1),
   );
   ass = ass.replace(
-    /Style: Caption,Microsoft YaHei,\d+/,
-    `Style: Caption,Microsoft YaHei,${size}`,
+    /^Style: Caption,[^,\r\n]+,\d+/m,
+    `Style: Caption,${subtitleFont},${size}`,
   );
   if (!theme.title) return ass;
   const titleLines = lines(theme.title, width < height ? 12 : 28);
@@ -308,9 +310,9 @@ function decorate(ass, segment, width, height, theme = {}) {
   const top = Math.round(height * 0.2);
   const left = Math.round(width * 0.07);
   const color = theme.brandColor.slice(1).match(/../g).reverse().join("");
-  const styles = `Style: Accent,Microsoft YaHei,10,&H00${color},&H00FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\nStyle: Title,Microsoft YaHei,${titleSize},&H00FFFFFF,&H00FFFFFF,&H50303030,&H80000000,-1,0,0,0,100,100,0,0,1,1,1,7,${left},${left},${top},1\nStyle: Facts,Microsoft YaHei,${Math.round(titleSize * 0.55)},&H00FFFFFF,&H00FFFFFF,&H50303030,&H80000000,0,0,0,0,100,100,0,0,1,1,1,7,${left},${left},${top + titleLines.length * (titleSize + 8) + 18},1\n`;
+  const styles = `Style: Accent,${subtitleFont},10,&H00${color},&H00FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\nStyle: Title,${subtitleFont},${titleSize},&H00FFFFFF,&H00FFFFFF,&H50303030,&H80000000,-1,0,0,0,100,100,0,0,1,1,1,7,${left},${left},${top},1\nStyle: Facts,${subtitleFont},${Math.round(titleSize * 0.55)},&H00FFFFFF,&H00FFFFFF,&H50303030,&H80000000,0,0,0,0,100,100,0,0,1,1,1,7,${left},${left},${top + titleLines.length * (titleSize + 8) + 18},1\n`;
   ass = ass.replace("[Events]", styles + "\n[Events]");
   const events = `Dialogue: 1,0:00:00.00,0:10:00.00,Accent,,0,0,0,,{\\an7\\pos(${left},${top - 18})\\p1}m 0 0 l ${Math.round(width * 0.1)} 0 l ${Math.round(width * 0.1)} 6 l 0 6{\\p0}\nDialogue: 1,0:00:00.00,0:10:00.00,Title,,0,0,0,,${titleLines.join("\\N")}\n${theme.facts ? `Dialogue: 1,0:00:00.00,0:10:00.00,Facts,,0,0,0,,${lines(theme.facts, width < height ? 22 : 48, 3).join("\\N")}\n` : ""}`;
   return ass + events;
 }
-module.exports = { card, decorate, shortCaptions };
+module.exports = { card, decorate, shortCaptions, subtitleFont };

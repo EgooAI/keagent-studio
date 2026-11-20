@@ -1,4 +1,5 @@
 const { app, BrowserWindow, protocol, net, dialog } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const devPort = Number(
@@ -13,7 +14,7 @@ if (devPort !== 5173) {
     app.getPath("appData"),
     `KeAgent Studio Dev ${devPort}`,
   );
-  require("node:fs").mkdirSync(profile, { recursive: true });
+  fs.mkdirSync(profile, { recursive: true });
   app.setPath("userData", profile);
 }
 // One main process owns this userData's browser coordination and recovery journals.
@@ -27,11 +28,13 @@ app.on("second-instance", () => {
   window?.show();
   window?.focus();
 });
+let releaseOrigin;
+const bundledMedia = [];
 if (!app.isPackaged) {
   const envFile = path.resolve(__dirname, "../../../.env.local");
-  if (require("node:fs").existsSync(envFile)) {
+  if (fs.existsSync(envFile)) {
     const values = require("node:util").parseEnv(
-      require("node:fs").readFileSync(envFile, "utf8"),
+      fs.readFileSync(envFile, "utf8"),
     );
     for (const key of [
       "CONTROL_API_URL",
@@ -41,6 +44,34 @@ if (!app.isPackaged) {
     ])
       if (process.env[key] === undefined && values[key] !== undefined)
         process.env[key] = values[key];
+  }
+} else {
+  const releaseFile = path.join(app.getAppPath(), "desktop-release.json");
+  if (fs.existsSync(releaseFile)) {
+    try {
+      const { publicOrigin } = JSON.parse(fs.readFileSync(releaseFile, "utf8"));
+      const url = new URL(publicOrigin);
+      if (url.protocol !== "https:" || url.href !== `${url.origin}/`)
+        throw new Error("Expected a single HTTPS origin");
+      releaseOrigin = url.origin;
+    } catch (cause) {
+      throw new Error("安装包服务器地址配置无效", { cause });
+    }
+    process.env.CONTROL_API_URL ||= releaseOrigin;
+    process.env.GO_API_URL ||= releaseOrigin;
+    for (const [variable, binary] of [
+      ["FFMPEG_PATH", "ffmpeg"],
+      ["FFPROBE_PATH", "ffprobe"],
+    ]) {
+      const file = path.join(
+        process.resourcesPath,
+        "media-tools",
+        binary + (process.platform === "win32" ? ".exe" : ""),
+      );
+      if (!fs.existsSync(file)) throw new Error(`安装包缺少媒体工具 ${binary}`);
+      bundledMedia.push(file);
+      process.env[variable] ||= file;
+    }
   }
 }
 protocol.registerSchemesAsPrivileged([
@@ -158,6 +189,17 @@ function createWindow() {
         );
         if (!heading.includes("创作工作台") && !heading.includes("登录"))
           throw new Error("Unexpected renderer content: " + heading);
+        for (const file of bundledMedia)
+          require("node:child_process").execFileSync(file, ["-version"], {
+            timeout: 5000,
+            windowsHide: true,
+          });
+        if (
+          releaseOrigin &&
+          process.env.CONTROL_API_URL === releaseOrigin &&
+          process.env.GO_API_URL === releaseOrigin
+        )
+          console.log("Desktop release verified: " + releaseOrigin);
         console.log("Electron renderer verified: " + heading);
         app.quit();
       } catch (error) {

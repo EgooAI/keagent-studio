@@ -94,6 +94,8 @@ pnpm build
 pnpm package:desktop  # 当前系统的未签名、未压缩 Electron 前端目录
 ```
 
+内测安装包用 `pnpm package:desktop:installer` 在目标系统构建。构建时设置 `KEAGENT_PUBLIC_ORIGIN` 为测试服务器的 HTTPS 源，设置 `VITE_API_MODE=live`。安装包包含对应平台的 FFmpeg 和 FFprobe，输出在 `release/`。私有仓库的 Desktop installers 工作流提供 Windows x64、Mac Apple Silicon 和 Mac Intel 安装包。
+
 单元测试覆盖批量任务与幂等、审核、修订冲突及历史、独立平台状态、资源安装、持久化、CSV 解析。浏览器测试覆盖房源选择与取消、刷新恢复、三房源审核发布、导入、历史成果、多窗口写入以及 1280×800 提交入口。
 
 本轮在 Windows 上通过 TypeScript 与格式检查、18 个单元测试、6 条浏览器场景、客户端与后台生产构建；构建后的 Electron 通过隐藏窗口实际加载验证。Mac 安装包和正式签名没有验证。

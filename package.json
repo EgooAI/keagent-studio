@@ -17,7 +17,9 @@
     "lint": "pnpm typecheck && prettier --check \"apps/**/*.{ts,tsx,css,cjs,html}\" \"packages/**/*.{ts,tsx,css,json}\" \"tests/**/*.ts\" \"*.{json,ts}\"",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "package:desktop": "pnpm build:publishing && pnpm --filter @keagent/desktop build && node scripts/prepare-desktop-package.mjs && electron-builder --dir",
+    "prepare:desktop-package": "pnpm build:publishing && pnpm --filter @keagent/desktop build && node scripts/prepare-desktop-package.mjs",
+    "package:desktop": "pnpm prepare:desktop-package && electron-builder --dir",
+    "package:desktop:installer": "node scripts/provision-desktop-media.mjs && pnpm prepare:desktop-package --installer && electron-builder --publish never",
     "preview": "pnpm --filter @keagent/desktop preview",
     "build:publishing": "pnpm build:artifact-media && vite build --config publishing.vite.config.ts",
     "build:artifact-media": "vite build --config artifact-media.vite.config.ts"
@@ -25,6 +27,7 @@
   "build": {
     "appId": "com.keagent.studio",
     "productName": "KeAgent Studio",
+    "artifactName": "KeAgent-Studio-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "app": "output/desktop-app"
@@ -33,9 +36,16 @@
       "apps/desktop/dist/**/*",
       "apps/desktop/electron/**/*",
       "!apps/desktop/electron/**/*.test.ts",
+      "desktop-release.json",
       "package.json",
       "!apps/desktop/electron/publishing/**/*.ts",
       "apps/desktop/electron/publishing/dist/runtime.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "output/desktop-app/media-tools",
+        "to": "media-tools"
+      }
     ],
     "extraMetadata": {
       "main": "apps/desktop/electron/main.cjs"

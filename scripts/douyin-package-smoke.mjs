@@ -1,42 +1,61 @@
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 const root = mkdtempSync(path.join(os.tmpdir(), "keagent-package-smoke-"));
+const executable = path.resolve(
+  process.argv[2] || "release/win-unpacked/KeAgent Studio.exe",
+);
+const origin = process.env.KEAGENT_PUBLIC_ORIGIN;
 const environment = { ...process.env };
 delete environment.ELECTRON_RUN_AS_NODE;
-const child = spawn(
-  path.resolve("release/win-unpacked/KeAgent Studio.exe"),
-  ["--smoke-test", "--hidden", `--user-data-dir=${root}`],
-  { windowsHide: true, env: environment, stdio: ["ignore", "pipe", "pipe"] },
-);
-let output = "";
-child.stdout.on("data", (chunk) => {
-  output += chunk;
-});
-child.stderr.on("data", (chunk) => {
-  output += chunk;
-});
-const timeout = setTimeout(() => {
-  child.kill();
-  process.exitCode = 1;
-}, 45000);
-child.on("error", (error) => {
-  clearTimeout(timeout);
-  console.error(error.message);
-  process.exitCode = 1;
-});
-child.on("exit", (code) => {
-  clearTimeout(timeout);
-  if (code !== 0 || !output.includes("Electron renderer verified:")) {
-    console.error(
-      output || "Packaged application did not reach the login screen",
-    );
+if (origin) {
+  // Exercise the installation defaults on this machine.
+  for (const key of [
+    "CONTROL_API_URL",
+    "GO_API_URL",
+    "FFMPEG_PATH",
+    "FFPROBE_PATH",
+    "KEAGENT_PUBLIC_ORIGIN",
+  ])
+    delete environment[key];
+}
+
+try {
+  const result = spawnSync(
+    executable,
+    ["--smoke-test", "--hidden", `--user-data-dir=${root}`],
+    {
+      windowsHide: true,
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      timeout: 45000,
+      killSignal: "SIGKILL",
+    },
+  );
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+  const lines = output.split(/\r?\n/);
+  const renderer = lines.find((line) =>
+    line.startsWith("Electron renderer verified: "),
+  );
+  const release = lines.includes(`Desktop release verified: ${origin}`);
+  if (
+    result.error ||
+    result.status !== 0 ||
+    !renderer ||
+    (origin && (!release || !renderer.includes("登录")))
+  ) {
+    console.error(result.error?.message || output || "Packaged app failed");
     process.exitCode = 1;
-  } else
+  } else {
     console.log(
-      "Packaged Windows client verified: isolated user data, bundled publishing runtime and login renderer.",
+      origin
+        ? `Packaged desktop verified: login screen, ${origin}, FFmpeg and FFprobe.`
+        : "Packaged desktop renderer verified with isolated user data.",
     );
+  }
+} finally {
   try {
     rmSync(root, {
       recursive: true,
@@ -47,4 +66,4 @@ child.on("exit", (code) => {
   } catch {
     /* Chromium may retain temporary locks briefly. */
   }
-});
+}

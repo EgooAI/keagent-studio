@@ -152,7 +152,9 @@ describe("short tour presentation", () => {
       0,
     );
     const decorated = presentation.decorate(ass, segment, 720, 1280, opening);
-    expect(decorated).toContain("Style: Caption,Microsoft YaHei,34");
+    const font =
+      process.platform === "darwin" ? "PingFang SC" : "Microsoft YaHei";
+    expect(decorated).toContain(`Style: Caption,${font},34`);
     expect(decorated).toContain(",3,0,2,40,40,358,1");
     expect(decorated).toContain("&H0047D4FF");
     expect(decorated).toContain("独立测试场景，非在售房源");
