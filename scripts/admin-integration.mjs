@@ -18,7 +18,8 @@ if (
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const prefix = `admin-check-${crypto.randomUUID()}`;
 const email = `${prefix}@example.test`;
-const password = crypto.randomUUID();
+const password = crypto.randomUUID().slice(0, 8);
+const newPassword = crypto.randomUUID().slice(0, 8);
 const accessTokens = new Map();
 const sessionCookies = new Map();
 const resourceIds = [];
@@ -77,14 +78,15 @@ try {
     process.env.BOOTSTRAP_ADMIN_EMAIL,
     process.env.BOOTSTRAP_ADMIN_PASSWORD,
   );
-  userId = (
-    await ok("/api/auth/admin/create-user", admin, {
-      name: prefix,
-      email,
-      password,
-      role: "user",
-    })
-  ).user.id;
+  const createUser = { name: prefix, email, password, role: "user" };
+  const tooShort = await request("/api/auth/admin/create-user", admin, {
+    ...createUser,
+    password: password.slice(1),
+  });
+  userId = tooShort.data.user?.id;
+  assert.equal(tooShort.status, 400);
+  assert.equal(tooShort.data.code, "PASSWORD_TOO_SHORT");
+  userId = (await ok("/api/auth/admin/create-user", admin, createUser)).user.id;
   const session = await login(email, password);
   const workspace = await ok("/v1/workspace", session);
   const property = {
@@ -322,13 +324,13 @@ try {
 
   await ok("/api/auth/admin/set-user-password", admin, {
     userId,
-    newPassword: password + "-reset",
+    newPassword,
   });
   const passwordLog = await ok(`/v1/admin/auth-audit/list?targetId=${userId}`);
   assert.ok(passwordLog.items.some((entry) => entry.target?.email === email));
   await ok("/api/auth/admin/revoke-user-sessions", admin, { userId });
   assert.equal((await request("/v1/workspace", session)).status, 401);
-  const nextSession = await login(email, password + "-reset");
+  const nextSession = await login(email, newPassword);
   await ok("/v1/workspace", nextSession);
   await ok("/api/auth/admin/ban-user", admin, {
     userId,

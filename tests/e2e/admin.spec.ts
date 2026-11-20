@@ -1835,12 +1835,9 @@ test("密码重置部分成功后跨主页面仍保留提醒，重试不重复�
     exact: true,
   });
   await expect(dialog).toContainText("broker0@example.test");
-  await dialog
-    .getByLabel("新密码", { exact: true })
-    .fill("New-password-12345!");
-  await dialog
-    .getByLabel("确认新密码", { exact: true })
-    .fill("New-password-12345!");
+  const password = "Tst-8Pwd";
+  await dialog.getByLabel("新密码", { exact: true }).fill(password);
+  await dialog.getByLabel("确认新密码", { exact: true }).fill(password);
   await dialog
     .getByRole("button", { name: "确认重置并强制退出", exact: true })
     .click();
@@ -1872,7 +1869,7 @@ test("密码重置部分成功后跨主页面仍保留提醒，重试不重复�
     data.writes.filter((write) => write.path.endsWith("/set-user-password")),
   ).toHaveLength(1);
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
-    "New-password-12345!",
+    password,
   );
 });
 

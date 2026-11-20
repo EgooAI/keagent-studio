@@ -34,6 +34,8 @@ import {
 } from "./admin-api";
 import AdminUserSelect from "./AdminUserSelect";
 
+const passwordLengthRule = { min: 8, message: "至少 8 个字符" };
+
 export default function AdminUsers({
   currentUser,
   pendingExit,
@@ -430,7 +432,7 @@ function UsersTable({
             label="初始密码"
             rules={[
               { required: true, message: "请输入初始密码" },
-              { min: 12, message: "至少 12 个字符" },
+              passwordLengthRule,
             ]}
           >
             <Input.Password autoComplete="new-password" />
@@ -465,7 +467,7 @@ function UsersTable({
             label="新密码"
             rules={[
               { required: true, message: "请输入新密码" },
-              { min: 12, message: "至少 12 个字符" },
+              passwordLengthRule,
             ]}
           >
             <Input.Password autoComplete="new-password" />
