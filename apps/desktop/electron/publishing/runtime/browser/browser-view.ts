@@ -83,6 +83,7 @@ export class BrowserView {
         webviewTag: false,
       },
     });
+    if (this.observation) this.view.webContents.setAudioMuted(true);
     this.defaultUserAgent = this.view.webContents.getUserAgent();
     this.view.setVisible(false);
     this.configureContents(this.view.webContents);
