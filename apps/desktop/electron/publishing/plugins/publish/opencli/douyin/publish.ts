@@ -311,10 +311,8 @@ export async function publishFromCreatorPage(
       );
   };
   const scheduledAt = input.scheduledAt;
-  const scheduleMode = scheduledAt === undefined ? "立即发布" : "定时发布";
-  const isSettingChecked = (text: string) =>
+  const isScheduledModeChecked = () =>
     page.evaluate<boolean>(`(() => {
-      const expected = ${JSON.stringify(text)};
       return [...document.querySelectorAll('input[type=checkbox], input[type=radio], [role=checkbox], [role=radio]')].some(control => {
         if (control.checked !== true && control.getAttribute('aria-checked') !== 'true') return false;
         const names = [
@@ -324,7 +322,7 @@ export async function publishFromCreatorPage(
           control.parentElement?.textContent,
           control.closest('label')?.textContent,
         ];
-        return names.some(name => name?.trim() === expected);
+        return names.some(name => name?.trim() === '定时发布');
       });
     })()`);
   const checkSchedule = async (seconds: number) => {
@@ -343,7 +341,7 @@ export async function publishFromCreatorPage(
       .replace(/\s+/g, " ");
     return (
       normalized === formatDouyinSchedule(seconds) &&
-      (await isSettingChecked("定时发布"))
+      (await isScheduledModeChecked())
     );
   };
 
@@ -389,40 +387,20 @@ export async function publishFromCreatorPage(
     uploadCover(page, files.cover, signal, assertPage),
   );
 
-  await steps.run("publish_settings", "核对网页发布设置", async () => {
-    for (const [step, text] of [
-      ["set_crosspost", "不同时发布"],
-      ["set_visibility", "公开"],
-      ["set_download", "不允许"],
-      ["set_schedule", scheduleMode],
-    ]) {
-      await steps.run(step, text, async () => {
-        const checked = () => isSettingChecked(text);
-        if (await checked()) return;
-        await click(label(text));
-        const deadline = Date.now() + 3_000;
-        while (Date.now() < deadline) {
-          assertPage();
-          if (await checked()) return;
-          await delay(100, undefined, { signal });
-        }
-        throw new Error("The creator page did not retain the publish setting");
-      });
-    }
-    if (scheduledAt !== undefined) {
-      await steps.run(
-        "set_scheduled_time",
-        "写入并核对抖音预约时间",
-        async () => {
-          await wait({ selector: dateInput });
-          await click({ selector: dateInput });
-          await page.replaceText(
-            formatDouyinSchedule(scheduledAt),
-            dateInput,
-            options,
-          );
-          // Commit the date picker without triggering a form's default Enter action.
-          await page.evaluate(`(() => {
+  if (scheduledAt !== undefined) {
+    await steps.run(
+      "set_scheduled_time",
+      "写入并核对抖音预约时间",
+      async () => {
+        if (!(await isScheduledModeChecked())) await click(label("定时发布"));
+        await click({ selector: dateInput });
+        await page.replaceText(
+          formatDouyinSchedule(scheduledAt),
+          dateInput,
+          options,
+        );
+        // Commit the date picker without triggering a form's default Enter action.
+        await page.evaluate(`(() => {
           const input = document.activeElement;
           if (location.origin !== ${JSON.stringify(origin)} ||
               !input?.matches(${JSON.stringify(dateInput)})) return;
@@ -431,19 +409,18 @@ export async function publishFromCreatorPage(
           }));
           input.blur();
         })()`);
-          const deadline = Date.now() + 3_000;
-          while (Date.now() < deadline) {
-            if (await checkSchedule(scheduledAt)) return;
-            await delay(100, undefined, { signal });
-          }
-          throw new PublishingError(
-            "SCHEDULE_TIME_MISMATCH",
-            "抖音页面未保留预约时间",
-          );
-        },
-      );
-    }
-  });
+        const deadline = Date.now() + 3_000;
+        while (Date.now() < deadline) {
+          if (await checkSchedule(scheduledAt)) return;
+          await delay(100, undefined, { signal });
+        }
+        throw new PublishingError(
+          "SCHEDULE_TIME_MISMATCH",
+          "抖音页面未保留预约时间",
+        );
+      },
+    );
+  }
   progress(80);
   const publish = button("发布");
   await steps.run("wait_publish_ready", "等待页面可提交", async () => {

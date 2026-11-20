@@ -21,7 +21,7 @@
 
 用户明确接收成片后创建不可变交接。平台标题、正文和话题属于消费记录。发布前及最终提交前重新检查当前验收、资产及登录身份。
 
-发布器通过网页文件选择器上传视频，输入标题和正文，将交接封面上传为抖音 3:4 竖封面，并核对公开、立即发布、关闭保存权限和不同步等设置。封面上传未获确认时停止提交。竖封面的网页操作参考 [auto-upload 的抖音上传器](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L338-L423)。
+发布器通过网页文件选择器上传视频，输入标题和正文，并将交接封面上传为抖音 3:4 竖封面。可见范围、下载权限和同步选项沿用抖音页面当前设置。封面上传未获确认时停止提交。竖封面的网页操作参考 [auto-upload 的抖音上传器](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L338-L423)。
 
 单条预约在用户确认时上传并提交给抖音。预约时间按北京时间显示，以整数 Unix 秒写入发布记录。提交前回读网页时间，定时提交请求的时间必须与预约时间相同。已排期作品可从创作者中心管理，核对公开状态或取消后可在 KeAgent 记录结果。日期控件操作参考 [auto-upload 的定时发布](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L97-L151)。
 
@@ -31,7 +31,7 @@
 
 ## 网页适配
 
-`plugins/publish/opencli/douyin/publish.ts` 集中维护创作者中心控件和回执校验。网页改版导致控件不可用时，可从发布记录定位视频上传、文案、发布设置或提交阶段。原 OpenCLI 上传代码的许可保存在 `plugins/publish/OPENCLI_LICENSE`。
+`plugins/publish/opencli/douyin/publish.ts` 集中维护创作者中心控件和回执校验。网页改版导致控件不可用时，可从发布记录定位视频上传、文案、封面、预约时间或提交阶段。原 OpenCLI 上传代码的许可保存在 `plugins/publish/OPENCLI_LICENSE`。
 
 ## 检查
 
@@ -47,7 +47,7 @@ corepack pnpm package:desktop --config.electronDist=node_modules/electron/dist
 node scripts/douyin-package-smoke.mjs
 ```
 
-隐藏 Electron 使用真实测试文件、默认注册器和解析器，以及隔离 Session 的 HTTPS 页面夹具。用例覆盖登录、视频与封面上传、文案输入、发布设置、单次提交、作品 ID 和中断恢复。Go 集成测试使用真实共享 API 和临时数据库 schema，结束后清理测试记录。真实抖音网页的兼容性需单独验证。
+隐藏 Electron 使用真实测试文件、默认注册器和解析器，以及隔离 Session 的 HTTPS 页面夹具。用例覆盖登录、视频与封面上传、文案输入、定时发布、单次提交、作品 ID 和中断恢复。Go 集成测试使用真实共享 API 和临时数据库 schema，结束后清理测试记录。真实抖音网页的兼容性需单独验证。
 
 目录打包先将桌面构建产物暂存到 `output/desktop-app`，独立清单不声明运行时外部依赖；构建钩子防止打包工具把整个pnpm工作区的后台依赖带入客户端。上面的electronDist命令复用当前平台已安装的Electron；跨平台构建需匹配的分发文件。目录包为未签名验证产物。
 

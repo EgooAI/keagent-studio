@@ -909,7 +909,7 @@ function PublishBatch({
       mask={{ closable: false }}
       cancelText="返回"
       cancelButtonProps={{ disabled: busy }}
-      okText={"确认公开发布 " + rows.length + " 条"}
+      okText={"确认发布 " + rows.length + " 条"}
       confirmLoading={busy}
       okButtonProps={{
         disabled:
@@ -923,8 +923,8 @@ function PublishBatch({
       <Alert
         showIcon
         type="info"
-        title="确认后按列表顺序公开发布到同一账号"
-        description="每条成片的封面将上传为抖音竖封面。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
+        title="确认后按列表顺序发布到同一账号"
+        description="可见范围、下载权限和同步选项沿用抖音页面当前设置。每条成片的封面将上传为抖音竖封面。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
       />
       <div className="publish-batch-account">
         <label htmlFor="publish-batch-account-id">发布账号</label>

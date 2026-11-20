@@ -11,7 +11,8 @@ const primaryLabels: Record<string, string> = {
   upload_video: "上传视频",
   fill_publish_form: "填写发布文案",
   upload_cover: "上传竖版封面",
-  publish_settings: "核对发布设置",
+  publish_settings: "核对发布设置", // Historical records only.
+  set_scheduled_time: "写入并核对预约时间",
   wait_publish_ready: "等待页面可提交",
   submit_page_request: "提交抖音发布",
   verify_publish_receipt: "核验抖音提交结果",
@@ -22,7 +23,6 @@ const detailLabels: Record<string, string> = {
   set_visibility: "设置作品可见范围",
   set_download: "设置下载权限",
   set_schedule: "选择发布方式",
-  set_scheduled_time: "写入并核对预约时间",
   safety_precheck_unavailable: "抖音预检不可用",
   wait_page_navigation: "等待网页跳转",
   wait_page_control: "等待页面控件",

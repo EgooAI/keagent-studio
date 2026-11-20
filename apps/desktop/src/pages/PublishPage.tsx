@@ -759,10 +759,8 @@ function ArtifactPublishDetail({
         <p className="muted publish-config-notice">
           <Send size={17} aria-hidden="true" />
           <span>
-            {scheduled
-              ? "由抖音按排期公开，关闭下载，不同步头条。"
-              : "立即公开发布，关闭下载，不同步头条。"}
-            成片封面将上传为抖音竖封面。
+            {scheduled ? "由抖音按预约时间发布。" : "确认后提交给抖音发布。"}
+            可见范围、下载权限和同步选项沿用抖音页面当前设置。成片封面将上传为抖音竖封面。
           </span>
         </p>
         <Form

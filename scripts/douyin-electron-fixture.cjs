@@ -179,14 +179,15 @@ function creatorForm(videoHash, coverHash) {
     </div>
     <div id="cover-result" role="status"></div>
     <section id="settings">
-    <label><input type="radio" name="sync" checked value="同时发布"><span>同时发布</span></label>
-    <label><input type="radio" name="sync" value="不同时发布"><span>不同时发布</span></label>
-    <label><input type="radio" name="visibility" checked value="公开"><span>公开</span></label>
-    <label><input type="radio" name="download" checked value="允许"><span>允许</span></label>
-    <label><input type="radio" name="download" value="不允许"><span>不允许</span></label>
+    ${
+      scheduledAt
+        ? `
     <label><input type="radio" name="schedule" checked value="立即发布"><span>立即发布</span></label>
     <label><input id="schedule" type="radio" name="schedule" value="定时发布"><span>定时发布</span></label>
     <input id="schedule-date" placeholder="日期和时间" hidden>
+    `
+        : ""
+    }
     <button id="submit" disabled>发布</button>
     </section>
   </section>
@@ -199,15 +200,12 @@ function creatorForm(videoHash, coverHash) {
     const digest = async file => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), n => n.toString(16).padStart(2, '0')).join('');
     let video, caption, selectedCover, appliedCover, imageURL, skipClicks = 0;
     let uploaded = false;
-    if (${verificationStage === "before_submit"}) {
-      document.querySelector('input[value="不同时发布"]').onchange = () => {
-        el('verification').hidden = false;
+    if (el('schedule')) {
+      el('schedule').onchange = () => { el('schedule-date').hidden = !el('schedule').checked; };
+      el('schedule-date').oninput = () => {
+        if (${scheduleTest === "readback_mismatch"}) el('schedule-date').value = '2099-01-01 10:00';
       };
     }
-    el('schedule').onchange = () => { el('schedule-date').hidden = !el('schedule').checked; };
-    el('schedule-date').oninput = () => {
-      if (${scheduleTest === "readback_mismatch"}) el('schedule-date').value = '2099-01-01 10:00';
-    };
     el('upload').onclick = () => el('video').click();
     el('horizontal').onclick = () => { throw new Error('Wrong cover ratio'); };
     el('vertical').onclick = () => { el('cover-editor').hidden = false; };
@@ -244,6 +242,8 @@ function creatorForm(videoHash, coverHash) {
           el('cover-editor').hidden = true;
           el('cover-result').textContent = '封面上传成功';
         }
+        if (${verificationStage === "before_submit"})
+          setTimeout(() => { el('verification').hidden = false; }, 500);
       }, 600);
     };
     if (${directCover}) el('skip-horizontal').onclick = () => {
@@ -262,7 +262,7 @@ function creatorForm(videoHash, coverHash) {
       setTimeout(() => {
         uploaded = ${!failVideo};
         el('uploadStatus').textContent = uploaded ? '重新上传' : '上传失败，重新上传';
-        el('submit').disabled = !uploaded;
+        el('submit').disabled = !uploaded || ${verificationStage === "before_submit"};
       }, 600);
     };
     el('title').oninput = () => { if (!uploaded) el('title').value = ''; };
@@ -286,10 +286,9 @@ function creatorForm(videoHash, coverHash) {
         body: JSON.stringify({
           video, cover: appliedCover, title: el('title').value,
           caption,
-          ...(el('schedule').checked ? { item: { common: {
+          ...(el('schedule')?.checked ? { item: { common: {
             timing: ${scheduleTest === "request_mismatch"} ? 0 : Date.parse(el('schedule-date').value.replace(' ', 'T') + '+08:00') / 1000
           } } } : {}),
-          settings: Array.from(document.querySelectorAll('input:checked'), input => input.value),
         }),
       });
       if ((await response.json()).item_id)
@@ -652,12 +651,6 @@ app.whenReady().then(async () => {
               ...(scheduledAt
                 ? { item: { common: { timing: scheduledAt } } }
                 : {}),
-              settings: [
-                "不同时发布",
-                "公开",
-                "不允许",
-                scheduledAt ? "定时发布" : "立即发布",
-              ],
             });
             assert.equal(
               records.get("electron-publish-fixture-0001")?.state,
@@ -1223,7 +1216,7 @@ app.whenReady().then(async () => {
               (failVideo
                 ? "upload_cover"
                 : failCover
-                  ? "publish_settings"
+                  ? "wait_publish_ready"
                   : "submit_page_request"),
           ),
         );
@@ -1240,6 +1233,12 @@ app.whenReady().then(async () => {
       service.publisher.active.state,
       "accepted",
       JSON.stringify(service.publisher.active),
+    );
+    assert.equal(
+      service.publisher.active.logs.some(
+        (log) => log.step === "publish_settings",
+      ),
+      false,
     );
     assert.equal(submits, 1);
     await call("publish.start", input);

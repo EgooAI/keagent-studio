@@ -945,7 +945,7 @@ test("发布工作台可在详情旁筛选成片，并在明确确认后批量�
   await expect
     .poll(() => page.evaluate(() => (window as any).__batchRequests.length))
     .toBe(0);
-  await batch.getByRole("button", { name: "确认公开发布 2 条" }).click();
+  await batch.getByRole("button", { name: "确认发布 2 条" }).click();
   const queue = page.getByRole("region", { name: "本机发布队列" });
   await expect(queue.getByText("排队中", { exact: true })).toHaveCount(2);
   const requests = await page.evaluate(() => (window as any).__batchRequests);
@@ -986,7 +986,7 @@ test("发布工作台可在详情旁筛选成片，并在明确确认后批量�
   });
 });
 
-test("发布记录合并步骤事件并定位发布设置失败", async ({ page }) => {
+test("历史发布记录合并步骤事件并定位旧版发布设置失败", async ({ page }) => {
   const events = [
     ["check_login", "started"],
     ["check_login", "completed"],
