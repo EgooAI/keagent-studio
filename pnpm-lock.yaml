@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@app/auth-sdk':
-        specifier: file:vendor\auth-sdk.tgz
+        specifier: file:vendor/auth-sdk.tgz
         version: file:vendor/auth-sdk.tgz(next@16.3.4(@playwright/test@1.64.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(pg@8.22.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.0.5(@types/node@26.6.6)(vite@8.3.5(@types/node@26.6.6)(jiti@2.7.0)))
       '@tanstack/react-query':
         specifier: ^5.105.0

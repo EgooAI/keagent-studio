@@ -1,0 +1,15 @@
+[Unit]
+Description=KeAgent authentication schema setup
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=keagent
+Group=keagent
+WorkingDirectory=/opt/keagent/current/services/control
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/keagent/keagent.env
+EnvironmentFile=-/etc/keagent/bootstrap.env
+ExecStart=/usr/bin/env node setup.mjs
+NoNewPrivileges=true

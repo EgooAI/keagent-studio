@@ -49,7 +49,7 @@
     "beforeBuild": "scripts/desktop-before-build.cjs"
   },
   "dependencies": {
-    "@app/auth-sdk": "file:vendor\\auth-sdk.tgz",
+    "@app/auth-sdk": "file:vendor/auth-sdk.tgz",
     "@tanstack/react-query": "^5.105.0",
     "antd": "^6.6.8",
     "lucide-react": "^1.65.0",

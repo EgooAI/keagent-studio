@@ -1,0 +1,18 @@
+[Unit]
+Description=KeAgent cloud business API and workers
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=exec
+User=keagent
+Group=keagent
+WorkingDirectory=/opt/keagent/current/services/cloud
+EnvironmentFile=/etc/keagent/keagent.env
+ExecStart=/opt/keagent/current/output/keagent-cloud
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
