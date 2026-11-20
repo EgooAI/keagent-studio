@@ -26,7 +26,8 @@ try {
     executable,
     ["--smoke-test", "--hidden", `--user-data-dir=${root}`],
     {
-      windowsHide: true,
+      // The tray check explicitly shows the GUI; SW_HIDE overrides its first ShowWindow on Windows.
+      windowsHide: false,
       env: environment,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",

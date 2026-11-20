@@ -1,4 +1,12 @@
-const { app, BrowserWindow, protocol, net, dialog } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  protocol,
+  net,
+  dialog,
+  Menu,
+  Tray,
+} = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -22,11 +30,19 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
   return;
 }
-app.on("second-instance", () => {
-  const window = BrowserWindow.getAllWindows()[0];
-  if (window?.isMinimized()) window.restore();
-  window?.show();
-  window?.focus();
+let mainWindow;
+let tray;
+let closingForQuit = false;
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+app.on("second-instance", showMainWindow);
+app.on("activate", showMainWindow);
+app.on("before-quit", () => {
+  closingForQuit = true;
 });
 let releaseOrigin;
 const bundledMedia = [];
@@ -138,6 +154,8 @@ function returnWindowSetup(window) {
 
 function createWindow() {
   const integratedTitle = ["win32", "darwin"].includes(process.platform);
+  const assets = path.join(__dirname, app.isPackaged ? "../dist" : "../public");
+  const icon = path.join(assets, "keagent-icon.png");
   const window = new BrowserWindow({
     show:
       !process.argv.includes("--smoke-test") &&
@@ -147,12 +165,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 720,
     title: "KeAgent Studio",
-    icon: path.join(
-      __dirname,
-      app.isPackaged
-        ? "../dist/keagent-icon.png"
-        : "../public/keagent-icon.png",
-    ),
+    icon,
     titleBarStyle: integratedTitle ? "hidden" : "default",
     titleBarOverlay:
       process.platform === "win32"
@@ -160,11 +173,43 @@ function createWindow() {
         : process.platform === "darwin",
     backgroundColor: "#f6f8fb",
     webPreferences: {
+      backgroundThrottling: false,
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  mainWindow = window;
+  const trayMenu = Menu.buildFromTemplate([
+    { id: "open", label: "打开 KeAgent Studio", click: showMainWindow },
+    { type: "separator" },
+    { id: "quit", label: "退出 KeAgent Studio", click: () => app.quit() },
+  ]);
+  if (integratedTitle) {
+    try {
+      tray = new Tray(
+        process.platform === "darwin"
+          ? path.join(assets, "trayTemplate.png")
+          : icon,
+      );
+      tray.setToolTip("KeAgent Studio");
+      tray.setContextMenu(trayMenu);
+      if (process.platform === "win32") tray.on("click", showMainWindow);
+    } catch (error) {
+      tray?.destroy();
+      tray = undefined;
+      console.warn("系统托盘不可用", error.message);
+    }
+  }
+  window.on("close", (event) => {
+    if (closingForQuit) {
+      // The publish or unsaved-draft dialog can still cancel this quit.
+      closingForQuit = false;
+    } else if (tray) {
+      event.preventDefault();
+      window.hide();
+    }
   });
   window.removeMenu();
   returnWindowSetup(window);
@@ -180,6 +225,7 @@ function createWindow() {
       event.preventDefault();
   });
   window.webContents.on("will-prevent-unload", (event) => {
+    showMainWindow();
     const choice = dialog.showMessageBoxSync(window, {
       type: "question",
       buttons: ["继续编辑", "放弃修改并关闭"],
@@ -201,6 +247,23 @@ function createWindow() {
         );
         if (!heading.includes("创作工作台") && !heading.includes("登录"))
           throw new Error("Unexpected renderer content: " + heading);
+        if (integratedTitle) {
+          if (!tray || tray.isDestroyed())
+            throw new Error("Missing system tray");
+          trayMenu.getMenuItemById("open").click();
+          if (!window.isVisible())
+            throw new Error("Tray did not open the window");
+          window.close();
+          if (window.isDestroyed() || window.isVisible())
+            throw new Error("Close did not hide to tray");
+          await window.webContents.executeJavaScript(
+            "new Promise(resolve => setTimeout(resolve, 100))",
+          );
+          trayMenu.getMenuItemById("open").click();
+          if (!window.isVisible())
+            throw new Error("Tray did not restore the window");
+          window.close();
+        }
         for (const file of bundledMedia)
           require("node:child_process").execFileSync(file, ["-version"], {
             timeout: 5000,
@@ -213,7 +276,7 @@ function createWindow() {
         )
           console.log("Desktop release verified: " + releaseOrigin);
         console.log("Electron renderer verified: " + heading);
-        app.quit();
+        trayMenu.getMenuItemById("quit").click();
       } catch (error) {
         console.error(error.message);
         app.exit(1);
@@ -292,6 +355,3 @@ app.whenReady().then(() => {
   createWindow();
 });
 app.on("window-all-closed", () => app.quit());
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
-});

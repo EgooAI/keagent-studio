@@ -540,7 +540,7 @@ function registerAuth(
     if (!commands.has(method)) throw new Error("此桌面能力未开放");
     return (await request(`/v1/commands/${method}`, args)).data;
   });
-  app.on("before-quit", () => workflow.stop());
+  app.on("will-quit", () => workflow.stop());
   return {
     setArchiveOutput(register) {
       workflow.archiveOutput = async (userId, jobId, assertCurrent) => {

@@ -601,11 +601,13 @@ export function registerPublishing(
     },
   );
   window.on("close", (event) => {
+    if (event.defaultPrevented) return;
     if (
       publisher.active &&
       ["running", "submitting"].includes(publisher.active.state)
     ) {
       browser.hide();
+      window.show();
       const answer = dialog.showMessageBoxSync(window, {
         type: "question",
         buttons: ["继续发布", "退出应用"],
@@ -615,7 +617,6 @@ export function registerPublishing(
         detail: "退出会中断操作；已经提交的结果需要重新打开应用后核对。",
       });
       if (answer === 0) event.preventDefault();
-      else stop();
     }
   });
   function stop() {
