@@ -1,7 +1,12 @@
 /** Publishing owns these records; the immutable artifact contract stays unchanged. */
 export type DouyinPublishState =
   "running" | "submitting" | "accepted" | "failed" | "unknown" | "canceled";
-export type SocialPlatform = "douyin" | "xhs";
+export type PublishPlatform = "channels" | "douyin";
+export type SocialPlatform = PublishPlatform | "xhs";
+export const publishPlatformLabels: Record<PublishPlatform, string> = {
+  channels: "微信视频号",
+  douyin: "抖音",
+};
 export interface DouyinAccount {
   platform?: SocialPlatform;
   id: string;
@@ -13,6 +18,7 @@ export interface DouyinAccount {
   unboundAt?: string;
 }
 export interface DouyinPublishInput {
+  platform?: PublishPlatform;
   requestKey: string;
   handoffId: string;
   accountId: string;
@@ -74,6 +80,9 @@ export interface DouyinDesktopState {
   resolverAvailable: boolean;
   tabs: DouyinBrowserTab[];
   activeAccountId?: string;
+  channelsLoginAccountIds?: string[];
+  channelsLoginError?: { accountId: string; message: string };
+  channelsVerificationAccountId?: string;
   activeRecord?: DouyinPublishRecord;
   queue?: DouyinQueue;
 }
@@ -107,11 +116,13 @@ export interface DouyinQueueEntry {
   description: string;
 }
 export interface DouyinBatchInput {
+  platform?: PublishPlatform;
   requestKey: string;
   accountId: string;
   entries: DouyinQueueEntry[];
 }
 export interface DouyinQueueRow {
+  platform?: SocialPlatform;
   createdAt?: string;
   checkedAt?: string;
   sourceWorkId?: string;
@@ -144,10 +155,15 @@ export const douyinStateLabels: Record<DouyinPublishState, string> = {
   unknown: "结果待核对",
   canceled: "已取消",
 };
-export function douyinRecordLabel(record: DouyinPublishRecord): string {
+export function douyinRecordLabel(
+  record: Pick<DouyinPublishRecord, "state" | "resultSource" | "platform"> & {
+    scheduledAt?: number | null;
+  },
+): string {
   if (record.state === "accepted") {
     if (record.resultSource === "manual") return "已发布";
     if (record.scheduledAt) return "已排期";
+    if (record.platform === "channels") return "已提交视频号";
   }
   return douyinStateLabels[record.state];
 }
@@ -173,6 +189,18 @@ export function validateDouyinSchedule(
     return "请选择有效的预约日期和时间";
   if (seconds < now + 2 * 3600) return "定时发布时间须至少提前 2 小时";
   if (seconds > now + 14 * 86400) return "定时发布时间不能超过 14 天";
+}
+
+export function validatePublishSchedule(
+  platform: PublishPlatform,
+  seconds: number,
+  now = Date.now() / 1000,
+): string | undefined {
+  if (platform === "channels") {
+    if (seconds % 3600 !== 0) return "微信视频号仅支持北京时间整点发布";
+    if (seconds <= now + 7200) return "微信视频号定时发布须提前超过 2 小时";
+  }
+  return validateDouyinSchedule(seconds, now);
 }
 /** OpenCLI counts UTF-16 code units. Keep UI, Main and Go aligned, including emoji. */
 export function douyinCaption(description: string, hashtags: string[]): string {

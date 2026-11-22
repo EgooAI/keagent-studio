@@ -1,5 +1,10 @@
 import { useEffect } from "react";
-import type { CommentPanelStatus, DouyinQueueRow } from "@keagent/shared-types";
+import {
+  publishPlatformLabels,
+  type SocialPlatform,
+  type CommentPanelStatus,
+  type DouyinQueueRow,
+} from "@keagent/shared-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   douyinApi,
@@ -7,6 +12,11 @@ import {
   ServiceRequestError,
 } from "@keagent/api-client";
 export { douyinApi, douyinDesktop };
+export const publishPlatformOptions = (["channels", "douyin"] as const).map(
+  (value) => ({ value, label: publishPlatformLabels[value] }),
+);
+export const socialPlatformLabel = (platform: SocialPlatform = "douyin") =>
+  platform === "xhs" ? "小红书" : publishPlatformLabels[platform];
 export const panelLabels: Record<CommentPanelStatus, string> = {
   not_checked: "未检查",
   visible: "可见",
@@ -18,11 +28,33 @@ export const panelLabels: Record<CommentPanelStatus, string> = {
   unknown: "无法判断",
 };
 export const publishVerificationCode = "VERIFICATION_REQUIRED";
-export const publishVerificationLabel = "需要输入验证码";
+export const publishVerificationLabel = (platform?: SocialPlatform) =>
+  platform === "channels" ? "需要管理员微信扫码验证" : "需要输入验证码";
 export function publishingFailureText(
   code: string,
   state?: DouyinQueueRow["state"],
+  platform: SocialPlatform = "douyin",
 ): string {
+  if (platform === "channels") {
+    const chromeErrors: Record<string, string> = {
+      CHROME_NOT_FOUND: "请更新 AI来客 以使用随包的视频号浏览器。",
+      BROWSER_COMPONENT_UNAVAILABLE:
+        "视频号专用浏览器文件不可用，请修复或更新 AI来客。",
+      BROWSER_PROFILE_NEWER:
+        "当前视频号的登录资料需要更新版本，请更新 AI来客。",
+      BROWSER_START_FAILED: "视频号浏览器未能启动，请检查系统权限后重试。",
+      PROFILE_BUSY: "请先关闭该账号已打开的视频号助手窗口，再重试。",
+      ACCOUNT_NOT_SAVED: "请到平台账号页检查并保存视频号登录状态。",
+      EXECUTION_FAILED: "视频号发布未完成，请在执行步骤中查看失败位置。",
+    };
+    if (chromeErrors[code]) return chromeErrors[code];
+  }
+  if (code === publishVerificationCode && platform === "channels")
+    return state === "unknown"
+      ? "实名验证未完成，请先到视频号助手核对作品状态。"
+      : state === "failed"
+        ? "本次实名验证未完成，请重新发起发布。"
+        : "请管理员使用微信扫描当前任务的实名验证二维码。";
   if (code === publishVerificationCode)
     return state === "unknown"
       ? "请在抖音账号浏览器按页面提示接收并输入验证码，或完成其他安全验证。验证后，先到创作者中心核对发布结果。"
@@ -59,12 +91,20 @@ export function publishingFailureText(
     ARTIFACT_ALREADY_SUBMITTED: "该成片已有发布提交或正在执行，已跳过。",
     OUTCOME_UNRESOLVED: "这份成片上次的发布结果待核对，请在详情中检查。",
   };
-  return labels[code] || "发布未完成，请查看执行步骤或联系管理员。";
+  return (
+    labels[code]?.replaceAll("抖音", socialPlatformLabel(platform)) ||
+    "发布未完成，请查看执行步骤或联系管理员。"
+  );
 }
-export function publishingMessage(error: unknown): string {
+export function publishingMessage(
+  error: unknown,
+  platform?: SocialPlatform,
+): string {
   if (error instanceof ServiceRequestError) {
     if (error.code === publishVerificationCode)
-      return publishingFailureText(error.code);
+      return publishingFailureText(error.code, undefined, platform);
+    if (platform === "channels" && error.code === "LOGIN_REQUIRED")
+      return "请在平台账号页使用微信扫码登录视频号。";
     const messages: Record<string, string> = {
       RESOLVER_UNAVAILABLE:
         "制作侧本机文件解析器尚未接入。可以查看成片信息，真实预览与发布将在接入后启用。",

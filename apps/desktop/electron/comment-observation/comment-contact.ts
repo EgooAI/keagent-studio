@@ -52,6 +52,7 @@ export function publicCommenterProfile(
       ? /^https:\/\/www\.xiaohongshu\.com\/user\/profile\/[0-9a-f]{24}\/?$/
       : /^https:\/\/www\.douyin\.com\/user\/[A-Za-z0-9_-]+\/?$/;
   if (
+    (platform !== "xhs" && platform !== "douyin") ||
     typeof value !== "string" ||
     value.length > 2048 ||
     !allowed.test(value) ||

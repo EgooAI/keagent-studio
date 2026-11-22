@@ -17,7 +17,7 @@ export type TaskStatus =
   | "canceled";
 export type Stage =
   "prepare" | "script" | "tts" | "avatar" | "render" | "cover";
-export type Platform = "douyin" | "xiaohongshu";
+export type Platform = "channels" | "douyin" | "xiaohongshu";
 export type PublishStatus =
   | "queued"
   | "running"
@@ -243,6 +243,7 @@ export const stageLabels: Record<Stage, string> = {
   cover: "生成封面",
 };
 export const platformLabels: Record<Platform, string> = {
+  channels: "微信视频号",
   douyin: "抖音",
   xiaohongshu: "小红书",
 };

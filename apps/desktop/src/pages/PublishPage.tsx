@@ -29,7 +29,9 @@ import {
   douyinRecordLabel,
   formatDouyinSchedule,
   validateDouyinInput,
-  validateDouyinSchedule,
+  validatePublishSchedule,
+  publishPlatformLabels,
+  type PublishPlatform,
   type ArtifactReviewState,
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
@@ -42,6 +44,7 @@ import {
 } from "../components/PublishWorkbench";
 import { artifactMedia } from "../lib/artifactMedia";
 import {
+  publishPlatformOptions,
   douyinApi,
   douyinDesktop,
   desktopPublishingAvailable,
@@ -58,8 +61,13 @@ import DemoPublishPage, {
 export default function PublishPage() {
   return isLive ? (
     <PublishWorkbench
-      detail={(id, surface) => (
-        <ArtifactPublishDetail key={id} artifactId={id} surface={surface} />
+      detail={(id, platform, surface) => (
+        <ArtifactPublishDetail
+          key={`${id}-${platform}`}
+          artifactId={id}
+          defaultPlatform={platform}
+          surface={surface}
+        />
       )}
     />
   ) : (
@@ -75,6 +83,7 @@ export function PublishDetailPage() {
   );
 }
 interface EditValues {
+  platform: PublishPlatform;
   title: string;
   description: string;
   hashtags: string[];
@@ -85,9 +94,11 @@ interface EditValues {
 const beijingSeconds = (value: string) => Date.parse(value + "+08:00") / 1000;
 function ArtifactPublishDetail({
   artifactId,
+  defaultPlatform = "channels",
   surface,
 }: {
   artifactId: string;
+  defaultPlatform?: PublishPlatform;
   surface?: PublishDetailSurface;
 }) {
   const embedded = !!surface;
@@ -103,11 +114,12 @@ function ArtifactPublishDetail({
     queryKey: ["douyin", "accounts"],
     queryFn: douyinApi.accounts,
   });
+  const [recordsPlatform, setRecordsPlatform] = useState(defaultPlatform);
   const [recordOffset, setRecordOffset] = useState(0);
   const [detailTab, setDetailTab] = useState<"preview" | "records">("preview");
   const records = useQuery({
-    queryKey: ["douyin", "records", artifactId, recordOffset],
-    queryFn: () => douyinApi.records(artifactId, recordOffset),
+    queryKey: ["douyin", "records", artifactId, recordsPlatform, recordOffset],
+    queryFn: () => douyinApi.records(artifactId, recordOffset, recordsPlatform),
     refetchInterval: 5000,
   });
   const assets = useQuery({
@@ -122,6 +134,8 @@ function ArtifactPublishDetail({
   });
   const [form] = Form.useForm<EditValues>();
   const values = Form.useWatch([], form) as EditValues | undefined;
+  const platform = values?.platform ?? defaultPlatform;
+  const platformName = publishPlatformLabels[platform];
   const [configurationRevision, setConfigurationRevision] = useState<number>();
   const configuring = configurationRevision !== undefined;
   const [dirty, setDirty] = useState(false);
@@ -183,7 +197,12 @@ function ArtifactPublishDetail({
     publishKey.current = crypto.randomUUID();
   }, [artifactId, artifact.data?.review.revision]);
   const current = artifact.data;
-  const browserOpen = !!desktop.data?.activeAccountId;
+  const browserOpen =
+    desktop.data?.tabs.some(
+      (tab) =>
+        tab.platform !== "channels" &&
+        tab.accountId === desktop.data?.activeAccountId,
+    ) ?? false;
   const localRecord = desktop.data?.activeRecord;
   const active = localRecord
     ? (records.data?.items.find(
@@ -203,7 +222,10 @@ function ArtifactPublishDetail({
     (row) => row.kind === "message" && isExecuting(row.state),
   );
   const queued = !!queue?.rows.some(
-    (row) => row.artifactId === artifactId && row.state === "queued",
+    (row) =>
+      row.artifactId === artifactId &&
+      (row.platform ?? "douyin") === platform &&
+      row.state === "queued",
   );
   const running = publishing || sendingMessage;
   const invalid = values
@@ -219,7 +241,7 @@ function ArtifactPublishDetail({
     : undefined;
   const scheduleIssue =
     scheduled && scheduledAt !== undefined
-      ? validateDouyinSchedule(scheduledAt)
+      ? validatePublishSchedule(platform, scheduledAt)
       : undefined;
   const publishAction =
     sendingMessage || queue?.paused
@@ -228,8 +250,18 @@ function ArtifactPublishDetail({
         ? scheduledAt && !scheduleIssue
           ? `预约 ${formatDouyinSchedule(scheduledAt).slice(5)} 发布`
           : "确认定时发布"
-        : "立即发布到抖音";
+        : `立即发布到${platformName}`;
   const deviceId = desktop.data?.deviceId;
+  const publishingAccounts = (accounts.data?.items ?? []).filter(
+    (account) =>
+      (account.platform ?? "douyin") === platform &&
+      !account.unboundAt &&
+      account.deviceId === deviceId,
+  );
+  const accountReady = publishingAccounts.some(
+    (account) =>
+      account.id === values?.accountId && account.loginStatus === "logged_in",
+  );
   const local =
     !!deviceId &&
     assets.data?.every(
@@ -287,7 +319,7 @@ function ArtifactPublishDetail({
         error instanceof ServiceRequestError ? error.code : undefined;
       if (configuring && code === publishVerificationCode)
         publishKey.current = crypto.randomUUID();
-      setError({ message: publishingMessage(error), code });
+      setError({ message: publishingMessage(error, platform), code });
     } finally {
       void client.invalidateQueries({ queryKey: ["douyin"] });
       inFlight.current = false;
@@ -323,13 +355,14 @@ function ArtifactPublishDetail({
         ? beijingSeconds(edit.scheduleTime || "")
         : undefined;
     if (scheduledAt !== undefined) {
-      const invalid = validateDouyinSchedule(scheduledAt);
+      const invalid = validatePublishSchedule(edit.platform, scheduledAt);
       if (invalid) throw new Error(invalid);
     }
     const result = await douyinApi.start({
       requestKey: publishKey.current,
       handoffId: handoff.id,
       accountId: edit.accountId,
+      platform: edit.platform,
       title: edit.title,
       description: edit.description || "",
       hashtags: edit.hashtags || [],
@@ -337,13 +370,16 @@ function ArtifactPublishDetail({
     });
     if (!isExecuting(result.state)) publishKey.current = crypto.randomUUID();
     resetConfiguration();
+    setRecordsPlatform(edit.platform);
+    setRecordOffset(0);
     setDetailTab("records");
     message.info(
       result.state === "queued" ? "已加入发布队列" : douyinRecordLabel(result),
     );
   }
   async function openCreatorManage(record: DouyinPublishRecord) {
-    await douyinDesktop("account.open", { accountId: record.accountId });
+    if (record.platform !== "channels")
+      await douyinDesktop("account.open", { accountId: record.accountId });
     await douyinDesktop("browser.action", {
       accountId: record.accountId,
       action: "manage",
@@ -370,7 +406,7 @@ function ArtifactPublishDetail({
   if (!current) {
     const status = (
       <>
-        {!embedded && <PageHeader title="成片与抖音发布" />}
+        {!embedded && <PageHeader title="成片与发布" />}
         {artifact.error ? (
           <Alert type="error" title={publishingMessage(artifact.error)} />
         ) : (
@@ -380,9 +416,10 @@ function ArtifactPublishDetail({
     );
     return surface ? surface(status, false) : status;
   }
-  const canConfigure = !!handoff && !!previewSource && approved && !queued;
+  const canConfigure = !!handoff && !!previewSource && approved;
   // A configuration that was opened for a different review must be closed and reopened.
-  const canSubmit = canConfigure && configurationRevision === reviewRevision;
+  const canSubmit =
+    canConfigure && !queued && configurationRevision === reviewRevision;
   let previewStatus = "正在加载视频预览…";
   if (previewError) previewStatus = previewError;
   else if (
@@ -527,6 +564,7 @@ function ArtifactPublishDetail({
                   onClick={() => {
                     form.resetFields();
                     form.setFieldsValue({
+                      platform: defaultPlatform,
                       title: current.content.title,
                       description: current.content.script,
                       hashtags: [],
@@ -580,31 +618,32 @@ function ArtifactPublishDetail({
           )}
         </section>
       </div>
-      {active?.artifactId === artifactId && (
-        <section
-          className="panel douyin-result"
-          hidden={detailTab !== "records"}
-        >
-          <h3>{douyinRecordLabel(active)}</h3>
-          <Progress
-            percent={active.progress}
-            status={active.state === "failed" ? "exception" : undefined}
-          />
-          {running && (
-            <Button
-              onClick={() =>
-                void act(async () => {
-                  await douyinDesktop("account.open", {
-                    accountId: active.accountId,
-                  });
-                })
-              }
-            >
-              查看账号浏览器
-            </Button>
-          )}
-        </section>
-      )}
+      {active?.artifactId === artifactId &&
+        (active.platform ?? "douyin") === recordsPlatform && (
+          <section
+            className="panel douyin-result"
+            hidden={detailTab !== "records"}
+          >
+            <h3>{douyinRecordLabel(active)}</h3>
+            <Progress
+              percent={active.progress}
+              status={active.state === "failed" ? "exception" : undefined}
+            />
+            {running && active.platform !== "channels" && (
+              <Button
+                onClick={() =>
+                  void act(async () => {
+                    await douyinDesktop("account.open", {
+                      accountId: active.accountId,
+                    });
+                  })
+                }
+              >
+                查看账号浏览器
+              </Button>
+            )}
+          </section>
+        )}
       <section
         ref={resultFocus}
         tabIndex={-1}
@@ -612,7 +651,21 @@ function ArtifactPublishDetail({
         hidden={detailTab !== "records"}
       >
         <h2>这份成片的发布记录</h2>
-        {queued && (
+        <Segmented<PublishPlatform>
+          aria-label="记录平台"
+          value={recordsPlatform}
+          options={publishPlatformOptions}
+          onChange={(value) => {
+            setRecordsPlatform(value);
+            setRecordOffset(0);
+          }}
+        />
+        {queue?.rows.some(
+          (row) =>
+            row.artifactId === artifactId &&
+            (row.platform ?? "douyin") === recordsPlatform &&
+            row.state === "queued",
+        ) && (
           <Alert
             showIcon
             type="info"
@@ -628,11 +681,9 @@ function ArtifactPublishDetail({
           <Alert type="error" title={publishingMessage(records.error)} />
         )}
         <p className="muted">
-          “已提交抖音”表示获得提交回执，不代表作品已通过审核或在线状态已核验。
+          平台回执表示提交成功，作品审核与上线状态请在对应平台的作品管理页查看。
         </p>
-        {!queued && !records.data?.items.length && (
-          <Empty description="暂无发布记录" />
-        )}
+        {!records.data?.items.length && <Empty description="暂无发布记录" />}
         {records.data?.items.map((record) => (
           <article className="douyin-record" key={record.id}>
             <Space wrap className="publish-record-heading">
@@ -648,9 +699,10 @@ function ArtifactPublishDetail({
                 }
               >
                 {record.errorCode === publishVerificationCode
-                  ? publishVerificationLabel
+                  ? publishVerificationLabel(record.platform)
                   : douyinRecordLabel(record)}
               </Tag>
+              <Tag>{publishPlatformLabels[record.platform ?? "douyin"]}</Tag>
               <span>{record.title}</span>
               <small>
                 {new Date(record.createdAt).toLocaleString("zh-CN")}
@@ -662,51 +714,72 @@ function ArtifactPublishDetail({
                 预约时间 {formatDouyinSchedule(record.scheduledAt)}（北京时间）
               </p>
             )}
-            {record.url && douyinRecordLabel(record) !== "已排期" && (
-              <p>
-                <a
-                  href={record.url}
-                  onClick={(event) => {
-                    if (desktopPublishingAvailable()) {
-                      event.preventDefault();
-                      void act(async () => {
-                        await douyinDesktop("account.open", {
-                          accountId: record.accountId,
+            {record.url &&
+              record.platform !== "channels" &&
+              douyinRecordLabel(record) !== "已排期" && (
+                <p>
+                  <a
+                    href={record.url}
+                    onClick={(event) => {
+                      if (desktopPublishingAvailable()) {
+                        event.preventDefault();
+                        void act(async () => {
+                          await douyinDesktop("account.open", {
+                            accountId: record.accountId,
+                          });
+                          await douyinDesktop("browser.action", {
+                            accountId: record.accountId,
+                            action: "post",
+                            recordId: record.id,
+                          });
                         });
-                        await douyinDesktop("browser.action", {
-                          accountId: record.accountId,
-                          action: "post",
-                          recordId: record.id,
-                        });
-                      });
-                    }
-                  }}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {record.url}
-                </a>
-              </p>
-            )}
+                      }
+                    }}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {record.url}
+                  </a>
+                </p>
+              )}
             {record.errorCode && (
               <p className="error-text">
-                {publishingFailureText(record.errorCode, record.state)}
+                {publishingFailureText(
+                  record.errorCode,
+                  record.state,
+                  record.platform,
+                )}
               </p>
             )}
-            {record.errorCode === publishVerificationCode && (
-              <Button
-                disabled={busy || !deviceId || record.deviceId !== deviceId}
-                onClick={() =>
-                  void act(() =>
-                    douyinDesktop("account.open", {
-                      accountId: record.accountId,
-                    }),
-                  )
-                }
-              >
-                打开抖音账号浏览器
-              </Button>
-            )}
+            {record.errorCode === publishVerificationCode &&
+              record.platform !== "channels" && (
+                <Button
+                  disabled={busy || !deviceId || record.deviceId !== deviceId}
+                  onClick={() =>
+                    void act(() =>
+                      douyinDesktop("account.open", {
+                        accountId: record.accountId,
+                      }),
+                    )
+                  }
+                >
+                  打开{publishPlatformLabels[record.platform ?? "douyin"]}
+                  账号浏览器
+                </Button>
+              )}
+            {record.platform === "channels" &&
+              record.state === "accepted" &&
+              !record.scheduledAt && (
+                <Button
+                  disabled={
+                    !desktopPublishingAvailable() ||
+                    record.deviceId !== deviceId
+                  }
+                  onClick={() => void act(() => openCreatorManage(record))}
+                >
+                  打开视频号助手作品管理
+                </Button>
+              )}
             {(record.state === "unknown" ||
               douyinRecordLabel(record) === "已排期") && (
               <Space>
@@ -716,7 +789,7 @@ function ArtifactPublishDetail({
                 >
                   {record.state === "unknown"
                     ? "打开创作者中心核对"
-                    : "去抖音管理"}
+                    : `去${publishPlatformLabels[record.platform ?? "douyin"]}管理`}
                 </Button>
                 <Button
                   disabled={record.deviceId !== desktop.data?.deviceId}
@@ -769,6 +842,7 @@ function ArtifactPublishDetail({
           disabled:
             busy ||
             !canSubmit ||
+            !accountReady ||
             publishing ||
             !!invalid ||
             (scheduled && (!scheduledAt || !!scheduleIssue)),
@@ -787,8 +861,12 @@ function ArtifactPublishDetail({
         <p className="muted publish-config-notice">
           <Send size={17} aria-hidden="true" />
           <span>
-            {scheduled ? "由抖音按预约时间发布。" : "确认后提交给抖音发布。"}
-            可见范围、下载权限和同步选项沿用抖音页面当前设置。成片封面将上传为抖音竖封面。
+            {scheduled
+              ? `由${platformName}按预约时间发布。`
+              : `确认后提交给${platformName}发布。`}
+            {platform === "douyin"
+              ? "可见范围、下载权限和同步选项沿用抖音页面当前设置。成片封面将上传为抖音竖封面。"
+              : "短标题从标题自动生成，使用成片的竖版封面。提交在后台进行，需要管理员扫码时会在工作台提示。"}
           </span>
         </p>
         <Form
@@ -797,11 +875,20 @@ function ArtifactPublishDetail({
           layout="vertical"
           disabled={busy}
           onFinish={(edit) => {
-            if (canSubmit && !publishing && !invalid)
+            if (canSubmit && accountReady && !publishing && !invalid)
               void act(() => start(edit));
           }}
-          initialValues={{ hashtags: [], description: "", timing: "immediate" }}
-          onValuesChange={() => {
+          initialValues={{
+            platform: defaultPlatform,
+            hashtags: [],
+            description: "",
+            timing: "immediate",
+          }}
+          onValuesChange={(changed) => {
+            if (changed.platform) {
+              form.resetFields(["accountId"]);
+              setError(undefined);
+            }
             setDirty(true);
             publishKey.current = crypto.randomUUID();
           }}
@@ -826,27 +913,27 @@ function ArtifactPublishDetail({
             </Form.Item>
           </div>
           <div>
+            <Form.Item name="platform" label="发布平台">
+              <Radio.Group options={publishPlatformOptions} />
+            </Form.Item>
             <Form.Item
               name="accountId"
               label="发布账号"
-              rules={[{ required: true, message: "请选择抖音账号" }]}
+              rules={[{ required: true, message: `请选择${platformName}账号` }]}
             >
               <Select
-                placeholder="选择当前设备的抖音账号"
-                options={accounts.data?.items
-                  .filter(
-                    (account) =>
-                      account.platform !== "xhs" &&
-                      account.deviceId === desktop.data?.deviceId,
-                  )
-                  .map((account) => ({
-                    value: account.id,
-                    label: `${account.name}${account.loginStatus !== "logged_in" ? "（需登录）" : ""}`,
-                  }))}
+                placeholder={`选择当前设备的${platformName}账号`}
+                options={publishingAccounts.map((account) => ({
+                  value: account.id,
+                  disabled: account.loginStatus !== "logged_in",
+                  label: `${account.name}${account.loginStatus !== "logged_in" ? "（需登录）" : ""}`,
+                }))}
               />
             </Form.Item>
             <p className="publish-config-account-link">
-              <Link to="/settings/platforms">添加或重新登录抖音账号</Link>
+              <Link to="/settings/platforms">
+                添加或重新登录{platformName}账号
+              </Link>
             </p>
             <Form.Item name="timing" label="发布时间">
               <Radio.Group
@@ -862,7 +949,11 @@ function ArtifactPublishDetail({
                   name="scheduleTime"
                   label="预约时间（北京时间）"
                   preserve={false}
-                  extra="请选择 2 小时后至 14 天内的时间。"
+                  extra={
+                    platform === "channels"
+                      ? "请选择超过 2 小时、14 天内的北京时间整点。"
+                      : "请选择 2 小时后至 14 天内的时间。"
+                  }
                   rules={[{ required: true, message: "请选择预约时间" }]}
                 >
                   <Input type="datetime-local" />
@@ -885,25 +976,28 @@ function ArtifactPublishDetail({
               <Alert
                 type="warning"
                 showIcon
-                title={publishVerificationLabel}
+                title={publishVerificationLabel(platform)}
                 description={publishingFailureText(
                   publishVerificationCode,
                   "failed",
+                  platform,
                 )}
                 action={
-                  <Button
-                    size="small"
-                    disabled={busy || !values?.accountId}
-                    onClick={() => {
-                      const accountId = values?.accountId;
-                      if (accountId)
-                        void act(() =>
-                          douyinDesktop("account.open", { accountId }),
-                        );
-                    }}
-                  >
-                    打开抖音账号浏览器
-                  </Button>
+                  platform !== "channels" && (
+                    <Button
+                      size="small"
+                      disabled={busy || !values?.accountId}
+                      onClick={() => {
+                        const accountId = values?.accountId;
+                        if (accountId)
+                          void act(() =>
+                            douyinDesktop("account.open", { accountId }),
+                          );
+                      }}
+                    >
+                      打开{platformName}账号浏览器
+                    </Button>
+                  )
                 }
               />
             ) : (
@@ -913,7 +1007,11 @@ function ArtifactPublishDetail({
             <Alert
               type="warning"
               showIcon
-              title="发布条件已变化，请返回详情检查验收和本机文件。"
+              title={
+                queued
+                  ? `该成片已加入${platformName}发布队列。`
+                  : "发布条件已变化，请返回详情检查验收和本机文件。"
+              }
             />
           )}
         </Form>
@@ -948,9 +1046,12 @@ function ArtifactPublishDetail({
       >
         {error && <Alert type="error" title={error.message} />}
         <p>
-          {reconciling?.scheduledAt
-            ? "请先在抖音创作者中心核对。预约仍有效时，请关闭此窗口。"
-            : "请先在抖音创作者中心核对作品状态。"}
+          请先在
+          {reconciling?.platform === "channels"
+            ? "视频号助手"
+            : "抖音创作者中心"}
+          核对作品状态。
+          {reconciling?.scheduledAt ? "预约仍有效时，请关闭此窗口。" : ""}
         </p>
       </Modal>
     </>

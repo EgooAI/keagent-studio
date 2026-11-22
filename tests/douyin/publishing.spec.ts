@@ -98,6 +98,13 @@ async function desktopFixture(
       let activeRecord: unknown;
       let activeAccountId: string | undefined;
       const observations: Record<string, unknown>[] = [];
+      const listeners = new Set<() => void>();
+      const channelsId = "c".repeat(32);
+      let channelsLoginAccountIds: string[] = [];
+      const browserActions: {
+        method: string;
+        input: Record<string, unknown>;
+      }[] = [];
       const artifacts = [
         fixture.artifact,
         {
@@ -134,6 +141,13 @@ async function desktopFixture(
       const okay = (data: unknown) => ({ ok: true, data });
       Object.assign(window, {
         __publishCount: 0,
+        __browserActions: browserActions,
+        __notifyPublishing: () => listeners.forEach((notify) => notify()),
+        __finishChannelsLogin: () => {
+          channelsLoginAccountIds = [];
+          Reflect.set(window, "__noChannelsAccount", false);
+          listeners.forEach((notify) => notify());
+        },
         __reconcileRequests: [] as unknown[],
         __batchRequests: [] as unknown[],
         __source: fixture,
@@ -222,8 +236,23 @@ async function desktopFixture(
             if (method === "douyin.cloud") {
               const op = args[0],
                 input = args[1] as Record<string, unknown>;
-              if (op === "accounts/list") return okay({ items: [account] });
+              if (op === "accounts/list")
+                return okay({
+                  items: Reflect.get(window, "__noChannelsAccount")
+                    ? [account]
+                    : [
+                        account,
+                        {
+                          ...account,
+                          id: "c".repeat(32),
+                          platform: "channels",
+                          name: "测试视频号账号",
+                        },
+                      ],
+                });
               if (op === "workspace") {
+                const showManual =
+                  manuallyPublished && input.platform === "douyin";
                 const matched = artifacts.filter(
                   (artifact) =>
                     !input.search ||
@@ -237,7 +266,7 @@ async function desktopFixture(
                     sourceRevision: artifact.source.revision,
                     review: artifact.review,
                     createdAt: artifact.createdAt,
-                    ...(manuallyPublished && artifact.id === fixture.artifact.id
+                    ...(showManual && artifact.id === fixture.artifact.id
                       ? {
                           status: "accepted",
                           recordState: "accepted",
@@ -248,15 +277,20 @@ async function desktopFixture(
                     deviceReady: resolverAvailable,
                   })),
                   counts:
-                    manuallyPublished &&
+                    showManual &&
                     matched.some((row) => row.id === fixture.artifact.id)
                       ? { accepted: 1, unpublished: matched.length - 1 }
                       : { unpublished: matched.length },
                   total: matched.length,
                 });
               }
-              if (op === "records/list")
-                return okay({ items: records, total: records.length });
+              if (op === "records/list") {
+                const items = records.filter(
+                  (r) =>
+                    (r.platform ?? "douyin") === (input.platform ?? "douyin"),
+                );
+                return okay({ items, total: items.length });
+              }
               if (op === "records/reconcile") {
                 (
                   window as unknown as { __reconcileRequests: unknown[] }
@@ -305,8 +339,44 @@ async function desktopFixture(
             },
           },
           publishing: {
-            subscribe: () => () => {},
+            subscribe: (listener: () => void) => {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
             request: async (method: string, input: Record<string, unknown>) => {
+              if (
+                [
+                  "account.add",
+                  "account.open",
+                  "account.check",
+                  "browser.action",
+                  "browser.viewport",
+                  "channels.verification",
+                ].includes(method)
+              ) {
+                browserActions.push({ method, input });
+              }
+              if (method === "channels.verification")
+                return okay({
+                  image:
+                    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jqE0AAAAASUVORK5CYII=",
+                });
+              if (
+                (method === "account.add" && input.platform === "channels") ||
+                (method === "account.open" && input.accountId === channelsId)
+              ) {
+                channelsLoginAccountIds = [channelsId];
+                return okay({ id: channelsId });
+              }
+              if (method === "account.check" && input.accountId === channelsId)
+                return okay({ loginStatus: "logged_in" });
+              if (
+                method === "browser.action" &&
+                input.accountId === channelsId
+              ) {
+                if (input.action === "close") channelsLoginAccountIds = [];
+                return okay(null);
+              }
               if (method === "observation.list") return okay(observations);
               if (method === "observation.start") {
                 const observed = {
@@ -343,6 +413,11 @@ async function desktopFixture(
                     : [],
                   activeAccountId,
                   activeRecord,
+                  channelsLoginAccountIds,
+                  channelsVerificationAccountId: Reflect.get(
+                    window,
+                    "__verificationAccountId",
+                  ),
                   queue,
                 });
               if (method === "preview") {
@@ -362,6 +437,7 @@ async function desktopFixture(
                     ...entry,
                     id: String(index),
                     batchId: input.requestKey,
+                    platform: input.platform,
                     accountId: input.accountId,
                     state: "queued",
                   }),
@@ -405,6 +481,7 @@ async function desktopFixture(
                   const queued = { id: input.requestKey, state: "queued" };
                   queue.rows.push({
                     ...queued,
+                    platform: input.platform,
                     accountId: input.accountId,
                     artifactId: fixture.artifact.id,
                     title: input.title,
@@ -423,8 +500,12 @@ async function desktopFixture(
                   progress: 100,
                   createdAt: "2026-11-07T00:00:00Z",
                   updatedAt: "2026-11-07T00:00:00Z",
-                  externalId: "123456789",
-                  url: "https://www.douyin.com/video/123456789",
+                  ...(input.platform === "channels"
+                    ? {}
+                    : {
+                        externalId: "123456789",
+                        url: "https://www.douyin.com/video/123456789",
+                      }),
                   resultSource: "platform",
                   logs: [],
                 };
@@ -478,6 +559,7 @@ test("fixture UI prepares an approved artifact automatically, edits consumer fie
   await expect(configure).toBeFocused();
   await configure.click();
   await expect(detail).toBeHidden();
+  await config.getByText("抖音", { exact: true }).click();
   await config.getByLabel("发布账号").click();
   await page.getByText(account.name, { exact: true }).click();
   const title = config.getByLabel("标题", { exact: true });
@@ -534,11 +616,145 @@ test("fixture UI prepares an approved artifact automatically, edits consumer fie
   await expect(page.getByText(/平台回执|提交回执/).first()).toBeVisible();
   await page.screenshot({ path: "output/douyin-user.png", fullPage: true });
 });
+test("微信视频号默认发布，验证定时整点并显示无公开链接的提交结果", async ({
+  page,
+}) => {
+  await desktopFixture(page);
+  await page.goto(`/#/publish/${fixture.artifact.id}`);
+  await page.getByRole("button", { name: "配置发布" }).click();
+  const config = page.getByRole("dialog", { name: "配置发布" });
+  await expect(config.getByRole("radio", { name: "微信视频号" })).toBeChecked();
+  await config.getByLabel("发布账号").click();
+  await expect(page.getByText(account.name, { exact: true })).toHaveCount(0);
+  await page.getByText("测试视频号账号", { exact: true }).click();
+  await config.getByText("定时发布", { exact: true }).click();
+  const nextDay = new Date(Date.now() + 32 * 3600_000)
+    .toISOString()
+    .slice(0, 13);
+  await config.getByLabel("预约时间（北京时间）").fill(nextDay + ":30");
+  await expect(
+    config.getByText("微信视频号仅支持北京时间整点发布"),
+  ).toBeVisible();
+  await config.getByText("立即发布", { exact: true }).click();
+  await config.getByRole("button", { name: "立即发布到微信视频号" }).click();
+  const record = page.locator(".douyin-record");
+  await expect(record.getByText("已提交视频号", { exact: true })).toBeVisible();
+  await expect(record.getByRole("link")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__browserActions")),
+  ).toEqual([]);
+  await record.getByRole("button", { name: "打开视频号助手作品管理" }).click();
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__browserActions")),
+  ).toEqual([
+    {
+      method: "browser.action",
+      input: { action: "manage", accountId: "c".repeat(32) },
+    },
+  ]);
+});
+
+test("微信扫码使用独立 Chrome，完成后在平台账号显示已登录", async ({
+  page,
+}) => {
+  await desktopFixture(page);
+  await page.addInitScript(() =>
+    Reflect.set(window, "__noChannelsAccount", true),
+  );
+  await page.goto("/#/settings/platforms");
+  const add = page.getByRole("button", { name: "添加微信视频号账号" });
+  await add.click();
+  await expect(page.getByText("等待微信扫码登录")).toBeVisible();
+  await expect(add).toBeDisabled();
+  await expect(
+    page.getByRole("region", { name: "微信视频号账号浏览器" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "取消登录" }).click();
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.getByText("等待微信扫码登录")).toBeVisible();
+  await page.evaluate(() => Reflect.get(window, "__finishChannelsLogin")());
+  const row = page
+    .locator(".douyin-account-row")
+    .filter({ hasText: "测试视频号账号" });
+  await expect(row.getByText("已登录", { exact: true })).toBeVisible();
+  await expect(page.getByText("等待微信扫码登录")).toBeHidden();
+  await row.getByRole("button", { name: "检查并保存" }).click();
+  expect(
+    await page.evaluate(() =>
+      Reflect.get(window, "__browserActions").map(
+        (call: { method: string }) => call.method,
+      ),
+    ),
+  ).toEqual(["account.add", "browser.action", "account.add", "account.check"]);
+});
+
+test("视频号强制实名时仅提示，用户打开后才读取当次二维码", async ({ page }) => {
+  await desktopFixture(page);
+  await page.goto("/#/publish");
+  await expect(page.getByRole("heading", { name: "发布中心" })).toBeVisible();
+  await page.evaluate(() => {
+    Reflect.set(window, "__verificationAccountId", "c".repeat(32));
+    Reflect.get(window, "__notifyPublishing")();
+  });
+  const prompt = page.getByRole("button", { name: "查看验证二维码" });
+  const dialog = page.getByRole("dialog", { name: "微信视频号实名验证" });
+  await expect(prompt).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__browserActions")),
+  ).toEqual([]);
+  await prompt.click();
+  await expect(
+    dialog.getByRole("img", { name: "当前发布任务的视频号实名验证二维码" }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "返回工作台" }).click();
+  await expect(dialog).toHaveCount(0);
+  await prompt.click();
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => {
+    Reflect.deleteProperty(window, "__verificationAccountId");
+    Reflect.get(window, "__notifyPublishing")();
+  });
+  await expect(dialog).toHaveCount(0);
+  await expect(prompt).toHaveCount(0);
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__browserActions")),
+  ).toEqual(
+    Array(2).fill({
+      method: "channels.verification",
+      input: { accountId: "c".repeat(32) },
+    }),
+  );
+});
+test("缺少视频号账号时引导绑定，保留抖音作为显式选择", async ({ page }) => {
+  await desktopFixture(page);
+  await page.addInitScript(() =>
+    Reflect.set(window, "__noChannelsAccount", true),
+  );
+  await page.goto(`/#/publish/${fixture.artifact.id}`);
+  await page.getByRole("button", { name: "配置发布" }).click();
+  const config = page.getByRole("dialog", { name: "配置发布" });
+  await expect(config.getByRole("radio", { name: "微信视频号" })).toBeChecked();
+  await expect(
+    config.getByRole("button", { name: "立即发布到微信视频号" }),
+  ).toBeDisabled();
+  await config
+    .getByRole("link", { name: "添加或重新登录微信视频号账号" })
+    .click();
+  const addButtons = page.getByRole("button", { name: /^添加.*账号$/ });
+  await expect(addButtons).toHaveText([
+    "添加微信视频号账号",
+    "添加抖音账号",
+    "添加小红书账号",
+  ]);
+});
 test("发私信时可提交单条视频到发布队列", async ({ page }) => {
   await desktopFixture(page, true, false, false, undefined, true);
   await page.goto(`/#/publish/${fixture.artifact.id}`);
   await page.getByRole("button", { name: "配置发布" }).click();
   const config = page.getByRole("dialog", { name: "配置发布" });
+  await config.getByText("抖音", { exact: true }).click();
   await config.getByLabel("发布账号").click();
   await page.getByText(account.name, { exact: true }).click();
   await config.getByRole("button", { name: "加入发布队列" }).click();
@@ -560,6 +776,7 @@ test("single-video scheduling validates Beijing time and displays a scheduled re
   const detail = page.getByRole("dialog", { name: "成片详情" });
   await detail.getByRole("button", { name: "配置发布" }).click();
   const config = page.getByRole("dialog", { name: "配置发布" });
+  await config.getByText("抖音", { exact: true }).click();
   const accountInput = config.getByRole("combobox", { name: "发布账号" });
   await accountInput.press("ArrowDown");
   await accountInput.press("Enter");
@@ -733,6 +950,7 @@ test("a new acceptance revision requires reopening configuration even after auto
   await configure.click();
   const config = page.getByRole("dialog", { name: "配置发布" });
   await expect(config).toBeVisible();
+  await config.getByText("抖音", { exact: true }).click();
   await config.getByLabel("发布账号").click();
   await page.getByText(account.name, { exact: true }).click();
   await page.evaluate(() => {
@@ -770,6 +988,7 @@ test("刷新后成片列表和本机队列都显示人工确认已发布", async
     logs: [],
   });
   await page.goto("/#/publish");
+  await page.getByText("抖音", { exact: true }).click();
   const list = page.getByRole("region", { name: "成片列表" });
   await expect(list.getByText("已发布", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "刷新", exact: true }).click();
@@ -793,6 +1012,10 @@ for (const published of [false, true]) {
     await desktopFixture(page, true, true);
     await page.goto(`/#/publish/${fixture.artifact.id}`);
     await page.getByText("发布记录", { exact: true }).click();
+    await page
+      .locator(".publish-record-panel")
+      .getByText("抖音", { exact: true })
+      .click();
     await page.getByRole("button", { name: "记录核对结果" }).click();
     const dialog = page.getByRole("dialog", { name: "记录人工核对结果" });
     await expect(dialog.locator(".ant-modal-footer button")).toHaveText([
@@ -987,7 +1210,8 @@ test("发布工作台可在详情旁筛选成片，并在明确确认后批量�
   const requests = await page.evaluate(() => (window as any).__batchRequests);
   expect(requests).toHaveLength(1);
   expect(requests[0]).toMatchObject({
-    accountId: account.id,
+    platform: "channels",
+    accountId: "c".repeat(32),
     entries: [
       {
         artifactId: fixture.artifact.id,
@@ -1049,6 +1273,10 @@ test("历史发布记录合并步骤事件并定位旧版发布设置失败", as
   });
   await page.goto(`/#/publish/${fixture.artifact.id}`);
   await page.getByText("发布记录", { exact: true }).click();
+  await page
+    .locator(".publish-record-panel")
+    .getByText("抖音", { exact: true })
+    .click();
   const steps = page.locator(".publish-execution-steps");
   await expect(steps).toHaveAttribute("open", "");
   const overview = steps.locator(".ant-timeline");
@@ -1082,6 +1310,10 @@ for (const state of ["failed", "unknown"] as const) {
     });
     await page.goto(`/#/publish/${fixture.artifact.id}`);
     await page.getByText("发布记录", { exact: true }).click();
+    await page
+      .locator(".publish-record-panel")
+      .getByText("抖音", { exact: true })
+      .click();
     await expect(
       page.getByText("需要输入验证码", { exact: true }),
     ).toBeVisible();
@@ -1120,6 +1352,10 @@ test("发布工作区按需显示批量操作，预览和记录独立切换", as
     page.getByRole("button", { name: "配置发布", exact: true }),
   ).toBeVisible();
   await page.getByText("发布记录", { exact: true }).click();
+  await page
+    .locator(".publish-record-panel")
+    .getByText("抖音", { exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "这份成片的发布记录" }),
   ).toBeVisible();

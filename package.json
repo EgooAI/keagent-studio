@@ -10,14 +10,15 @@
     "setup:auth": "node scripts/service.mjs setup",
     "dev:backend": "concurrently -k \"pnpm dev:control\" \"pnpm dev:cloud\"",
     "dev:web": "pnpm --filter @keagent/desktop dev",
-    "dev:desktop": "pnpm build:publishing && node scripts/dev-desktop.mjs",
+    "dev:desktop": "pnpm prepare:channels && pnpm build:publishing && node scripts/dev-desktop.mjs",
     "dev:admin": "pnpm --filter @keagent/admin dev",
     "build": "pnpm build:publishing && pnpm --filter @keagent/desktop build && pnpm --filter @keagent/admin build",
     "typecheck": "tsc --noEmit",
     "lint": "pnpm typecheck && prettier --check \"apps/**/*.{ts,tsx,css,cjs,html}\" \"packages/**/*.{ts,tsx,css,json}\" \"tests/**/*.ts\" \"*.{json,ts}\"",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "prepare:desktop-package": "pnpm build:publishing && pnpm --filter @keagent/desktop build && node scripts/prepare-desktop-package.mjs",
+    "prepare:channels": "node scripts/provision-channels-worker.mjs && node scripts/provision-channels-browser.mjs",
+    "prepare:desktop-package": "pnpm prepare:channels && pnpm build:publishing && pnpm --filter @keagent/desktop build && node scripts/prepare-desktop-package.mjs",
     "package:desktop": "pnpm prepare:desktop-package && electron-builder --dir",
     "package:desktop:installer": "node scripts/provision-desktop-media.mjs && pnpm prepare:desktop-package --installer && electron-builder --publish never",
     "preview": "pnpm --filter @keagent/desktop preview",
@@ -43,6 +44,14 @@
     ],
     "extraResources": [
       {
+        "from": "output/channels-browser",
+        "to": "channels-browser"
+      },
+      {
+        "from": "output/channels-runtime",
+        "to": "channels-runtime"
+      },
+      {
         "from": "output/desktop-app/media-tools",
         "to": "media-tools"
       }
@@ -55,6 +64,7 @@
       "target": "nsis"
     },
     "mac": {
+      "signIgnore": "/channels-browser/Chromium\\.app(?:/|$)",
       "icon": "build/icon.png",
       "target": "dmg"
     },

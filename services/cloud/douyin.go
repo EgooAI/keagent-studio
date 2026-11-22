@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS keagent_douyin_mail (
 `
 
 type douyinInput struct {
+	Platform    string   `json:"platform,omitempty"`
 	RequestKey  string   `json:"requestKey"`
 	HandoffID   string   `json:"handoffId"`
 	AccountID   string   `json:"accountId"`
@@ -77,7 +78,18 @@ var douyinWord = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 var douyinStep = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var douyinPostID = regexp.MustCompile(`^[0-9]{5,30}$`)
 
+func (v douyinInput) fingerprint() string {
+	// Old desktop requests omitted the platform for Douyin.
+	if v.Platform == "douyin" {
+		v.Platform = ""
+	}
+	return exchangeFingerprint(v)
+}
+
 func validateDouyinInput(v douyinInput) error {
+	if v.Platform != "" && v.Platform != "channels" && v.Platform != "douyin" {
+		return exchangeFail(422, "INVALID_INPUT", "发布平台无效")
+	}
 	caption := strings.TrimSpace(v.Description)
 	if v.Hashtags == nil || len(v.Hashtags) > 30 {
 		return exchangeFail(422, "INVALID_INPUT", "话题过多")
@@ -176,6 +188,7 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 	}
 	if operation == "records/list" {
 		var in struct {
+			Platform   string `json:"platform"`
 			ArtifactID string `json:"artifactId"`
 			Limit      int    `json:"limit"`
 			Offset     int    `json:"offset"`
@@ -186,15 +199,15 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		if in.Limit == 0 {
 			in.Limit = 20
 		}
-		if in.Limit < 1 || in.Limit > 100 || in.Offset < 0 {
+		if in.Limit < 1 || in.Limit > 100 || in.Offset < 0 || (in.Platform != "" && in.Platform != "douyin" && in.Platform != "channels") {
 			return nil, exchangeFail(422, "INVALID_INPUT", "分页参数无效")
 		}
-		where := ` WHERE owner_id=$1 AND ($2='' OR artifact_id=$2)`
+		where := ` WHERE owner_id=$1 AND ($2='' OR artifact_id=$2) AND ($3='' OR COALESCE(payload->>'platform','douyin')=$3)`
 		var total int
-		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM keagent_douyin_publish`+where, a.UserID, in.ArtifactID).Scan(&total); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM keagent_douyin_publish`+where, a.UserID, in.ArtifactID, in.Platform).Scan(&total); err != nil {
 			return nil, err
 		}
-		rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_douyin_publish`+where+` ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $4`, a.UserID, in.ArtifactID, in.Limit, in.Offset)
+		rr, err := s.db.QueryContext(ctx, `SELECT payload FROM keagent_douyin_publish`+where+` ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5`, a.UserID, in.ArtifactID, in.Platform, in.Limit, in.Offset)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +260,7 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		if err = decodeExchange(body, &in); err != nil {
 			return nil, err
 		}
-		if (in.Platform != "" && in.Platform != "douyin" && in.Platform != "xhs") || !exchangeID.MatchString(in.ID) || len([]rune(in.Name)) > 100 || len(in.PlatformUserID) > 150 {
+		if (in.Platform != "" && in.Platform != "channels" && in.Platform != "douyin" && in.Platform != "xhs") || !exchangeID.MatchString(in.ID) || len([]rune(in.Name)) > 100 || len(in.PlatformUserID) > 150 {
 			return nil, exchangeFail(422, "INVALID_INPUT", "账号参数无效")
 		}
 		if !strings.Contains(",logged_in,logged_out,expired,verification_required,risk_controlled,profile_unavailable,unknown,", ","+in.LoginStatus+",") {
@@ -344,7 +357,7 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		var fingerprint string
 		err = tx.QueryRowContext(ctx, `SELECT payload,fingerprint FROM keagent_douyin_publish WHERE owner_id=$1 AND request_key=$2`, a.UserID, in.RequestKey).Scan(&priorRaw, &fingerprint)
 		if err == nil {
-			if fingerprint != exchangeFingerprint(in) {
+			if fingerprint != in.fingerprint() {
 				return nil, exchangeFail(409, "IDEMPOTENCY_CONFLICT", "请求键已绑定另一发布操作")
 			}
 			var prior douyinRecord
@@ -358,12 +371,6 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
-		}
-		if in.ScheduledAt != 0 {
-			offset := in.ScheduledAt - time.Now().Unix()
-			if offset < 2*3600 || offset > 14*86400 {
-				return nil, exchangeFail(422, "INVALID_SCHEDULE", "预约时间须在 2 小时至 14 天内")
-			}
 		}
 		var busy bool
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_publish WHERE owner_id=$1 AND device_id=$2 AND state IN('running','submitting'))`, a.UserID, a.DeviceID).Scan(&busy); err != nil {
@@ -401,12 +408,28 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		if _, e = readArtifactAssets(ctx, tx, a, current.Assets, true); e != nil {
 			return nil, e
 		}
-		var accountOK bool
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_account WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND NOT(payload ? 'unboundAt') AND COALESCE(payload->>'platform','douyin')='douyin' AND payload->>'loginStatus'='logged_in')`, in.AccountID, a.UserID, a.DeviceID).Scan(&accountOK); err != nil {
+		var platform string
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(payload->>'platform','douyin') FROM keagent_douyin_account
+			WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND NOT(payload ? 'unboundAt') AND payload->>'loginStatus'='logged_in'
+			AND (COALESCE(payload->>'platform','douyin')<>'channels' OR (payload->>'savedProfile'='true' AND COALESCE(payload->>'platformUserId','')<>''))`, in.AccountID, a.UserID, a.DeviceID).Scan(&platform)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-		if !accountOK {
-			return nil, exchangeFail(409, "ACCOUNT_UNAVAILABLE", "请先登录并保存抖音账号")
+		requestPlatform := in.Platform
+		if requestPlatform == "" {
+			requestPlatform = "douyin"
+		}
+		if platform != requestPlatform {
+			return nil, exchangeFail(409, "ACCOUNT_UNAVAILABLE", "请先登录并保存对应平台的账号")
+		}
+		if in.ScheduledAt != 0 {
+			offset := in.ScheduledAt - time.Now().Unix()
+			if platform == "channels" && (in.ScheduledAt%3600 != 0 || offset <= 2*3600) {
+				return nil, exchangeFail(422, "INVALID_SCHEDULE", "视频号预约须选择北京时间整点且提前超过 2 小时")
+			}
+			if offset < 2*3600 || offset > 14*86400 {
+				return nil, exchangeFail(422, "INVALID_SCHEDULE", "预约时间须在 2 小时至 14 天内")
+			}
 		}
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM keagent_douyin_publish WHERE owner_id=$1 AND artifact_id=$2 AND payload->>'accountId'=$3 AND state='unknown')`, a.UserID, current.ID, in.AccountID).Scan(&busy); err != nil {
 			return nil, err
@@ -420,13 +443,13 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 			return nil, err
 		}
 		if busy {
-			return nil, exchangeFail(409, "ARTIFACT_ALREADY_SUBMITTED", "该成片已提交到此抖音账号")
+			return nil, exchangeFail(409, "ARTIFACT_ALREADY_SUBMITTED", "该成片已提交到此发布账号")
 		}
 		if in.Batch {
 			var state string
 			err = tx.QueryRowContext(ctx, `SELECT state FROM keagent_douyin_publish WHERE owner_id=$1 AND artifact_id=$2
-				AND state IN('running','submitting','accepted','unknown')
-				ORDER BY (state='unknown') DESC,created_at DESC,id DESC LIMIT 1`, a.UserID, current.ID).Scan(&state)
+				AND COALESCE(payload->>'platform','douyin')=$3 AND state IN('running','submitting','accepted','unknown')
+				ORDER BY (state='unknown') DESC,created_at DESC,id DESC LIMIT 1`, a.UserID, current.ID, platform).Scan(&state)
 			if err == nil {
 				if state == "unknown" {
 					return nil, exchangeFail(409, "OUTCOME_UNRESOLVED", "请先核对该成片的上次发布结果")
@@ -439,7 +462,7 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		}
 		v := douyinRecord{douyinInput: in, ID: id(), OwnerID: a.UserID, DeviceID: a.DeviceID, ArtifactID: current.ID, State: "running", CreatedAt: now(), UpdatedAt: now(), Logs: []douyinLog{}}
 		raw, _ := json.Marshal(v)
-		_, err = tx.ExecContext(ctx, `INSERT INTO keagent_douyin_publish(id,owner_id,device_id,artifact_id,handoff_id,request_key,fingerprint,state,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, v.ID, a.UserID, a.DeviceID, v.ArtifactID, in.HandoffID, in.RequestKey, exchangeFingerprint(in), v.State, raw)
+		_, err = tx.ExecContext(ctx, `INSERT INTO keagent_douyin_publish(id,owner_id,device_id,artifact_id,handoff_id,request_key,fingerprint,state,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, v.ID, a.UserID, a.DeviceID, v.ArtifactID, in.HandoffID, in.RequestKey, in.fingerprint(), v.State, raw)
 		result = object{"record": v, "created": true}
 	case "records/report":
 		var in douyinRecord
@@ -453,7 +476,7 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		if v.DeviceID != a.DeviceID {
 			return nil, exchangeFail(409, "WRONG_DEVICE", "发布属于另一设备")
 		}
-		if exchangeFingerprint(in.douyinInput) != exchangeFingerprint(v.douyinInput) || !validDouyinLogs(in.Logs) || in.Progress < 0 || in.Progress > 100 || (in.ErrorCode != "" && !douyinWord.MatchString(in.ErrorCode)) {
+		if in.fingerprint() != v.fingerprint() || !validDouyinLogs(in.Logs) || in.Progress < 0 || in.Progress > 100 || (in.ErrorCode != "" && !douyinWord.MatchString(in.ErrorCode)) {
 			return nil, exchangeFail(422, "INVALID_INPUT", "发布回报无效")
 		}
 		if !douyinTransition(v, in) {
@@ -530,6 +553,9 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 		v.UpdatedAt = now()
 		if published {
 			if in.URL != "" {
+				if v.Platform == "channels" {
+					return nil, exchangeFail(422, "INVALID_INPUT", "视频号作品请在视频号助手核对，无需填写链接")
+				}
 				u, e := url.Parse(in.URL)
 				if e != nil {
 					return nil, exchangeFail(422, "INVALID_INPUT", "作品链接无效")
@@ -576,8 +602,14 @@ func (s *server) douyin(ctx context.Context, a actor, operation string, body []b
 	return result, nil
 }
 func douyinTransition(prior, next douyinRecord) bool {
-	if next.State == "accepted" && (!validDouyinResult(next.ExternalID, next.URL) || next.ResultSource != "platform") {
-		return false
+	if next.State == "accepted" {
+		validReceipt := validDouyinResult(next.ExternalID, next.URL)
+		if prior.Platform == "channels" {
+			validReceipt = next.ExternalID == "" && next.URL == ""
+		}
+		if !validReceipt || next.ResultSource != "platform" {
+			return false
+		}
 	}
 	if next.State != "accepted" && (next.ExternalID != "" || next.URL != "" || next.ResultSource != "") {
 		return false
@@ -601,7 +633,7 @@ func douyinTransition(prior, next douyinRecord) bool {
 }
 
 func observeDouyin(ctx context.Context, tx *sql.Tx, v douyinRecord) error {
-	if v.ResultSource == "manual" || (v.State != "accepted" && !(v.State == "failed" && v.ErrorCode == "EXECUTION_FAILED")) {
+	if v.Platform == "channels" || v.ResultSource == "manual" || (v.State != "accepted" && !(v.State == "failed" && v.ErrorCode == "EXECUTION_FAILED")) {
 		return nil
 	}
 	var previous string
@@ -725,7 +757,7 @@ func (s *server) adminDouyin(r *http.Request, a actor, body []byte) (any, error)
 	}
 	if op == "detail" {
 		var raw []byte
-		err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_douyin_publish WHERE id=$1`, r.URL.Query().Get("id")).Scan(&raw)
+		err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_douyin_publish WHERE id=$1 AND COALESCE(payload->>'platform','douyin')='douyin'`, r.URL.Query().Get("id")).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, exchangeFail(404, "NOT_FOUND", "记录不存在")
 		}
@@ -768,7 +800,7 @@ func (s *server) adminDouyin(r *http.Request, a actor, body []byte) (any, error)
 			}
 		}
 	}
-	where := ` WHERE ($1='' OR owner_id=$1) AND ($2='' OR device_id=$2) AND ($3='' OR state=$3) AND ($4='' OR payload->>'errorCode'=$4) AND ($5='' OR created_at>=NULLIF($5,'')::timestamptz) AND ($6='' OR created_at<=NULLIF($6,'')::timestamptz)`
+	where := ` WHERE COALESCE(payload->>'platform','douyin')='douyin' AND ($1='' OR owner_id=$1) AND ($2='' OR device_id=$2) AND ($3='' OR state=$3) AND ($4='' OR payload->>'errorCode'=$4) AND ($5='' OR created_at>=NULLIF($5,'')::timestamptz) AND ($6='' OR created_at<=NULLIF($6,'')::timestamptz)`
 	args := []any{query.Get("ownerId"), query.Get("deviceId"), query.Get("state"), query.Get("errorCode"), from, to}
 	if op == "summary" {
 		rr, e := s.db.QueryContext(ctx, `SELECT state,count(*) FROM keagent_douyin_publish`+where+` GROUP BY state`, args...)

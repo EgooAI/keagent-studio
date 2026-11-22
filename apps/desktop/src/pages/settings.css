@@ -212,6 +212,11 @@
 .settings-content .douyin-account-row > div {
   min-width: 0;
 }
+.settings-content .settings-platform-channels {
+  background: #836322;
+  color: #fff;
+  border: 0;
+}
 .settings-content .settings-platform-douyin {
   background: #282d37;
   color: #fff;

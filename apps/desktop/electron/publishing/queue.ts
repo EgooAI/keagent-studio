@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import {
   validateDouyinInput,
+  validatePublishSchedule,
   type DouyinBatchInput,
   type DouyinMessageStepLog,
   type DouyinPublishRecord,
@@ -79,6 +80,7 @@ function publicRow(entry: Entry, data: Checkpoint): DouyinQueueRow {
       (entry.kind === "message" ? entry.message?.source?.commentId : undefined),
     batchId: entry.batchId,
     accountId: entry.accountId,
+    platform: entry.platform,
     title: entry.title,
     eligibleAt: time > Date.now() ? time : undefined,
     kind: entry.kind,
@@ -355,6 +357,7 @@ export class PublishQueue {
       title:
         "私信 · " + (input.recipientName || input.profileUrl.split("/").pop()),
       kind: "message",
+      platform: input.platform,
       state: "queued",
       signature,
       message: {
@@ -475,9 +478,19 @@ export class PublishQueue {
       !/^[A-Za-z0-9_-]{16,100}$/.test(input.requestKey) ||
       !id(input.accountId) ||
       !id(artifactId) ||
+      (input.platform !== undefined &&
+        !["channels", "douyin"].includes(input.platform)) ||
       validateDouyinInput(input)
     )
       throw new PublishingError("INVALID_INPUT", "单条发布参数无效");
+    if (input.scheduledAt !== undefined) {
+      const issue = validatePublishSchedule(
+        input.platform ?? "douyin",
+        input.scheduledAt,
+      );
+      if (issue && !entry)
+        throw new PublishingError("INVALID_SCHEDULE", issue, 422);
+    }
     if (entry) {
       if (
         entry.kind === "message" ||
@@ -493,7 +506,9 @@ export class PublishQueue {
       if (
         data.entries.some(
           (row) =>
-            row.artifactId === artifactId && (live(row) || uncertain(row)),
+            row.artifactId === artifactId &&
+            (row.platform ?? "douyin") === (input.platform ?? "douyin") &&
+            (live(row) || uncertain(row)),
         )
       )
         throw new PublishingError(
@@ -506,6 +521,7 @@ export class PublishQueue {
         batchId: input.requestKey,
         accountId: input.accountId,
         artifactId,
+        platform: input.platform,
         expectedReviewRevision: 0,
         title: input.title,
         description: input.description,
@@ -541,6 +557,8 @@ export class PublishQueue {
       );
     const { requestKey, accountId, entries } = input;
     if (
+      (input.platform !== undefined &&
+        !["channels", "douyin"].includes(input.platform)) ||
       typeof requestKey !== "string" ||
       !/^[a-f0-9-]{36}$/.test(requestKey) ||
       !id(accountId) ||
@@ -577,7 +595,13 @@ export class PublishQueue {
 
     const data = this.data(identity);
     const signature = createHash("sha256")
-      .update(JSON.stringify([accountId, entries]))
+      .update(
+        JSON.stringify(
+          input.platform === "channels"
+            ? [accountId, entries, "channels"]
+            : [accountId, entries],
+        ),
+      )
       .digest("hex");
     if (data.batches[requestKey]) {
       if (data.batches[requestKey] !== signature)
@@ -597,6 +621,7 @@ export class PublishQueue {
         data.entries.some(
           (entry) =>
             entry.artifactId === artifactId &&
+            (entry.platform ?? "douyin") === (input.platform ?? "douyin") &&
             (live(entry) || uncertain(entry)),
         ),
       )
@@ -617,6 +642,7 @@ export class PublishQueue {
           id: randomUUID(),
           batchId: requestKey,
           accountId,
+          platform: input.platform,
           state: "queued",
         });
     });
@@ -628,7 +654,7 @@ export class PublishQueue {
     if (
       record.ownerId !== identity.userId ||
       record.deviceId !== identity.deviceId ||
-      !["accepted", "failed", "canceled"].includes(record.state)
+      !["accepted", "failed", "canceled", "unknown"].includes(record.state)
     )
       return;
     const data = this.data(identity);
@@ -640,6 +666,7 @@ export class PublishQueue {
     );
     if (
       !entry ||
+      (record.state === "unknown" && entry.state !== "interrupted") ||
       (!uncertain(entry) &&
         (record.resultSource !== "manual" ||
           entry.resultSource === "manual" ||
@@ -732,6 +759,7 @@ export class PublishQueue {
       this.save(identity, data, () => clearQueuePause(data));
       this.kick(identity);
     } else if (action === "clear-interrupted") {
+      await this.refreshVideoResults(identity, true);
       const entry = data.entries.find(
         (row) => row.id === id && row.state === "interrupted",
       );

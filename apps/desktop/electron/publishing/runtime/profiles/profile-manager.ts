@@ -46,6 +46,26 @@ export class ProfileManager {
     return !this.isDeletePending(key) && existsSync(this.dataPath(key));
   }
 
+  chromePath(profile: ProfileKey): string {
+    return path.join(
+      this.accountPath(normalizeProfileKey(profile)),
+      "chrome-profile",
+    );
+  }
+
+  private channelsBrowserPaths(profile: ProfileKey): string[] {
+    const root = this.accountPath(normalizeProfileKey(profile));
+    return ["chrome-profile", "chromium-profile"].map((folder) =>
+      path.join(root, folder),
+    );
+  }
+
+  hasChannelsBrowserState(profile: ProfileKey): boolean {
+    return this.channelsBrowserPaths(profile).some((folder) =>
+      existsSync(path.join(folder, "Local State")),
+    );
+  }
+
   async open(
     profile: ProfileKey,
     proxyOptions: ProxyOptions = {},
@@ -109,6 +129,16 @@ export class ProfileManager {
       throw new Error("Profile deletion target is outside its workspace");
     }
     if (existsSync(dataPath)) {
+      // The retired embedded profile may remain locked while Chrome has already exited.
+      for (const folder of this.channelsBrowserPaths(key)) {
+        await rm(folder, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        });
+      }
+      await rm(path.join(accountPath, ACCOUNT_SAVED_MARKER), { force: true });
       await this.clearSession(dataPath);
       // Electron Session 与 Chromium 网络服务会在进程存活期间继续持有数据库文件；
       // Windows 下立即递归删除会因 EBUSY 失败。先隔离该 Profile，下次启动前清理。

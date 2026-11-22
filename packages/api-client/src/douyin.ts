@@ -1,6 +1,7 @@
 import { ServiceRequestError, serviceRequest } from "./transport";
 import type {
   DouyinAccount,
+  PublishPlatform,
   CommentObservation,
   DouyinDesktopState,
   DouyinPublishInput,
@@ -25,7 +26,7 @@ interface Envelope<T> {
 function unwrap<T>(reply: Envelope<T>): T {
   if (!reply.ok)
     throw new ServiceRequestError(
-      reply.error?.message || "抖音操作失败",
+      reply.error?.message || "平台操作失败",
       reply.error?.status || 0,
       reply.error?.code,
     );
@@ -76,15 +77,17 @@ export const douyinApi = {
     douyinDesktop<string>("observation.screenshot", { id }),
   accounts: () => cloud<{ items: DouyinAccount[] }>("accounts/list"),
   workspace: (input: {
+    platform?: PublishPlatform;
     search?: string;
     review?: ArtifactReviewState;
     status?: DouyinWorkspaceStatus;
     offset: number;
     limit: number;
   }) => cloud<DouyinWorkspace>("workspace", input),
-  records: (artifactId: string, offset = 0) =>
+  records: (artifactId: string, offset = 0, platform?: PublishPlatform) =>
     cloud<{ items: DouyinPublishRecord[]; total: number }>("records/list", {
       artifactId,
+      platform,
       offset,
       limit: 20,
     }),

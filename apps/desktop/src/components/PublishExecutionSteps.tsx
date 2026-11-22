@@ -88,14 +88,18 @@ const status = {
   started: { text: "执行中", color: "blue" },
   missing: { text: "未记录结果", color: "gray" },
 };
-const stepName = (step: Step) =>
-  primaryLabels[step.step] || detailLabels[step.step] || "其他平台操作";
 
 export default function PublishExecutionSteps({
   record,
 }: {
   record: DouyinPublishRecord;
 }) {
+  const stepName = (step: Step) =>
+    (
+      primaryLabels[step.step] ||
+      detailLabels[step.step] ||
+      "其他平台操作"
+    ).replace("抖音", record.platform === "channels" ? "微信视频号" : "抖音");
   const steps = groupLogs(record.logs ?? []);
   const main = mainSteps(steps);
   const overview = main.length ? main : steps;
@@ -160,7 +164,11 @@ export default function PublishExecutionSteps({
                     errorCode !== "EXECUTION_FAILED" &&
                     errorCode !== record.errorCode && (
                       <div className="publish-step-detail">
-                        {publishingFailureText(errorCode)}
+                        {publishingFailureText(
+                          errorCode,
+                          record.state,
+                          record.platform,
+                        )}
                       </div>
                     )}
                 </>

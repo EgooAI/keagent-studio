@@ -2,6 +2,7 @@ import { useState } from "react";
 import { App, Alert, Button, Empty, Modal, Space, Tag } from "antd";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  socialPlatformLabel,
   douyinApi,
   douyinDesktop,
   desktopPublishingAvailable,
@@ -18,6 +19,7 @@ const labels: Record<string, string> = {
   profile_unavailable: "本机登录资料不可用",
   unknown: "待检查",
 };
+const accountPlatforms: SocialPlatform[] = ["channels", "douyin", "xhs"];
 export default function DouyinAccounts() {
   const query = useQuery({
     queryKey: ["douyin", "accounts"],
@@ -28,17 +30,28 @@ export default function DouyinAccounts() {
   const { message } = App.useApp();
   const [busy, setBusy] = useState("");
   const [removing, setRemoving] = useState<DouyinAccount>();
+  const loginIds = desktop.data?.channelsLoginAccountIds ?? [];
+  const loginError = desktop.data?.channelsLoginError;
   async function run(
     method: string,
     accountId = "",
     platform?: SocialPlatform,
+    action?: "close",
   ) {
     setBusy(method + accountId);
     try {
-      await douyinDesktop(method, { accountId, platform });
+      const result = await douyinDesktop<{ loginStatus?: string } | null>(
+        method,
+        { accountId, platform, action },
+      );
+      if (method === "account.check" && platform === "channels") {
+        if (result?.loginStatus === "logged_in")
+          message.success("视频号已登录，账号已保存");
+        else message.info("当前视频号未登录，请点击「扫码登录」。");
+      }
       void client.invalidateQueries({ queryKey: ["douyin"] });
     } catch (error) {
-      message.error(publishingMessage(error));
+      message.error(publishingMessage(error, platform));
     } finally {
       setBusy("");
     }
@@ -53,19 +66,20 @@ export default function DouyinAccounts() {
           </p>
         </div>
         <Space wrap>
-          <Button
-            type="primary"
-            disabled={!desktopPublishingAvailable() || !!busy}
-            onClick={() => void run("account.add", "", "douyin")}
-          >
-            添加抖音账号
-          </Button>
-          <Button
-            disabled={!desktopPublishingAvailable() || !!busy}
-            onClick={() => void run("account.add", "", "xhs")}
-          >
-            添加小红书账号
-          </Button>
+          {accountPlatforms.map((platform) => (
+            <Button
+              key={platform}
+              type={platform === "channels" ? "primary" : "default"}
+              disabled={
+                !desktopPublishingAvailable() ||
+                !!busy ||
+                (platform === "channels" && !!loginIds.length)
+              }
+              onClick={() => void run("account.add", "", platform)}
+            >
+              添加{socialPlatformLabel(platform)}账号
+            </Button>
+          ))}
         </Space>
       </div>
       {!desktopPublishingAvailable() && (
@@ -78,73 +92,108 @@ export default function DouyinAccounts() {
           action={<Button onClick={() => void query.refetch()}>重试</Button>}
         />
       )}
-      {!query.isPending && !query.data?.items.length && (
+      {loginIds.map((accountId) => (
+        <Alert
+          key={accountId}
+          type="info"
+          showIcon
+          title="等待微信扫码登录"
+          description="请用微信扫描视频号助手窗口中的二维码。登录成功后会自动保存账号并返回 AI来客。"
+          action={
+            <Button
+              size="small"
+              disabled={!!busy}
+              onClick={() =>
+                void run("browser.action", accountId, "channels", "close")
+              }
+            >
+              取消登录
+            </Button>
+          }
+        />
+      ))}
+      {loginError && (
+        <Alert
+          type="error"
+          showIcon
+          title="视频号登录未完成"
+          description={loginError.message}
+        />
+      )}
+      {!loginIds.length && !query.isPending && !query.data?.items.length && (
         <Empty description="尚未保存平台账号" />
       )}
-      {query.data?.items.map((account) => {
-        const local = desktop.data?.deviceId === account.deviceId;
-        return (
-          <div className="douyin-account-row" key={account.id}>
-            <div>
-              <Tag
-                className={
-                  account.platform === "xhs"
-                    ? "settings-platform-xhs"
-                    : "settings-platform-douyin"
-                }
-              >
-                {account.platform === "xhs" ? "小红书" : "抖音"}
-              </Tag>
-              <strong>{account.name}</strong>{" "}
-              <Tag
-                color={
-                  account.loginStatus === "logged_in" ? "green" : "default"
-                }
-              >
-                {labels[account.loginStatus] || "待检查"}
-              </Tag>
-              {!local && <Tag>其他设备</Tag>}
-              <p className="muted">
-                {account.platformUserId
-                  ? `${account.platform === "xhs" ? "小红书用户 ID" : "抖音号"}：${account.platformUserId} · `
-                  : ""}
-                最近检查：
-                {new Date(account.lastCheckedAt).toLocaleString("zh-CN")}
-              </p>
+      {query.data?.items
+        .slice()
+        .sort(
+          (a, b) =>
+            accountPlatforms.indexOf(a.platform ?? "douyin") -
+            accountPlatforms.indexOf(b.platform ?? "douyin"),
+        )
+        .map((account) => {
+          const local = desktop.data?.deviceId === account.deviceId;
+          const unavailable = !local || !!busy || loginIds.includes(account.id);
+          return (
+            <div className="douyin-account-row" key={account.id}>
+              <div>
+                <Tag
+                  className={`settings-platform-${account.platform ?? "douyin"}`}
+                >
+                  {socialPlatformLabel(account.platform)}
+                </Tag>
+                <strong>{account.name}</strong>{" "}
+                <Tag
+                  color={
+                    account.loginStatus === "logged_in" ? "green" : "default"
+                  }
+                >
+                  {labels[account.loginStatus] || "待检查"}
+                </Tag>
+                {!local && <Tag>其他设备</Tag>}
+                <p className="muted">
+                  {account.platformUserId
+                    ? `${(account.platform ?? "douyin") === "douyin" ? "抖音号" : socialPlatformLabel(account.platform) + " ID"}：${account.platformUserId} · `
+                    : ""}
+                  最近检查：
+                  {new Date(account.lastCheckedAt).toLocaleString("zh-CN")}
+                </p>
+              </div>
+              <Space wrap>
+                <Button
+                  disabled={unavailable}
+                  onClick={() =>
+                    void run("account.open", account.id, account.platform)
+                  }
+                >
+                  {account.platform === "channels"
+                    ? "扫码登录"
+                    : "打开 / 重新登录"}
+                </Button>
+                <Button
+                  disabled={unavailable}
+                  loading={busy === "account.check" + account.id}
+                  onClick={() =>
+                    void run("account.check", account.id, account.platform)
+                  }
+                >
+                  {account.platform === "channels" ? "检查并保存" : "检查"}
+                </Button>
+                <Button
+                  danger
+                  disabled={unavailable}
+                  onClick={() => setRemoving(account)}
+                >
+                  解绑
+                </Button>
+              </Space>
             </div>
-            <Space wrap>
-              <Button
-                disabled={!local || !!busy}
-                onClick={() => void run("account.open", account.id)}
-              >
-                打开 / 重新登录
-              </Button>
-              <Button
-                disabled={!local || !!busy}
-                onClick={() => void run("account.check", account.id)}
-              >
-                检查
-              </Button>
-              <Button
-                danger
-                disabled={!local || !!busy}
-                onClick={() => setRemoving(account)}
-              >
-                解绑
-              </Button>
-            </Space>
-          </div>
-        );
-      })}
+          );
+        })}
       <Modal
         className="settings-action-modal"
         centered
         width={500}
-        title={
-          removing?.platform === "xhs"
-            ? "解绑这个小红书账号？"
-            : "解绑这个抖音账号？"
-        }
+        title={`解绑这个${socialPlatformLabel(removing?.platform)}账号？`}
         open={!!removing}
         okText="解绑并清除本机登录资料"
         confirmLoading={!!busy}

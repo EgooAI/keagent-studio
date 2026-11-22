@@ -132,6 +132,7 @@ test("修改已完成文案后仍能查看历史成片与原发布记录", async
   await expect(
     page.getByRole("button", { name: "配置发布", exact: true }),
   ).toHaveCount(0);
+  await page.getByRole("tab", { name: "抖音", exact: true }).click();
   await expect(
     page.locator(".publish-records").getByText("已发布", { exact: true }),
   ).toBeVisible();
@@ -149,7 +150,7 @@ test("演示成片在弹窗配置发布并保留平台记录", async ({ page }) 
     "演示弹窗标题",
   );
   await config
-    .getByRole("button", { name: "模拟提交到抖音草稿", exact: true })
+    .getByRole("button", { name: "模拟提交到微信视频号草稿", exact: true })
     .click();
   await expect(config).toBeHidden();
   await expect(

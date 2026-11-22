@@ -142,7 +142,7 @@ function CollectionWorkspace() {
   });
   const localAccounts = (accounts.data?.items ?? []).filter(
     (a) =>
-      a.platform !== "xhs" &&
+      (a.platform ?? "douyin") === "douyin" &&
       !a.unboundAt &&
       a.deviceId === desktop.data?.deviceId,
   );

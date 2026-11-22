@@ -33,6 +33,7 @@ import { demoApi, insufficientCreditsEvent, isLive } from "@keagent/api-client";
 import { creditSummaryQuery } from "./lib/creditSummary";
 import { useWorkspace } from "./lib/workspace";
 import DouyinBrowserWorkspace from "./components/DouyinBrowserWorkspace";
+import ChannelsVerification from "./components/ChannelsVerification";
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const PropertiesPage = lazy(() => import("./pages/PropertiesPage"));
 const PropertyDetailPage = lazy(() =>
@@ -266,6 +267,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
       </aside>
       <div className="app-workspace">
         <main id="main-content" className="app-main" tabIndex={-1}>
+          {isLive && <ChannelsVerification />}
           {error ? (
             <div className="panel error-boundary">
               <Alert
