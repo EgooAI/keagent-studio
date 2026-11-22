@@ -53,6 +53,7 @@ try {
       )
     );
   }
+  console.log("Bundled Chromium H.264 playback:", browser.version, browser.frameProbe);
   const result = spawnSync(
     executable,
     ["--smoke-test", "--hidden", `--user-data-dir=${root}`],

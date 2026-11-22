@@ -351,27 +351,56 @@ async def verify_browser(playwright, directory, bundled_only, live_login=False):
                 raise RuntimeError("视频号助手未显示可用的登录二维码")
             return {"browser": backend, "version": product, "loginPage": True, "qrImageLoaded": True}
         sample = Path(__file__).with_name("browser-probe.mp4").read_bytes()
-        html = '<title>Channels browser probe</title><video muted preload="auto" src="data:video/mp4;base64,' + base64.b64encode(sample).decode("ascii") + '"></video>'
-        await page.route("http://channels-probe.invalid/", lambda route: route.fulfill(content_type="text/html", body=html))
-        await page.goto("http://channels-probe.invalid/", wait_until="domcontentloaded", timeout=15000)
+        html = '<title>Channels browser probe</title><video muted loop playsinline preload="auto" src="data:video/mp4;base64,' + base64.b64encode(sample).decode("ascii") + '"></video>'
+        # WebCodecs requires a secure context. Fulfill the loopback URL entirely in memory.
+        url = "http://127.0.0.1/"
+        await page.route(url, lambda route: route.fulfill(content_type="text/html", body=html))
+        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
         if await page.title() != "Channels browser probe":
             raise RuntimeError("专用浏览器未能加载自检网页")
-        pixel = await page.evaluate("""async () => {
+        probe = await asyncio.wait_for(page.evaluate("""async () => {
           const video = document.querySelector('video');
+          if (video.error) throw Error('media error ' + video.error.code);
           if (video.readyState < 2) await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(Error('decode timeout')), 10000);
-            video.onloadeddata = () => { clearTimeout(timer); resolve(); };
-            video.onerror = () => { clearTimeout(timer); reject(Error('decode failed')); };
+            video.onloadeddata = resolve;
+            video.onerror = () => reject(Error('media error ' + video.error.code));
           });
           const canvas = document.createElement('canvas');
           canvas.width = canvas.height = 1;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, 1, 1);
-          return Array.from(ctx.getImageData(0,0,1,1).data);
-        }""")
-        if not (pixel[0] > 160 and pixel[1] < 50 and pixel[2] < 50 and pixel[3] == 255):
-            raise RuntimeError("专用浏览器未能解码 H.264 测试帧")
-        return {"browser": backend, "version": product, "h264": True}
+          function canvasPixel() {
+            ctx.drawImage(video, 0, 0, 1, 1);
+            return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+          }
+          const preloadPixel = canvasPixel();
+          await video.play();
+          const presented = await new Promise(resolve => video.requestVideoFrameCallback(
+            (_, metadata) => resolve(metadata.presentedFrames)));
+          video.pause();
+          const presentedPixel = canvasPixel();
+          const frame = new VideoFrame(video);
+          try {
+            // The fixture is solid red (limited-range YUV 81,90,240). Read the
+            // decoded planes directly when possible, without a GPU/canvas conversion.
+            const yuv = ['I420', 'NV12'].includes(frame.format);
+            const options = yuv ? {} : {format: 'RGBA'};
+            const bytes = new Uint8Array(frame.allocationSize(options));
+            const planes = await frame.copyTo(bytes, options);
+            const decodedPixel = yuv
+              ? [bytes[planes[0].offset], bytes[planes[1].offset],
+                 bytes[frame.format === 'NV12' ? planes[1].offset + 1 : planes[2].offset]]
+              : Array.from(bytes.slice(planes[0].offset, planes[0].offset + 4));
+            return {preloadPixel, presentedPixel, presented, format: yuv ? 'YUV' : 'RGBA', decodedPixel};
+          } finally { frame.close(); }
+        }"""), timeout=15)
+        pixel = probe["decodedPixel"]
+        if probe["format"] == "YUV":
+            red = 50 <= pixel[0] <= 95 and 70 <= pixel[1] <= 110 and pixel[2] >= 220
+        else:
+            red = pixel[0] > 160 and pixel[1] < 50 and pixel[2] < 50 and pixel[3] == 255
+        if not probe["presented"] or not red:
+            raise RuntimeError(f"专用浏览器 H.264 测试帧颜色异常: {probe}")
+        return {"browser": backend, "version": product, "h264": True, "frameProbe": probe}
     finally:
         await context.close()
 
