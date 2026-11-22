@@ -1,10 +1,24 @@
 import type { BeikeHouseDetail, Property } from "@keagent/shared-types";
+import beikeCityPaths from "./beike-city-paths.json";
 
 export type BeikePropertyInput = Pick<
   Property,
   "title" | "community" | "propertyNumber"
 > &
   Partial<Property>;
+
+export function propertyListingUrl(property: Property) {
+  const savedUrl = property.details?.listingUrl?.trim();
+  if (savedUrl) return savedUrl;
+
+  // 城市路径取自贝壳移动站城市目录 https://m.ke.com/city/
+  const city = property.city.trim().replace(/市$/, "");
+  const path = (beikeCityPaths as Record<string, string>)[city];
+  const number = property.propertyNumber.trim();
+  if (typeof path === "string" && /^\d+$/.test(number)) {
+    return `https://m.ke.com/${path}/ershoufang/${number}.html`;
+  }
+}
 
 // 总价单位是「万元」，Property.priceCents 是「分」：1 万 = 1,000,000 分。
 export function beikeHouseToPropertyInput(

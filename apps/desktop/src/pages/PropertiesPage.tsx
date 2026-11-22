@@ -38,6 +38,7 @@ import {
 import { demoApi, isLive } from "@keagent/api-client";
 import type { ImportResult, Property } from "@keagent/shared-types";
 import { useWorkspace } from "../lib/workspace";
+import { propertyListingUrl } from "../lib/beike";
 import { PageHeader, PropertyPhoto, formatPrice } from "../components/common";
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
 import { request as productionRequest } from "../components/panoramaClient";
@@ -554,6 +555,23 @@ export function PropertyDetailPage() {
       : "保存如视 VR 看房链接后会自动导入全景图，也可以直接添加本机图片。";
     materialActions = (
       <>
+        <Button
+          onClick={async () => {
+            const url = propertyListingUrl(property);
+            if (!url) {
+              void message.warning("请在编辑房源中补充房源详情链接后再复制");
+              return;
+            }
+            try {
+              await navigator.clipboard.writeText(url);
+              void message.success("已复制房源网页，可在浏览器打开查看 VR");
+            } catch {
+              void message.error("复制房源网页失败，请重试");
+            }
+          }}
+        >
+          获取房源 VR 链接
+        </Button>
         <Button
           disabled={
             hasPanoramas ||

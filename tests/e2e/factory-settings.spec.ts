@@ -53,6 +53,8 @@ async function fixture(
           ...property,
           id: "user-property",
           title: "本人房源联调测试",
+          city: "北京市",
+          propertyNumber: "101140860601",
           sample: false,
           details: { orientation: "南" },
         },
@@ -1412,9 +1414,26 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
   page,
 }) => {
   await fixture(page);
+  const copiedLinks: string[] = [];
+  await page.exposeFunction("recordCopiedLink", (link: string) => {
+    copiedLinks.push(link);
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: (window as any).recordCopiedLink },
+    });
+  });
   await page.goto("/#/properties/user-property");
   await page.getByRole("tab", { name: "制作素材" }).click();
   await expect(page.getByText("0 张 VR 全景图", { exact: true })).toBeVisible();
+  const copyListing = page.getByRole("button", { name: "获取房源 VR 链接" });
+  await copyListing.click();
+  await expect(
+    page.getByText("已复制房源网页，可在浏览器打开查看 VR"),
+  ).toBeVisible();
+  expect(copiedLinks).toEqual([
+    "https://m.ke.com/bj/ershoufang/101140860601.html",
+  ]);
   await expect(
     page.getByRole("button", { name: "添加 VR 全景图" }),
   ).toBeVisible();
@@ -1452,6 +1471,7 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
   ).toHaveAttribute("src", "/media/interior-1.jpg");
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
   await expect(addLink).toBeDisabled();
+  await expect(copyListing).toBeEnabled();
   const { details, requests } = await page.evaluate(() => {
     const { workspace, calls } = (window as any).factorySettingsTest;
     return {
