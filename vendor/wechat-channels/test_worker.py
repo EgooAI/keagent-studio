@@ -64,14 +64,15 @@ class BrowserSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.launch.side_effect = missing
         await worker.launch_chrome(self.driver, self.system, headless=False)
         dedicated = self.system.with_name("chromium-profile")
-        self.launch.assert_awaited_with(str(dedicated), executable_path=str(self.binary), headless=False,
+        executable_path = str(self.binary.resolve(strict=True))
+        self.launch.assert_awaited_with(str(dedicated), executable_path=executable_path, headless=False,
                                        no_viewport=True, chromium_sandbox=True)
         self.assertEqual((dedicated / ".ai-laike-browser-version").read_text(), self.manifest["version"])
         self.assertEqual(old_state.read_text(), "original")
         self.launch.reset_mock()
         self.launch.side_effect = self.create_context
         await worker.launch_chrome(self.driver, self.system, headless=True)
-        self.launch.assert_awaited_once_with(str(dedicated), executable_path=str(self.binary), headless=True,
+        self.launch.assert_awaited_once_with(str(dedicated), executable_path=executable_path, headless=True,
                                              no_viewport=True, chromium_sandbox=True)
 
     async def test_registered_chrome_outside_default_path_stays_with_original_profile(self):
