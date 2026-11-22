@@ -1461,6 +1461,10 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
     );
 
   await expect(city).toHaveValue("北京");
+  await expect(dialog.getByText("按房源号查询", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(dialog.getByLabel("贝壳房源号", { exact: true })).toHaveCount(0);
   await expect(location).toHaveValue("");
   await dialog.getByRole("button", { name: "望京 · 两居 · 500万以内" }).click();
   await expect(location).toHaveValue("望京");
@@ -1517,6 +1521,7 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
 });
 
 test("贝壳按房源号查询并确认导入精确匹配的房源", async ({ page }) => {
+  test.skip(true, "按房源号查询入口暂时隐藏，重新开放时恢复此测试");
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page);
   await page.goto("/#/properties");
