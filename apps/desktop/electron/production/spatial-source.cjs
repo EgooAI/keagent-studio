@@ -1,12 +1,8 @@
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
-const https = require("node:https");
-const dns = require("node:dns/promises");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
-const { privateAddress } = require("../panorama/providers.cjs");
-
 const faces = ["right", "left", "up", "down", "front", "back"];
 const maxBytes = 200 * 1024 * 1024;
 function sourceURL(value, asset = false, base) {
@@ -42,55 +38,32 @@ function sourceURL(value, asset = false, base) {
 
 async function download(value, signal, budget, limit, asset = false, base) {
   const url = sourceURL(value, asset, base);
-  const addresses = await dns.lookup(url.hostname, { all: true });
-  domain.ensure(
-    addresses.length &&
-      addresses.every(({ address }) => !privateAddress(address)),
-    "VR 下载地址不能指向内网",
-  );
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const request = https.get(
-      url,
-      {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
-        headers: {
-          "User-Agent": "KeAgent-Studio/0.1",
-          "Accept-Encoding": "identity",
-        },
-        // Pin the checked DNS result so the HTTPS connection cannot resolve a different address.
-        lookup: (_host, options, callback) =>
-          options.all
-            ? callback(null, addresses)
-            : callback(null, addresses[0].address, addresses[0].family),
-      },
-      (response) => {
-        if (response.statusCode !== 200) {
-          response.resume();
-          reject(
-            new Error(
-              `VR 下载失败（HTTP ${response.statusCode}）；请使用无需登录或跳转的公开链接`,
-            ),
-          );
-          return;
-        }
-        const chunks = [];
-        let length = 0;
-        response.on("data", (chunk) => {
-          length += chunk.length;
-          budget.bytes += chunk.length;
-          if (length > limit || budget.bytes > maxBytes) {
-            response.destroy(new Error("VR 素材超过导入大小限制"));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on("error", reject);
-        response.on("end", () => resolve(Buffer.concat(chunks)));
-      },
-    );
-    request.on("error", reject);
+  // Use the desktop network stack so system proxies and split DNS work for VR imports.
+  const network = require("electron").net ?? globalThis;
+  const response = await network.fetch(url.href, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
+    redirect: "manual",
+    credentials: "omit",
+    headers: { "User-Agent": "KeAgent-Studio/0.1" },
   });
+  if (response.status !== 200 || !response.body) {
+    await response.body?.cancel();
+    throw new Error(
+      `VR 下载失败（HTTP ${response.status}）；请使用无需登录或跳转的公开链接`,
+    );
+  }
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of response.body) {
+    length += chunk.byteLength;
+    budget.bytes += chunk.byteLength;
+    domain.ensure(
+      length <= limit && budget.bytes <= maxBytes,
+      "VR 素材超过导入大小限制",
+    );
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, length);
 }
 
 function parseWork(html) {

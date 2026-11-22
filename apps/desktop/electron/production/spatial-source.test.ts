@@ -2,15 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
-import { EventEmitter } from "node:events";
 const require = createRequire(import.meta.url);
 const spatial = require("./spatial-source.cjs");
 const sources = require("./sources.cjs");
 const { PanoramaWorkflow } = require("../panorama/workflow.cjs");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
-const dns = require("node:dns/promises");
-const https = require("node:https");
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
@@ -164,55 +161,50 @@ describe("Realsee spatial import", () => {
       expect(() => spatial.normalizeWork(work, pageURL)).toThrow();
     }
   });
-  it("pins public DNS and refuses redirects and private addresses", async () => {
-    const lookup = vi
-      .spyOn(dns, "lookup")
-      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
-    let status = 200;
-    const get = vi
-      .spyOn(https, "get")
-      .mockImplementation((...args: unknown[]) => {
-        const options = args[1] as any;
-        const done = args[2] as (response: any) => void;
-        options.lookup(
-          "open.realsee.com",
-          {},
-          (error: unknown, address: string) => {
-            expect(error).toBeNull();
-            expect(address).toBe("8.8.8.8");
-          },
-        );
-        const response = Object.assign(new EventEmitter(), {
-          statusCode: status,
-          resume() {},
-          destroy(error: Error) {
-            response.emit("error", error);
-          },
-        });
-        queueMicrotask(() => {
-          done(response);
-          response.emit("data", Buffer.from("example"));
-          response.emit("end");
-        });
-        return new EventEmitter();
-      });
+  it("requests the original VR host and CDN through the network stack", async () => {
+    const request = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("example"));
+    const budget = { bytes: 0 };
     const signal = new AbortController().signal;
-    expect(
-      (await spatial.download(pageURL, signal, { bytes: 0 }, 100)).toString(),
-    ).toBe("example");
+    for (const [url, asset] of [
+      [pageURL, false],
+      [baseURL, true],
+    ] as const) {
+      expect(
+        (await spatial.download(url, signal, budget, 100, asset)).toString(),
+      ).toBe("example");
+      expect(request).toHaveBeenLastCalledWith(
+        url,
+        expect.objectContaining({ redirect: "manual", credentials: "omit" }),
+      );
+    }
+    expect(budget.bytes).toBe(14);
+    await expect(
+      spatial.download("https://other.example/", signal, budget, 100),
+    ).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("rejects redirects and enforces per-file and shared download limits", async () => {
+    const request = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("example"));
+    const signal = new AbortController().signal;
     await expect(
       spatial.download(pageURL, signal, { bytes: 0 }, 2),
     ).rejects.toThrow("大小限制");
-    status = 302;
+    await expect(
+      spatial.download(pageURL, signal, { bytes: 200 * 1024 * 1024 }, 100),
+    ).rejects.toThrow("大小限制");
+    request.mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: { Location: "https://other.example/" },
+      }),
+    );
     await expect(
       spatial.download(pageURL, signal, { bytes: 0 }, 100),
     ).rejects.toThrow("HTTP 302");
-    lookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
-    const calls = get.mock.calls.length;
-    await expect(
-      spatial.download(pageURL, signal, { bytes: 0 }, 100),
-    ).rejects.toThrow("内网");
-    expect(get).toHaveBeenCalledTimes(calls);
   });
   it("atomically replaces the gallery, keeps stable scene IDs and preserves source metadata", async () => {
     const { workflow, owner, property } = fixture();
