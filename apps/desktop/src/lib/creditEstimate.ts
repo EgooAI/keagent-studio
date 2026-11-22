@@ -19,22 +19,20 @@ function ceilKilo(chars: number) {
 
 export function estimateBatchCost(
   pricing: CreditPricing | undefined,
-  options: { tasks: number; withOpening: boolean },
+  tasks: number,
   estimatedChars: number = ESTIMATED_CHARS_PER_VIDEO,
 ): BatchCostEstimate | undefined {
-  if (!pricing || options.tasks <= 0) return undefined;
+  if (!pricing || tasks <= 0) return undefined;
   const { prices } = pricing;
   const script = prices.script ?? 0;
   const tts = (prices.tts_per_kilo_char ?? 0) * ceilKilo(estimatedChars);
-  const opening = options.withOpening ? (prices.opening ?? 0) : 0;
-  if (script + tts + opening <= 0) return undefined;
+  if (script + tts <= 0) return undefined;
   const items = [
     { label: "文案", amount: script },
     { label: "配音", amount: tts },
-    ...(options.withOpening ? [{ label: "开场", amount: opening }] : []),
   ].filter((item) => item.amount > 0);
-  const perTask = script + tts + opening;
-  return { perTask, total: perTask * options.tasks, items };
+  const perTask = script + tts;
+  return { perTask, total: perTask * tasks, items };
 }
 
 export function estimateBreakdownText(estimate: BatchCostEstimate) {

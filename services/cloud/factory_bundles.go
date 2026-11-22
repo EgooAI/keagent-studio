@@ -117,9 +117,12 @@ func (s *server) factoryMix(ctx context.Context, a actor, input object, save boo
 			return nil, err
 		}
 	}
-	parts, err := resolveBundleParts(ctx, tx, refs, true, pinned)
+	parts, err := resolveBundleParts(ctx, tx, refs, true, nil)
 	if err != nil {
 		return nil, err
+	}
+	if parts["edit"]["opening"] != nil {
+		return nil, fail(409, "生成式开场已停用，请选择使用本机视频的经纪人开场剪辑")
 	}
 	if !save {
 		name = baseName

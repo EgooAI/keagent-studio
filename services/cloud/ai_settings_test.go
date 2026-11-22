@@ -150,9 +150,6 @@ func TestAIConfigProtection(t *testing.T) {
 			t.Fatalf("allowed private target %s", address)
 		}
 	}
-	if !validOpeningWAV(aiProbeSpeech) {
-		t.Fatal("bundled test audio does not match the production format")
-	}
 }
 
 func TestAIProbeEnvironmentWithoutConfigKey(t *testing.T) {

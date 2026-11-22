@@ -4,6 +4,8 @@ import { dirname, resolve } from "node:path";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { loadEnvFile } from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
+
+// Media smoke test for builds that still expose the legacy panorama screen.
 loadEnvFile(".env.local");
 if (new URL(process.env.BETTER_AUTH_URL).origin !== "http://127.0.0.1:18080")
   throw new Error("Only local integration is allowed");
@@ -63,7 +65,6 @@ try {
           Response.json({
             ai: false,
             bailianTts: true,
-            minimaxOpening: false,
             managedVoices: true,
           }),
         );
@@ -77,7 +78,9 @@ try {
         return Promise.resolve(Response.json({ pcm: pcm.toString("base64") }));
       }
       if (
-        /\/v1\/panorama\/(script|opening-submit|opening-query)$/.test(url)
+        /\/v1\/panorama\/(script(?:-vision)?|opening-(?:submit|query))$/.test(
+          url,
+        )
       )
         throw new Error(
           "Paid provider calls are forbidden in the media regression",
@@ -154,7 +157,7 @@ try {
   const copied = resolve(output, "desktop-generated.mp4");
   await writeFile(copied, await readFile(localPath));
   const result = {
-    audio: "Synthetic test tone fixture; no paid TTS or MiniMax requests",
+    audio: "Synthetic test tone fixture for isolated media regression",
     jobId: state.jobs[0].id,
     duration: state.jobs[0].duration,
     video: copied,

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -83,47 +82,13 @@ func providerBody(ctx context.Context, method, endpoint string, headers http.Hea
 	}
 	return data, nil
 }
-func validOpeningWAV(data []byte) bool {
-	return openingWAVBytes(data) > 0
-}
-func openingWAVBytes(data []byte) int {
-	if len(data) < 44 || len(data) > 1500000 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
-		return 0
-	}
-	formatOK, audioBytes := false, 0
-	for offset := 12; offset+8 <= len(data); {
-		size := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
-		start := offset + 8
-		if size > len(data)-start {
-			return 0
-		}
-		switch string(data[offset : offset+4]) {
-		case "fmt ":
-			if size < 16 {
-				return 0
-			}
-			b := data[start : start+16]
-			formatOK = binary.LittleEndian.Uint16(b[:2]) == 1 && binary.LittleEndian.Uint16(b[2:4]) == 1 && binary.LittleEndian.Uint32(b[4:8]) == 24000 && binary.LittleEndian.Uint32(b[8:12]) == 48000 && binary.LittleEndian.Uint16(b[12:14]) == 2 && binary.LittleEndian.Uint16(b[14:16]) == 16
-		case "data":
-			if audioBytes != 0 || size <= 0 || size > 30*48000 || size%2 != 0 {
-				return 0
-			}
-			audioBytes = size
-		}
-		offset = start + size + size%2
-	}
-	if !formatOK {
-		return 0
-	}
-	return audioBytes
-}
 func (s *server) panorama(ctx context.Context, a actor, operation string, body []byte) (any, error) {
 	var input object
 	if json.Unmarshal(body, &input) != nil {
 		return nil, fail(400, "参数格式无效")
 	}
 	switch operation {
-	case "script-vision", "script", "tts", "opening-submit", "opening-query":
+	case "script-vision", "script", "tts", "opening-query":
 		var err error
 		ctx, err = withBillingTask(ctx, input, operation)
 		if err != nil {
@@ -135,8 +100,10 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		return nil, fail(410, "AI 扩图已移除，请使用原始 VR 全景图")
 	case "beike-import":
 		return s.fetchBeike(ctx, input)
-	case "opening-submit", "opening-query":
-		return s.productionOpening(ctx, a, operation, input)
+	case "opening-submit":
+		return nil, fail(410, "MiniMax 开场生成已停用，请使用本机开场视频")
+	case "opening-query":
+		return s.queryProductionOpening(ctx, a, input)
 	case "mix-save", "mix-resolve":
 		return s.factoryMix(ctx, a, input, operation == "mix-save")
 	case "capabilities":
@@ -180,9 +147,13 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 				templates[i] = summary
 			}
 		}
-		caps := object{"templates": templates, "ai": services[0].State == "configured", "bailianTts": qwenSpeechConfigured(ctx), "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": minimaxConfigured(ctx)}
+		caps := object{"templates": templates, "ai": services[0].State == "configured", "bailianTts": qwenSpeechConfigured(ctx), "managedVoices": true, "beike": aiValue(ctx, "BEIKE_ACCESS_TOKEN") != "", "minimaxOpening": false}
 		if library != nil {
-			caps["library"] = library
+			version := digestBytes(mustJSON(library))
+			caps["catalogVersion"] = version
+			if input["catalogVersion"] != version {
+				caps["library"] = library
+			}
 		}
 		return caps, nil
 	case "template":
@@ -192,13 +163,15 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		}
 		return template, err
 	case "script-vision":
-		template, err := s.jobProductionTemplate(ctx, a, input, input["openingRecipe"] == true)
+		template, err := s.jobProductionTemplate(ctx, a, input, true)
 		if err != nil {
 			return nil, err
 		}
+		config := obj(obj(template["production"])["config"])
+		omitOpening := input["omitOpening"] == true && config["videoMode"] == "avatar"
 		return s.chargedScript(ctx, a, input, func(chargeCtx context.Context) (any, error) {
 			chargeCtx = s.withProviderUsage(chargeCtx, a.UserID, "script_vision")
-			return generateVisionScript(chargeCtx, template, obj(input["property"]), rows(input["images"]))
+			return generateVisionScript(chargeCtx, template, obj(input["property"]), rows(input["images"]), omitOpening)
 		})
 	case "script":
 		expected := rows(input["segments"])
@@ -206,9 +179,15 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		if len(expected) < 3 || len(expected) > 22 || (language != "zh-CN" && language != "en-US") {
 			return nil, fail(422, "文案段落或语言无效")
 		}
+		instruction := "你是房产视频编导。仅使用输入房源事实和人工标注的空间说明，不编造学区、产权、朝向、收益。按输入模板改写。输出语言 " + language + "。只输出 JSON 数组，每项包含 id 和 text，id和顺序与输入segments一致。"
+		if obj(expected[0])["id"] == "opening" {
+			instruction += "开场宜在15秒内读完。"
+		} else {
+			instruction += "从第一个房源空间开始讲解，不写开场介绍。"
+		}
 		return s.chargedScript(ctx, a, input, func(chargeCtx context.Context) (any, error) {
 			chargeCtx = s.withProviderUsage(chargeCtx, a.UserID, "script")
-			content, err := generateWithInstruction(chargeCtx, input, "你是房产视频编导。仅使用输入房源事实和人工标注的空间说明，不编造学区、产权、朝向、收益。按输入模板改写。输出语言 "+language+"。只输出 JSON 数组，每项包含 id 和 text，id和顺序与输入segments一致。开场宜在15秒内读完。")
+			content, err := generateWithInstruction(chargeCtx, input, instruction)
 			if err != nil {
 				return nil, fail(502, err.Error())
 			}

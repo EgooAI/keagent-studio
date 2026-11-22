@@ -161,85 +161,66 @@ func TestPanoramaScriptChargesViaPricing(t *testing.T) {
 	creditInvariant(t, s, "u1")
 }
 
-func TestOpeningCreditsHoldAndSettle(t *testing.T) {
-	t.Setenv("MINIMAX_API_KEY", "test-key")
+func TestRetiredOpeningQuerySettlesHistoricalHold(t *testing.T) {
+	t.Setenv("AI_CONFIG_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("MINIMAX_API_KEY", "fallback-key")
 	s := &server{db: productionTestDB(t)}
-	grantForTest(t, s, "owner", creditKindPurchased, 100, 0)
-	submits := 0
-	s.sourceHTTP = func(_ context.Context, method, endpoint string, _ http.Header, _ []byte, _ int64) ([]byte, error) {
-		switch endpoint {
-		case minimaxBase + "/v2/video_generation":
-			submits++
-			if submits == 2 {
-				return nil, fail(502, "提交结果未知")
-			}
-			return []byte(`{"task_id":"123"}`), nil
-		case minimaxBase + "/v2/query/video_generation/123":
-			return []byte(`{"task":{"id":"123","status":"succeeded","content":{"url":"https://cdn.hailuoai.com/test.mp4"}}}`), nil
-		default:
-			t.Fatalf("unexpected provider request: %s %s", method, endpoint)
-			return nil, nil
-		}
-	}
-	owner := actor{UserID: "owner"}
-	input := minimaxTestInput(t, 3000)
-	first, err := s.productionOpening(t.Context(), owner, "opening-submit", input)
+	pinnedKey, err := sealAI(aiVersionLabel("opening", 2), aiValues{"MINIMAX_API_KEY": "pinned-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	available, held := chargeBalance(t, s, "owner")
-	if available != 0 || held != 100 {
-		t.Fatalf("opening submit must hold 100: available=%d held=%d", available, held)
+	if _, err = s.db.ExecContext(t.Context(), `INSERT INTO keagent_ai_version(service_group,version,encrypted,actor_id)
+		VALUES('opening',2,$1,'admin')`, pinnedKey); err != nil {
+		t.Fatal(err)
 	}
-	// 同素材重放：沿用首次提交，不重复冻结。
-	if _, err = s.productionOpening(t.Context(), owner, "opening-submit", input); err != nil {
-		t.Fatalf("replay submit: %v", err)
+	for _, tc := range []struct {
+		status    string
+		version   int64
+		apiKey    string
+		available int64
+	}{
+		{"succeeded", 2, "pinned-key", 0},
+		{"failed", 0, "fallback-key", 100},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			owner := actor{UserID: tc.status}
+			key := digestBytes([]byte(owner.UserID))
+			grantForTest(t, s, owner.UserID, creditKindPurchased, 100, 0)
+			if _, err := s.holdCredits(t.Context(), owner.UserID, "opening", key, 100, key, "v1", nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(t.Context(), `INSERT INTO keagent_minimax_opening(owner_id,input_hash,config_version,task_id)
+				VALUES($1,$2,$3,'123')`, owner.UserID, key, tc.version); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			s.sourceHTTP = func(_ context.Context, method, endpoint string, headers http.Header, _ []byte, _ int64) ([]byte, error) {
+				calls++
+				if method != http.MethodGet || endpoint != minimaxBase+"/v2/query/video_generation/123" || headers.Get("Authorization") != "Bearer "+tc.apiKey {
+					t.Fatal("historical lookup did not use original credentials")
+				}
+				return json.Marshal(object{"task": object{"id": "123", "status": tc.status, "content": object{"url": "https://cdn.hailuoai.com/test.mp4"}}})
+			}
+			query := []byte(`{"requestKey":"` + key + `"}`)
+			if _, err = s.panorama(t.Context(), actor{UserID: "other"}, "opening-query", query); err == nil || calls != 0 {
+				t.Fatal("another owner could query the historical task")
+			}
+			if _, err = s.panorama(t.Context(), owner, "opening-submit", query); err == nil || calls != 0 {
+				t.Fatal("retired submit reached the provider")
+			}
+			if available, held := chargeBalance(t, s, owner.UserID); available != 0 || held != 100 {
+				t.Fatalf("retired submit changed the old hold: available=%d held=%d", available, held)
+			}
+			result, err := s.panorama(t.Context(), owner, "opening-query", query)
+			if err != nil || obj(result)["status"] != tc.status || calls != 1 {
+				t.Fatalf("historical query: %#v %v", result, err)
+			}
+			if available, held := chargeBalance(t, s, owner.UserID); available != tc.available || held != 0 {
+				t.Fatalf("historical hold settlement: available=%d held=%d", available, held)
+			}
+			creditInvariant(t, s, owner.UserID)
+		})
 	}
-	available, held = chargeBalance(t, s, "owner")
-	if available != 0 || held != 100 {
-		t.Fatalf("replay submit must not add holds: available=%d held=%d", available, held)
-	}
-	result, err := s.productionOpening(t.Context(), owner, "opening-query", first)
-	if err != nil || result["status"] != "succeeded" {
-		t.Fatalf("query: %#v %v", result, err)
-	}
-	available, held = chargeBalance(t, s, "owner")
-	if available != 0 || held != 0 {
-		t.Fatalf("succeeded query must capture: available=%d held=%d", available, held)
-	}
-	var spent int64
-	if err = s.db.QueryRowContext(t.Context(), `SELECT COALESCE(SUM((metadata->>'spent')::bigint),0) FROM keagent_credit_ledger WHERE owner_id='owner' AND kind='capture'`).Scan(&spent); err != nil || spent != 100 {
-		t.Fatalf("capture ledger spent: %d %v", spent, err)
-	}
-	creditInvariant(t, s, "owner")
-
-	// 余额不足：提交被干净地拒绝。
-	other := actor{UserID: "broke"}
-	if _, err = s.productionOpening(t.Context(), other, "opening-submit", input); err == nil {
-		t.Fatal("insufficient opening submit accepted")
-	}
-	requireCoded(t, err, 402, "CREDITS_INSUFFICIENT")
-}
-
-func TestOpeningExplicitRejectionReleasesHold(t *testing.T) {
-	t.Setenv("MINIMAX_API_KEY", "test-key")
-	s := &server{db: productionTestDB(t)}
-	grantForTest(t, s, "owner", creditKindPurchased, 100, 0)
-	s.sourceHTTP = func(_ context.Context, _ string, endpoint string, _ http.Header, _ []byte, _ int64) ([]byte, error) {
-		if endpoint == minimaxBase+"/v2/video_generation" {
-			return nil, providerHTTPError{fault: fault{502, "供应商 HTTP 400"}, httpStatus: 400}
-		}
-		t.Fatal("unexpected provider request")
-		return nil, nil
-	}
-	if _, err := s.productionOpening(t.Context(), actor{UserID: "owner"}, "opening-submit", minimaxTestInput(t, 3000)); err == nil {
-		t.Fatal("rejected submit accepted")
-	}
-	available, held := chargeBalance(t, s, "owner")
-	if available != 100 || held != 0 {
-		t.Fatalf("explicit rejection must release: available=%d held=%d", available, held)
-	}
-	creditInvariant(t, s, "owner")
 }
 
 func TestVoiceCloneCreditsLifecycle(t *testing.T) {

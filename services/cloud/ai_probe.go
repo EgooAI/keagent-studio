@@ -263,16 +263,6 @@ func (p *aiProbe) progressJSON() []byte {
 }
 func aiProbeFailure(service string, err error) (status, category, message string) {
 	var upstream providerHTTPError
-	if service == "opening" && errors.As(err, &upstream) {
-		category := "validation"
-		switch upstream.httpStatus {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			category = "authentication"
-		case http.StatusPaymentRequired, http.StatusTooManyRequests:
-			category = "quota"
-		}
-		return "failed", category, upstream.Error()
-	}
 	if (service == "tts" || service == "voice-clone") && errors.As(err, &upstream) {
 		label := "百炼配音"
 		if service == "voice-clone" {

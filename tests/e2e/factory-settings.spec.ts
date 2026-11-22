@@ -6,14 +6,22 @@ import type { BeikeSearchResult } from "../../packages/shared-types/src/beike";
 async function fixture(
   page: Page,
   large = false,
-  miniMax = false,
+  withRoomFixture = false,
   withBundles = false,
+  cachedBundles = false,
 ) {
   const catalog = JSON.parse(
     readFileSync("services/cloud/video_templates.json", "utf8"),
   );
   await page.addInitScript(
-    ({ workspace, catalog, large, miniMax, withBundles }) => {
+    ({
+      workspace,
+      catalog,
+      large,
+      withRoomFixture,
+      withBundles,
+      cachedBundles,
+    }) => {
       const property = {
         id: "panorama-cc0-sample",
         propertyNumber: "TEST-PANORAMA-001",
@@ -46,12 +54,12 @@ async function fixture(
           details: { orientation: "南" },
         },
       ];
-      if (miniMax) {
+      if (withRoomFixture) {
         const source = catalog[0];
         catalog.push({
           ...source,
-          id: "minimax-tour",
-          name: "MiniMax 地点带看",
+          id: "uploaded-opening-tour",
+          name: "经纪人开场测试模板",
           production: {
             ...source.production,
             config: { ...source.production.config, videoMode: "avatar" },
@@ -76,7 +84,12 @@ async function fixture(
           })),
         );
       }
+      let finishCatalog: () => void = () => {};
+      const catalogReady = new Promise<void>((resolve) => {
+        finishCatalog = resolve;
+      });
       const state = {
+        finishCatalog,
         workspace,
         catalog,
         aiConfigured: false,
@@ -91,13 +104,12 @@ async function fixture(
         creditPricing: undefined as
           { version: string; prices: Record<string, number> } | undefined,
         calls: [] as { method: string; input: any }[],
+        retiredParts: [] as string[],
         rows: [] as any[],
         batches: [] as { id: string; createdAt: string; count: number }[],
-        openingClip: undefined as
-          { id: string; name: string; duration: number } | undefined,
-        openingPhoto: undefined as { id: string; name: string } | undefined,
-        openingBackground: undefined as
-          { id: string; name: string; asset: string } | undefined,
+        openingVideos: JSON.parse(
+          sessionStorage.getItem("opening-videos") || "[]",
+        ),
       };
       const mixParts = (["edit", "cover", "script"] as const).flatMap((kind) =>
         [0, 1].map((i) => ({
@@ -264,43 +276,51 @@ async function fixture(
               return { count: 1 };
             }
             if (method === "panorama.opening-clip-import") {
-              state.openingClip = {
-                id: "a".repeat(64),
-                name: "开门参考.mp4",
+              const index = state.openingVideos.length + 1;
+              const clip = {
+                id: (input?.saveToLibrary ? String(index) : "a").repeat(64),
+                name: input?.saveToLibrary
+                  ? `保存的开场${index}.mp4`
+                  : "临时开场.mp4",
                 duration: 3,
+                url: "/media/test-opening.mp4",
               };
-              return state.openingClip;
+              if (input?.saveToLibrary) {
+                state.openingVideos.push(clip);
+                sessionStorage.setItem(
+                  "opening-videos",
+                  JSON.stringify(state.openingVideos),
+                );
+              }
+              return clip;
             }
-            if (method === "panorama.opening-photo-import") {
-              state.openingPhoto = { id: "b".repeat(64), name: "经纪人.jpg" };
-              return state.openingPhoto;
+            if (method === "panorama.opening-videos")
+              return state.openingVideos;
+            if (method === "panorama.opening-video-remove") {
+              state.openingVideos = state.openingVideos.filter(
+                (clip: any) => clip.id !== input.id,
+              );
+              sessionStorage.setItem(
+                "opening-videos",
+                JSON.stringify(state.openingVideos),
+              );
+              return null;
             }
-            if (method === "panorama.opening-background-import") {
-              state.openingBackground = {
-                id: "d".repeat(64),
-                name: "小区入口.jpg",
-                asset: "d".repeat(64) + ".jpg",
-              };
-              return state.openingBackground;
-            }
-            if (method === "panorama.opening-materials")
-              return {
-                photo: state.openingPhoto && {
-                  ...state.openingPhoto,
-                  url: "/media/interior-1.jpg",
-                },
-                background: state.openingBackground && {
-                  ...state.openingBackground,
-                  url: "/media/interior-2.jpg",
-                },
-              };
-            if (method === "panorama.factory-catalog")
+            if (method === "panorama.factory-catalog") {
+              if (input?.cachedOnly && !cachedBundles) return null;
+              if (cachedBundles && !input?.cachedOnly) await catalogReady;
               return {
                 ...(withBundles
                   ? {
                       library: {
-                        recommended,
-                        parts: mixParts,
+                        recommended:
+                          cachedBundles && !input?.cachedOnly
+                            ? [{ ...recommended[1], name: "门店新搭配" }]
+                            : recommended,
+                        parts: mixParts.map((part) => ({
+                          ...part,
+                          available: !state.retiredParts.includes(part.id),
+                        })),
                         personal: JSON.parse(
                           sessionStorage.getItem("saved-mixes") || "[]",
                         ),
@@ -315,12 +335,9 @@ async function fixture(
                 ffmpeg: true,
                 ffprobe: true,
                 managedVoices: true,
-                minimaxOpening: true,
-                openingClip: state.openingClip,
-                openingPhoto: state.openingPhoto,
-                openingBackground: state.openingBackground,
                 voices: [],
               };
+            }
             if (method === "panorama.factory-save-mix") {
               const saved = {
                 id: "mine-1",
@@ -411,29 +428,11 @@ async function fixture(
                       (item: any) => item.id === pair.templateId,
                     );
                 const id = "review-" + i;
-                const openingLocations = t.production.opening && [
-                  {
-                    asset: "a".repeat(64) + ".jpg",
-                    label: "小区入口",
-                    url: "/media/panoramas/lebombo.jpg",
-                  },
-                  {
-                    asset: "c".repeat(64) + ".jpg",
-                    label: "花园",
-                    url: "/media/panoramas/hotel_room.jpg",
-                  },
-                ];
                 const config = {
                   ...t.production.config,
                   ...input.renderOverrides,
                   voice: state.workspace.profile.defaults.voiceId,
-                  openingPhoto: t.production.opening
-                    ? input.openingPhoto
-                    : undefined,
-                  openingLocation: openingLocations && {
-                    source: "property",
-                    asset: openingLocations[0].asset,
-                  },
+                  openingVideo: input.openingVideo,
                 };
                 const draft = {
                   id,
@@ -441,7 +440,7 @@ async function fixture(
                   revision: 1,
                   config,
                   templateSnapshot: structuredClone(t),
-                  scenes: miniMax
+                  scenes: withRoomFixture
                     ? [
                         {
                           id: "room-1",
@@ -464,13 +463,17 @@ async function fixture(
                       ]
                     : [],
                   segments: [
-                    {
-                      id: "opening",
-                      kind: "opening",
-                      sceneId: miniMax ? "room-1" : undefined,
-                      text: "请确认这条房源文案。",
-                    },
-                    ...(miniMax
+                    ...(input.openingVideo
+                      ? []
+                      : [
+                          {
+                            id: "opening",
+                            kind: "opening",
+                            sceneId: withRoomFixture ? "room-1" : undefined,
+                            text: "请确认这条房源文案。",
+                          },
+                        ]),
+                    ...(withRoomFixture
                       ? [
                           {
                             id: "room-1",
@@ -494,8 +497,9 @@ async function fixture(
                   progress: 0,
                   config,
                   draft,
-                  openingLocations,
-                  openingLocationUrl: openingLocations?.[0].url,
+                  openingVideoUrl: input.openingVideo
+                    ? "/media/test-opening.mp4"
+                    : undefined,
                 };
               });
               state.batches = [
@@ -506,15 +510,6 @@ async function fixture(
                 },
               ];
               return { batchId: input.requestId, issues: [] };
-            }
-            if (method === "panorama.factory-opening-location") {
-              const row = state.rows.find((item) => item.id === input.id);
-              row.draft.config.openingLocation.asset = input.asset;
-              row.openingLocationUrl = row.openingLocations.find(
-                (item: { asset: string }) => item.asset === input.asset,
-              ).url;
-              row.draft.revision = ++row.revision;
-              return null;
             }
             if (method === "panorama.factory-detail")
               return state.rows.find((row) => row.id === input.id);
@@ -545,11 +540,85 @@ async function fixture(
       workspace: createInitialWorkspace(),
       catalog,
       large,
-      miniMax,
+      withRoomFixture,
       withBundles,
+      cachedBundles,
     },
   );
 }
+
+test("先显示本机推荐搭配，云端同步后替换已删除的搭配", async ({ page }) => {
+  await fixture(page, false, false, true, true);
+  await page.goto("/#/studio/create");
+  const library = page.getByRole("region", { name: "搭配库" });
+  const cached = library.getByRole("button", {
+    name: "短视频带看，已应用",
+    exact: true,
+  });
+  await expect(cached).toBeVisible();
+  await cached.click();
+  await page.evaluate(() =>
+    (window as any).factorySettingsTest.finishCatalog(),
+  );
+  await expect(
+    library.getByRole("button", { name: "门店新搭配，已应用", exact: true }),
+  ).toBeVisible();
+  await expect(cached).toHaveCount(0);
+});
+
+test("云端下架部件后回退到普通短视频并停用旧搭配", async ({ page }) => {
+  await fixture(page, false, false, true);
+  await page.goto("/#/studio/create");
+
+  const library = page.getByRole("region", { name: "搭配库" });
+  const cover = page.getByRole("button", { name: "更换封面模板" });
+  await expect(
+    library.getByRole("button", { name: "短视频带看，已应用", exact: true }),
+  ).toBeVisible();
+  await cover.click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: /^品牌信息栏/ })
+    .click();
+  await page.getByRole("button", { name: "存为我的搭配" }).click();
+  await page.getByRole("textbox", { name: "搭配名称" }).fill("旧封面搭配");
+  await page.getByRole("button", { name: "保存搭配", exact: true }).click();
+  await expect(
+    library.getByRole("button", { name: "旧封面搭配，已应用", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: /^批次设置/ }).click();
+  await page.getByRole("combobox", { name: "本批追加搭配" }).click();
+  await page
+    .locator(".ant-select-dropdown:visible")
+    .getByText("短视频带看 · 经纪人开场", { exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+
+  await page.evaluate(() => {
+    (window as any).factorySettingsTest.retiredParts = ["cover1", "edit1"];
+  });
+  await page.getByRole("button", { name: "刷新搭配" }).click();
+  const retired = library.getByRole("button", {
+    name: "旧封面搭配，模板已下架",
+    exact: true,
+  });
+  await expect(retired).toBeDisabled();
+  await expect(
+    page.getByRole("combobox", { name: "本批追加搭配" }),
+  ).toHaveCount(0);
+  await library.getByText("推荐搭配", { exact: true }).click();
+  await expect(
+    library.getByRole("button", { name: "短视频带看，已应用", exact: true }),
+  ).toBeVisible();
+  await cover.click();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: /^醒目大标题/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: /^品牌信息栏/ }),
+  ).toHaveCount(0);
+});
 
 test("声音设置展示当前声音复刻及配音价目", async ({ page }) => {
   await fixture(page);
@@ -819,160 +888,70 @@ test("素材不足或读取失败时不能确认选图", async ({ page }) => {
   ).toBeDisabled();
 });
 
-test("MiniMax 模板要求经纪人授权，审核页可更换地点图和镜头角度", async ({
+test("经纪人开场每批必选，可选择本机视频库或临时上传，审核只显示带看文案", async ({
   page,
 }) => {
   await fixture(page, false, true);
-  await page.route("**/media/interior-{1,2}.jpg", (route) => {
-    const height = route.request().url().endsWith("interior-1.jpg")
-      ? 1536
-      : 1820;
-    return route.fulfill({
-      contentType: "image/svg+xml",
-      body: `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="${height}"><rect width="100%" height="100%" fill="gray"/></svg>`,
-    });
-  });
   await page.goto("/#/settings/appearance");
-  await expect(page.getByRole("heading", { name: "形象与背景" })).toBeVisible();
-  await page
-    .getByRole("button", { name: "上传经纪人照片", exact: true })
-    .click();
+  await expect(page.getByRole("heading", { name: "开场视频库" })).toBeVisible();
+  const upload = page.getByRole("button", { name: "上传并保存视频" });
+  await upload.click();
   await expect(
-    page.getByRole("img", { name: "经纪人照片", exact: true }),
+    page.getByRole("heading", { name: "保存的开场1.mp4" }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "上传开场背景图", exact: true })
-    .click();
+  await upload.click();
   await expect(
-    page.getByRole("img", { name: "开场背景图", exact: true }),
+    page.getByRole("heading", { name: "保存的开场2.mp4" }),
   ).toBeVisible();
-  for (const width of [1440, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const name of ["经纪人照片", "开场背景图"]) {
-      const card = page.getByRole("region", { name, exact: true });
-      const preview = card.locator(".settings-material-preview");
-      const image = preview.getByRole("img", { name, exact: true });
-      await image.evaluate((element: HTMLImageElement) => element.decode());
-      const imageBox = (await image.boundingBox())!;
-      const previewBox = (await preview.boundingBox())!;
-      const button = card.getByRole("button", { name: `更换${name}` });
-      expect(imageBox.x).toBeGreaterThanOrEqual(previewBox.x);
-      expect(imageBox.y).toBeGreaterThanOrEqual(previewBox.y);
-      expect(imageBox.x + imageBox.width).toBeLessThanOrEqual(
-        previewBox.x + previewBox.width,
-      );
-      expect(imageBox.y + imageBox.height).toBeLessThanOrEqual(
-        previewBox.y + previewBox.height,
-      );
-      expect((await button.boundingBox())!.y).toBeGreaterThan(
-        previewBox.y + previewBox.height,
-      );
-      await button.click({ trial: true });
-    }
-    await page.screenshot({
-      path: test.info().outputPath("opening-materials-" + width + ".png"),
-    });
-  }
+
   await page.goto("/#/studio/create");
-  await page.getByRole("button", { name: "选择视频模板", exact: true }).click();
-  await page
-    .getByRole("checkbox", {
-      name: "选择MiniMax 地点带看 · 1.0.0",
-      exact: true,
-    })
-    .check();
-  await page.getByRole("button", { name: "确认选择（1）" }).click();
-  await page.getByRole("button", { name: "选择房源", exact: true }).click();
-  await page
-    .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
-    .check();
-  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await selectTemplates(page, ["经纪人开场测试模板 · 1.0.0"]);
+  async function configureBatch() {
+    await page.getByRole("button", { name: "选择房源", exact: true }).click();
+    await page
+      .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
+      .check();
+    await page.getByRole("button", { name: "确认选择（1）" }).click();
+    await chooseImages(page);
+  }
+  await configureBatch();
   const create = page.getByRole("button", { name: "生成 1 条文案" });
   await expect(create).toBeDisabled();
-  await expect(page.getByRole("button", { name: "选择参考视频" })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByRole("link", { name: "设置经纪人照片与背景" }),
-  ).toHaveAttribute("href", "#/settings/appearance");
-  await expect(create).toBeDisabled();
-  await page
-    .getByRole("checkbox", {
-      name: "我确认已获得经纪人照片和开场素材的使用授权",
-    })
-    .check();
-  await chooseImages(page);
+  await choose(page, "选择已保存的开场视频", "保存的开场2.mp4 · 3.0 秒");
   await expect(create).toBeEnabled();
   await create.click();
-  await expect(
-    page.getByRole("button", { name: "审核", exact: true }),
-  ).toBeVisible();
   await page.getByRole("button", { name: "审核", exact: true }).click();
+  await expect(page.locator('video[aria-label="开场视频"]')).toBeVisible();
   await expect(
-    page.getByRole("img", { name: "开场地点图", exact: true }),
-  ).toHaveAttribute("src", /lebombo/);
-  const openingRow = page.locator(".factory-review-segment").filter({
-    has: page.getByRole("textbox", { name: "开场介绍", exact: true }),
-  });
-  await expect(
-    openingRow.getByRole("img", { name: "开场地点图", exact: true }),
-  ).toBeVisible();
+    page.getByRole("textbox", { name: "开场介绍", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "1 · 客厅", exact: true }),
-  ).toHaveCount(1);
-  const angle = page.getByRole("spinbutton", { name: "1 · 客厅镜头起始角度" });
-  const save = page.getByRole("button", { name: "保存修改", exact: true });
-  await expect(save).toBeDisabled();
-  await angle.fill("150");
-  await expect(save).toBeEnabled();
-  await angle.fill("0");
-  await expect(save).toBeDisabled();
-  await angle.fill("150");
-  await choose(page, "1 · 客厅镜头方向", "向左");
-  await page
-    .getByRole("textbox", { name: "开场介绍", exact: true })
-    .fill(
-      "今天我们来到了测试小区，带大家看看这套两居室，跟我一起进去了解一下。",
+  ).toBeVisible();
+  const submitted = () =>
+    page.evaluate(() =>
+      (window as any).factorySettingsTest.calls
+        .filter((call: any) => call.method === "panorama.factory-create")
+        .map((call: any) => call.input.openingVideo),
     );
-  for (const width of [1440, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    await page.screenshot({
-      path: test.info().outputPath("opening-review-" + width + ".png"),
-    });
-  }
-  await choose(page, "更换开场地点图", "2 · 花园");
+  expect(await submitted()).toEqual(["2".repeat(64)]);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "审核文案" })).toBeHidden();
+  await page.getByRole("tab", { name: "新建视频", exact: true }).click();
+  await configureBatch();
+  await expect(create).toBeDisabled();
+  await page.getByRole("button", { name: "临时上传", exact: true }).click();
+  await expect(page.getByText(/本次使用 临时开场.mp4/)).toBeVisible();
+  await create.click();
+  await expect.poll(submitted).toEqual(["2".repeat(64), "a".repeat(64)]);
+
+  await page.goto("/#/settings/appearance");
   await expect(
-    page.getByRole("img", { name: "开场地点图", exact: true }),
-  ).toHaveAttribute("src", /hotel_room/);
-  await expect(angle).toHaveValue("150");
-  const calls = await page.evaluate(
-    () => (window as any).factorySettingsTest.calls,
+    page.getByRole("heading", { name: "保存的开场2.mp4" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "临时开场.mp4" })).toHaveCount(
+    0,
   );
-  expect(
-    calls.find((call: any) => call.method === "panorama.factory-create").input,
-  ).toMatchObject({
-    openingPhoto: "b".repeat(64),
-    openingBackground: "d".repeat(64),
-    openingAuthorized: true,
-    openingRecipe: true,
-  });
-  expect(
-    calls.find((call: any) => call.method === "panorama.save").input.scenes,
-  ).toEqual([
-    expect.objectContaining({ id: "room-1", yaw: 150, direction: -1 }),
-  ]);
-  expect(
-    calls.find((call: any) => call.method === "panorama.factory-create").input
-      .openingClip,
-  ).toBeUndefined();
-  expect(
-    calls.find(
-      (call: any) => call.method === "panorama.factory-opening-location",
-    ).input,
-  ).toMatchObject({
-    revision: 2,
-    asset: "c".repeat(64) + ".jpg",
-  });
 });
 
 test("短视频带看审核可单独保存两行开场封面标题", async ({ page }) => {

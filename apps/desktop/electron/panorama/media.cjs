@@ -189,6 +189,58 @@ async function concatAudio(files, output, cwd, signal) {
     signal,
   );
 }
+function openingDuration(info) {
+  const video = info?.streams?.find(
+    (stream) =>
+      stream.codec_type === "video" && !stream.disposition?.attached_pic,
+  );
+  if (!video) return NaN;
+  return Number(video.duration) || Number(info.format?.duration);
+}
+async function openingAudio(file, id, cwd, signal) {
+  const info = await probe(file, cwd, signal, "mov");
+  const duration = openingDuration(info);
+  ensure(duration >= 2 && duration <= 30, "本机开场视频的画面或时长无效");
+  const audio = `opening-${id}.wav`;
+  const target = path.join(cwd, audio);
+  if (!(await exists(target))) {
+    const temp = target + ".part.wav";
+    const hasAudio = info.streams.some(
+      (stream) => stream.codec_type === "audio",
+    );
+    try {
+      await run(
+        ffmpeg(),
+        [
+          "-v",
+          "error",
+          "-y",
+          ...(hasAudio
+            ? ["-f", "mov", "-i", file]
+            : ["-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono"]),
+          "-map",
+          "0:a:0",
+          "-af",
+          "aresample=24000:async=1:first_pts=0,apad",
+          "-ac",
+          "1",
+          "-c:a",
+          "pcm_s16le",
+          "-t",
+          String(duration),
+          temp,
+        ],
+        cwd,
+        signal,
+      );
+      signal.throwIfAborted();
+      await fs.rename(temp, target);
+    } finally {
+      await fs.rm(temp, { force: true });
+    }
+  }
+  return { duration, audio };
+}
 async function synthesize(segment, c, cwd, signal, remote, billingContext) {
   const key = audioKey(segment, c);
   const parts = sentences(segment.text);
@@ -466,7 +518,6 @@ async function render(
   jobDir,
   signal,
   onProgress,
-  openingFile,
   spatialClips,
 ) {
   const c = job.config;
@@ -488,7 +539,7 @@ async function render(
           job.scenes,
           audio,
           c,
-          Boolean((!c.openingPhoto && c.openingClip) || openingFile),
+          Boolean(c.openingVideo || c.openingClip),
         )
       : null;
   const cache = path.join(ownerDir, "cache");
@@ -498,8 +549,9 @@ async function render(
   let elapsed = 0;
   let frame = 0;
   for (const [index, narration] of audio.entries()) {
+    const uploadedOpening = narration.kind === "opening" && c.openingVideo;
     const segment =
-      shortTour && c.subtitles
+      !uploadedOpening && shortTour && c.subtitles
         ? {
             ...narration,
             captions: await shortTourCaptions(narration, cache, signal),
@@ -525,12 +577,9 @@ async function render(
     // Wrap the start angle for FFmpeg while preserving continuous turns across segments.
     const start = wrapYaw(camera?.start ?? scene.yaw);
     const localOpening =
-      segment.kind === "opening" && !c.openingPhoto && c.openingClip;
+      uploadedOpening || (segment.kind === "opening" && c.openingClip);
     const openingVideo =
-      segment.kind === "opening" &&
-      (localOpening
-        ? path.join(ownerDir, "opening", `${localOpening}.mp4`)
-        : openingFile);
+      localOpening && path.join(ownerDir, "opening", `${localOpening}.mp4`);
     const spatialClip =
       !openingVideo && spatial ? spatialClips?.[index] : undefined;
     ensure(
@@ -556,11 +605,8 @@ async function render(
       height,
       c.subtitles,
       label,
-      openingVideo
-        ? c.openingPhoto
-          ? path.basename(openingVideo)
-          : c.openingClip
-        : null,
+      localOpening || null,
+      ...(uploadedOpening ? ["uploaded-opening"] : []),
       presentation.card(job, segment.kind),
       ...(shortTour ? [camera, hFov, vFov] : []),
       ...(spatialClip
@@ -603,11 +649,10 @@ async function render(
           presentation.card(job, segment.kind),
         ),
       );
-      // shortcut: hold the last frame of a short clip, until templates support a timed cut to the room.
       const base = spatialClip
         ? `trim=start_frame=${spatialClip.offsetFrames}:end_frame=${spatialClip.offsetFrames + frames},setpts=PTS-STARTPTS,scale=${width}:${height},setsar=1`
         : openingVideo
-          ? `scale=${width}:${height}:force_original_aspect_ratio=${shortTour ? `increase,crop=${width}:${height}` : `decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`},setsar=1,tpad=stop_mode=clone:${c.openingClip ? "stop=-1" : "stop_duration=5"}`
+          ? `scale=${width}:${height}:force_original_aspect_ratio=${shortTour && !uploadedOpening ? `increase,crop=${width}:${height}` : `decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`},setsar=1,tpad=stop_mode=clone:stop=-1`
           : `scale=4096:2048,loop=loop=-1:size=1:start=0,${shortTour ? "settb=AVTB," : ""}setpts=N/(${fps}*TB),sendcmd=f=${cmd},v360@camera=input=e:output=flat:w=${width}:h=${height}:h_fov=${hFov}:v_fov=${vFov}:yaw=${start}:reset_rot=1,setsar=1`;
       const temp = `clip-${key}.part.mp4`;
       await run(
@@ -624,7 +669,8 @@ async function render(
           ...(localOpening ? ["-map", "0:V:0"] : []),
           "-vf",
           base +
-            (c.subtitles || job.sample || c.design === "standard" || shortTour
+            (!uploadedOpening &&
+            (c.subtitles || job.sample || c.design === "standard" || shortTour)
               ? `,ass=${ass}`
               : ""),
           "-an",
@@ -828,6 +874,8 @@ module.exports = {
   duration,
   capabilities,
   synthesize,
+  openingDuration,
+  openingAudio,
   render,
   shortTourCameras,
   cameraCommands,

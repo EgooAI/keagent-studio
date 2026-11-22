@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -48,9 +47,6 @@ func validateAIProbeInput(service, mode string, input object) error {
 		if speaker := str(input["speaker"]); !qwenVoiceID.MatchString(speaker) || !strings.HasPrefix(speaker, qwenAudioModel+"-") {
 			return fail(422, "请填写千问 3.1 Plus 的专用测试音色 ID")
 		}
-	case "opening":
-		_, err := minimaxProbePayload(input)
-		return err
 	case "beike":
 		if input["authorized"] != true {
 			return fail(422, "请确认此地址已授权用于测试")
@@ -110,7 +106,7 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 			images = append(images, object{"id": []string{"probe-photo-1", "probe-photo-2"}[i], "kind": "photo", "jpeg": value})
 		}
 		template := object{"production": object{"config": object{"language": "zh-CN"}, "scriptRules": object{"overall": "简洁介绍示例房源", "opening": "简短开场", "scene": "按图片可见内容写一段", "closing": "简短结尾"}}}
-		_, err = generateVisionScript(ctx, template, object{"title": "服务连通性验证示例房源"}, images)
+		_, err = generateVisionScript(ctx, template, object{"title": "服务连通性验证示例房源"}, images, false)
 		return err
 	case "tts":
 		voice, err := s.activePublicVoice(ctx, str(input["voiceId"]))
@@ -138,66 +134,10 @@ func (s *server) performAIProbe(ctx context.Context, p *aiProbe) error {
 	case "beike":
 		_, err = s.lookupBeike(ctx, input, func(step string) error { return s.aiStep(ctx, p, step) })
 		return err
-	case "opening":
-		return s.probeMiniMaxOpening(ctx, p, input)
+
 	}
 	return fail(422, "测试服务无效")
 }
-func minimaxProbePayload(input object) ([]byte, error) {
-	args := object{"authorized": input["authorized"], "photo": input["photo"], "audio": base64.StdEncoding.EncodeToString(aiProbeSpeech), "ratio": "9:16"}
-	if input["video"] != nil && input["location"] == nil {
-		args["video"] = input["video"] // Resume samples saved by the previous admin UI.
-	} else {
-		if str(input["location"]) == "" {
-			return nil, fail(422, "请选择测试地点图")
-		}
-		args["location"] = input["location"]
-		args["prompt"] = "保留人物和地点特征。人物面向镜头自然口播，嘴部动作跟随参考音频。"
-	}
-	return minimaxPayload(args)
-}
-
-func (s *server) probeMiniMaxOpening(ctx context.Context, p *aiProbe, input object) error {
-	if p.Progress.Task == "" {
-		body, err := minimaxProbePayload(input)
-		if err != nil {
-			return err
-		}
-		if err = s.aiStep(ctx, p, "提交 4 秒 MiniMax 开场样例"); err != nil {
-			return err
-		}
-		p.Progress.Task, err = s.minimaxSubmit(ctx, body)
-		if err != nil {
-			return err
-		}
-	}
-	for {
-		if err := s.aiStep(ctx, p, "查询 MiniMax 并校验开场视频"); err != nil {
-			return err
-		}
-		result, err := s.minimaxQuery(ctx, p.Progress.Task)
-		if err != nil {
-			return err
-		}
-		switch str(result["status"]) {
-		case "succeeded":
-			data, err := s.productionBody(ctx, "GET", str(result["videoUrl"]), nil, nil, 32<<20)
-			if err != nil {
-				return err
-			}
-			if len(data) < 12 || string(data[4:8]) != "ftyp" {
-				return fail(502, "MiniMax 返回的视频不是 MP4")
-			}
-			return nil
-		case "failed", "cancelled":
-			return fail(502, str(result["message"]))
-		}
-		if err := waitAIProbe(ctx); err != nil {
-			return err
-		}
-	}
-}
-
 func (s *server) probeAIConnection(ctx context.Context, p *aiProbe) error {
 	if err := s.aiStep(ctx, p, "连接供应商（仅验证网络与 TLS）"); err != nil {
 		return err
@@ -354,6 +294,3 @@ func waitAIProbe(ctx context.Context) error {
 		return nil
 	}
 }
-
-//go:embed ai-probe-speech.wav
-var aiProbeSpeech []byte

@@ -161,33 +161,20 @@
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.settings-material-preview {
+.settings-opening-video {
   width: 100%;
-  height: 104px;
-  display: grid;
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  place-items: center;
-  overflow: hidden;
-  color: var(--muted);
-  margin-block: 4px 12px;
-  background: var(--canvas);
+  aspect-ratio: 16 / 9;
+  background: #172334;
   border-radius: 7px;
-}
-.settings-material-preview .ant-image {
-  width: 100%;
-  height: 100%;
-}
-.settings-material-preview .ant-image-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+  margin-bottom: 12px;
 }
 .settings-material .settings-material-name {
   margin: auto 0 8px;
   font-size: 13px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
 }
-.settings-material-notice,
 .settings-public-voices {
   border-top: 1px solid var(--line);
   padding-top: 16px;

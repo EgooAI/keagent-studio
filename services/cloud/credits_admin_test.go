@@ -272,17 +272,20 @@ func TestAdminCreditPricingAndWelcome(t *testing.T) {
 	if _, err = adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"image_expand": 3}}); err == nil {
 		t.Fatal("retired image expansion price accepted")
 	}
-	updated, err := adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"opening": 150}})
-	if err != nil || obj(updated)["version"] != "v1" {
+	if _, err = s.db.ExecContext(t.Context(), `INSERT INTO keagent_setting(id,payload) VALUES('credit_pricing','{"version":1,"prices":{"opening":150,"script":8}}')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"opening": 0, "script": 10}})
+	if retired, ok := err.(fault); !ok || retired.status != 410 {
+		t.Fatalf("retired opening price was editable: %v", err)
+	}
+	updated, err := adminCall(t, s, admin, "PUT", "/v1/admin/credits/pricing", object{"prices": object{"opening": 150, "tts_per_kilo_char": 20, "voice_clone": 90}})
+	if err != nil || obj(updated)["version"] != "v2" {
 		t.Fatalf("pricing update: %#v %v", updated, err)
 	}
-	grantForTest(t, s, "u1", creditKindPurchased, 200, 0)
-	hold, err := s.holdCredits(t.Context(), "u1", "opening", "priced", 150, "priced-key", "v1", nil)
-	if err != nil {
-		t.Fatalf("hold must use updated price: %v", err)
-	}
-	if hold.Amount != 150 {
-		t.Fatalf("hold amount %d", hold.Amount)
+	prices := obj(updated)["prices"].(map[string]int64)
+	if prices["opening"] != 150 || prices["script"] != 8 || prices["tts_per_kilo_char"] != 20 || prices["voice_clone"] != 90 {
+		t.Fatalf("partial update did not preserve stored prices: %#v", prices)
 	}
 
 	if _, err = adminCall(t, s, admin, "GET", "/v1/admin/credits/welcome", nil); err != nil {

@@ -37,10 +37,10 @@ func TestAdminPageValidation(t *testing.T) {
 }
 
 func TestAdminAISafeConfiguration(t *testing.T) {
-	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID", "DASHSCOPE_VOICE_CLONE_ENABLED", "MINIMAX_API_KEY"} {
+	for _, key := range []string{"AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_ALLOWED_HOSTS", "DASHSCOPE_API_KEY", "DASHSCOPE_WORKSPACE_ID", "DASHSCOPE_VOICE_CLONE_ENABLED"} {
 		t.Setenv(key, "")
 	}
-	if services := aiServices(); services[0].State != "missing" || services[1].State != "missing" || services[len(services)-1].State != "missing" {
+	if services := aiServices(); services[0].State != "missing" || services[1].State != "missing" {
 		t.Fatal("missing providers reported configured")
 	}
 	t.Setenv("AI_API_KEY", "secret-key-do-not-expose")
@@ -89,6 +89,24 @@ func TestAdminAISafeConfiguration(t *testing.T) {
 	value, err := (&server{}).panorama(t.Context(), actor{}, "capabilities", []byte(`{}`))
 	if err != nil || value.(object)["ai"] != false || value.(object)["bailianTts"] != true {
 		t.Fatal("capability rules diverged from admin checks", value, err)
+	}
+}
+
+func TestAdminMiniMaxIsRetired(t *testing.T) {
+	t.Setenv("MINIMAX_API_KEY", "historical-key")
+	for _, service := range aiServices() {
+		if service.ID == "opening" {
+			t.Fatal("retired MiniMax appears in the service overview")
+		}
+	}
+	s := &server{}
+	for _, operation := range []string{"test", "save", "activate", "verify-enable"} {
+		action := "ai-config/" + operation
+		request := httptest.NewRequest("POST", "/v1/admin/"+action, nil)
+		_, err := s.manageAI(request, actor{UserID: "admin"}, action, []byte(`{"service":"opening"}`))
+		if retired, ok := err.(fault); !ok || retired.status != 410 {
+			t.Fatalf("retired config %s: %v", operation, err)
+		}
 	}
 }
 

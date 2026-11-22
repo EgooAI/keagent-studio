@@ -56,7 +56,6 @@ export function AIState({ state }: { state: AdminAIService["state"] }) {
 const serviceOrder: AdminAIService["id"][] = [
   "script",
   "tts",
-  "opening",
   "beike",
   "beike-cli",
 ];
@@ -103,7 +102,12 @@ export default function AdminAI() {
   const { params, setParams } = useAdminParams();
   const { modal } = App.useApp();
   const serviceParam = params.get("service");
-  const requested = serviceParam === "voice-clone" ? "tts" : serviceParam;
+  const requested =
+    serviceParam === "voice-clone"
+      ? "tts"
+      : serviceParam === "opening"
+        ? null
+        : serviceParam;
   const [dirty, setDirty] = useState(false);
   const [dialogId, setDialogId] = useState(requested);
   const serviceButtons = useRef(new Map<string, HTMLButtonElement>());
@@ -118,6 +122,7 @@ export default function AdminAI() {
       const needsUpgrade = needsSpeechUpgrade(data);
       return data.management?.some(
         (row) =>
+          row.summary.id !== "opening" &&
           (!needsUpgrade || !isSpeechService(row.summary)) &&
           (probeRunning(row.verification) ||
             probeRunning(row.active.test) ||
@@ -127,7 +132,9 @@ export default function AdminAI() {
         : false;
     },
   });
-  const management = query.data?.management ?? [];
+  const management = (query.data?.management ?? []).filter(
+    ({ summary }) => summary.id !== "opening",
+  );
   const speechUpgradeRequired = !!query.data && needsSpeechUpgrade(query.data);
   const voiceClone = management.find((row) => row.summary.id === "voice-clone");
   const rows = management

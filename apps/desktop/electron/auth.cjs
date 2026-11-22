@@ -36,16 +36,6 @@ function registerAuth(
         });
         return result.canceled ? undefined : result.filePaths[0];
       },
-      openIntroPhoto: async (background = false) => {
-        const result = await dialog.showOpenDialog({
-          title: background ? "导入开场背景图" : "导入经纪人照片",
-          properties: ["openFile"],
-          filters: [
-            { name: "JPEG / PNG 图片", extensions: ["jpg", "jpeg", "png"] },
-          ],
-        });
-        return result.canceled ? undefined : result.filePaths[0];
-      },
       save: async (defaultPath) => {
         const result = await dialog.showSaveDialog({
           defaultPath,
@@ -97,6 +87,7 @@ function registerAuth(
   let accessExpires = 0;
   let tokenRequest;
   let identityGeneration = 0;
+  let verifiedUserId;
   const identityListeners = new Set();
   const installationFile = path.join(
     app.getPath("userData"),
@@ -111,6 +102,7 @@ function registerAuth(
     workflow.stop();
     for (const listener of identityListeners) listener();
     identityGeneration++;
+    verifiedUserId = undefined;
     accessToken = "";
     accessExpires = 0;
     tokenRequest = undefined;
@@ -205,6 +197,7 @@ function registerAuth(
         response.status === 403 &&
         (route === "/v1/session" || route === "/v1/devices/register")
       ) {
+        verifiedUserId = undefined;
         workflow.stop();
         for (const listener of identityListeners) listener();
       }
@@ -213,6 +206,7 @@ function registerAuth(
         { status: response.status, code: data.error?.code },
       );
     }
+    if (route === "/v1/session") verifiedUserId = data.userId;
     if (!business && next && token) {
       token = next;
       save();
@@ -485,7 +479,12 @@ function registerAuth(
     }
     if (typeof method === "string" && method.startsWith("panorama.")) {
       const generation = identityGeneration;
-      const identity = (await request("/v1/session")).data;
+      const cachedCatalog =
+        method === "panorama.factory-catalog" && args[0]?.cachedOnly === true;
+      if (cachedCatalog && (!token || !verifiedUserId)) return null;
+      const identity = cachedCatalog
+        ? { userId: verifiedUserId }
+        : (await request("/v1/session")).data;
       let property;
       if (
         [

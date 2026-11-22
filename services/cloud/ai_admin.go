@@ -114,7 +114,11 @@ func (s *server) manageAI(r *http.Request, a actor, action string, body []byte) 
 	if json.Unmarshal(body, &input) != nil {
 		return nil, fail(400, "配置请求无效")
 	}
-	spec, ok := specFor(str(input["service"]))
+	service := str(input["service"])
+	if service == "opening" {
+		return nil, fail(410, "MiniMax 开场配置已停用")
+	}
+	spec, ok := specFor(service)
 	if !ok {
 		return nil, fail(422, "未知 AI 服务")
 	}

@@ -5,6 +5,7 @@ const runtimeFields = new Set([
   "materialMode",
   "voice",
   "avatarId",
+  "openingVideo",
   "openingClip",
   "openingPhoto",
   "openingLocation",

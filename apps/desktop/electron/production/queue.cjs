@@ -48,6 +48,7 @@ class ProductionQueue {
   constructor(workflow) {
     this.workflow = workflow;
     this.preparing = new Map();
+    this.catalogRequests = new WeakMap();
     this.rendering = false;
     this.archiving = false;
     this.generation = 0;
@@ -196,13 +197,37 @@ class ProductionQueue {
       assertCurrent();
       return image;
     }
-    if (method === "catalog")
-      return {
-        ...(await this.workflow.capabilities(true)),
-        openingClip: state.openingClip,
-        openingPhoto: state.openingPhoto,
-        openingBackground: state.openingBackground,
+    if (method === "catalog") {
+      const cached = state.factoryCatalog;
+      if (input.cachedOnly === true) return cached?.data ?? null;
+      const request = {};
+      this.catalogRequests.set(state, request);
+      const { catalogVersion, library, ...fresh } =
+        await this.workflow.capabilities(
+          true,
+          cached?.version,
+          AbortSignal.timeout(10000),
+        );
+      assertCurrent();
+      if (!library && (!cached || catalogVersion !== cached.version))
+        return fresh;
+      const version = catalogVersion || hash(library);
+      const data = {
+        ...fresh,
+        library: cached?.version === version ? cached.data.library : library,
       };
+      if (this.catalogRequests.get(state) !== request) return data;
+      if (cached?.version === version && hash(data) === hash(cached.data))
+        return cached.data;
+      state.factoryCatalog = { version, data };
+      try {
+        this.workflow.persist(owner);
+      } catch (error) {
+        state.factoryCatalog = cached;
+        throw error;
+      }
+      return data;
+    }
     if (method === "materials") {
       ensure(validID(input.propertyId), "请选择房源");
       const result = await this.workflow.factoryProperties({
@@ -317,52 +342,16 @@ class ProductionQueue {
       ensure(item, "视频任务不存在");
       const draft = state.drafts.find((value) => value.id === item.draftId);
       const job = state.jobs.find((value) => value.id === item.jobId);
-      const location = draft?.config.openingLocation;
       return {
         ...this.summary(item, job, draft),
         config: item.config,
         legacy: item.legacy,
         draft: draft && this.workflow.draftView(owner, draft),
         job: job && this.workflow.jobView(owner, job),
-        openingLocationUrl:
-          location?.asset &&
-          this.workflow.url(owner, `assets/${location.asset}`),
-        openingLocations:
-          location?.source === "property"
-            ? this.workflow.openingLocations(owner, draft.property.id)
-            : undefined,
+        openingVideoUrl:
+          item.config.openingVideo &&
+          this.workflow.openingVideoURL(owner, item.config.openingVideo),
       };
-    }
-    if (method === "opening-location") {
-      const item = data.items.find((row) => row.id === input.id);
-      ensure(item?.phase === "review", "请先返回待审核，再更换地点图");
-      const draft = this.workflow.draft(owner, item.draftId, input.revision);
-      const location = draft.config.openingLocation;
-      ensure(
-        location?.source === "property" &&
-          this.workflow
-            .openingLocations(owner, draft.property.id)
-            .some(({ asset }) => asset === input.asset),
-        "请选择当前房源的原始实拍图",
-      );
-      if (location.asset === input.asset) return;
-      const previous = draft.config;
-      draft.config = {
-        ...previous,
-        openingLocation: { ...location, asset: input.asset },
-      };
-      draft.revision++;
-      try {
-        this.update(owner, item, {
-          config: draft.config,
-          approvedRevision: undefined,
-        });
-      } catch (error) {
-        draft.config = previous;
-        draft.revision--;
-        throw error;
-      }
-      return null;
     }
     if (method === "pause" || method === "resume") {
       this.update(owner, data, {
@@ -440,23 +429,10 @@ class ProductionQueue {
       (input.voiceId === undefined ||
         input.voiceId === "" ||
         validID(input.voiceId)) &&
-        (input.openingClip === undefined ||
-          (typeof input.openingClip === "string" &&
-            /^[a-f0-9]{64}$/.test(input.openingClip))) &&
-        (input.openingPhoto === undefined ||
-          (typeof input.openingPhoto === "string" &&
-            /^[a-f0-9]{64}$/.test(input.openingPhoto))),
+        (input.openingVideo === undefined ||
+          (typeof input.openingVideo === "string" &&
+            /^[a-f0-9]{64}$/.test(input.openingVideo))),
       "音色或开场视频引用无效",
-    );
-    ensure(
-      !input.openingPhoto || input.openingAuthorized === true,
-      "请确认经纪人照片和开场素材的使用授权",
-    );
-    ensure(
-      input.openingBackground === undefined ||
-        (typeof input.openingBackground === "string" &&
-          /^[a-f0-9]{64}$/.test(input.openingBackground)),
-      "开场背景图引用无效",
     );
     for (const pair of input.pairs)
       ensure(
@@ -492,10 +468,7 @@ class ProductionQueue {
       input.pairs,
       input.sceneIdsByProperty,
       input.voiceId,
-      input.openingClip ?? input.avatarId,
-      ...(input.openingPhoto ? [input.openingPhoto] : []),
-      ...(input.openingBackground ? [input.openingBackground] : []),
-      ...(input.openingRecipe === true ? ["opening-recipe"] : []),
+      input.openingVideo,
       ...(overrides ? [{ renderOverrides: overrides }] : []),
       ...(mixes ? [{ mixes }] : []),
     ]);
@@ -550,8 +523,14 @@ class ProductionQueue {
       ? (voices.voices || []).filter((voice) => voice.status === "ready")
       : [];
     const state = this.workflow.store(owner);
-    const openingClip = state.openingClip?.id;
-    const fixedOpenings = new Map();
+    const openingVideo =
+      input.openingVideo &&
+      (await media.exists(
+        this.workflow.openingVideoFile(owner, input.openingVideo),
+      ))
+        ? input.openingVideo
+        : undefined;
+    assertCurrent();
     const selectedMaterials = new Map();
     const items = [];
     const issues = [];
@@ -600,11 +579,6 @@ class ProductionQueue {
         continue;
       }
       const recipe = template.production.config;
-      const templateOpening = template.production.opening;
-      const openingPhoto =
-        templateOpening || input.openingRecipe !== true
-          ? input.openingPhoto
-          : undefined;
       const voiceId = currentVoiceId(input.voiceId || defaults.voiceId);
       if (
         !sample &&
@@ -632,10 +606,6 @@ class ProductionQueue {
           v.language === recipe.language &&
           (!input.voiceId || sample || v.name === input.voiceId),
       );
-      if (sample && (templateOpening || openingPhoto)) {
-        issue("MiniMax 开场请选择真实房源");
-        continue;
-      }
       if (sample && recipe.videoMode === "avatar") {
         issue("测试房源仅支持配音模板");
         continue;
@@ -653,87 +623,13 @@ class ProductionQueue {
         issue("公共配音服务未配置");
         continue;
       }
-      if (
-        (templateOpening || openingPhoto) &&
-        (!caps.minimaxOpening || !caps.managedVoices)
-      ) {
-        issue("请在管理后台启用 MiniMax 开场和百炼配音");
-        continue;
-      }
-      if (
-        templateOpening &&
-        (!openingPhoto || openingPhoto !== state.openingPhoto?.id)
-      ) {
-        issue("请选择经纪人照片并确认素材使用授权");
-        continue;
-      }
-      if (
-        !templateOpening &&
-        openingPhoto &&
-        (openingPhoto !== state.openingPhoto?.id ||
-          input.openingClip !== openingClip ||
-          !openingClip ||
-          state.openingClip.duration > 5 ||
-          state.openingClip.bytes > 8 * 1024 * 1024)
-      ) {
-        issue("请选择 2–5 秒的参考视频和经纪人照片，素材更新后请刷新");
-        continue;
-      }
-      if (
-        !sample &&
-        recipe.videoMode === "avatar" &&
-        !templateOpening &&
-        (!openingClip || input.openingClip !== openingClip)
-      ) {
-        issue(
-          openingClip
-            ? "真人开场视频已更新，请刷新后重新创建"
-            : "请先导入真人开场视频",
-        );
+      if (recipe.videoMode === "avatar" && !openingVideo) {
+        issue("请选择本机开场视频");
         continue;
       }
       if (!sample && !caps.ai) {
         issue("AI 文案服务未配置");
         continue;
-      }
-      let openingLocation;
-      let templateSnapshot = template;
-      if (templateOpening) {
-        const { location } = templateOpening;
-        openingLocation = { source: location.source };
-        if (location.source === "property" && input.openingBackground) {
-          if (input.openingBackground !== state.openingBackground?.id) {
-            issue("开场背景图已更新，请刷新后重新创建");
-            continue;
-          }
-          openingLocation = {
-            source: "personal",
-            asset: state.openingBackground.asset,
-          };
-        }
-        if (location.source === "fixed") {
-          if (!fixedOpenings.has(template.id)) {
-            ensure(
-              typeof location.image === "string",
-              "模板固定地点图缺失，请联系管理员",
-            );
-            const image = await this.workflow.importBytes(
-              owner,
-              Buffer.from(location.image, "base64"),
-              "模板固定地点图",
-              "reference",
-            );
-            fixedOpenings.set(template.id, image.asset);
-          }
-          openingLocation.asset = fixedOpenings.get(template.id);
-          templateSnapshot = {
-            ...template,
-            production: {
-              ...template.production,
-              opening: { ...templateOpening, location: { source: "fixed" } },
-            },
-          };
-        }
       }
       const resolved = config(
         {
@@ -752,12 +648,8 @@ class ProductionQueue {
             sample || !caps.managedVoices
               ? system.name
               : (personal || publicVoice).id,
-          openingClip:
-            !templateOpening && (recipe.videoMode === "avatar" || openingPhoto)
-              ? openingClip
-              : undefined,
-          openingPhoto,
-          openingLocation,
+          openingVideo:
+            recipe.videoMode === "avatar" ? openingVideo : undefined,
         },
         [template],
       );
@@ -793,6 +685,8 @@ class ProductionQueue {
         issue(reason(error));
         continue;
       }
+      const production = { ...template.production };
+      delete production.opening;
       items.push({
         id: randomUUID(),
         batchId: input.requestId,
@@ -802,7 +696,7 @@ class ProductionQueue {
         config: resolved,
         templateVersion: template.version,
         templateName: template.name,
-        templateSnapshot,
+        templateSnapshot: { ...template, production },
         phase: "pending",
         createdAt,
       });
@@ -903,10 +797,9 @@ class ProductionQueue {
         enqueue({});
       } else
         patch({ phase: item.draftId ? "review" : "pending", error: undefined });
-    } else if (action === "room-opening" || action === "edit-opening") {
+    } else if (action === "room-opening") {
       ensure(
-        (item.phase === "failed" ||
-          (action === "room-opening" && item.phase === "review")) &&
+        ["failed", "review"].includes(item.phase) &&
           !this.workflow.active.has(item.jobId),
         "请等待任务停止后再调整开场",
       );
@@ -916,19 +809,16 @@ class ProductionQueue {
       );
       const draft = this.workflow.draft(owner, item.draftId, revision);
       ensure(
-        draft.config.openingPhoto ||
-          (action === "room-opening" &&
-            draft.config.videoMode === "avatar" &&
-            !draft.config.roomOpening),
+        !draft.config.openingVideo &&
+          (draft.config.openingPhoto ||
+            (draft.config.videoMode === "avatar" && !draft.config.roomOpening)),
         "当前任务无法调整开场",
       );
       const previousConfig = draft.config;
-      if (action === "room-opening") {
-        draft.config = { ...draft.config, roomOpening: true };
-        delete draft.config.openingClip;
-        delete draft.config.openingPhoto;
-        delete draft.config.openingLocation;
-      }
+      draft.config = { ...draft.config, roomOpening: true };
+      delete draft.config.openingClip;
+      delete draft.config.openingPhoto;
+      delete draft.config.openingLocation;
       draft.revision++;
       try {
         patch({

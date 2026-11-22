@@ -11,6 +11,7 @@ export interface PanoramaConfig {
   ttsProvider: "system" | "bailian" | "personal";
   voice: string;
   rate: number;
+  openingVideo?: string;
   openingClip?: string;
   openingPhoto?: string;
   openingLocation?: {

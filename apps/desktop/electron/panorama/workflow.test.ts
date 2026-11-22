@@ -97,101 +97,60 @@ describe("panorama domain", () => {
     ])
       expect(() => domain.renderOverrides(value)).toThrow();
   });
-  it("downloads the MiniMax OSS result and rejects unrelated hosts", async () => {
+  it("reuses the local catalog across restarts and replaces it only when the server version changes", async () => {
     const { workflow, owner } = fixture();
-    const dns = require("node:dns/promises");
-    vi.spyOn(dns, "lookup").mockResolvedValue([
-      { address: "8.8.8.8", family: 4 },
-    ]);
-    const fetch = vi.fn().mockResolvedValue(new Response("video fixture"));
-    vi.stubGlobal("fetch", fetch);
-    const file = path.join(workflow.directory(owner), "result.mp4");
-    const url =
-      "https://algeng-video-infer.oss-cn-shanghai.aliyuncs.com/output.mp4?signature=test";
-    const signal = new AbortController().signal;
-    await providers.downloadMiniMaxVideo(url, file, signal);
-    expect(fs.readFileSync(file, "utf8")).toBe("video fixture");
-    expect(fetch).toHaveBeenCalledWith(
-      new URL(url),
-      expect.objectContaining({ redirect: "error" }),
-    );
-    for (const host of [
-      "other-bucket.oss-cn-shanghai.aliyuncs.com",
-      "algeng-video-infer.oss-cn-shanghai.aliyuncs.com.evil.example",
-    ])
-      await expect(
-        providers.downloadMiniMaxVideo(
-          `https://${host}/result.mp4`,
-          file,
-          signal,
-        ),
-      ).rejects.toThrow("域名无效");
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it("persists personal opening images per owner and preserves them after canceled or invalid uploads", async () => {
-    const { workflow, owner } = fixture();
-    const file = path.join(workflow.directory(owner), "portrait.jpg");
-    fs.writeFileSync(
-      file,
-      Buffer.concat([Buffer.from([255, 216, 255]), Buffer.alloc(100)]),
-    );
-    workflow.dialogs.openIntroPhoto = vi.fn().mockResolvedValue(file);
-    vi.spyOn(media, "probe").mockResolvedValue({
-      streams: [{ codec_name: "mjpeg", width: 640, height: 480 }],
-    });
-    const photo = await workflow.handle("user-a", "opening-photo-import");
-    const background = await workflow.handle(
-      "user-a",
-      "opening-background-import",
-    );
-    const directory = workflow.directory(owner);
-    fs.mkdirSync(path.join(directory, "cache"), { recursive: true });
-    fs.writeFileSync(
-      path.join(directory, "cache", "opening.wav"),
-      "test audio",
-    );
-    vi.spyOn(media, "scriptImage").mockResolvedValue("background-reference");
+    const first = { recommended: [{ id: "old" }], parts: [], personal: [] };
+    const second = { recommended: [{ id: "new" }], parts: [], personal: [] };
+    const version = "a".repeat(64);
+    const updatedVersion = "b".repeat(64);
+    vi.mocked(workflow.capabilities).mockRestore();
+    workflow.capabilityPromise = Promise.resolve({ ffmpeg: true });
     workflow.remote = vi
       .fn()
-      .mockRejectedValue(new Error("stop before provider"));
-    await expect(
-      workflow.miniMaxOpening(
-        directory,
-        {
-          openingPhoto: photo.id,
-          openingLocation: { source: "personal", asset: background.asset },
-          aspectRatio: "9:16",
-        },
-        { audio: "opening.wav" },
-        new AbortController().signal,
-        { id: "template", version: "1.0.0" },
-      ),
-    ).rejects.toThrow("stop before provider");
+      .mockResolvedValue({ catalogVersion: version, library: first });
+    expect(
+      await workflow.handle("user-a", "factory-catalog", { cachedOnly: true }),
+    ).toBeNull();
+    expect(workflow.remote).not.toHaveBeenCalled();
+    expect(await workflow.handle("user-a", "factory-catalog")).toMatchObject({
+      library: first,
+    });
     expect(workflow.remote).toHaveBeenCalledWith(
-      "opening-submit",
-      expect.objectContaining({
-        location: "background-reference",
-        photo: fs.readFileSync(file).toString("base64"),
-        audio: Buffer.from("test audio").toString("base64"),
-      }),
+      "capabilities",
+      expect.objectContaining({ bundleCatalog: true }),
       expect.any(AbortSignal),
     );
-    workflow.stores.clear();
-    const saved = await workflow.handle("user-a", "opening-materials");
-    expect(saved.photo.url).toMatch(/^data:image\/jpeg;base64,/);
-    expect(saved.background.asset).toBe(background.asset);
-    expect(await workflow.handle("user-b", "opening-materials")).toEqual({});
-    workflow.dialogs.openIntroPhoto.mockResolvedValue(undefined);
+
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    restarted.capabilityPromise = workflow.capabilityPromise;
+    restarted.remote = vi.fn().mockResolvedValue({ catalogVersion: version });
+    const call = (input = {}) =>
+      restarted.handle("user-a", "factory-catalog", input);
+    expect(await call({ cachedOnly: true })).toMatchObject({ library: first });
     expect(
-      await workflow.handle("user-a", "opening-background-import"),
+      await restarted.handle("user-b", "factory-catalog", { cachedOnly: true }),
     ).toBeNull();
-    expect(workflow.store(owner).openingBackground.id).toBe(background.id);
-    workflow.dialogs.openIntroPhoto.mockResolvedValue(file);
-    fs.writeFileSync(file, "invalid image");
-    await expect(
-      workflow.handle("user-a", "opening-photo-import"),
-    ).rejects.toThrow("JPEG");
-    expect(workflow.store(owner).openingPhoto.id).toBe(photo.id);
+    expect(restarted.remote).not.toHaveBeenCalled();
+    const persist = vi.spyOn(restarted, "persist");
+    expect(await call()).toMatchObject({ library: first });
+    expect(restarted.remote).toHaveBeenCalledWith(
+      "capabilities",
+      expect.objectContaining({ catalogVersion: version }),
+      expect.any(AbortSignal),
+    );
+    expect(persist).not.toHaveBeenCalled();
+
+    restarted.remote.mockResolvedValue({
+      catalogVersion: updatedVersion,
+      library: second,
+    });
+    expect(await call()).toMatchObject({ library: second });
+    expect(persist).toHaveBeenCalledOnce();
+    expect(restarted.store(owner).factoryCatalog.version).toBe(updatedVersion);
+    restarted.remote.mockRejectedValue(new Error("offline"));
+    await expect(call()).rejects.toThrow("offline");
+    expect(await call({ cachedOnly: true })).toMatchObject({ library: second });
+    expect(persist).toHaveBeenCalledOnce();
   });
 
   it("saves reusable templates without property-specific or identity fields and freezes draft versions", async () => {
@@ -1276,117 +1235,6 @@ describe("production queue", () => {
     );
   });
 
-  it("sends the approved opening WAV to MiniMax and reuses it as the narration track", async () => {
-    const { workflow, owner, scenes, config } = fixture();
-    const dir = workflow.directory(owner);
-    const references = path.join(dir, "opening");
-    fs.mkdirSync(references);
-    const video = Buffer.from("video reference".repeat(6));
-    const photo = Buffer.from("photo reference".repeat(6));
-    const wav = Buffer.from("original Bailian WAV");
-    const openingClip = domain.hash(video);
-    const openingPhoto = domain.hash(photo);
-    fs.writeFileSync(path.join(references, `${openingClip}.mp4`), video);
-    fs.writeFileSync(path.join(references, `${openingPhoto}.photo`), photo);
-    vi.mocked(workflow.capabilities).mockResolvedValue({
-      ffmpeg: true,
-      ffprobe: true,
-      managedVoices: true,
-      bailianTts: true,
-      minimaxOpening: true,
-    });
-    workflow.remote = vi.fn(async (method: string, input: unknown) => {
-      if (method === "voice-list")
-        return { publicVoices: [{ id: "test", language: "zh-CN" }] };
-      if (method === "opening-submit") {
-        expect(input).toMatchObject({
-          audio: wav.toString("base64"),
-          video: video.toString("base64"),
-          photo: photo.toString("base64"),
-          authorized: true,
-        });
-        return { requestKey: "a".repeat(64) };
-      }
-      if (method === "opening-query")
-        return {
-          status: "succeeded",
-          videoUrl: "https://cdn.hailuoai.com/example.mp4",
-        };
-      throw new Error(`Unexpected provider operation ${method}`);
-    });
-    vi.spyOn(media, "synthesize").mockImplementation(
-      async (...args: unknown[]) => {
-        const [segment, voice, cache] = args as [
-          { kind: string },
-          { ttsProvider: string },
-          string,
-        ];
-        expect(voice.ttsProvider).toBe("bailian");
-        const audio = `${segment.kind}.wav`;
-        fs.writeFileSync(path.join(cache, audio), wav);
-        return { audio, duration: 4.2, captions: [] };
-      },
-    );
-    vi.spyOn(providers, "downloadMiniMaxVideo").mockImplementation(
-      async (...args: unknown[]) => {
-        fs.writeFileSync(String(args[1]), "MiniMax video".repeat(6));
-      },
-    );
-    vi.spyOn(media, "probe").mockResolvedValue({
-      format: { duration: 5 },
-      streams: [{ codec_type: "video" }],
-    });
-    const render = vi
-      .spyOn(media, "render")
-      .mockResolvedValue({ duration: 12.6 });
-    const input = {
-      scenes,
-      config: {
-        ...config,
-        ttsProvider: "bailian",
-        openingClip,
-        openingPhoto,
-      },
-    };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const draft = await workflow.handle(
-        "user-a",
-        "generate",
-        input,
-        property,
-      );
-      if (!attempt) {
-        await expect(
-          workflow.handle("user-a", "start", {
-            id: draft.id,
-            revision: draft.revision,
-          }),
-        ).rejects.toThrow("请先确认整条视频的文案");
-        expect(workflow.remote).not.toHaveBeenCalled();
-      }
-      const job = await workflow.handle("user-a", "start", {
-        id: draft.id,
-        revision: draft.revision,
-        confirmed: true,
-      });
-      await workflow.active.get(job.id)?.promise;
-      expect(job.status, job.error).toBe("succeeded");
-    }
-    expect(
-      workflow.remote.mock.calls.filter(
-        ([method]: [string]) => method === "opening-submit",
-      ),
-    ).toHaveLength(1);
-    const [, tracks, , , , , videoFile] = render.mock.calls[0];
-    expect(tracks).toMatchObject([
-      { audio: "opening.wav" },
-      { audio: "scene.wav" },
-      { audio: "scene.wav" },
-      { audio: "closing.wav" },
-    ]);
-    expect(String(videoFile)).toMatch(/minimax-[a-f0-9]{64}\.mp4$/);
-  });
-
   it("lets a legacy opening draft switch to room footage", async () => {
     const { workflow, owner, scenes, config, call, act, pairs } =
       batchFixture();
@@ -1403,6 +1251,7 @@ describe("production queue", () => {
       (value: { id: string }) => value.id === draft.id,
     );
     saved.config.videoMode = "avatar";
+    saved.config.openingPhoto = domain.hash("old photo");
     const item = state.production.items[0];
     Object.assign(item, {
       phase: "review",
@@ -1417,299 +1266,159 @@ describe("production queue", () => {
     expect(item.phase).toBe("review");
   });
 
-  it("locks each MiniMax task to its own original location and requires a fresh approval after a change", async () => {
-    const { workflow, owner, scenes, config, call, act, pairs, templates } =
-      batchFixture();
-    const state = workflow.store(owner);
-    const selected = [pairs[0], pairs[3], pairs[6]];
-    const photo = "b".repeat(64);
-    fs.mkdirSync(path.join(workflow.directory(owner), "opening"));
-    fs.writeFileSync(
-      path.join(workflow.directory(owner), "opening", `${photo}.photo`),
-      "broker photo fixture".repeat(4),
-    );
-    state.openingPhoto = { id: photo };
-    const template = templates[0];
-    Object.assign(template.production, {
-      schemaVersion: 2,
-      opening: { prompt: "在地点图中出镜", location: { source: "property" } },
-    });
-    template.production.config.videoMode = "avatar";
-    vi.mocked(workflow.capabilities).mockResolvedValue({
-      ai: true,
-      ffmpeg: true,
-      ffprobe: true,
-      managedVoices: true,
-      bailianTts: true,
-      minimaxOpening: true,
-      templates,
-      defaultConfig: config,
-      voices: [],
-    });
-    function addPhoto(propertyId: string, name: string, id: string) {
-      const asset = `${domain.hash(name)}.jpg`;
-      state.assetMetadata[asset] = {
-        kinds: ["photo"],
-        width: 640,
-        height: 480,
-      };
-      fs.writeFileSync(
-        path.join(workflow.directory(owner), "assets", asset),
-        name,
-      );
-      state.imports[propertyId].scenes = [
-        ...state.imports[propertyId].scenes,
-        { ...scenes[0], id, asset, room: name, kind: "photo" },
-      ];
-      return asset;
-    }
-    const first = addPhoto(
-      selected[0].propertyId,
-      "正门",
-      "22222222-2222-4222-8222-222222222222",
-    );
-    const replacement = addPhoto(
-      selected[0].propertyId,
-      "门厅",
-      "33333333-3333-4333-8333-333333333333",
-    );
-    const other = addPhoto(
-      selected[1].propertyId,
-      "庭院",
-      "44444444-4444-4444-8444-444444444444",
-    );
-    const factory = require("../production/factory.cjs");
-    vi.mocked(factory.scriptImages).mockImplementation(
-      async (_w: unknown, _o: string, scenes: { id: string }[]) => scenes,
-    );
-    workflow.remote = vi.fn(
-      async (method: string, input: { images: { id: string }[] }) => {
-        if (method === "voice-list")
-          return { publicVoices: [{ id: "voice-1", language: "zh-CN" }] };
-        if (method === "script-vision")
-          return [
-            "opening",
-            ...input.images.map(({ id }) => id),
-            "closing",
-          ].map((id) => ({ id, text: "审核文案" }));
-        throw new Error("unexpected provider " + method);
-      },
-    );
-    await call("pause");
-    const batch = {
-      requestId: "location-opening",
-      pairs: selected,
-      openingRecipe: true,
-    };
-    expect((await call("create", batch)).issues[0].error).toContain(
-      "经纪人照片",
-    );
-    await call("create", {
-      ...batch,
-      openingPhoto: photo,
-      openingAuthorized: true,
-    });
-    await call("resume");
-    const items = state.production.items;
-    await vi.waitFor(() =>
-      expect(items.map((item: { phase: string }) => item.phase)).toEqual([
-        "review",
-        "review",
-        "review",
-      ]),
-    );
-    expect(
-      items.map(
-        (item: { config: { openingLocation: { asset?: string } } }) =>
-          item.config.openingLocation.asset,
-      ),
-    ).toEqual([first, other, undefined]);
-    const [a, b, missing] = items;
-    await expect(
-      call("opening-location", { id: a.id, revision: 1, asset: other }),
-    ).rejects.toThrow("当前房源");
-    await call("opening-location", {
-      id: a.id,
-      revision: 1,
-      asset: replacement,
-    });
-    expect((await call("detail", { id: a.id })).draft).toMatchObject({
-      revision: 2,
-      config: { openingLocation: { asset: replacement } },
-    });
-    expect(
-      (await call("detail", { id: b.id })).config.openingLocation.asset,
-    ).toBe(other);
-    expect((await act("confirm", { id: a.id, revision: 1 }))[0].ok).toBe(false);
-    expect(
-      (await act("confirm", { id: missing.id, revision: 1 }))[0].error,
-    ).toContain("开场地点图");
-    expect(
-      (await act("room-opening", { id: missing.id, revision: 1 }))[0].ok,
-    ).toBe(true);
-    expect(missing.config.openingLocation).toBeUndefined();
-    expect(
-      workflow.remote.mock.calls.some(
-        ([method]: [string]) => method === "opening-submit",
-      ),
-    ).toBe(false);
-
-    await call("pause");
-    state.openingBackground = {
-      id: domain.hash("personal"),
-      asset: replacement,
-    };
-    const personalBatch = {
-      requestId: "personal-background",
-      pairs: [selected[0]],
-      openingPhoto: photo,
-      openingBackground: state.openingBackground.id,
-      openingAuthorized: true,
-      openingRecipe: true,
-    };
-    await call("create", personalBatch);
-    const personalItem = state.production.items.find(
-      (item: any) => item.batchId === personalBatch.requestId,
-    );
-    expect(personalItem.config.openingLocation).toEqual({
-      source: "personal",
-      asset: replacement,
-    });
-    state.openingBackground = { id: domain.hash("replacement"), asset: first };
-    await call("resume");
-    await vi.waitFor(() => expect(personalItem.phase).toBe("review"));
-    expect(
-      (await call("detail", { id: personalItem.id })).draft.config
-        .openingLocation,
-    ).toEqual({ source: "personal", asset: replacement });
-    expect(
-      (
-        await call("create", {
-          ...personalBatch,
-          requestId: "stale-background",
-        })
-      ).issues[0].error,
-    ).toContain("背景图已更新");
-  });
-
-  it("uses the template location with panorama-only properties and returns overlong narration to review", async () => {
-    const {
-      workflow,
-      owner,
-      config,
-      call,
-      act,
-      pairs,
-      templates,
-      releaseScripts,
-    } = batchFixture();
-    const state = workflow.store(owner);
-    const photo = "b".repeat(64);
-    const opening = path.join(workflow.directory(owner), "opening");
-    fs.mkdirSync(opening);
-    fs.writeFileSync(
-      path.join(opening, `${photo}.photo`),
-      "broker photo fixture".repeat(4),
-    );
-    state.openingPhoto = { id: photo };
-    const fixtureImage = Buffer.from("template location fixture".repeat(4));
-    const asset = `${domain.hash(fixtureImage)}.jpg`;
-    fs.writeFileSync(
-      path.join(workflow.directory(owner), "assets", asset),
-      fixtureImage,
-    );
-    const importImage = vi
-      .spyOn(workflow, "importBytes")
-      .mockResolvedValue({ asset });
-    templates[0].production.config.videoMode = "avatar";
-    Object.assign(templates[0].production, {
-      schemaVersion: 2,
-      opening: {
-        prompt: "在门店出镜",
-        location: { source: "fixed", image: fixtureImage.toString("base64") },
-      },
-    });
-    vi.mocked(workflow.capabilities).mockResolvedValue({
-      ai: true,
-      ffmpeg: true,
-      ffprobe: true,
-      managedVoices: true,
-      bailianTts: true,
-      minimaxOpening: true,
-      templates,
-      defaultConfig: config,
-      voices: [],
-    });
-    vi.spyOn(media, "synthesize").mockResolvedValue({ duration: 16 });
-    await call("create", {
-      requestId: "fixed-location-opening",
-      pairs: [pairs[0], pairs[3]],
-      openingPhoto: photo,
-      openingAuthorized: true,
-      openingRecipe: true,
-    });
-    releaseScripts();
-    const [first, second] = state.production.items;
-    await vi.waitFor(() =>
-      expect([first.phase, second.phase]).toEqual(["review", "review"]),
-    );
-    expect(importImage).toHaveBeenCalledTimes(1);
-    expect(first.config.openingLocation.asset).toBe(asset);
-    expect(second.config.openingLocation.asset).toBe(asset);
-    expect(
-      first.templateSnapshot.production.opening.location,
-    ).not.toHaveProperty("image");
-    expect((await act("confirm", { id: first.id, revision: 1 }))[0].ok).toBe(
-      true,
-    );
-    await vi.waitFor(() => expect(first.error).toContain("16.0 秒"));
-    expect(first.phase).toBe("review");
-    expect((await call("detail", { id: first.id })).revision).toBe(2);
-    expect(first.approvedRevision).toBeUndefined();
-    expect(
-      workflow.remote.mock.calls.some(
-        ([method]: [string]) => method === "opening-submit",
-      ),
-    ).toBe(false);
-  });
-
-  it("snapshots the local clip for new face batches without consulting the avatar service", async () => {
+  it("keeps the local opening library account-scoped and requires an explicit selection for each batch", async () => {
     const { workflow, owner, call, pairs, templates } = batchFixture();
     templates[0].production.config.videoMode = "avatar";
     await call("pause");
     const input = { requestId: "face-batch", pairs: [pairs[0]] };
-    expect(await call("create", input)).toMatchObject({
-      issues: [{ error: "请先导入真人开场视频" }],
-    });
     const source = path.join(workflow.root, "intro.mp4");
-    fs.writeFileSync(source, "test opening clip");
-    workflow.dialogs.openIntro = async () => source;
+    workflow.dialogs.openIntro = vi.fn().mockResolvedValue(source);
     vi.spyOn(media, "probe").mockResolvedValue({
       format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "3.0" },
       streams: [{ codec_type: "video" }],
     });
-    const clip = await workflow.handle("user-a", "opening-clip-import");
-    expect((await call("catalog")).openingClip).toEqual(clip);
+    const save = (contents: string, saveToLibrary: boolean) => {
+      fs.writeFileSync(source, contents.repeat(10));
+      return workflow.handle("user-a", "opening-clip-import", {
+        saveToLibrary,
+      });
+    };
+    const first = await save("first clip", true);
+    const second = await save("second clip", true);
+    const temporary = await save("temporary clip", false);
+
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    expect(await restarted.handle("user-a", "opening-videos")).toMatchObject([
+      first,
+      second,
+    ]);
+    expect(await restarted.handle("user-b", "opening-videos")).toEqual([]);
+    const url = new URL(workflow.openingVideoURL(owner, first.id));
+    expect(workflow.mediaFile("user-a", url)).toBe(
+      workflow.openingVideoFile(owner, first.id),
+    );
+    expect(() => workflow.mediaFile("user-b", url)).toThrow("无权访问");
+
+    expect(await call("create", input)).toMatchObject({
+      issues: [{ error: "请选择本机开场视频" }],
+    });
     expect(
-      (await workflow.handle("user-b", "factory-catalog")).openingClip,
-    ).toBeUndefined();
-    expect(await call("create", { ...input, openingClip: clip.id })).toEqual({
+      await call("create", { ...input, openingVideo: "1".repeat(64) }),
+    ).toMatchObject({
+      issues: [{ error: "请选择本机开场视频" }],
+    });
+    expect(await call("create", { ...input, openingVideo: first.id })).toEqual({
       batchId: input.requestId,
       issues: [],
     });
-    fs.writeFileSync(source, "new test opening clip");
-    await workflow.handle("user-a", "opening-clip-import");
+    expect(
+      await call("create", {
+        ...input,
+        requestId: "temporary-batch",
+        openingVideo: temporary.id,
+      }),
+    ).toEqual({
+      batchId: "temporary-batch",
+      issues: [],
+    });
+    await workflow.handle("user-a", "opening-video-remove", { id: first.id });
+    expect(await workflow.handle("user-a", "opening-videos")).toMatchObject([
+      second,
+    ]);
+    expect(
+      workflow
+        .store(owner)
+        .production.items.map((item: any) => item.config.openingVideo),
+    ).toEqual([temporary.id, first.id]);
+    expect(
+      fs.readFileSync(workflow.openingVideoFile(owner, first.id), "utf8"),
+    ).toBe("first clip".repeat(10));
+    workflow.dialogs.openIntro.mockResolvedValue(undefined);
+    expect(
+      await workflow.handle("user-a", "opening-clip-import", {
+        saveToLibrary: true,
+      }),
+    ).toBeNull();
+    expect(await workflow.handle("user-a", "opening-videos")).toMatchObject([
+      second,
+    ]);
+  });
+
+  it("sends only walkthrough information to the cloud and puts local opening audio before narration", async () => {
+    const { workflow, owner, call, act, pairs, scenes, templates, config } =
+      batchFixture();
+    const recipe = templates[0].production;
+    recipe.config.videoMode = "avatar";
+    Object.assign(recipe, {
+      opening: { prompt: "旧版开场提示词", location: { source: "fixed" } },
+    });
+    const id = domain.hash("opening");
+    const file = workflow.openingVideoFile(owner, id);
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, Buffer.alloc(100));
+    const expected = domain.segments(property, scenes, {
+      ...config,
+      ...recipe.config,
+      openingVideo: id,
+    });
+    expect(expected.map((segment: { kind: string }) => segment.kind)).toEqual([
+      "scene",
+      "scene",
+      "closing",
+    ]);
+    workflow.remote = vi.fn(async (method, input) => {
+      if (method === "voice-list")
+        return { publicVoices: [{ id: "voice-1", language: "zh-CN" }] };
+      if (method === "script-vision") {
+        expect(input.omitOpening).toBe(true);
+        expect(JSON.stringify(input)).not.toContain(id);
+        expect(JSON.stringify(input)).not.toContain("旧版开场提示词");
+        return expected;
+      }
+      throw new Error("unexpected provider " + method);
+    });
+    const opening = vi
+      .spyOn(media, "openingAudio")
+      .mockResolvedValue({ duration: 4, audio: "opening.wav" });
+    const speak = vi
+      .spyOn(media, "synthesize")
+      .mockImplementation(async (segment: any) => ({
+        ...segment,
+        duration: 1,
+        audio: "tour.wav",
+      }));
+    const render = vi
+      .spyOn(media, "render")
+      .mockResolvedValue({ duration: 7, timeline: [] });
+
+    await call("create", {
+      requestId: "local-only",
+      pairs: [pairs[0]],
+      openingVideo: id,
+    });
     const item = workflow.store(owner).production.items[0];
-    expect(item.config.openingClip).toBe(clip.id);
+    await vi.waitFor(() => expect(item.phase).toBe("review"));
+    const { draft, openingVideoUrl } = await call("detail", { id: item.id });
+    expect(openingVideoUrl).toBe(workflow.openingVideoURL(owner, id));
+    expect(draft.segments).toEqual(expected);
     expect(
-      fs.readFileSync(
-        path.join(workflow.directory(owner), "opening", `${clip.id}.mp4`),
-        "utf8",
-      ),
-    ).toBe("test opening clip");
-    expect(
-      workflow.remote.mock.calls.map(([method]: [string]) => method),
-    ).toEqual(["voice-list", "voice-list"]);
+      await act("confirm", { id: item.id, revision: draft.revision }),
+    ).toMatchObject([{ ok: true }]);
+    await vi.waitFor(() => expect(render).toHaveBeenCalled());
+    expect(opening).toHaveBeenCalledWith(
+      file,
+      id,
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(speak.mock.calls.map(([segment]: any[]) => segment.id)).toEqual(
+      expected.map((segment: { id: string }) => segment.id),
+    );
+    expect(render.mock.calls[0][1]).toMatchObject([
+      { kind: "opening", audio: "opening.wav", duration: 4, captions: [] },
+      ...expected,
+    ]);
+    await vi.waitFor(() => expect(item.phase).toBe("archiving"));
   });
 
   it("persists a 20 × 3 batch exactly once and pages large history as summaries", async () => {

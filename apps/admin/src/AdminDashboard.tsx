@@ -49,6 +49,7 @@ export default function AdminDashboard() {
     (service) =>
       service.state !== "configured" &&
       service.id !== "voice-clone" &&
+      service.id !== "opening" &&
       (!isSpeechService(service) || isBailianSpeech(service)),
   );
   return (

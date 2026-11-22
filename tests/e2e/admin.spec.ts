@@ -892,6 +892,27 @@ async function aiConfigFixture(page: Page) {
   return { beikeCLI, clone, script, tts, writes, finishVerification };
 }
 
+test("旧服务响应和直达链接均不再显示 MiniMax 配置入口", async ({ page }) => {
+  const { writes } = await aiConfigFixture(page);
+  await page.goto(adminBase + "/#/admin/dashboard");
+  const issues = page.getByRole("region", { name: "AI 配置缺项" });
+  await expect(issues.getByRole("link", { name: "文案生成" })).toBeVisible();
+  await expect(issues.getByText(/MiniMax/)).toHaveCount(0);
+
+  await page.goto(adminBase + "/#/admin/ai?service=opening");
+  const services = page.getByRole("region", { name: "AI 服务配置" });
+  await expect(
+    services.getByRole("button", { name: "管理多模态文案" }),
+  ).toBeVisible();
+  await expect(services.getByText(/MiniMax/)).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await services.getByRole("button", { name: "管理多模态文案" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "多模态文案", exact: true }),
+  ).toBeVisible();
+  expect(writes).toEqual([]);
+});
+
 test("贝壳找房沿用已保存的密钥并在换密钥失败时保留生效配置", async ({
   page,
 }) => {
@@ -998,7 +1019,7 @@ test("百炼语音保持一个配置入口并验证共享密钥", async ({ page 
     await aiConfigFixture(page);
   await page.goto(adminBase + "/#/admin/ai");
   const table = page.getByRole("table");
-  await expect(table.getByRole("row")).toHaveCount(6);
+  await expect(table.getByRole("rowheader")).toHaveCount(4);
   await expect(table.getByRole("button", { name: "管理百炼语音" })).toHaveCount(
     1,
   );
@@ -1582,7 +1603,7 @@ test("删除公共模板需要确认，成功后从目录移除", async ({ page 
   ]);
 });
 
-test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async ({ page }) => {
+test("公共模板可配置本机经纪人开场视频", async ({ page }) => {
   const data = await fixture(page);
   await page.goto(adminBase + "/#/admin/resources?catalog=legacy");
   await page.getByRole("button", { name: "新建模板草稿", exact: true }).click();
@@ -1590,69 +1611,20 @@ test("公共模板可上传 MiniMax 固定背景图并在预览中核对", async
     name: "新建模板草稿",
     exact: true,
   });
-  const choose = async (label: string, value: string) => {
-    await dialog
-      .getByRole("combobox", { name: new RegExp(label + "$") })
-      .click();
-    await page
-      .locator(".ant-select-dropdown:visible")
-      .getByText(value, { exact: true })
-      .click();
-  };
   await dialog.getByLabel("模板名称", { exact: true }).fill("小区开场模板");
-  await choose("视频表现", "经纪人开场露脸");
-  await choose("开场方式", "MiniMax H3 生成");
-  await expect(dialog.getByText("随房源取图", { exact: true })).toBeVisible();
-  await expect(dialog.getByLabel("画面提示词", { exact: true })).toHaveValue(
-    /边走边介绍房源/,
-  );
-  await choose("开场背景图", "上传固定背景图");
-  await dialog
-    .getByLabel("画面提示词", { exact: true })
-    .fill("经纪人站在入口，自然中景。");
-  await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
-  await expect(
-    dialog.getByText("请上传模板固定背景图", { exact: true }),
-  ).toBeVisible();
-  await dialog
-    .getByLabel("上传固定背景图")
-    .setInputFiles("apps/desktop/public/media/interior-1.jpg");
-  await expect(
-    dialog.getByRole("img", { name: "模板固定背景图预览" }),
-  ).toBeVisible();
-  for (const width of [1440, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    await dialog.getByLabel("上传固定背景图").scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: test.info().outputPath("minimax-background-" + width + ".png"),
-      animations: "disabled",
-    });
-  }
+  await dialog.getByRole("combobox", { name: /视频表现$/ }).click();
+  await page
+    .locator(".ant-select-dropdown:visible")
+    .getByText("经纪人开场视频", { exact: true })
+    .click();
+  await expect(dialog.getByText(/制作时由用户选择本机开场视频/)).toBeVisible();
   await dialog.getByRole("button", { name: "保存草稿", exact: true }).click();
   await expect(dialog).toBeHidden();
-  expect(
-    (
-      data.writes.find((write) => write.path.endsWith("/resources"))?.body
-        .production as typeof defaultProduction | undefined
-    )?.opening,
-  ).toEqual({
-    prompt: "经纪人站在入口，自然中景。",
-    location: { source: "fixed", image: expect.stringMatching(/^\/9j\//) },
-  });
-  const row = page.getByRole("row").filter({
-    has: page.getByRole("button", { name: "小区开场模板", exact: true }),
-  });
-  await row.getByRole("button", { name: "预览校验", exact: true }).click();
-  const preview = page.getByRole("dialog", {
-    name: "制作模板预览校验",
-    exact: true,
-  });
-  await expect(
-    preview.getByRole("img", { name: "模板固定背景图", exact: true }),
-  ).toBeVisible();
-  await expect(
-    preview.getByText("经纪人站在入口，自然中景。", { exact: true }),
-  ).toBeVisible();
+  const production = data.writes.find((write) =>
+    write.path.endsWith("/resources"),
+  )?.body.production as typeof defaultProduction | undefined;
+  expect(production?.config.videoMode).toBe("avatar");
+  expect(production?.opening).toBeUndefined();
 });
 
 test("空间镜头模板隐藏旋转参数并保留配置完整性", async ({ page }) => {

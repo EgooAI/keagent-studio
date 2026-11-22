@@ -69,7 +69,11 @@ func TestProviderUsageSpeechAndOpeningAmounts(t *testing.T) {
 		*rows[0].Characters != 35 || rows[0].CostMicros == nil || *rows[0].CostMicros != 4900 {
 		t.Fatalf("Bailian must use final cumulative characters: %#v", rows)
 	}
-	s.recordOpeningUsage(t.Context(), "owner", "content-key", "minimax-task", []byte(`{"duration":5}`), nil)
+	seconds := int64(5)
+	s.recordProviderUsage(s.withProviderUsage(t.Context(), "owner", "opening"), providerUsage{
+		Provider: "minimax", Model: "MiniMax-H3", ProviderRef: "minimax-task", BusinessRef: "content-key",
+		Status: "pending", Unit: "seconds", Source: "request", Seconds: &seconds,
+	})
 	rows = reportProviderTestRows(t, s, url.Values{"operation": {"opening"}})
 	if len(rows) != 1 || rows[0].Status != "pending" || rows[0].CostMicros != nil {
 		t.Fatalf("pending opening should display unknown cost: %#v", rows)

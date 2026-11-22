@@ -15,7 +15,7 @@ const visionInstruction = "你是房产视频编导。先结合整套原图、�
 
 var scriptImageID = regexp.MustCompile(`^[a-zA-Z0-9-]{1,64}$`)
 
-func visionContent(template, property object, images []any) ([]object, []string, error) {
+func visionContent(template, property object, images []any, omitOpening bool) ([]object, []string, error) {
 	if len(images) == 0 || len(images) > 20 || strings.TrimSpace(str(property["title"])) == "" {
 		return nil, nil, fail(422, "请提供房源标题和 1–20 张图片（含参考图）")
 	}
@@ -35,7 +35,7 @@ func visionContent(template, property object, images []any) ([]object, []string,
 		rules["scene"] = str(rules["scene"]) + " 每图一句，只讲当前画面一个要点，句内可用逗号自然停顿，避免逐图重复面积、价格或开场。"
 		rules["closing"] = str(rules["closing"]) + " 最后一个房间画面上用一句短邀请收尾，约 2 秒，不另起长篇总结。"
 	}
-	if recipe["opening"] != nil {
+	if !omitOpening && recipe["opening"] != nil {
 		timing := "朗读建议 6–10 秒且不超过 15 秒。"
 		if shortTour {
 			timing = "朗读保持 2–3 秒，直接点明地点或一个已核实卖点。"
@@ -43,7 +43,14 @@ func visionContent(template, property object, images []any) ([]object, []string,
 		rules["opening"] = str(rules["opening"]) + " 开场单独介绍到访地点与本次带看的房源，" + timing + "只引用已提供的地点和房源事实，不把参考背景当作已核实的小区实景，不描述第一张室内图片；逐图讲解从下一段开始。"
 	}
 	seen := map[string]bool{"opening": true, "closing": true}
-	ids := []string{"opening"}
+	ids := []string{}
+	if omitOpening {
+		delete(rules, "opening")
+		rules["overall"] = str(rules["overall"]) + " 视频已有开场，本次只写逐图带看和结尾，从第一张房源图直接开始讲解，不写开场介绍。"
+	} else {
+		ids = append(ids, "opening")
+	}
+	firstScene := len(ids)
 	parts := []object{}
 	for _, raw := range images {
 		image := obj(raw)
@@ -70,7 +77,7 @@ func visionContent(template, property object, images []any) ([]object, []string,
 		parts = append(parts, object{"type": "text", "text": string(label)},
 			object{"type": "image_url", "image_url": object{"url": "data:image/jpeg;base64," + encoded}})
 	}
-	if len(ids) < 2 {
+	if len(ids) == firstScene {
 		return nil, nil, fail(422, "至少需要一张出镜图片")
 	}
 	ids = append(ids, "closing")
@@ -85,8 +92,8 @@ func visionContent(template, property object, images []any) ([]object, []string,
 	return append([]object{{"type": "text", "text": string(inputJSON)}}, parts...), ids, nil
 }
 
-func generateVisionScript(ctx context.Context, template, property object, images []any) ([]object, error) {
-	parts, ids, err := visionContent(template, property, images)
+func generateVisionScript(ctx context.Context, template, property object, images []any, omitOpening bool) ([]object, error) {
+	parts, ids, err := visionContent(template, property, images, omitOpening)
 	if err != nil {
 		return nil, err
 	}

@@ -32,7 +32,7 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 		object{"id": "floor-plan", "kind": "reference", "jpeg": imageData},
 		object{"id": "room-pano", "kind": "panorama", "jpeg": imageData},
 	}
-	parts, ids, err := visionContent(template, object{"title": "测试房源", "areaSqm": 80, "details": object{"orientation": "南北", "vrUrl": "https://example.com/vr"}}, images)
+	parts, ids, err := visionContent(template, object{"title": "测试房源", "areaSqm": 80, "details": object{"orientation": "南北", "vrUrl": "https://example.com/vr"}}, images, false)
 	if err != nil || !slices.Equal(ids, []string{"opening", "room-photo", "room-pano", "closing"}) {
 		t.Fatalf("invalid segment plan: %v, %v", ids, err)
 	}
@@ -81,7 +81,7 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 	recipe := obj(template["production"])
 	recipe["opening"] = object{"prompt": "边走边介绍"}
 	originalRule := str(obj(recipe["scriptRules"])["opening"])
-	openingParts, _, err := visionContent(template, object{"title": "测试房源"}, images)
+	openingParts, _, err := visionContent(template, object{"title": "测试房源"}, images, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,9 +93,22 @@ func TestVisionScriptProviderPayload(t *testing.T) {
 	if !strings.Contains(openingRule, "6–10 秒") || !strings.Contains(openingRule, "不描述第一张室内图片") || str(obj(recipe["scriptRules"])["opening"]) != originalRule {
 		t.Fatal("opening guidance missing or persisted template mutated")
 	}
+	parts, ids, err = visionContent(template, object{"title": "测试房源"}, images, true)
+	if err != nil || !slices.Equal(ids, []string{"room-photo", "room-pano", "closing"}) {
+		t.Fatalf("uploaded opening requested an opening script: %v, %v", ids, err)
+	}
+	var tourInput object
+	if json.Unmarshal([]byte(str(parts[0]["text"])), &tourInput) != nil ||
+		obj(tourInput["rules"])["opening"] != nil ||
+		!strings.Contains(str(obj(tourInput["rules"])["overall"]), "只写逐图带看和结尾") {
+		t.Fatal("uploaded opening rules should only request the walkthrough")
+	}
+	if _, err := validateVisionSegments(response, ids); err == nil {
+		t.Fatal("accepted an unexpected opening script")
+	}
 	delete(recipe, "opening")
 	obj(images[0])["jpeg"] = "not-an-image"
-	if _, _, err := visionContent(template, object{"title": "测试房源"}, images); err == nil {
+	if _, _, err := visionContent(template, object{"title": "测试房源"}, images, false); err == nil {
 		t.Fatal("accepted invalid image data")
 	}
 	delete(obj(obj(template["production"])["scriptRules"]), "overall")
@@ -117,7 +130,7 @@ func TestShortTourScriptPacing(t *testing.T) {
 	mixed := object{"parts": object{"script": object{"id": "chosen"}}, "production": object{
 		"config": object{"design": "short-tour", "language": "zh-CN"}, "scriptRules": object{"overall": "按我的讲解节奏逐室介绍。"},
 	}}
-	mixedParts, _, err := visionContent(mixed, object{"title": "测试房源"}, images)
+	mixedParts, _, err := visionContent(mixed, object{"title": "测试房源"}, images, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +149,7 @@ func TestShortTourScriptPacing(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, _ := json.Marshal(template)
-			parts, _, err := visionContent(template, object{"title": "测试房源"}, images)
+			parts, _, err := visionContent(template, object{"title": "测试房源"}, images, false)
 			if err != nil {
 				t.Fatal(err)
 			}

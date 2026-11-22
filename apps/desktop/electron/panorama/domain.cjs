@@ -162,6 +162,18 @@ function config(input, personalTemplates = []) {
   for (const key of ["openingTemplate", "sceneTemplate", "closingTemplate"])
     c[key] = text(c[key], "文案模板", 1500);
   ensure(typeof c.voice === "string" && c.voice.length <= 150, "声音无效");
+  if (input.openingVideo !== undefined) {
+    ensure(
+      c.videoMode === "avatar" &&
+        typeof input.openingVideo === "string" &&
+        /^[a-f0-9]{64}$/.test(input.openingVideo) &&
+        !input.openingClip &&
+        !input.openingPhoto &&
+        !input.roomOpening,
+      "开场视频引用无效",
+    );
+    c.openingVideo = input.openingVideo;
+  }
   if (input.openingClip !== undefined) {
     ensure(
       (c.videoMode === "avatar" || input.openingPhoto !== undefined) &&
@@ -262,12 +274,16 @@ function segments(property, scenes, c) {
     description: "",
   };
   return [
-    {
-      id: "opening",
-      kind: "opening",
-      sceneId: c.leadSceneId || scenes[0].id,
-      text: fill(c.openingTemplate, values),
-    },
+    ...(c.openingVideo
+      ? []
+      : [
+          {
+            id: "opening",
+            kind: "opening",
+            sceneId: c.leadSceneId || scenes[0].id,
+            text: fill(c.openingTemplate, values),
+          },
+        ]),
     ...scenes.map((scene) => ({
       id: scene.id,
       kind: "scene",

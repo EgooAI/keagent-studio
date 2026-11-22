@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Alert,
   Form,
@@ -12,9 +11,7 @@ import {
 import type {
   ProductionTemplateRecipe,
   ProductionTemplatePreview,
-  ProductionOpening,
 } from "@keagent/shared-types";
-import { encodeOpeningLocation, openingImageURL } from "./openingLocationImage";
 import { CatalogSummary, CoverExample } from "./TemplateCatalog";
 
 export const defaultProduction: Extract<
@@ -48,145 +45,9 @@ const field = (key: string) => ["production", "config", key];
 const choices = (values: [string | number, string][]) =>
   values.map(([value, label]) => ({ value, label }));
 
-const defaultOpening: ProductionOpening = {
-  prompt:
-    "保持参考经纪人照片中的面部、发型和服装特征。将人物自然置于背景图片的场景中，保持场景的建筑结构、陈设和光线。经纪人面向镜头缓步向前走两三步，边走边介绍房源，配合轻微自然手势，嘴部动作跟随参考音频。镜头以平稳中景跟随，保持人物清晰完整，避免快速运镜、场景切换和夸张动作，不添加文字、字幕、标识或背景音乐。",
-  location: { source: "property" },
-};
-
-function OpeningEditor({
-  value,
-  onChange,
-  disabled,
-  id,
-}: {
-  value?: ProductionOpening;
-  onChange?: (value?: ProductionOpening) => void;
-  disabled?: boolean;
-  id?: string;
-}) {
-  const [reading, setReading] = useState(false);
-  const [error, setError] = useState("");
-  const image =
-    value?.location.source === "fixed" ? value.location.image : undefined;
-  return (
-    <>
-      <Select
-        id={id}
-        disabled={disabled || reading}
-        value={value ? "minimax" : "clip"}
-        options={choices([
-          ["clip", "导入真人短片"],
-          ["minimax", "MiniMax H3 生成"],
-        ])}
-        onChange={(mode) => {
-          setError("");
-          onChange?.(mode === "minimax" ? defaultOpening : undefined);
-        }}
-      />
-      {value && (
-        <>
-          <Form.Item
-            label="开场背景图"
-            htmlFor={id + "-location"}
-            extra={
-              value.location.source === "property"
-                ? "优先使用用户在「设置 → 形象与背景」上传的背景图，未上传时采用房源实拍图。"
-                : "上传经纪人边走边介绍时所在的场景，例如小区入口、园区步道或室内。该背景随模板保存，供使用此模板的任务复用。"
-            }
-          >
-            <Select
-              id={id + "-location"}
-              disabled={disabled || reading}
-              value={value.location.source}
-              options={choices([
-                ["property", "随房源取图"],
-                ["fixed", "上传固定背景图"],
-              ])}
-              onChange={(source: "property" | "fixed") => {
-                setError("");
-                onChange?.({ ...value, location: { source } });
-              }}
-            />
-          </Form.Item>
-          {value.location.source === "fixed" && (
-            <Form.Item
-              label="上传固定背景图"
-              htmlFor={id + "-image"}
-              extra="请使用已获授权的 JPG 或 PNG，最多 15 MB。"
-            >
-              {image && (
-                <img
-                  width={160}
-                  height={90}
-                  style={{ objectFit: "contain" }}
-                  src={openingImageURL(image)}
-                  alt="模板固定背景图预览"
-                />
-              )}
-              <input
-                id={id + "-image"}
-                type="file"
-                accept=".jpg,.jpeg,.png"
-                disabled={disabled || reading}
-                onChange={async (event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-                  if (!file) return;
-                  setError("");
-                  setReading(true);
-                  onChange?.({ ...value, location: { source: "fixed" } });
-                  try {
-                    onChange?.({
-                      ...value,
-                      location: {
-                        source: "fixed",
-                        image: await encodeOpeningLocation(file),
-                      },
-                    });
-                  } catch (cause) {
-                    setError(
-                      cause instanceof Error
-                        ? cause.message
-                        : "无法读取地点图片",
-                    );
-                  } finally {
-                    setReading(false);
-                  }
-                }}
-              />
-              {reading && <span role="status">正在处理地点图…</span>}
-              {error && <Alert showIcon type="error" title={error} />}
-            </Form.Item>
-          )}
-          <Form.Item
-            label="画面提示词"
-            htmlFor={id + "-prompt"}
-            extra="描述人物如何行走、手势、跟拍镜头和光线。经纪人照片与个人背景在「设置 → 形象与背景」上传，开场文案先合成 2–15 秒配音，再与两张图片一起交给 MiniMax 生成开场。"
-          >
-            <Input.TextArea
-              id={id + "-prompt"}
-              rows={3}
-              value={value.prompt}
-              maxLength={1500}
-              showCount
-              disabled={disabled || reading}
-              onChange={(event) =>
-                onChange?.({ ...value, prompt: event.target.value })
-              }
-            />
-          </Form.Item>
-        </>
-      )}
-    </>
-  );
-}
-
 export function ProductionTemplateEditor({
-  disabled,
   section = "legacy",
 }: {
-  disabled?: boolean;
   section?: "edit" | "script" | "legacy";
 }) {
   const editFields = section !== "script";
@@ -232,7 +93,7 @@ export function ProductionTemplateEditor({
             <Select
               options={choices([
                 ["voiceover", "图片带看配音"],
-                ["avatar", "经纪人开场露脸"],
+                ["avatar", "经纪人开场视频"],
               ])}
             />
           </Form.Item>
@@ -253,24 +114,10 @@ export function ProductionTemplateEditor({
           />
         </Form.Item>
       )}
-      {editFields && !legacy && videoMode === "avatar" && (
-        <Form.Item
-          name={["production", "opening"]}
-          label="开场方式"
-          preserve={false}
-          rules={[
-            {
-              validator: async (_, value?: ProductionOpening) => {
-                if (value && !value.prompt.trim())
-                  throw new Error("请填写画面提示词");
-                if (value?.location.source === "fixed" && !value.location.image)
-                  throw new Error("请上传模板固定背景图");
-              },
-            },
-          ]}
-        >
-          <OpeningEditor disabled={disabled} />
-        </Form.Item>
+      {editFields && videoMode === "avatar" && (
+        <p className="admin-secondary">
+          制作时由用户选择本机开场视频，使用视频原声。文案和配音从房源带看开始。
+        </p>
       )}
       {scriptFields && legacy && (
         <p className="admin-secondary">
@@ -431,10 +278,6 @@ export function ProductionPreview({
   const kind = value.definition?.kind;
   const showEdit = !kind || kind === "edit" || kind === "bundle";
   const showScript = !kind || kind === "script" || kind === "bundle";
-  const opening =
-    value.template.production.schemaVersion === 2
-      ? value.template.production.opening
-      : undefined;
   return (
     <>
       <Alert
@@ -561,7 +404,7 @@ export function ProductionPreview({
                 key: "mode",
                 label: "表现",
                 children:
-                  c.videoMode === "avatar" ? "经纪人开场露脸" : "图片带看配音",
+                  c.videoMode === "avatar" ? "经纪人开场视频" : "图片带看配音",
               },
               {
                 key: "motion",
@@ -583,37 +426,6 @@ export function ProductionPreview({
               },
             ]}
           />
-          {opening && (
-            <Descriptions
-              title="MiniMax H3 开场"
-              size="small"
-              column={1}
-              items={[
-                {
-                  key: "location",
-                  label: "开场背景图",
-                  children:
-                    opening.location.source === "fixed" &&
-                    opening.location.image ? (
-                      <img
-                        width={160}
-                        height={90}
-                        style={{ objectFit: "contain" }}
-                        src={openingImageURL(opening.location.image)}
-                        alt="模板固定背景图"
-                      />
-                    ) : (
-                      <span>优先使用用户设置的背景图，未上传时随房源取图</span>
-                    ),
-                },
-                {
-                  key: "prompt",
-                  label: "画面提示词",
-                  children: opening.prompt,
-                },
-              ]}
-            />
-          )}
         </>
       )}
       {kind && showScript && (

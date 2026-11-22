@@ -508,39 +508,66 @@ func (s *server) adminCreditPricingUpdate(ctx context.Context, a actor, input ob
 	if pricesInput == nil {
 		return nil, fail(422, "价目配置必须包含 prices")
 	}
-	var raw []byte
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_setting WHERE id='credit_pricing'`).Scan(&raw)
-	currentVersion := int64(0)
-	if err == nil {
-		var stored struct {
-			Version int64 `json:"version"`
-		}
-		_ = json.Unmarshal(raw, &stored)
-		currentVersion = stored.Version
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	storedPrices := map[string]any{}
+	patch := make(map[string]int64, len(pricesInput))
 	for key, value := range pricesInput {
 		if _, known := defaultCreditPrices[key]; !known {
 			return nil, fail(422, "未知计费键 "+key)
 		}
-		price := int64(number(value))
-		if price < 0 || price > 1_000_000 {
-			return nil, fail(422, "计费键 "+key+" 的单价超出范围")
+		price, ok := value.(float64)
+		if !ok || price < 0 || price > 1_000_000 || price != float64(int64(price)) {
+			return nil, fail(422, "计费键 "+key+" 的单价须为 0 至 1000000 的整数")
 		}
-		storedPrices[key] = price
+		patch[key] = int64(price)
 	}
-	next := object{"version": currentVersion + 1, "prices": storedPrices}
-	b, _ := json.Marshal(next)
-	if _, err = s.db.ExecContext(ctx, `INSERT INTO keagent_setting(id,payload) VALUES('credit_pricing',$1) ON CONFLICT (id) DO UPDATE SET payload=$1`, b); err != nil {
-		return nil, err
-	}
-	if err = writeCreditAudit(ctx, s.db, a.UserID, "credit.pricing.update", "credit_pricing", next); err != nil {
-		return nil, err
-	}
-	prices, version, err := readCreditPricing(ctx, s.db)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO keagent_setting(id,payload) VALUES('credit_pricing','{}') ON CONFLICT(id) DO NOTHING`); err != nil {
+		return nil, err
+	}
+	var raw []byte
+	if err = tx.QueryRowContext(ctx, `SELECT payload FROM keagent_setting WHERE id='credit_pricing' FOR UPDATE`).Scan(&raw); err != nil {
+		return nil, err
+	}
+	stored := struct {
+		Version int64            `json:"version"`
+		Prices  map[string]int64 `json:"prices"`
+	}{}
+	_ = json.Unmarshal(raw, &stored)
+	if stored.Prices == nil {
+		stored.Prices = map[string]int64{}
+	}
+	if price, included := patch["opening"]; included {
+		previous, exists := stored.Prices["opening"]
+		if !exists || previous < 0 {
+			previous = defaultCreditPrices["opening"]
+		}
+		if price != previous {
+			return nil, fail(410, "MiniMax 开场已停用，历史单价不可修改")
+		}
+		delete(patch, "opening")
+	}
+	if len(patch) == 0 {
+		prices, version, err := readCreditPricing(ctx, tx)
+		return object{"prices": prices, "version": version}, err
+	}
+	for key, price := range patch {
+		stored.Prices[key] = price
+	}
+	next := object{"version": stored.Version + 1, "prices": stored.Prices}
+	if _, err = tx.ExecContext(ctx, `UPDATE keagent_setting SET payload=$1 WHERE id='credit_pricing'`, mustJSON(next)); err != nil {
+		return nil, err
+	}
+	if err = writeCreditAudit(ctx, tx, a.UserID, "credit.pricing.update", "credit_pricing", next); err != nil {
+		return nil, err
+	}
+	prices, version, err := readCreditPricing(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	return object{"prices": prices, "version": version}, nil

@@ -45,7 +45,6 @@ export function ProductionServiceStatus() {
           [
             ["AI 文案", catalog.data?.ai],
             ["百炼配音", catalog.data?.bailianTts],
-            ["MiniMax 开场", catalog.data?.minimaxOpening],
             ["贝壳房源接入", catalog.data?.beike],
           ] as [string, boolean | undefined][]
         ).map(([name, configured]) => ({

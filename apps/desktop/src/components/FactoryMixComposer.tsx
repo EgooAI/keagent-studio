@@ -28,6 +28,7 @@ import type {
 import {
   factoryRequest,
   matchesMix,
+  mixTemplate,
   partFor,
   partKinds,
   partLabel,
@@ -301,16 +302,20 @@ export function FactoryMixComposer({
                 .slice((shownPage - 1) * perPage, shownPage * perPage)
                 .map((bundle) => {
                   const applied = !!current && matchesMix(current, bundle);
+                  const available = !!mixTemplate(library.parts, bundle);
+                  const action = !available
+                    ? "模板已下架"
+                    : applied
+                      ? "已应用"
+                      : "用同款";
                   const fallback = thumbnail(library, bundle);
                   return (
                     <button
                       key={templateKey(bundle)}
                       type="button"
                       aria-pressed={applied}
-                      aria-label={
-                        bundle.name + (applied ? "，已应用" : "，用同款")
-                      }
-                      disabled={disabled}
+                      aria-label={bundle.name + "，" + action}
+                      disabled={disabled || !available}
                       onClick={() => onChange(bundle)}
                       className={"mix-card" + (applied ? " selected" : "")}
                     >
@@ -324,14 +329,8 @@ export function FactoryMixComposer({
                       <span className="mix-card-foot">
                         <strong>{bundle.name}</strong>
                         <span className="mix-apply">
-                          {applied ? (
-                            <>
-                              <Check size={15} />
-                              已应用
-                            </>
-                          ) : (
-                            "用同款"
-                          )}
+                          {applied && <Check size={15} />}
+                          {action}
                         </span>
                       </span>
                     </button>

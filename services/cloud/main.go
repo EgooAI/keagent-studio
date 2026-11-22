@@ -183,7 +183,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := int64(1 << 20)
-	if r.URL.Path == "/v1/panorama/script-vision" || r.URL.Path == "/v1/panorama/opening-submit" {
+	if r.URL.Path == "/v1/panorama/script-vision" {
 		limit = 16 << 20
 	}
 	if r.URL.Path == "/v1/admin/resources/preview" {
@@ -867,15 +867,22 @@ func (s *server) admin(r *http.Request, a actor, body []byte) (any, error) {
 		}
 		definition := obj(input["definition"])
 		definitionKind := str(definition["kind"])
-		if definition != nil && !(hasPublication && !published && prior != nil && prior["publishedOnce"] == true) {
+		unpublishing := hasPublication && !published && prior != nil && prior["publishedOnce"] == true
+		if !unpublishing && (obj(input["production"])["opening"] != nil || definition["opening"] != nil) {
+			return nil, fail(422, "经纪人开场请使用本机视频，生成式开场已停用")
+		}
+		if definition != nil && !unpublishing {
 			modes := []any{"voiceover", "avatar"}
 			switch definitionKind {
 			case "edit":
 				modes = []any{obj(definition["config"])["videoMode"]}
 			case "bundle":
-				parts, e := bundleParts(ctx, tx, definition, prior == nil || prior["publishedOnce"] != true)
+				parts, e := bundleParts(ctx, tx, definition, published || prior == nil || prior["publishedOnce"] != true)
 				if e != nil {
 					return nil, e
+				}
+				if parts["edit"]["opening"] != nil {
+					return nil, fail(422, "请为搭配选择使用本机视频的经纪人开场剪辑")
 				}
 				modes = []any{obj(parts["edit"]["config"])["videoMode"]}
 			}
@@ -1183,6 +1190,9 @@ func main() {
 	}
 	if err = migrateTemplateLibrary(context.Background(), db); err != nil {
 		log.Fatalf("public template library migration failed: %v", err)
+	}
+	if err = simplifyShortTourCatalog(context.Background(), db); err != nil {
+		log.Fatalf("default template catalog migration failed: %v", err)
 	}
 	if _, err = db.Exec(voiceSchema); err != nil {
 		log.Fatal("voice migration failed")

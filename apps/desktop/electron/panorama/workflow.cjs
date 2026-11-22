@@ -2,10 +2,8 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { setTimeout: delay } = require("node:timers/promises");
 const domain = require("./domain.cjs");
 const media = require("./media.cjs");
-const providers = require("./providers.cjs");
 const sources = require("../production/sources.cjs");
 const templateLibrary = require("../production/templates.cjs");
 const factory = require("../production/factory.cjs");
@@ -146,6 +144,7 @@ class PanoramaWorkflow {
       assetMetadata: undefined,
       imports: undefined,
       production: undefined,
+      factoryCatalog: undefined,
       imageTasks: state.imageTasks.map(({ id, sceneId, status, error }) => ({
         id,
         sceneId,
@@ -187,7 +186,7 @@ class PanoramaWorkflow {
     return this.view(owner, { drafts: [], jobs: [job], imageTasks: [] })
       .jobs[0];
   }
-  async capabilities(mode) {
+  async capabilities(mode, catalogVersion, signal) {
     this.capabilityPromise ??= media
       .capabilities(path.join(this.root, "runtime"))
       .catch((error) => {
@@ -201,15 +200,22 @@ class PanoramaWorkflow {
           mode === "runtime"
             ? { runtimeOnly: true }
             : mode === true
-              ? { summary: true, openingRecipe: true, bundleCatalog: true }
+              ? {
+                  summary: true,
+                  openingRecipe: true,
+                  bundleCatalog: true,
+                  catalogVersion,
+                }
               : mode
                 ? { ...mode, openingRecipe: true }
                 : {},
+          signal,
         )
       : {};
     return {
       ...local,
       ...(cloud.library ? { library: cloud.library } : {}),
+      ...(cloud.catalogVersion ? { catalogVersion: cloud.catalogVersion } : {}),
       templates:
         mode === true || mode === "runtime"
           ? cloud.templates || []
@@ -235,12 +241,12 @@ class PanoramaWorkflow {
     );
     return this.importBytes(owner, await fsp.readFile(file), room, kind);
   }
-  async importOpeningClip(owner, state, assertCurrent, referenceOnly) {
+  async importOpeningClip(owner, state, assertCurrent, saveToLibrary) {
     const file = await this.dialogs.openIntro();
     assertCurrent();
-    if (!file) return state.openingClip ?? null;
-    const maxMB = referenceOnly ? 8 : 50;
-    const maxSeconds = referenceOnly ? 5 : 30;
+    if (!file) return null;
+    const maxMB = 50;
+    const maxSeconds = 30;
     const maxBytes = maxMB * 1024 * 1024;
     const stat = await fsp.stat(file);
     domain.ensure(
@@ -262,7 +268,7 @@ class PanoramaWorkflow {
       const info = await media
         .probe(temp, directory, AbortSignal.timeout(12000), "mov")
         .catch(() => null);
-      const duration = Number(info?.format?.duration);
+      const duration = media.openingDuration(info);
       domain.ensure(
         info?.format?.format_name?.split(",").includes("mp4") &&
           info.streams.some(
@@ -275,91 +281,38 @@ class PanoramaWorkflow {
       assertCurrent();
       if (!(await media.exists(target))) await fsp.rename(temp, target);
       assertCurrent();
-      const previous = state.openingClip;
-      state.openingClip = {
-        id,
-        name: path.basename(file).slice(-120),
-        duration,
-        bytes: bytes.length,
-      };
-      try {
-        this.persist(owner);
-      } catch (error) {
-        state.openingClip = previous;
-        throw error;
+      const clip = { id, name: path.basename(file).slice(-120), duration };
+      if (saveToLibrary) {
+        const previous = state.openingVideos ?? [];
+        this.saveOpeningVideos(owner, state, [
+          ...previous.filter((video) => video.id !== id),
+          clip,
+        ]);
       }
-      return state.openingClip;
+      return clip;
     } finally {
       await fsp.rm(temp, { force: true });
     }
   }
-  async importOpeningPhoto(owner, state, assertCurrent, background = false) {
-    const key = background ? "openingBackground" : "openingPhoto";
-    const file = await this.dialogs.openIntroPhoto(background);
-    assertCurrent();
-    if (!file) return null;
-    const maxBytes = (background ? 15 : 3) * 1024 * 1024;
-    const stat = await fsp.stat(file);
-    domain.ensure(
-      stat.isFile() && stat.size <= maxBytes,
-      `请选择 ${background ? 15 : 3} MB 以内的 JPEG 或 PNG 图片`,
-    );
-    const bytes = await fsp.readFile(file);
-    const jpeg = bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]));
-    const png = bytes
-      .subarray(0, 8)
-      .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    domain.ensure(
-      bytes.length <= maxBytes && (jpeg || png),
-      `请选择 ${background ? 15 : 3} MB 以内的 JPEG 或 PNG 图片`,
-    );
-    const directory = path.join(this.directory(owner), "opening");
-    await fsp.mkdir(directory, { recursive: true });
-    const id = domain.hash(bytes);
-    const temp = path.join(
-      directory,
-      `${crypto.randomUUID()}.part.${jpeg ? "jpg" : "png"}`,
-    );
+  saveOpeningVideos(owner, state, videos) {
+    const previous = state.openingVideos;
+    state.openingVideos = videos;
     try {
-      await fsp.writeFile(temp, bytes, { flag: "wx" });
-      const info = await media
-        .probe(temp, directory, AbortSignal.timeout(12000), "image2")
-        .catch(() => null);
-      const { width, height } = info?.streams?.[0] || {};
-      domain.ensure(
-        width >= 256 &&
-          height >= 256 &&
-          width <= 4096 &&
-          height <= 4096 &&
-          width * 5 >= height * 2 &&
-          height * 5 >= width * 2,
-        "请选择宽高 256–4096 像素、宽高比 0.4–2.5 的图片",
-      );
-      assertCurrent();
-      const target = path.join(directory, `${id}.photo`);
-      if (!background && !(await media.exists(target)))
-        await fsp.rename(temp, target);
-      assertCurrent();
-      const image = background
-        ? await this.importBytes(owner, bytes, "开场背景图", "reference")
-        : undefined;
-      assertCurrent();
-      const previous = state[key];
-      state[key] = {
-        id,
-        name: path.basename(file).slice(-120),
-        ...(image ? { asset: image.asset } : {}),
-      };
-      try {
-        this.persist(owner);
-      } catch (error) {
-        state[key] = previous;
-        throw error;
-      }
-      return state[key];
-    } finally {
-      await fsp.rm(temp, { force: true });
+      this.persist(owner);
+    } catch (error) {
+      state.openingVideos = previous;
+      throw error;
     }
+  }
+  openingVideoURL(owner, id) {
+    return this.url(owner, `opening/${id}.mp4`);
+  }
+  openingVideoFile(owner, id) {
+    domain.ensure(
+      typeof id === "string" && /^[a-f0-9]{64}$/.test(id),
+      "开场视频引用无效",
+    );
+    return path.join(this.directory(owner), "opening", `${id}.mp4`);
   }
   async importBytes(owner, data, room, kind = "panorama") {
     domain.ensure(
@@ -415,25 +368,6 @@ class PanoramaWorkflow {
       height: stream.height,
       url: this.url(owner, `assets/${asset}`),
     };
-  }
-  openingLocations(owner, propertyId) {
-    const { assetMetadata, imports } = this.store(owner);
-    const scenes = imports[propertyId]?.scenes || [];
-    const result = new Map();
-    for (const scene of scenes) {
-      const asset = scene.kind === "photo" ? scene.asset : scene.sourceAsset;
-      const metadata = assetMetadata[asset];
-      if (!assetName.test(asset || "") || !metadata?.kinds?.includes("photo"))
-        continue;
-      const ratio = metadata.width / metadata.height;
-      if (ratio >= 0.4 && ratio <= 2.5 && !result.has(asset))
-        result.set(asset, {
-          asset,
-          label: scene.room,
-          url: this.url(owner, `assets/${asset}`),
-        });
-    }
-    return [...result.values()];
   }
   scenes(owner, input) {
     domain.ensure(
@@ -597,30 +531,20 @@ class PanoramaWorkflow {
         owner,
         state,
         assertCurrent,
-        input.referenceOnly === true,
+        input.saveToLibrary === true,
       );
-    if (method === "opening-photo-import")
-      return this.importOpeningPhoto(owner, state, assertCurrent);
-    if (method === "opening-background-import")
-      return this.importOpeningPhoto(owner, state, assertCurrent, true);
-    if (method === "opening-materials") {
-      const photo = state.openingPhoto;
-      const bytes = photo
-        ? await fsp.readFile(
-            path.join(this.directory(owner), "opening", `${photo.id}.photo`),
-          )
-        : undefined;
-      assertCurrent();
-      return {
-        photo: photo && {
-          ...photo,
-          url: `data:image/${bytes[0] === 0xff ? "jpeg" : "png"};base64,${bytes.toString("base64")}`,
-        },
-        background: state.openingBackground && {
-          ...state.openingBackground,
-          url: this.url(owner, `assets/${state.openingBackground.asset}`),
-        },
-      };
+    if (method === "opening-videos")
+      return (state.openingVideos ?? []).map((clip) => ({
+        ...clip,
+        url: this.openingVideoURL(owner, clip.id),
+      }));
+    if (method === "opening-video-remove") {
+      this.saveOpeningVideos(
+        owner,
+        state,
+        (state.openingVideos ?? []).filter((clip) => clip.id !== input.id),
+      );
+      return null;
     }
     if (method === "capabilities") return this.capabilities();
     if (method === "preview-system") {
@@ -753,7 +677,8 @@ class PanoramaWorkflow {
         "开场镜头改变后，请重新生成文案",
       );
       domain.ensure(
-        c.openingClip === draft.config.openingClip &&
+        c.openingVideo === draft.config.openingVideo &&
+          c.openingClip === draft.config.openingClip &&
           c.openingPhoto === draft.config.openingPhoto &&
           domain.hash(c.openingLocation || null) ===
             domain.hash(draft.config.openingLocation || null) &&
@@ -1043,16 +968,17 @@ class PanoramaWorkflow {
       }
       if (preparing && !property.sample) c.scriptProvider = "ai";
       domain.ensure(
-        !c.openingLocation || templateSnapshot?.production.opening,
-        "请选择已上架的 MiniMax 开场模板",
+        !c.openingPhoto &&
+          (c.videoMode !== "avatar" ||
+            c.openingVideo ||
+            (item && (c.openingClip || c.roomOpening))),
+        "请选择开场视频后重新创建任务",
       );
-      domain.ensure(
-        c.videoMode !== "avatar" ||
-          c.openingClip ||
-          c.openingLocation ||
-          c.roomOpening,
-        "请选择真人开场视频，或改用房源画面开场",
-      );
+      if (c.openingVideo)
+        domain.ensure(
+          await media.exists(this.openingVideoFile(owner, c.openingVideo)),
+          "本机开场视频已丢失，请重新上传",
+        );
       assertCurrent();
       domain.ensure(
         c.scriptProvider !== "ai" || this.remote,
@@ -1085,16 +1011,10 @@ class PanoramaWorkflow {
         c.coverSceneId = "";
         c.coverTitle = "";
         for (const scene of scenes) scene.direction = c.direction;
-        if (c.openingLocation?.source === "property") {
-          const options = this.openingLocations(owner, property.id);
-          c.openingLocation.asset =
-            options.find(({ asset }) => asset === c.openingLocation.asset)
-              ?.asset || options[0]?.asset;
-        }
       }
       for (const key of ["leadSceneId", "coverSceneId"])
         domain.ensure(
-          !c[key] || scenes.some((s) => s.id === c[key]),
+          !c[key] || scenes.some((scene) => scene.id === c[key]),
           "开场或封面空间已移除，请重新选择",
         );
       const expected = domain.segments(property, scenes, c);
@@ -1124,7 +1044,9 @@ class PanoramaWorkflow {
                   ),
                   templateId: templateSnapshot.id,
                   templateVersion: templateSnapshot.version,
-                  openingRecipe: !!templateSnapshot.production.opening,
+                  openingRecipe:
+                    !!c.openingVideo || !!templateSnapshot.production.opening,
+                  ...(c.openingVideo ? { omitOpening: true } : {}),
                   images: await factory.scriptImages(
                     this,
                     owner,
@@ -1148,7 +1070,15 @@ class PanoramaWorkflow {
                       room,
                       description,
                     })),
-                    template: c,
+                    template: c.openingVideo
+                      ? Object.fromEntries(
+                          Object.entries(c).filter(
+                            ([key]) =>
+                              key !== "openingVideo" &&
+                              key !== "openingTemplate",
+                          ),
+                        )
+                      : c,
                     language: c.language,
                     segments: expected,
                   },
@@ -1271,39 +1201,21 @@ class PanoramaWorkflow {
         "公共音色已下架或不存在，请在全景工厂重新选择可用音色",
       );
     }
-    if (draft.config.openingClip) {
+    domain.ensure(
+      !draft.config.openingPhoto,
+      "旧版生成开场已停用，请改用房源开场，或新建任务选择开场视频",
+    );
+    const clip = draft.config.openingVideo || draft.config.openingClip;
+    if (clip) {
       domain.ensure(
-        await media.exists(
-          path.join(
-            this.directory(owner),
-            "opening",
-            `${draft.config.openingClip}.mp4`,
-          ),
-        ),
+        await media.exists(this.openingVideoFile(owner, clip)),
         "本机开场视频已丢失，请重新导入原视频后重试",
       );
-    } else if (!draft.config.openingLocation) {
+    } else {
       domain.ensure(
         draft.config.videoMode !== "avatar" || draft.config.roomOpening,
-        "请选择真人开场视频，或改用房源画面开场",
+        "请选择开场视频，或改用房源画面开场",
       );
-    }
-    if (draft.config.openingPhoto) {
-      domain.ensure(caps.minimaxOpening, "请在管理后台启用 MiniMax 开场服务");
-      const dir = this.directory(owner);
-      domain.ensure(
-        await media.exists(
-          path.join(dir, "opening", `${draft.config.openingPhoto}.photo`),
-        ),
-        "经纪人照片已丢失，请重新导入原照片",
-      );
-      const location = draft.config.openingLocation;
-      if (location)
-        domain.ensure(
-          assetName.test(location.asset || "") &&
-            (await media.exists(path.join(dir, "assets", location.asset))),
-          "没有可用的开场地点图，请补充房源原图或改用房源开场",
-        );
     }
   }
   billingContext(draftId, productionItem) {
@@ -1316,120 +1228,6 @@ class PanoramaWorkflow {
         : undefined,
       ...productionItem?.billingEstimate,
     };
-  }
-  async miniMaxOpening(
-    dir,
-    config,
-    opening,
-    signal,
-    templateSnapshot,
-    billingContext,
-  ) {
-    const cache = path.join(dir, "cache");
-    const audio = await fsp.readFile(path.join(cache, opening.audio));
-    const location = config.openingLocation;
-    const key = domain.hash([
-      location ? "minimax-h3-768p-location-v1" : "minimax-h3-768p-v1",
-      location
-        ? [templateSnapshot.id, templateSnapshot.version, location.asset]
-        : config.openingClip,
-      config.openingPhoto,
-      domain.hash(audio),
-      config.aspectRatio,
-    ]);
-    const target = path.join(cache, `minimax-${key}.mp4`);
-    if (await media.exists(target)) return target;
-    const photo = await fsp.readFile(
-      path.join(dir, "opening", `${config.openingPhoto}.photo`),
-    );
-    domain.ensure(
-      photo.length <= 3 * 1024 * 1024 &&
-        domain.hash(photo) === config.openingPhoto,
-      "经纪人照片内容已变更，请重新导入原照片",
-    );
-    let reference;
-    if (location) {
-      reference = {
-        templateId: templateSnapshot.id,
-        templateVersion: templateSnapshot.version,
-      };
-      if (location.source !== "fixed") {
-        const file = path.join(dir, "assets", location.asset);
-        domain.ensure(
-          domain.hash(await fsp.readFile(file)) ===
-            location.asset.split(".")[0],
-          "地点原图已变更，请重新导入原图",
-        );
-        reference.location = await media.scriptImage(file, dir, signal);
-      }
-    } else {
-      const video = await fsp.readFile(
-        path.join(dir, "opening", `${config.openingClip}.mp4`),
-      );
-      domain.ensure(
-        video.length <= 8 * 1024 * 1024 &&
-          domain.hash(video) === config.openingClip,
-        "参考视频内容已变更，请重新导入原文件",
-      );
-      reference = { video: video.toString("base64") };
-    }
-    const { requestKey } = await this.remote(
-      "opening-submit",
-      {
-        ...reference,
-        billingContext,
-        photo: photo.toString("base64"),
-        audio: audio.toString("base64"),
-        ratio: config.aspectRatio,
-        authorized: true,
-      },
-      signal,
-    );
-    domain.ensure(
-      typeof requestKey === "string" && /^[a-f0-9]{64}$/.test(requestKey),
-      "MiniMax 开场请求标识无效",
-    );
-    const polling = AbortSignal.any([
-      signal,
-      AbortSignal.timeout(12 * 60 * 1000),
-    ]);
-    let result;
-    try {
-      for (;;) {
-        polling.throwIfAborted();
-        result = await this.remote(
-          "opening-query",
-          { requestKey, billingContext },
-          polling,
-        );
-        if (result.status === "succeeded") break;
-        domain.ensure(
-          result.status === "queued" || result.status === "running",
-          result.message || "MiniMax 开场未完成",
-        );
-        await delay(5000, undefined, { signal: polling });
-      }
-    } catch (error) {
-      if (!signal.aborted && polling.aborted)
-        throw new Error("MiniMax 尚未返回结果，重试会继续查询原任务");
-      throw error;
-    }
-    const temp = target + ".part.mp4";
-    try {
-      await providers.downloadMiniMaxVideo(result.videoUrl, temp, signal);
-      const info = await media.probe(temp, cache, signal, "mov");
-      domain.ensure(
-        info.streams.some(
-          (s) => s.codec_type === "video" && !s.disposition?.attached_pic,
-        ) && Number(info.format.duration) >= opening.duration - 0.12,
-        "MiniMax 开场视频无法读取或短于解说音频",
-      );
-      signal.throwIfAborted();
-      await fsp.rename(temp, target);
-      return target;
-    } finally {
-      await fsp.rm(temp, { force: true });
-    }
   }
   execute(owner, job, productionItem) {
     const billingContext = this.billingContext(job.draftId, productionItem);
@@ -1449,7 +1247,21 @@ class PanoramaWorkflow {
       await fsp.mkdir(cache, { recursive: true });
       await fsp.mkdir(jobDir, { recursive: true });
       this.scenes(owner, job.scenes);
+      domain.ensure(!job.config.openingPhoto, "旧版生成开场已停用");
       const audio = [];
+      if (job.config.openingVideo)
+        audio.push({
+          ...(await media.openingAudio(
+            this.openingVideoFile(owner, job.config.openingVideo),
+            job.config.openingVideo,
+            cache,
+            signal,
+          )),
+          id: "opening",
+          kind: "opening",
+          sceneId: job.scenes[0].id,
+          captions: [],
+        });
       for (const [index, segment] of job.segments.entries()) {
         update("tts", (index / job.segments.length) * 30);
         const narration = await media.synthesize(
@@ -1460,29 +1272,7 @@ class PanoramaWorkflow {
           this.remote,
           billingContext,
         );
-        if (
-          index === 0 &&
-          job.config.openingPhoto &&
-          !(narration.duration >= 2 && narration.duration <= 15)
-        ) {
-          job.reviewOpening = !!job.config.openingLocation;
-          throw new Error(
-            `MiniMax 开场解说须为 2–15 秒，当前约 ${narration.duration.toFixed(1)} 秒，请调整开场文案后重新审核`,
-          );
-        }
         audio.push(narration);
-      }
-      let openingFile;
-      if (job.config.openingPhoto) {
-        update("opening", 32);
-        openingFile = await this.miniMaxOpening(
-          dir,
-          job.config,
-          audio[0],
-          signal,
-          job.templateSnapshot,
-          billingContext,
-        );
       }
       update("render", 40);
       let spatialClips;
@@ -1490,9 +1280,7 @@ class PanoramaWorkflow {
         const runs = media.spatialRuns(
           job,
           audio,
-          Boolean(
-            openingFile || (!job.config.openingPhoto && job.config.openingClip),
-          ),
+          Boolean(job.config.openingVideo || job.config.openingClip),
         );
         const rendered = await spatialRender.renderRuns(
           runs,
@@ -1528,7 +1316,6 @@ class PanoramaWorkflow {
             );
           }
         },
-        openingFile,
         spatialClips,
       );
       signal.throwIfAborted();
@@ -1606,6 +1393,7 @@ class PanoramaWorkflow {
     const relative = url.pathname.slice(prefix.length);
     domain.ensure(
       /^assets\/[a-f0-9]{64}\.(jpg|png)$/.test(relative) ||
+        /^opening\/[a-f0-9]{64}\.mp4$/.test(relative) ||
         /^preview\/segment-[a-f0-9]{64}\.wav$/.test(relative) ||
         /^jobs\/[a-f0-9-]{36}\/(final\.mp4|cover\.jpg|narration\.wav)$/.test(
           relative,

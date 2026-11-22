@@ -110,7 +110,7 @@ function PilotSettings({ pilot }: { pilot: CreditPackPilot }) {
       <Form.Item
         name="typicalVideoCredits"
         label="普通房源视频参考用量（积分／条）"
-        extra="填写已核对的实测用量，排除 MiniMax 开场。桌面端按这个用量估算视频条数。"
+        extra="填写已核对的带看文案和配音实测用量。桌面端据此估算视频条数。"
       >
         <InputNumber min={1} max={1_000_000} precision={0} />
       </Form.Item>

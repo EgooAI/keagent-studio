@@ -194,12 +194,12 @@ func (s *server) productionTemplate(ctx context.Context, input object) (object, 
 	return s.loadProductionTemplate(ctx, input, false)
 }
 
-func (s *server) loadProductionTemplate(ctx context.Context, input object, allowRetiredOpening bool) (object, error) {
+func (s *server) loadProductionTemplate(ctx context.Context, input object, allowRetired bool) (object, error) {
 	var b []byte
 	err := s.db.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND payload ? 'production'
 		AND (payload->>'published'='true' OR ($2 AND payload->>'publishedOnce'='true'
-		AND payload->'production' ? 'opening' AND payload->>'version'=$3))`,
-		str(input["id"]), allowRetiredOpening, str(input["version"])).Scan(&b)
+		AND payload->>'version'=$3))`,
+		str(input["id"]), allowRetired, str(input["version"])).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fail(409, "模板已下架或不存在，请刷新后重新选择")
 	}
@@ -267,12 +267,21 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 		sample["production"] = composeProduction(parts["edit"], parts["script"])
 	}
 	preview["template"] = sample
-	if cached {
-		preview["segments"] = resource["previewSegments"]
-		return preview, nil
-	}
 	recipe := obj(sample["production"])
 	c := obj(recipe["config"])
+	omitOpening := c["videoMode"] == "avatar"
+	previewSegments := func(saved any) any {
+		if !omitOpening {
+			return saved
+		}
+		return slices.DeleteFunc(slices.Clone(rows(saved)), func(segment any) bool {
+			return obj(segment)["id"] == "opening"
+		})
+	}
+	if cached {
+		preview["segments"] = previewSegments(resource["previewSegments"])
+		return preview, nil
+	}
 	segments := []object{}
 	needsScript := kind != "cover" && kind != "edit"
 	if needsScript && number(recipe["schemaVersion"]) == 2 {
@@ -285,7 +294,7 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 		if err != nil {
 			return nil, err
 		}
-		segments, err = generateVisionScript(aiCtx, sample, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images)
+		segments, err = generateVisionScript(aiCtx, sample, object{"title": "示例房源", "description": "两张图片仅供模板预览，房源事实未提供。"}, images, omitOpening)
 		if err != nil {
 			return nil, err
 		}
@@ -295,7 +304,9 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 			values = strings.NewReplacer("{title}", "Sample two-bedroom home", "{facts}", "Approximately 80 square meters, two bedrooms.", "{sellingPoints}", "Verified room layout", "{room}", "Living room", "{description}", "The original photo shows the living room layout.")
 		}
 		for _, item := range []struct{ id, key string }{{"opening", "openingTemplate"}, {"scene", "sceneTemplate"}, {"closing", "closingTemplate"}} {
-			segments = append(segments, object{"id": item.id, "text": values.Replace(str(c[item.key]))})
+			if item.id != "opening" || !omitOpening {
+				segments = append(segments, object{"id": item.id, "text": values.Replace(str(c[item.key]))})
+			}
 		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -318,7 +329,7 @@ func (s *server) previewProduction(ctx context.Context, a actor, input object, g
 		return nil, fail(409, "预览期间模板已修改，请重新预览")
 	}
 	if current["previewDigest"] == digest && current["previewSegments"] != nil {
-		preview["segments"] = current["previewSegments"]
+		preview["segments"] = previewSegments(current["previewSegments"])
 		return preview, nil
 	}
 	current["previewDigest"] = digest

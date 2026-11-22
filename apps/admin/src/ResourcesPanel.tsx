@@ -713,7 +713,6 @@ function ResourceForm({
     production = {
       ...defaultProduction,
       config: { ...defaultProduction.config, ...definition.config },
-      opening: definition.opening,
     };
   } else if (definition?.kind === "script") {
     const config = {
@@ -770,21 +769,17 @@ function ResourceForm({
         parts,
       }) => {
         const meta = { name, description, category, version };
-        if (section === "legacy")
-          return onSave({ ...meta, production: recipe });
+        if (section === "legacy") {
+          if (recipe.schemaVersion === 1)
+            return onSave({ ...meta, production: recipe });
+          const { opening, ...production } = recipe;
+          return onSave({ ...meta, production });
+        }
         let definition: CatalogTemplate;
         switch (section) {
           case "edit": {
             const { language, ...config } = recipe.config;
-            definition = {
-              kind: "edit",
-              config,
-              ...(recipe.schemaVersion === 2 &&
-              config.videoMode === "avatar" &&
-              recipe.opening
-                ? { opening: recipe.opening }
-                : {}),
-            };
+            definition = { kind: "edit", config };
             break;
           }
           case "script": {
@@ -877,10 +872,7 @@ function ResourceForm({
       ) : section === "bundle" ? (
         <BundleEditor readOnly={readOnly} disabled={busy} />
       ) : (
-        <ProductionTemplateEditor
-          section={section}
-          disabled={busy || readOnly}
-        />
+        <ProductionTemplateEditor section={section} />
       )}
       {!formId && !readOnly && (
         <Button type="primary" htmlType="submit" loading={busy}>

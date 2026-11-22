@@ -1,4 +1,3 @@
-import { encodeOpeningLocation } from "./openingLocationImage";
 import {
   Alert,
   App,
@@ -176,7 +175,6 @@ export default function AIConfigDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [file, setFile] = useState<File>();
-  const [openingLocation, setOpeningLocation] = useState<File>();
   const [verification, setVerification] = useState<AdminAIProbe>();
   const [verificationRequest, setVerificationRequest] = useState<string>();
   const dialogTitle = useRef<HTMLSpanElement>(null);
@@ -275,7 +273,6 @@ export default function AIConfigDialog({
       setDirty(false);
       setSampleDirty(false);
       setFile(undefined);
-      setOpeningLocation(undefined);
       setError("");
       onDirty(false);
       void message.success("配置已验证并启用");
@@ -299,7 +296,6 @@ export default function AIConfigDialog({
     setVerifyClone(clone);
     sampleForm.resetFields();
     setFile(undefined);
-    setOpeningLocation(undefined);
     setSampleDirty(false);
     return false;
   }
@@ -352,7 +348,6 @@ export default function AIConfigDialog({
     setSampleDirty(false);
     onDirty(false);
     setFile(undefined);
-    setOpeningLocation(undefined);
     setVerificationRequest(undefined);
     setError("");
   }
@@ -405,15 +400,6 @@ export default function AIConfigDialog({
       sample.audio = await encodeFile(file);
       sample.format = format;
     }
-    if (mode === "sample" && service === "opening") {
-      if (!openingLocation || !file || file.size > 3 * 1024 * 1024) {
-        throw new Error("请选择测试地点图和 3 MB 以内的经纪人照片");
-      }
-      [sample.location, sample.photo] = await Promise.all([
-        encodeOpeningLocation(openingLocation),
-        encodeFile(file),
-      ]);
-    }
     return sample;
   }
 
@@ -438,9 +424,6 @@ export default function AIConfigDialog({
         file?.name,
         file?.size,
         file?.lastModified,
-        openingLocation?.name,
-        openingLocation?.size,
-        openingLocation?.lastModified,
       ]);
       if (testRequest.current?.key !== key) {
         testRequest.current = { key, id: crypto.randomUUID() };
@@ -858,45 +841,7 @@ export default function AIConfigDialog({
                 />
               </Form.Item>
             )}
-            {service === "opening" && (
-              <>
-                <Form.Item
-                  label="测试地点图"
-                  htmlFor="opening-test-location"
-                  required
-                >
-                  <input
-                    id="opening-test-location"
-                    type="file"
-                    accept=".jpg,.jpeg,.png"
-                    disabled={blocked}
-                    onChange={(event) => {
-                      setOpeningLocation(event.target.files?.[0]);
-                      sampleChanged();
-                    }}
-                  />
-                </Form.Item>
-                <Form.Item
-                  label="测试人物照片"
-                  htmlFor="opening-test-photo"
-                  required
-                >
-                  <input
-                    id="opening-test-photo"
-                    type="file"
-                    accept=".jpg,.jpeg,.png"
-                    disabled={blocked}
-                    onChange={(event) => {
-                      setFile(event.target.files?.[0]);
-                      sampleChanged();
-                    }}
-                  />
-                </Form.Item>
-              </>
-            )}
-            {(service === "opening" ||
-              service === "beike" ||
-              sampleMode === "training") && (
+            {(service === "beike" || sampleMode === "training") && (
               <Form.Item
                 name="authorized"
                 valuePropName="checked"

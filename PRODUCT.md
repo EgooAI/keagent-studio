@@ -10,7 +10,7 @@ React 工作界面运行在 Electron 桌面壳中，另提供独立管理后台�
 
 ## Stack
 
-已确认 Electron、React、TypeScript、Vite、React Router、Ant Design、Tailwind CSS、Zustand、TanStack Query 与 Lucide。本轮仅实现前端与可持久化 Mock，不编写 Go 后端或本地媒体执行器。
+已确认 Electron、React、TypeScript、Vite、React Router、Ant Design、Tailwind CSS、Zustand、TanStack Query 与 Lucide。实际制作使用 Go 云端服务和 Electron 本机媒体执行器。
 
 ## Users
 
@@ -22,11 +22,11 @@ React 工作界面运行在 Electron 桌面壳中，另提供独立管理后台�
 
 ## Operating Context
 
-六导航为工作台、房源中心、AI 视频工厂、发布中心、AI 获客和设置。用户一次选择多个房源，视频模式固定为纯口播和经纪人露脸；模板与资源按需选择。完整需求以 docs 中用户已确认的文档为准。
+六导航为工作台、房源中心、AI 视频工厂、发布中心、AI 获客和设置。用户一次选择多个房源，默认推荐「短视频带看」和「短视频带看 · 经纪人开场」，两者共用封面和文案。桌面端先读取本机目录缓存，再按云端版本同步。完整需求以 docs 中用户已确认的文档为准。
 
 ## Capabilities and Constraints
 
-本轮全程明确模拟，不伪装平台、TTS 或数字人成功。房源和复杂模板使用弹窗，声音、形象和提示词使用下拉；开启审核时阻断下游。同一成片的不同平台任务独立；草稿不算已发布。首版不做收费、Redis、专业剪辑时间轴或独立内容资产页。
+本机开场版需要手动选择 MP4，保留视频原声，口播文案和配音从房源画面开始。文案审核通过后继续制作。演示模式明确标识模拟结果。同一成片的不同平台任务独立，平台草稿与正式发布分别记录。
 
 ## Brand Commitments
 
@@ -34,7 +34,7 @@ KeAgent Studio 为工作名称。用户已批准文档约定的白色浅灰桌�
 
 ## Evidence on Hand
 
-docs/01 至 docs/05 和共享对话是需求依据。界面房源、经纪人、任务和线索是明确标识的演示内容。没有真实外部服务接入凭证。
+docs/01 至 docs/05 和共享对话是需求依据。演示环境中的房源、账号、任务和线索应明确标识为演示内容。
 
 ## Product Principles
 

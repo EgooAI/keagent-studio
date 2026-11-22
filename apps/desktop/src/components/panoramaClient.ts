@@ -9,7 +9,7 @@ export const stageNames = {
   images: "正在处理房源图片",
   tts: "生成分段配音",
   avatar: "旧版开场",
-  opening: "MiniMax 生成开场",
+  opening: "旧版开场",
   render: "渲染镜头与合成",
   cover: "成片校验与封面",
 };

@@ -17,7 +17,6 @@ export interface FactoryTemplate {
   version: string;
   name: string;
   description?: string;
-  opening?: "minimax";
   config: Pick<
     PanoramaConfig,
     | "language"
@@ -36,16 +35,12 @@ export type FactoryOpeningClip = {
   id: string;
   name: string;
   duration: number;
-  bytes?: number;
+  url?: string;
 };
-export type FactoryOpeningPhoto = Pick<FactoryOpeningClip, "id" | "name">;
 
 export type FactoryCatalog = Omit<PanoramaCapabilities, "templates"> & {
   templates: FactoryTemplate[];
   library?: FactoryLibrary;
-  openingClip?: FactoryOpeningClip;
-  openingPhoto?: FactoryOpeningPhoto;
-  openingBackground?: FactoryOpeningPhoto & { asset: string };
 };
 export type FactoryBundle = {
   id: string;
@@ -60,7 +55,6 @@ export type FactoryPart = TemplatePartOption & {
   description?: string;
   cover?: CoverTemplate;
   config?: EditTemplate["config"];
-  opening?: "minimax";
   language?: PanoramaConfig["language"];
 };
 export type FactoryLibrary = {
@@ -99,16 +93,23 @@ export function mixTemplate(
   bundle: FactoryBundle,
 ): FactoryTemplate | undefined {
   const edit = partFor(parts, bundle, "edit");
-  const language = partFor(parts, bundle, "script")?.language;
-  if (!edit?.config || !language || !partFor(parts, bundle, "cover")?.cover)
+  const script = partFor(parts, bundle, "script");
+  const cover = partFor(parts, bundle, "cover");
+  if (
+    !edit?.available ||
+    !edit.config ||
+    !script?.available ||
+    !script.language ||
+    !cover?.available ||
+    !cover.cover
+  )
     return;
   return {
     id: bundle.id,
     version: bundle.version,
     name: bundle.name,
     description: bundle.description,
-    config: { ...edit.config, language },
-    opening: edit.opening,
+    config: { ...edit.config, language: script.language },
   };
 }
 export function mixRequest(bundle: FactoryBundle) {
@@ -183,8 +184,7 @@ export type FactoryDetail = FactoryRow & {
   draft?: PanoramaDraft;
   job?: PanoramaJob;
   legacy?: boolean;
-  openingLocationUrl?: string;
-  openingLocations?: { asset: string; label: string; url: string }[];
+  openingVideoUrl?: string;
 };
 export type FactoryList = {
   rows: FactoryRow[];
@@ -205,7 +205,6 @@ export type FactoryAction =
   | "retry"
   | "copy"
   | "archive"
-  | "edit-opening"
   | "room-opening";
 export type FactoryActionResult = {
   id: string;

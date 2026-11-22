@@ -53,10 +53,7 @@ func aiServicesFor(ctx context.Context) []aiService {
 		case "beike":
 			service.Purpose = "查询房屋档案与室内照片"
 			service.Endpoint = "https://gw-open.ke.com"
-		case "opening":
-			service.Purpose = "用人物照片、地点图和解说音频生成开场"
-			service.Model = minimaxModel
-			service.Endpoint = minimaxBase
+
 		}
 		if len(service.Missing)+len(service.Issues) > 0 {
 			service.State = "incomplete"

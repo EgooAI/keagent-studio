@@ -16,7 +16,7 @@ const pricing: CreditPricing = {
 };
 
 it("estimates per-task cost from current prices", () => {
-  const estimate = estimateBatchCost(pricing, { tasks: 3, withOpening: false });
+  const estimate = estimateBatchCost(pricing, 3);
   expect(estimate).toBeDefined();
   // 文案 5 + 配音 10（600 字按 1 个千字计）
   expect(estimate?.perTask).toBe(15);
@@ -24,36 +24,21 @@ it("estimates per-task cost from current prices", () => {
   expect(estimate?.items.map((item) => item.label)).toEqual(["文案", "配音"]);
 });
 
-it("adds the opening charge when the batch uses MiniMax openings", () => {
-  const estimate = estimateBatchCost(pricing, { tasks: 2, withOpening: true });
-  expect(estimate?.perTask).toBe(115);
-  expect(estimate?.total).toBe(230);
-  expect(estimate?.items.map((item) => item.label)).toEqual([
-    "文案",
-    "配音",
-    "开场",
-  ]);
-});
-
 it("rounds the narration estimate up to whole kilo-char units", () => {
-  const estimate = estimateBatchCost(
-    pricing,
-    { tasks: 1, withOpening: false },
-    1001,
-  );
+  const estimate = estimateBatchCost(pricing, 1, 1001);
   expect(estimate?.perTask).toBe(25);
 });
 
 it("returns no estimate without pricing, tasks or chargeable items", () => {
-  expect(estimateBatchCost(undefined, { tasks: 3, withOpening: true })).toBeUndefined();
-  expect(estimateBatchCost(pricing, { tasks: 0, withOpening: true })).toBeUndefined();
+  expect(estimateBatchCost(undefined, 3)).toBeUndefined();
+  expect(estimateBatchCost(pricing, 0)).toBeUndefined();
   const free: CreditPricing = { version: "v0", prices: {} };
-  expect(estimateBatchCost(free, { tasks: 3, withOpening: true })).toBeUndefined();
+  expect(estimateBatchCost(free, 3)).toBeUndefined();
 });
 
 it("renders a summary line with the breakdown", () => {
-  const estimate = estimateBatchCost(pricing, { tasks: 2, withOpening: true });
+  const estimate = estimateBatchCost(pricing, 2);
   expect(estimate && estimateSummaryText(estimate)).toBe(
-    "预计消耗约 230 积分（每条 115：文案 5 + 配音 10 + 开场 100）",
+    "预计消耗约 30 积分（每条 15：文案 5 + 配音 10）",
   );
 });

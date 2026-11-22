@@ -41,11 +41,7 @@ function MaterialStatus({ row }: { row: FactoryProperty }) {
 function templateSpecs(template: FactoryTemplate) {
   return [
     template.config.language === "en-US" ? "英文" : "中文",
-    template.opening
-      ? "MiniMax H3"
-      : template.config.videoMode === "avatar"
-        ? "露脸"
-        : "配音",
+    template.config.videoMode === "avatar" ? "经纪人开场" : "房源开场",
     template.config.aspectRatio,
     template.config.resolution,
   ].join(" · ");
@@ -130,6 +126,9 @@ export function FactoryPicker({
   const [selecting, setSelecting] = useState(false);
   const [preview, setPreview] = useState<FactoryTemplate>();
   const property = kind === "property";
+  const confirmed = property
+    ? [...selected]
+    : templates.map(templateKey).filter((key) => selected.has(key));
   const query = {
     search,
     district,
@@ -233,17 +232,17 @@ export function FactoryPicker({
       className={`factory-picker-modal ${property ? "factory-property-picker-modal" : "factory-template-picker-modal"}`}
       width={960}
       onCancel={onClose}
-      okText={"确认选择（" + selected.size + "）"}
+      okText={"确认选择（" + confirmed.length + "）"}
       cancelText="取消"
       okButtonProps={{ disabled: selecting }}
       onOk={() => {
         if (property) onProperties(propertyRows);
-        onConfirm([...selected]);
+        onConfirm(confirmed);
       }}
       footer={(_, { OkBtn, CancelBtn }) => (
         <div className="factory-picker-footer">
           <span>
-            已选 <strong>{selected.size}</strong>{" "}
+            已选 <strong>{confirmed.length}</strong>{" "}
             {property ? "套房源" : "个模板"}
           </span>
           <Space>

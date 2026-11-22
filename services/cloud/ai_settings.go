@@ -46,6 +46,10 @@ UPDATE keagent_ai_probe
  SET status='failed',finished_at=now(),encrypted_input=NULL,
      result='{"message":"语音供应商已切换，请重新测试百炼配置","category":"validation"}'
  WHERE service_group='speech' AND status IN ('queued','running');
+UPDATE keagent_ai_probe
+ SET status='failed',finished_at=now(),encrypted_input=NULL,
+     result=result||'{"message":"MiniMax 开场测试已停用","category":"validation"}'
+ WHERE service_group='opening' AND status IN ('queued','running');
 `
 
 type aiField struct {
@@ -64,7 +68,6 @@ var aiSpecs = []aiSpec{
 	{"voice-clone", speechAIGroup, "声音复刻", "阿里云百炼", []aiField{{"DASHSCOPE_API_KEY", "共享 API Key", "secret"}, {"DASHSCOPE_WORKSPACE_ID", "业务空间 ID", "text"}, {"DASHSCOPE_VOICE_CLONE_ENABLED", "启用声音复刻", "toggle"}}},
 	{"beike", "beike", "贝壳取材", "贝壳开放平台", []aiField{{"BEIKE_ACCESS_TOKEN", "Access Token", "secret"}}},
 	{"beike-cli", "beike-cli", "贝壳找房", "贝壳 AI 平台 CLI", []aiField{{"BEIKE_MCP_API_KEY", "MCP API Key", "secret"}, {"BEIKE_CLI_PATH", "CLI 可执行文件路径（可选，留空自动检测）", "text"}}},
-	{"opening", "opening", "MiniMax 开场", "MiniMax", []aiField{{"MINIMAX_API_KEY", "API Key", "secret"}}},
 }
 
 func specFor(id string) (aiSpec, bool) {
@@ -90,6 +93,9 @@ func groupFields(group string) map[string]aiField {
 type aiValues map[string]string
 
 func environmentAI(group string) aiValues {
+	if group == "opening" {
+		return aiValues{"MINIMAX_API_KEY": strings.TrimSpace(os.Getenv("MINIMAX_API_KEY"))}
+	}
 	values := aiValues{}
 	for key := range groupFields(group) {
 		values[key] = strings.TrimSpace(os.Getenv(key))

@@ -292,11 +292,24 @@ try {
   assert.deepEqual(ai.services.map((service) => service.id).sort(), [
     "beike",
     "beike-cli",
-    "opening",
     "script",
     "tts",
     "voice-clone",
   ]);
+  assert.ok(!ai.management.some((item) => item.summary.id === "opening"));
+  assert.ok(!overview.services.some((item) => item.id === "opening"));
+  assert.equal(
+    (await request("/v1/panorama/opening-submit", session, {})).status,
+    410,
+  );
+  assert.equal(
+    (
+      await request("/v1/admin/ai-config/verify-enable", admin, {
+        service: "opening",
+      })
+    ).status,
+    410,
+  );
   for (const id of ["tts", "voice-clone"]) {
     const service = ai.services.find((item) => item.id === id);
     assert.equal(service.provider, "阿里云百炼");

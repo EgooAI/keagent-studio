@@ -117,7 +117,7 @@ test("桌面侧栏显示可用积分并直达兑换，也可按日期查看实�
   const packs = page.getByRole("region", { name: "试点积分包" });
   await expect(packs.getByText("约 2 条普通房源视频")).toBeVisible();
   await expect(packs.getByText("约 10 条普通房源视频")).toBeVisible();
-  await expect(packs.getByText(/MiniMax 开场单独计费/)).toBeVisible();
+  await expect(packs.getByText(/本机开场视频不另计费/)).toBeVisible();
   await expect(packs.getByText("联系试点运营领取兑换码")).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("textbox", { name: "兑换码" }).fill("TEST-CREDIT-CODE");

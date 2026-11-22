@@ -39,7 +39,7 @@ import { useQuery } from "@tanstack/react-query";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
 import { ProductionServiceStatus } from "../components/ProductionServiceStatus";
 import { CreditsPanel } from "../components/CreditsPanel";
-import { OpeningMaterials } from "../components/OpeningMaterials";
+import { OpeningVideos } from "../components/OpeningVideos";
 import { ThemeSettings } from "@keagent/theme";
 import { platformLabels } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
@@ -404,7 +404,7 @@ export default function SettingsPage() {
           <strong>使用本人素材，保留明确授权</strong>
           <p>
             {isLive
-              ? "本人声音须确认授权后才提交复刻；移除本应用音色不会自动释放供应商槽位。选择 MiniMax 开场时，已授权的参考素材和开场解说会发送给 MiniMax。平台账号由本人在客户端连接，发布前确认目标账号和成片。"
+              ? "本人声音须确认授权后才提交复刻。移除本应用音色不会自动释放供应商槽位。经纪人开场视频只保存在本机。平台账号由本人在客户端连接，发布前确认目标账号和成片。"
               : "使用本人声音素材需要确认授权。当前演示不上传选择的文件，不读取平台真实账号，也不向陌生用户发送消息。"}
           </p>
         </div>
@@ -416,7 +416,7 @@ export default function SettingsPage() {
             key: "files",
             label: "上传资料",
             children: isLive
-              ? "本人声音、照片仅在明确上传和授权后提交；房源素材用于所选制作流程。"
+              ? "本人声音仅在明确上传和授权后提交。生成带看文案时会提交所选房源图片。"
               : "当前仅在本地选择文件，记录示例名称并模拟处理",
           },
           {
@@ -430,7 +430,7 @@ export default function SettingsPage() {
             key: "ai",
             label: "AI 请求",
             children: isLive
-              ? "按管理员配置调用文案、配音或 MiniMax 开场服务。视频使用原始 VR 全景素材；服务调用可能产生供应商费用。"
+              ? "带看文案和配音按管理员设置调用云端服务。经纪人开场使用用户选择的本机视频和原声。"
               : "未调用外部供应商；话术和生产结果均为演示",
           },
         ]}
@@ -466,7 +466,7 @@ export default function SettingsPage() {
   );
   const items = [
     { key: "account", label: "账号信息", children: accountSettings },
-    { key: "appearance", label: "形象与背景", children: <OpeningMaterials /> },
+    { key: "appearance", label: "开场视频库", children: <OpeningVideos /> },
     {
       key: "voices",
       label: "声音与音色",

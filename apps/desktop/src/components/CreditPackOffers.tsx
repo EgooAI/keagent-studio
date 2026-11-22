@@ -53,8 +53,7 @@ export default function CreditPackOffers() {
         })}
       </div>
       <p className="muted">
-        视频条数按普通房源视频用量估算，实际消耗取决于所选服务。MiniMax
-        开场单独计费。
+        视频条数按普通房源视频用量估算，实际消耗取决于所选服务。本机开场视频不另计费。
       </p>
       <p className="settings-credit-packs-instructions">{instructions}</p>
     </section>

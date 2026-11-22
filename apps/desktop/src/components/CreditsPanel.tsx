@@ -78,8 +78,8 @@ function CreditWallet() {
         </Button>
       </header>
       <p>
-        AI 文案、配音、声音复刻和 MiniMax
-        开场按实际调用消耗积分；本机视频合成与平台发布不消耗。
+        AI
+        文案、配音和声音复刻按实际调用消耗积分。本机开场视频、视频合成与平台发布不消耗积分。
       </p>
       {summary.error && (
         <Alert

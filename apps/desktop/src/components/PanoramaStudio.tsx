@@ -84,9 +84,17 @@ import {
   type FactoryProperties,
   type FactoryProperty,
   type FactoryRow,
+  type FactoryTemplate,
 } from "./factoryClient";
 import { request, stageNames } from "./panoramaClient";
 import "./video-factory.css";
+
+function isOrdinaryShortTour(template?: FactoryTemplate) {
+  return (
+    template?.config.design === "short-tour" &&
+    template.config.videoMode === "voiceover"
+  );
+}
 
 const tabs = [
   ["all", "全部"],
@@ -201,7 +209,9 @@ export function PanoramaStudio() {
   >({});
   const [voiceId, setVoiceId] = useState<string>();
   const [batchRenderEdits, setBatchRenderEdits] = useState<RenderEdits>({});
-  const [openingAuthorized, setOpeningAuthorized] = useState(false);
+  const [savedOpeningId, setSavedOpeningId] = useState<string>();
+  const [temporaryOpening, setTemporaryOpening] =
+    useState<FactoryOpeningClip>();
   const [excluded, setExcluded] = useState(new Set<string>());
   const [expanded, setExpanded] = useState(false);
   const [pairPage, setPairPage] = useState(1);
@@ -290,8 +300,25 @@ export function PanoramaStudio() {
     queryFn: () => factoryRequest<FactoryCatalog>("catalog"),
     enabled: desktop,
     retry: false,
-    staleTime: 30_000,
+    staleTime: 60_000,
+    refetchInterval: creating ? 60_000 : false,
   });
+  useEffect(() => {
+    if (!desktop || client.getQueryData(["factory-catalog"])) return;
+    let active = true;
+    void factoryRequest<FactoryCatalog | null>("catalog", { cachedOnly: true })
+      .then((cached) => {
+        if (active && cached)
+          client.setQueryData<FactoryCatalog>(
+            ["factory-catalog"],
+            (current) => current ?? cached,
+          );
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [client, desktop]);
   const pricing = useQuery({
     ...creditPricingQuery,
     enabled: desktop && isLive,
@@ -325,22 +352,42 @@ export function PanoramaStudio() {
     }));
   }, [defaults.data, catalog.data]);
   const library = catalog.data?.library;
-  const bundles = library ? [...library.recommended, ...library.personal] : [];
-  const preferredId = defaults.data?.defaults?.videoTemplate?.id;
+  const bundles = library
+    ? [...library.recommended, ...library.personal].filter((bundle) =>
+        mixTemplate(library.parts, bundle),
+      )
+    : [];
+  const preferred = defaults.data?.defaults?.videoTemplate;
   const defaultBundle =
     bundles.find(
       (bundle) =>
-        bundle.id === preferredId || bundle.id === "bundle:" + preferredId,
-    ) || bundles[0];
-  let currentMix: FactoryBundle | undefined = chosenMix
-    ? chosenMix.id === "free-mix" ||
-      bundles.some((b) => templateKey(b) === templateKey(chosenMix))
-      ? chosenMix
-      : undefined
-    : defaultBundle;
+        bundle.version === preferred?.version &&
+        (bundle.id === preferred.id || bundle.id === "bundle:" + preferred.id),
+    ) ||
+    (library &&
+      library.recommended.find((bundle) =>
+        isOrdinaryShortTour(mixTemplate(library.parts, bundle)),
+      )) ||
+    bundles[0];
+  const chosenAvailable =
+    !!library &&
+    !!chosenMix &&
+    !!mixTemplate(library.parts, chosenMix) &&
+    (chosenMix.id === "free-mix" ||
+      bundles.some((bundle) => templateKey(bundle) === templateKey(chosenMix)));
+  let currentMix = chosenAvailable ? chosenMix : defaultBundle;
+  useEffect(() => {
+    if (!library || !chosenMix || chosenAvailable) return;
+    setChosenMix(undefined);
+    setBatchRenderEdits({});
+    setSavedOpeningId(undefined);
+    setTemporaryOpening(undefined);
+    setExcluded(new Set());
+    setIssues([]);
+    setPairPage(1);
+  }, [library, chosenMix, chosenAvailable]);
   if (
     library &&
-    !chosenMix &&
     !currentMix &&
     partKinds.every((k) =>
       library.parts.some((p) => p.available && p.kind === k),
@@ -358,30 +405,39 @@ export function PanoramaStudio() {
       ) as FactoryBundle["parts"],
     };
   }
-  const selectedMixes = currentMix
-    ? [
-        currentMix,
-        ...bundles.filter(
-          (bundle) =>
-            bundle.id !== currentMix?.id &&
-            additionalMixes.includes(templateKey(bundle)),
-        ),
-      ]
-    : [];
+  const additionalBundles = bundles.filter(
+    (bundle) => bundle.id !== currentMix?.id,
+  );
+  const selectedAdditional = additionalBundles.filter((bundle) =>
+    additionalMixes.includes(templateKey(bundle)),
+  );
+  const selectedMixes = currentMix ? [currentMix, ...selectedAdditional] : [];
   const templates = library
     ? selectedMixes.flatMap((bundle) => {
         const t = mixTemplate(library.parts, bundle);
         return t ? [t] : [];
       })
     : catalog.data?.templates || [];
-  const templateIds = library ? templates.map(templateKey) : legacyTemplateIds;
+  const legacyAvailable = legacyTemplateIds.filter((key) =>
+    templates.some((template) => templateKey(template) === key),
+  );
+  const legacyFallback =
+    !library && legacyTemplateIds.length && !legacyAvailable.length
+      ? templates.find(isOrdinaryShortTour)
+      : undefined;
+  const templateIds = library
+    ? templates.map(templateKey)
+    : legacyFallback
+      ? [templateKey(legacyFallback)]
+      : legacyAvailable;
   function applyMix(mix: FactoryBundle) {
     if (
       !currentMix ||
       templateKey(currentMix.parts.edit) !== templateKey(mix.parts.edit)
     ) {
       setBatchRenderEdits({});
-      setOpeningAuthorized(false);
+      setSavedOpeningId(undefined);
+      setTemporaryOpening(undefined);
     }
     setChosenMix(mix);
     setAdditionalMixes((ids) => ids.filter((key) => key !== templateKey(mix)));
@@ -410,6 +466,7 @@ export function PanoramaStudio() {
         : previous,
     );
     applyMix(saved);
+    void client.invalidateQueries({ queryKey: ["factory-catalog"] });
     void message.success("已保存到我的搭配");
   }
   const firstProperty = propertyIds.length
@@ -479,14 +536,6 @@ export function PanoramaStudio() {
         : [];
     }),
   );
-  const faceTemplates = new Set(
-    templates
-      .filter(
-        (template) =>
-          template.config.videoMode === "avatar" && !template.opening,
-      )
-      .map(templateKey),
-  );
   const imageProperties = [
     ...new Set(pairs.map((pair) => pair.propertyId)),
   ].map((id) => ({ id, title: propertyTitle(id) }));
@@ -494,36 +543,21 @@ export function PanoramaStudio() {
     ({ id }) =>
       sceneIdsByProperty[id]?.length >= 2 && sceneIdsByProperty[id].length <= 7,
   ).length;
-  const miniMaxTemplates = new Set(
-    templates
-      .filter((template) => template.opening === "minimax")
-      .map(templateKey),
+  const needsOpeningForBatch = selectedTemplates.some(
+    (template) => template.config.videoMode === "avatar",
   );
-  const useMiniMax = pairs.some((pair) =>
-    miniMaxTemplates.has(
-      templateKey({ id: pair.templateId, version: pair.version }),
-    ),
-  );
-  const needsOpeningForBatch = pairs.some((pair) =>
-    faceTemplates.has(
-      templateKey({ id: pair.templateId, version: pair.version }),
-    ),
-  );
+  const openingVideos = useQuery({
+    queryKey: ["opening-videos"],
+    queryFn: () => request<FactoryOpeningClip[]>("opening-videos"),
+    enabled: desktop && needsOpeningForBatch,
+  });
+  const openingClip =
+    temporaryOpening ??
+    openingVideos.data?.find((clip) => clip.id === savedOpeningId);
   const costEstimate = useMemo(
-    () =>
-      estimateBatchCost(pricing.data, {
-        tasks: pairs.length,
-        withOpening: useMiniMax,
-      }),
-    [pricing.data, pairs.length, useMiniMax],
+    () => estimateBatchCost(pricing.data, pairs.length),
+    [pricing.data, pairs.length],
   );
-  const openingClip = catalog.data?.openingClip;
-  const openingPhoto = catalog.data?.openingPhoto;
-  const miniMaxReady =
-    catalog.data?.minimaxOpening &&
-    catalog.data.managedVoices &&
-    openingPhoto &&
-    openingAuthorized;
   const filters = {
     search,
     batchId,
@@ -668,10 +702,6 @@ export function PanoramaStudio() {
       imageProperties.map(({ id }) => [id, sceneIdsByProperty[id]]),
     );
     const openingClipId = needsOpeningForBatch ? openingClip?.id : undefined;
-    const openingPhotoId = useMiniMax ? openingPhoto?.id : undefined;
-    const openingBackgroundId = useMiniMax
-      ? catalog.data?.openingBackground?.id
-      : undefined;
     const mixes = library
       ? selectedMixes
           .filter((mix) => activeTemplateKeys.has(templateKey(mix)))
@@ -682,8 +712,6 @@ export function PanoramaStudio() {
       selectedImages,
       voiceId,
       openingClipId,
-      openingPhotoId,
-      openingBackgroundId,
       overrides,
       mixes,
     ]);
@@ -698,11 +726,7 @@ export function PanoramaStudio() {
       ...(mixes ? { mixes } : {}),
       sceneIdsByProperty: selectedImages,
       voiceId,
-      openingClip: openingClipId,
-      openingPhoto: openingPhotoId,
-      openingBackground: openingBackgroundId,
-      openingAuthorized: useMiniMax && openingAuthorized,
-      openingRecipe: true,
+      openingVideo: openingClipId,
       ...(costEstimate && pricing.data
         ? {
             billingEstimate: {
@@ -720,7 +744,8 @@ export function PanoramaStudio() {
     setPropertyIds([]);
     setSceneIdsByProperty({});
     setBatchRenderEdits({});
-    setOpeningAuthorized(false);
+    setSavedOpeningId(undefined);
+    setTemporaryOpening(undefined);
     setExcluded(new Set());
     setPairPage(1);
     setBatchId(result.batchId);
@@ -736,10 +761,8 @@ export function PanoramaStudio() {
       "opening-clip-import",
     );
     if (!selected) return;
-    client.setQueryData<FactoryCatalog>(
-      ["factory-catalog"],
-      (current) => current && { ...current, openingClip: selected },
-    );
+    setSavedOpeningId(undefined);
+    setTemporaryOpening(selected);
     setIssues([]);
   }
   async function save() {
@@ -966,20 +989,8 @@ export function PanoramaStudio() {
         })
       }
       onConfirm={() => void run(confirmNext)}
-      onOpeningLocation={(asset) =>
-        void run(async () => {
-          const draft = await save();
-          if (!draft) return;
-          await factoryRequest("opening-location", {
-            id: row.id,
-            revision: draft.revision,
-            asset,
-          });
-          await refresh();
-        })
-      }
       onAct={(action) => {
-        if (action === "edit-opening" || action === "withdraw") {
+        if (action === "withdraw") {
           void run(async () => {
             if (await act(action, [row])) setReviewing(true);
           });
@@ -1081,8 +1092,13 @@ export function PanoramaStudio() {
           {(catalog.error || list.error) && (
             <Alert
               showIcon
-              type="error"
-              title={(catalog.error || list.error)?.message}
+              type={list.error || !catalog.data ? "error" : "warning"}
+              title={
+                list.error?.message ||
+                (catalog.data
+                  ? "暂未同步云端模板，正在显示本机缓存"
+                  : catalog.error?.message)
+              }
               action={
                 <Button
                   onClick={() => {
@@ -1253,57 +1269,61 @@ export function PanoramaStudio() {
                 </Space>
               </div>
             )}
-            {useMiniMax && (
-              <div className="factory-compose-note">
-                <strong>MiniMax H3 开场</strong>
-                <Space wrap>
-                  <Link to="/settings/appearance">设置经纪人照片与背景</Link>
-                  <span>{openingPhoto?.name || "尚未上传经纪人照片"}</span>
-                  <span>
-                    {catalog.data?.openingBackground?.name ||
-                      "尚未上传个人背景图"}
-                  </span>
-                </Space>
-                <Checkbox
-                  checked={openingAuthorized}
-                  disabled={busy}
-                  onChange={(event) => {
-                    setOpeningAuthorized(event.target.checked);
-                    setIssues([]);
-                  }}
-                >
-                  我确认已获得经纪人照片和开场素材的使用授权
-                </Checkbox>
-                <div>
-                  审核通过后，照片、地点图和百炼开场配音将发送给
-                  MiniMax，生成视频会计费。
-                </div>
-                {!catalog.data?.minimaxOpening && (
-                  <div>
-                    请在管理后台的「AI 服务」启用 MiniMax 开场，再刷新配置。
-                  </div>
-                )}
-              </div>
-            )}
             {needsOpeningForBatch && (
               <div className="factory-compose-note">
-                <Space wrap size={8}>
+                <strong>开场视频（必选）</strong>
+                <Space wrap>
+                  <Select
+                    aria-label="选择已保存的开场视频"
+                    placeholder="选择已保存的视频"
+                    style={{ width: 240 }}
+                    value={savedOpeningId}
+                    options={openingVideos.data?.map((clip) => ({
+                      value: clip.id,
+                      label: `${clip.name} · ${clip.duration.toFixed(1)} 秒`,
+                    }))}
+                    loading={openingVideos.isPending}
+                    notFoundContent="视频库暂无视频"
+                    disabled={busy}
+                    onChange={(id) => {
+                      setSavedOpeningId(id);
+                      setTemporaryOpening(undefined);
+                      setIssues([]);
+                    }}
+                  />
                   <Button
-                    size="small"
                     disabled={busy}
                     onClick={() => void run(importOpening)}
                   >
-                    {openingClip ? "更换真人开场视频" : "导入真人开场视频"}
+                    {temporaryOpening ? "更换临时视频" : "临时上传"}
                   </Button>
-                  <span>
-                    {openingClip
-                      ? `${openingClip.name} · ${openingClip.duration.toFixed(1)} 秒`
-                      : "请选择 2–30 秒的 MP4"}
-                  </span>
+                  <Link to="/settings/appearance">管理开场视频库</Link>
                 </Space>
-                <div>
-                  本机保存，可在露脸批次复用。建议选无对白镜头，开场使用房源文案的配音。
-                </div>
+                {temporaryOpening ? (
+                  <div>
+                    本次使用 {temporaryOpening.name} ·{" "}
+                    {temporaryOpening.duration.toFixed(1)} 秒
+                  </div>
+                ) : (
+                  <div>
+                    支持 2–30 秒、50 MB 以内的 MP4。临时上传仅用于本次制作。
+                  </div>
+                )}
+                {openingVideos.isError && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    title="视频库读取失败"
+                    action={
+                      <Button
+                        size="small"
+                        onClick={() => void openingVideos.refetch()}
+                      >
+                        重试
+                      </Button>
+                    }
+                  />
+                )}
               </div>
             )}
             {!library && !templates.length && catalog.isSuccess && (
@@ -1352,7 +1372,7 @@ export function PanoramaStudio() {
             {expanded && (
               <div className="factory-compose-expanded">
                 <Space wrap>
-                  {library && bundles.some((b) => b.id !== currentMix?.id) && (
+                  {library && additionalBundles.length > 0 && (
                     <label>
                       本批追加搭配{" "}
                       <Select
@@ -1361,14 +1381,12 @@ export function PanoramaStudio() {
                         className="factory-config-select"
                         aria-label="本批追加搭配"
                         placeholder="选择其他搭配"
-                        value={additionalMixes}
+                        value={selectedAdditional.map(templateKey)}
                         disabled={busy}
-                        options={bundles
-                          .filter((b) => b.id !== currentMix?.id)
-                          .map((b) => ({
-                            value: templateKey(b),
-                            label: b.name,
-                          }))}
+                        options={additionalBundles.map((bundle) => ({
+                          value: templateKey(bundle),
+                          label: bundle.name,
+                        }))}
                         onChange={(ids) => {
                           setAdditionalMixes(ids);
                           setExcluded(new Set());
@@ -1496,8 +1514,6 @@ export function PanoramaStudio() {
                   pairs.length > 200 ||
                   selectedPropertyCount !== imageProperties.length ||
                   (needsOpeningForBatch && !openingClip) ||
-                  (useMiniMax && !miniMaxReady) ||
-                  !!catalog.error ||
                   !catalog.data
                 }
                 onClick={() => void run(create)}

@@ -36,6 +36,16 @@ async function fixture(page: Page) {
         pilot = route.request().postDataJSON();
       return json(pilot);
     }
+    if (url.pathname === "/v1/admin/credits/pricing")
+      return json({
+        version: "default",
+        prices: {
+          opening: 100,
+          script: 5,
+          voice_clone: 25,
+          tts_per_kilo_char: 10,
+        },
+      });
     if (url.pathname === "/v1/admin/credits/pack-stats") return json([]);
     if (url.pathname === "/v1/admin/credits/quote-stats")
       return json({ sample: 0 });
@@ -139,6 +149,20 @@ test("后台启用试点积分包并按配置面额生成兑换码", async ({ pa
   await expect(
     page.getByText("PILOT-TEST-CODE", { exact: true }),
   ).toBeVisible();
+});
+
+test("价目界面移除旧开场计价，历史服务消耗仍可查看", async ({ page }) => {
+  await fixture(page);
+  await page.goto(adminBase + "/#/admin/credits");
+  await expect(
+    page.getByRole("row", { name: "MiniMax 开场 0", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "价目与赠送" }).click();
+  const pricing = page.getByRole("tabpanel", { name: "价目与赠送" });
+  await expect(
+    pricing.getByText("AI 文案（每次）", { exact: true }),
+  ).toBeVisible();
+  await expect(pricing.getByText(/MiniMax|opening/)).toHaveCount(0);
 });
 
 test("服务消耗按北京时间默认最近30天，支持范围、空结果和失败重试", async ({

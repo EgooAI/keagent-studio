@@ -471,7 +471,6 @@ function PricingAndWelcome() {
   }>(["admin", "credits-welcome"], "/v1/admin/credits/welcome");
   const { run, busy } = useAdminAction();
   const priceLabels: Record<string, string> = {
-    opening: "MiniMax 开场（每次）",
     voice_clone: "声音复刻（每次）",
     script: "AI 文案（每次）",
     tts_per_kilo_char: "云端配音（每千字）",
@@ -504,7 +503,7 @@ function PricingAndWelcome() {
       </h3>
       {pricing.data &&
         Object.entries(pricing.data.prices)
-          .filter(([key]) => key !== "image_expand")
+          .filter(([key]) => key !== "image_expand" && key !== "opening")
           .map(([key, value]) => (
             <PricingRow
               key={key}
