@@ -1,7 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createInitialWorkspace } from "../../packages/api-client/src/fixtures";
-import type { BeikeSearchResult } from "../../packages/shared-types/src/beike";
+import type {
+  BeikeDetailResult,
+  BeikeSearchResult,
+} from "../../packages/shared-types/src/beike";
 
 async function fixture(
   page: Page,
@@ -94,6 +97,7 @@ async function fixture(
         catalog,
         aiConfigured: false,
         beikeResult: undefined as BeikeSearchResult | undefined,
+        beikeDetail: undefined as BeikeDetailResult | undefined,
         failNextPropertyNumber: "",
         failNextVrImport: false,
         spatialImports: new Set<string>(),
@@ -231,13 +235,15 @@ async function fixture(
                   : [],
               };
             state.calls.push({ method, input: args[0] });
+            const beikeReady = !!(state.beikeResult || state.beikeDetail);
             if (method === "beikeCli.status")
               return {
-                available: !!state.beikeResult,
-                configured: !!state.beikeResult,
-                reason: state.beikeResult ? "ready" : "not_configured",
+                available: beikeReady,
+                configured: beikeReady,
+                reason: beikeReady ? "ready" : "not_configured",
               };
             if (method === "beikeCli.search") return state.beikeResult;
+            if (method === "beikeCli.detail") return state.beikeDetail;
             const input = args[0] || {};
             if (method === "createProperty") {
               if (
@@ -250,7 +256,7 @@ async function fixture(
               const saved = {
                 ...property,
                 ...input,
-                id: state.beikeResult
+                id: beikeReady
                   ? "beike-" + input.propertyNumber
                   : "new-property",
                 sample: false,
@@ -1508,6 +1514,92 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
     ["BJ-02", "北京市"],
     ["BJ-02", "北京市"],
   ]);
+});
+
+test("贝壳按房源号查询并确认导入精确匹配的房源", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await fixture(page);
+  await page.goto("/#/properties");
+  const id = "101138285186";
+  const house = {
+    id,
+    title: "大西洋新城E区 2室1厅 77㎡ 540万",
+    community: "大西洋新城E区",
+    district: "望京",
+    totalPriceWan: 540,
+    unitPrice: 70000,
+    areaSqm: 77,
+    layout: "2室1厅1厨2卫",
+    orientation: "南,西北",
+    builtYear: "2010年",
+    status: "在售",
+  };
+  await page.evaluate(
+    (detail: BeikeDetailResult) => {
+      (window as any).factorySettingsTest.beikeDetail = detail;
+    },
+    { city: "北京市", returned: 1, houses: [house] },
+  );
+  await page.getByRole("button", { name: "导入房源" }).click();
+  const dialog = page.getByRole("dialog", { name: "从贝壳找房" });
+  await dialog.getByText("按房源号查询", { exact: true }).click();
+  const field = dialog.getByLabel("贝壳房源号", { exact: true });
+  const submit = dialog.getByRole("button", { name: "查询房源" });
+  const add = dialog.getByRole("button", { name: "导入这套房源" });
+  const calls = (method: string) =>
+    page.evaluate(
+      (method) =>
+        (window as any).factorySettingsTest.calls
+          .filter((call: any) => call.method === method)
+          .map((call: any) => call.input),
+      method,
+    );
+
+  await field.fill("101,102");
+  await submit.click();
+  await expect(page.getByText("请输入一个纯数字的贝壳房源号")).toBeVisible();
+  expect(await calls("beikeCli.detail")).toEqual([]);
+
+  await field.fill("101138285187");
+  await submit.click();
+  await expect(
+    dialog.getByText("未找到该房源，请核对城市和贝壳房源号。"),
+  ).toBeVisible();
+  await expect(add).toHaveCount(0);
+
+  await field.fill(" １０１１３８２８５１８６ ");
+  await field.press("Enter");
+  await expect(dialog.getByRole("status")).toHaveText(`房源号 ${id} · 在售`);
+  await expect(
+    dialog.getByRole("checkbox", { name: /大西洋新城E区/ }),
+  ).toBeChecked();
+  expect(await calls("beikeCli.detail")).toEqual([
+    { city: "北京", ids: ["101138285187"] },
+    { city: "北京", ids: [id] },
+  ]);
+  expect(await calls("createProperty")).toEqual([]);
+
+  await add.click();
+  await expect(page.getByText("已导入 1 套贝壳房源")).toBeVisible();
+  await expect(add).toHaveCount(0);
+  expect(await calls("createProperty")).toEqual([
+    expect.objectContaining({
+      propertyNumber: id,
+      title: house.title,
+      city: "北京市",
+      priceCents: 540_000_000,
+      areaSqm: 77,
+      details: expect.objectContaining({
+        buildingAge: "2010年",
+        listingStatus: "在售",
+      }),
+    }),
+  ]);
+  await dialog
+    .getByRole("button", { name: "关闭", exact: true })
+    .last()
+    .click();
+  await expect(page.getByText(house.title, { exact: true })).toBeVisible();
 });
 
 test("新视频继续使用已保存的制作偏好", async ({ page }) => {

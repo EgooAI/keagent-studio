@@ -1,4 +1,4 @@
-import type { BeikeHouse, Property } from "@keagent/shared-types";
+import type { BeikeHouseDetail, Property } from "@keagent/shared-types";
 
 export type BeikePropertyInput = Pick<
   Property,
@@ -6,12 +6,12 @@ export type BeikePropertyInput = Pick<
 > &
   Partial<Property>;
 
-// 把贝壳 search 返回的房源摘要映射成 createProperty 的入参。
 // 总价单位是「万元」，Property.priceCents 是「分」：1 万 = 1,000,000 分。
 export function beikeHouseToPropertyInput(
-  house: BeikeHouse,
+  house: BeikeHouseDetail,
   city: string,
 ): BeikePropertyInput {
+  const { status } = house;
   return {
     title: house.title,
     community: house.community,
@@ -26,8 +26,12 @@ export function beikeHouseToPropertyInput(
     details: {
       floor: house.floor,
       orientation: house.orientation,
+      buildingAge: house.builtYear || house.buildingAge,
       transactionAttributes: house.transaction,
-      listingStatus: house.status === "在售" ? "在售" : undefined,
+      listingStatus:
+        status === "在售" || status === "已成交" || status === "已下架"
+          ? status
+          : undefined,
     },
     image: "",
     images: [],
