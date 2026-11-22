@@ -23,7 +23,7 @@
 
 发布器通过网页文件选择器上传视频，输入标题和正文，并将交接封面上传为抖音 3:4 竖封面。可见范围、下载权限和同步选项沿用抖音页面当前设置。封面上传未获确认时停止提交。竖封面的网页操作参考 [auto-upload 的抖音上传器](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L338-L423)。
 
-单条预约在用户确认时上传并提交给抖音。预约时间按北京时间显示，以整数 Unix 秒写入发布记录。提交前回读网页时间，定时提交请求的时间必须与预约时间相同。已排期作品可从创作者中心管理，核对公开状态或取消后可在 KeAgent 记录结果。日期控件操作参考 [auto-upload 的定时发布](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L97-L151)。
+单条预约在用户确认时上传并提交给抖音。预约时间按北京时间显示，以整数 Unix 秒写入发布记录。提交前回读网页时间，定时提交请求的时间必须与预约时间相同。已排期作品可从创作者中心管理，核对公开状态或取消后可在 AI来客记录结果。日期控件操作参考 [auto-upload 的定时发布](https://github.com/s840207702/auto-upload/blob/054f01ecc8f441f120abba4333cdc73e8f025802/uploader/douyin_uploader/main.py#L97-L151)。
 
 执行状态为 `running / submitting / accepted / failed / unknown / canceled`。本机写入 `submitting` 日志并获得云端确认后，只点击一次网页的发布按钮。发布器读取网页发出的提交回执，有效作品 ID 记为 `accepted`。明确的平台拒绝记为失败，超时或回执不明时转为待核对。平台审核与作品可见性由抖音决定。
 

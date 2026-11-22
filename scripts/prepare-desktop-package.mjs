@@ -67,8 +67,9 @@ await writeFile(
   JSON.stringify(
     {
       name: source.name,
-      productName: source.build.productName,
-      description: "KeAgent Studio 桌面客户端",
+      // Electron uses this internal name for the existing profile and macOS Keychain.
+      productName: "KeAgent Studio",
+      description: `${source.build.productName}桌面客户端`,
       version: source.version,
       private: true,
       type: "module",

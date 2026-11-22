@@ -12,7 +12,7 @@ export function getAuth() {
   if (process.env.BETTER_AUTH_SECRET.length < 32)
     throw new Error("服务端密钥至少 32 字符");
   instance = betterAuth({
-    appName: "KeAgent Studio",
+    appName: "AI来客",
     database: new Pool({ connectionString: process.env.DATABASE_URL }),
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.BETTER_AUTH_URL || "http://127.0.0.1:18080",

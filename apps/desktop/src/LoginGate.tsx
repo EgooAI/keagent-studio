@@ -97,7 +97,7 @@ export default function LoginGate() {
       <section className="login-panel" aria-labelledby="login-title">
         <header>
           <img src="./keagent-icon.png" width="48" height="48" alt="" />
-          <h1 id="login-title">登录 KeAgent Studio</h1>
+          <h1 id="login-title">登录 AI来客</h1>
           <p>使用管理员开通的账号登录。</p>
         </header>
         {error && (

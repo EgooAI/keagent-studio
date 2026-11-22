@@ -209,7 +209,7 @@ function messageChat(
     if (state.reason === "login")
       throw new PublishingError(
         action === "submit" ? "DM_NOT_DISPATCHED" : "LOGIN_REQUIRED",
-        "平台要求登录或验证，请在 KeAgent 的平台账号页处理。",
+        "平台要求登录或验证，请在 AI来客的「平台账号」页处理。",
       );
     return state;
   };

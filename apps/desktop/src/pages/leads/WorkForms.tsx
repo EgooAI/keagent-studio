@@ -140,7 +140,7 @@ export function WorkAdd({
           />
         </Form.Item>
         <p className="work-note">
-          KeAgent 运行时，每 15 分钟检查一次持续监控的作品。
+          AI来客运行时，每 15 分钟检查一次持续监控的作品。
         </p>
         <Form.Item name="accepted" valuePropName="checked">
           <Checkbox>

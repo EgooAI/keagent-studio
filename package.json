@@ -26,8 +26,8 @@
   },
   "build": {
     "appId": "com.keagent.studio",
-    "productName": "KeAgent Studio",
-    "artifactName": "KeAgent-Studio-${version}-${os}-${arch}.${ext}",
+    "productName": "AI来客",
+    "artifactName": "AI-Laike-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "app": "output/desktop-app"

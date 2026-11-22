@@ -106,7 +106,7 @@ export function WorkMonitors({
       size="large"
     >
       <p className="monitor-cadence">
-        KeAgent 运行期间，每 15 分钟用对应账号检查一次新评论。
+        AI来客运行期间，每 15 分钟用对应账号检查一次新评论。
       </p>
       {list.isPending && <Spin />}
       {list.error && <Alert type="error" title={list.error.message} />}

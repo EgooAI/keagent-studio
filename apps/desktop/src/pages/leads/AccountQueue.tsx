@@ -70,7 +70,7 @@ function messageEvidence(task: AccountTask, platform: LeadScope["platform"]) {
   const { local } = task;
   if (local?.resultSource === "manual") return "经纪人已人工核对平台会话。";
   if (local?.state === "accepted")
-    return "KeAgent 已在收件人的会话记录中自动核实这条私信。";
+    return "AI来客已在收件人的会话记录中自动核实这条私信。";
   if (local?.state === "failed" && stoppedBeforeSend.has(local.errorCode ?? ""))
     return "在发送前停止，未点击发送。";
   if (
@@ -79,7 +79,7 @@ function messageEvidence(task: AccountTask, platform: LeadScope["platform"]) {
     local.sourceWorkId &&
     local.sourceCommentId
   )
-    return "KeAgent 会重新读取收件人的抖音会话。核实后，这里会自动更新。";
+    return "AI来客会重新读取收件人的抖音会话。核实后，这里会自动更新。";
   if (task.stage === "uncertain")
     return "尚无可以确认发送成功的会话记录。请在对应平台会话中核对。";
   return "暂无会话核对记录。";

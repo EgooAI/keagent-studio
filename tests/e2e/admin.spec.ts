@@ -1179,6 +1179,14 @@ test("管理入口职责明确，真实路由和旧入口可恢复", async ({ pa
   ];
   await page.goto(adminBase);
   await expect(page).toHaveURL(/#\/admin\/dashboard$/);
+  await expect(page).toHaveTitle("AI来客 · 管理后台");
+  await expect(
+    page.getByRole("link", { name: "AI来客 · 管理后台" }).locator("img"),
+  ).toHaveJSProperty("naturalWidth", 128);
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    "href",
+    /keagent-icon\.png$/,
+  );
   await expect(
     page.getByRole("heading", { name: "管理工作台", exact: true }),
   ).toBeVisible();
@@ -1861,7 +1869,9 @@ test("会话失效立即关闭停用确认，不保留旧管理操作", async ({
     window.dispatchEvent(new Event("keagent:unauthorized")),
   );
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText("登录管理后台", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("登录 AI来客管理后台", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "确认停用", exact: true }),
   ).toHaveCount(0);

@@ -10,6 +10,7 @@ const {
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const productName = "AI来客";
 const devPort = Number(
   (!app.isPackaged && app.commandLine.getSwitchValue("keagent-dev-port")) ||
     5173,
@@ -164,7 +165,7 @@ function createWindow() {
     height: 940,
     minWidth: 1080,
     minHeight: 720,
-    title: "KeAgent Studio",
+    title: productName,
     icon,
     titleBarStyle: integratedTitle ? "hidden" : "default",
     titleBarOverlay:
@@ -182,9 +183,9 @@ function createWindow() {
   });
   mainWindow = window;
   const trayMenu = Menu.buildFromTemplate([
-    { id: "open", label: "打开 KeAgent Studio", click: showMainWindow },
+    { id: "open", label: `打开 ${productName}`, click: showMainWindow },
     { type: "separator" },
-    { id: "quit", label: "退出 KeAgent Studio", click: () => app.quit() },
+    { id: "quit", label: `退出 ${productName}`, click: () => app.quit() },
   ]);
   if (integratedTitle) {
     try {
@@ -193,7 +194,7 @@ function createWindow() {
           ? path.join(assets, "trayTemplate.png")
           : icon,
       );
-      tray.setToolTip("KeAgent Studio");
+      tray.setToolTip(productName);
       tray.setContextMenu(trayMenu);
       if (process.platform === "win32") tray.on("click", showMainWindow);
     } catch (error) {
@@ -245,7 +246,12 @@ function createWindow() {
         const heading = await window.webContents.executeJavaScript(
           `new Promise((resolve, reject) => { const deadline = Date.now() + 10000; const check = () => { const heading = document.querySelector('h1, .ant-card-head-title'); if (heading) resolve(heading.textContent); else if (Date.now() > deadline) reject(new Error('Renderer did not mount')); else setTimeout(check, 100); }; check(); })`,
         );
-        if (!heading.includes("创作工作台") && !heading.includes("登录"))
+        if (!window.getTitle().startsWith(productName))
+          throw new Error("Unexpected window title: " + window.getTitle());
+        if (
+          !heading.includes("创作工作台") &&
+          heading !== `登录 ${productName}`
+        )
           throw new Error("Unexpected renderer content: " + heading);
         if (integratedTitle) {
           if (!tray || tray.isDestroyed())

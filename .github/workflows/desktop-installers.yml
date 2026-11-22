@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       public_origin:
-        description: KeAgent HTTPS origin
+        description: AI来客 HTTPS origin
         required: true
         default: https://47.93.88.61
         type: string
@@ -54,10 +54,10 @@ jobs:
         run: |
           $installer = Get-ChildItem -LiteralPath release -Filter '*.exe'
           if (@($installer).Count -ne 1) { throw 'Expected one Windows installer' }
-          $target = Join-Path $env:RUNNER_TEMP 'KeAgentSmoke'
+          $target = Join-Path $env:RUNNER_TEMP 'AI-Laike-Smoke'
           $installation = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$target" -WindowStyle Hidden -Wait -PassThru
           if ($installation.ExitCode -ne 0) { throw "Installer failed: $($installation.ExitCode)" }
-          node scripts/douyin-package-smoke.mjs (Join-Path $target 'KeAgent Studio.exe')
+          node scripts/douyin-package-smoke.mjs (Join-Path $target 'AI来客.exe')
       - name: Check Mac disk image
         if: runner.os == 'macOS'
         shell: bash
@@ -67,10 +67,10 @@ jobs:
           mount=$(mktemp -d)
           trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true; rmdir "$mount"' EXIT
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          node scripts/douyin-package-smoke.mjs "$mount/KeAgent Studio.app/Contents/MacOS/KeAgent Studio"
+          node scripts/douyin-package-smoke.mjs "$mount/AI来客.app/Contents/MacOS/AI来客"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: KeAgent-Studio-${{ matrix.target }}
+          name: AI-Laike-${{ matrix.target }}
           path: ${{ matrix.installer }}
           if-no-files-found: error
           compression-level: 0

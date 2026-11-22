@@ -437,7 +437,7 @@ function WorksView({ accountId, accountName, platform, canOperate }: Props) {
             )}
           </section>
           <p className="work-note">
-            KeAgent 运行期间，每 15 分钟检查一次持续监控的作品。
+            AI来客运行期间，每 15 分钟检查一次持续监控的作品。
           </p>
         </>
       ) : (

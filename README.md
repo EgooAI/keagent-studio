@@ -1,6 +1,6 @@
-# KeAgent Studio 开发文档
+# AI来客 开发文档
 
-KeAgent Studio 是面向房产经纪人的 AI 视频生产与营销桌面应用的工作名称。用户通过房源资料批量生成视频，审核文案，查看成片，提交各平台草稿或发布流程，并分析评论线索。客户端支持 Windows 和 macOS，另有 Go 云端服务、本地执行器和独立 Web 管理后台。
+AI来客是面向房产经纪人的 AI 视频生产与营销桌面应用。用户通过房源资料批量生成视频，审核文案，查看成片，提交各平台草稿或发布流程，并分析评论线索。客户端支持 Windows 和 macOS，另有 Go 云端服务、本地执行器和独立 Web 管理后台。
 
 版本：V1 开发基线。整理日期：2026 年 10 月 30 日。
 
@@ -93,7 +93,9 @@ pnpm build
 pnpm package:desktop  # 当前系统的未签名、未压缩 Electron 前端目录
 ```
 
-内测安装包用 `pnpm package:desktop:installer` 在目标系统构建。构建时设置 `KEAGENT_PUBLIC_ORIGIN` 为测试服务器的 HTTPS 源，设置 `VITE_API_MODE=live`。安装包包含对应平台的 FFmpeg 和 FFprobe，输出在 `release/`。私有仓库的 Desktop installers 工作流提供 Windows x64、Mac Apple Silicon 和 Mac Intel 安装包。
+内测安装包用 `pnpm package:desktop:installer` 在目标系统构建。构建时设置 `KEAGENT_PUBLIC_ORIGIN` 为测试服务器的 HTTPS 源，设置 `VITE_API_MODE=live`。安装包包含对应平台的 FFmpeg 和 FFprobe，安装包输出到 `release/`，文件名以 `AI-Laike-` 开头。私有仓库的 Desktop installers 工作流提供 Windows x64、Mac Apple Silicon 和 Mac Intel 安装包。
+
+新版沿用原应用 ID 和 `KeAgent Studio` 本地数据目录，供已有安装继续读取登录状态、平台账号和本地任务。
 
 单元测试覆盖批量任务与幂等、审核、修订冲突及历史、独立平台状态、资源安装、持久化、CSV 解析。浏览器测试覆盖房源选择与取消、刷新恢复、三房源审核发布、导入、历史成果、多窗口写入以及 1280×800 提交入口。
 

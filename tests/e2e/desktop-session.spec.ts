@@ -42,7 +42,13 @@ async function openDesktop(page: Page, initial = "online") {
 test("桌面会话在短暂断网后保留工作台，失效后停在登录页", async ({ page }) => {
   await openDesktop(page);
   const sidebar = page.locator(".sidebar");
-  await expect(sidebar).toBeVisible();
+  await expect(
+    sidebar.getByRole("link", { name: "AI来客 工作台" }),
+  ).toBeVisible();
+  await expect(
+    sidebar.getByText("房产创作工作台", { exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveTitle("AI来客 · 房产创作工作台");
   // A remount would discard unsaved component state as well as this marker.
   await sidebar.evaluate((el) => el.setAttribute("data-original", "yes"));
   const tick = async (result: string) => {
@@ -71,7 +77,7 @@ test("桌面会话在短暂断网后保留工作台，失效后停在登录页",
   await expect(page.locator("html")).toHaveAttribute("data-polls", pending!);
   await page.evaluate(() => window.dispatchEvent(new Event("test:release")));
   await tick("revoked");
-  const login = page.getByRole("heading", { name: "登录 KeAgent Studio" });
+  const login = page.getByRole("heading", { name: "登录 AI来客" });
   await expect(login).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.dataset.result = "online";
@@ -107,7 +113,7 @@ test("启动时服务不可用会等待验证，用户退出后忽略迟到的�
   await page.clock.fastForward(15_000);
   await page.getByRole("button", { name: "用户菜单" }).click();
   await page.getByRole("menuitem", { name: "退出登录" }).click();
-  const login = page.getByRole("heading", { name: "登录 KeAgent Studio" });
+  const login = page.getByRole("heading", { name: "登录 AI来客" });
   await expect(login).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.dataset.result = "online";

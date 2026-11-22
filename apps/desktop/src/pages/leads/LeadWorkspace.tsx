@@ -20,7 +20,7 @@ export default function LeadWorkspace() {
     <Alert
       showIcon
       type="info"
-      title="请在 KeAgent 桌面客户端打开 AI 获客"
+      title="请在 AI来客桌面客户端打开 AI 获客"
       description="在桌面端可以查看已保存的作品、评论、线索和本机账号队列。"
     />
   );

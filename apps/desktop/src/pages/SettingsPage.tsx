@@ -19,7 +19,6 @@ import {
 } from "antd";
 import {
   Mic,
-  Monitor,
   Play,
   Plus,
   RefreshCw,
@@ -439,13 +438,11 @@ export default function SettingsPage() {
   );
   const about = (
     <>
-      <h2>关于 KeAgent Studio</h2>
+      <h2>关于 AI来客</h2>
       <div className="settings-profile">
-        <span className="settings-symbol">
-          <Monitor size={30} aria-hidden="true" />
-        </span>
+        <img src="./keagent-icon.png" width="54" height="54" alt="" />
         <div>
-          <strong style={{ fontSize: 20 }}>KeAgent Studio</strong>
+          <strong style={{ fontSize: 20 }}>AI来客</strong>
           <p style={{ color: "#667085", margin: "8px 0" }}>
             v0.1.0 · {isLive ? "开发测试版" : "前端演示版"}
           </p>

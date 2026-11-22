@@ -139,14 +139,10 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
         跳至主要内容
       </a>
       <aside className="sidebar">
-        <Link
-          to="/dashboard"
-          className="brand"
-          aria-label="KeAgent Studio 工作台"
-        >
+        <Link to="/dashboard" className="brand" aria-label="AI来客 工作台">
           <img src="./keagent-icon.png" width="38" height="38" alt="" />
           <span>
-            <strong>KeAgent Studio</strong>
+            <strong>AI来客</strong>
             <small>房产创作工作台</small>
           </span>
         </Link>
@@ -383,7 +379,7 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
             </Suspense>
           )}
           <footer className="app-footer">
-            <span>KeAgent Studio</span>
+            <span>AI来客</span>
             <span>
               {isLive
                 ? "云端联调 · 未接入的能力会明确提示"

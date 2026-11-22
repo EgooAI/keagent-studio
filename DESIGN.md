@@ -1,5 +1,5 @@
 ---
-name: KeAgent Studio
+name: AI来客
 description: 白色工作面、冷灰背景与皇冠紫主操作组成的桌面工作界面。
 colors:
   primary: "#722ed1"
@@ -125,7 +125,7 @@ components:
     padding: "16px"
 ---
 
-# Design System: KeAgent Studio
+# Design System: AI来客
 
 ## Overview
 

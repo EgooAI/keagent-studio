@@ -27,7 +27,6 @@ import {
   Coins,
   Cpu,
   LayoutDashboard,
-  Layers,
   Settings,
   ShieldCheck,
   Users,
@@ -186,7 +185,7 @@ export default function LiveAdmin() {
   if (!user)
     return (
       <main className="admin-login">
-        <Card title="登录管理后台" className="admin-login-card">
+        <Card title="登录 AI来客管理后台" className="admin-login-card">
           <p className="admin-secondary">
             使用管理员账号维护用户、公共模板与云端服务。
           </p>
@@ -266,13 +265,17 @@ export default function LiveAdmin() {
         <Link
           to="/admin/dashboard"
           className="admin-brand"
-          aria-label="KeAgent Studio 管理工作台"
+          aria-label="AI来客 · 管理后台"
         >
-          <span className="admin-brand-mark">
-            <Layers size={18} aria-hidden="true" />
-          </span>
+          <img
+            className="admin-brand-mark"
+            src="./keagent-icon.png"
+            width="34"
+            height="34"
+            alt=""
+          />
           <div>
-            <strong>KeAgent Studio</strong>
+            <strong>AI来客</strong>
             <small>管理后台</small>
           </div>
         </Link>

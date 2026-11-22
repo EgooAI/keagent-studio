@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 const root = mkdtempSync(path.join(os.tmpdir(), "keagent-package-smoke-"));
 const executable = path.resolve(
-  process.argv[2] || "release/win-unpacked/KeAgent Studio.exe",
+  process.argv[2] || "release/win-unpacked/AI来客.exe",
 );
 const origin = process.env.KEAGENT_PUBLIC_ORIGIN;
 const environment = { ...process.env };
@@ -45,7 +45,7 @@ try {
     result.error ||
     result.status !== 0 ||
     !renderer ||
-    (origin && (!release || !renderer.includes("登录")))
+    (origin && (!release || !renderer.endsWith("登录 AI来客")))
   ) {
     console.error(result.error?.message || output || "Packaged app failed");
     process.exitCode = 1;

@@ -283,8 +283,7 @@
   align-items: center;
   margin: 18px 0 24px;
 }
-.settings-profile .ant-avatar,
-.settings-symbol {
+.settings-profile .ant-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -297,11 +296,6 @@
 }
 .settings-profile p {
   margin: 4px 0 0;
-}
-.settings-symbol {
-  width: 54px;
-  height: 54px;
-  border-radius: 12px;
 }
 .settings-notice {
   display: flex;
