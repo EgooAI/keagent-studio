@@ -466,7 +466,8 @@ export class BrowserView {
       update();
       this.onNavigation(url);
     });
-    contents.on("did-navigate-in-page", (_event, url) => {
+    contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+      if (!isMainFrame) return;
       this.lastTargetUrl = url;
       update();
       this.onNavigation(url);

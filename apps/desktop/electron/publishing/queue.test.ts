@@ -62,6 +62,35 @@ function setup() {
   return { input, ports, record };
 }
 
+it("keeps an existing Douyin batch independent from a Channels batch for the same artifact", async () => {
+  const { input, ports, record } = setup();
+  ports.execute.mockImplementation(async (entry) =>
+    record(entry.artifactId, "accepted"),
+  );
+  const queue = new PublishQueue(ports);
+  const batch = { ...input, entries: input.entries.slice(0, 1) };
+  queue.add(identity, batch);
+  queue.add(identity, {
+    ...batch,
+    accountId: "d".repeat(32),
+    requestKey: randomUUID(),
+    platform: "channels",
+  });
+  expect(() =>
+    queue.add(identity, { ...batch, requestKey: randomUUID() }),
+  ).toThrow("已有排队任务");
+  await vi.waitFor(() =>
+    expect(
+      queue
+        .view(identity)
+        .rows.map((row) => [row.platform ?? "douyin", row.state]),
+    ).toEqual([
+      ["channels", "accepted"],
+      ["douyin", "accepted"],
+    ]),
+  );
+});
+
 it("runs each confirmed item once and pauses for unknown results", async () => {
   const { input, ports, record } = setup();
   ports.execute.mockImplementation(async (entry, _, check, started) => {
@@ -149,6 +178,42 @@ it.each(["accepted", "failed"] as const)(
     expect(ports.execute).not.toHaveBeenCalled();
   },
 );
+
+it("keeps a recovered Channels submission pending manual verification", async () => {
+  const { input, ports, record } = setup();
+  const folder = ports.directory(identity);
+  fs.mkdirSync(folder);
+  const id = input.entries[0].artifactId;
+  fs.writeFileSync(
+    path.join(folder, "publish-queue.json"),
+    JSON.stringify({
+      paused: false,
+      batches: {},
+      entries: [
+        {
+          id: "crashed",
+          platform: "channels",
+          artifactId: id,
+          recordId: id,
+          state: "running",
+        },
+      ],
+    }),
+  );
+  ports.record.mockResolvedValue({
+    ...record(id, "unknown"),
+    platform: "channels",
+  });
+  const restarted = new PublishQueue(ports);
+  await expect(
+    restarted.control(identity, "clear-interrupted", "crashed"),
+  ).rejects.toMatchObject({ code: "QUEUE_CONFLICT" });
+  expect(restarted.view(identity)).toMatchObject({
+    paused: true,
+    rows: [{ state: "unknown" }],
+  });
+  expect(ports.execute).not.toHaveBeenCalled();
+});
 
 it("recovers a persisted queue without replaying its interrupted item", async () => {
   const { input, ports } = setup();

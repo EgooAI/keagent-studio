@@ -216,7 +216,7 @@ func collectionDevice(ctx context.Context, tx *sql.Tx, a actor) error {
 
 func accountStatus(ctx context.Context, tx *sql.Tx, a actor, account string) (string, error) {
 	var state string
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(payload->>'loginStatus','unknown') FROM keagent_douyin_account WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND NOT(payload ? 'unboundAt') FOR SHARE`, account, a.UserID, a.DeviceID).Scan(&state)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(payload->>'loginStatus','unknown') FROM keagent_douyin_account WHERE id=$1 AND owner_id=$2 AND device_id=$3 AND NOT(payload ? 'unboundAt') AND COALESCE(payload->>'platform','douyin') IN ('douyin','xhs') FOR SHARE`, account, a.UserID, a.DeviceID).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

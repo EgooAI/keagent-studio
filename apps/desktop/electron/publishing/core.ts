@@ -6,7 +6,7 @@ import type {
 } from "@keagent/shared-types";
 import {
   validateDouyinInput,
-  validateDouyinSchedule,
+  validatePublishSchedule,
   type DouyinPublishInput,
   type DouyinPublishRecord,
   type DouyinAccount,
@@ -54,7 +54,7 @@ export interface PublishPorts {
     steps: ExecutionStepReporter,
     beforeSubmit: () => Promise<void>,
     progress: (value: number) => void,
-  ): Promise<{ externalId: string; url: string }>;
+  ): Promise<{ externalId?: string; url?: string }>;
   journal(record: DouyinPublishRecord): void;
   changed(record?: DouyinPublishRecord): void;
   cleanup(requestKey: string, identity?: PublishingIdentity): Promise<void>;
@@ -158,7 +158,10 @@ export class DirectPublisher {
     if (input.scheduledAt !== undefined) {
       const scheduleError = input.batch
         ? "批量发布暂不支持排期"
-        : validateDouyinSchedule(input.scheduledAt);
+        : validatePublishSchedule(
+            input.platform ?? "douyin",
+            input.scheduledAt,
+          );
       if (scheduleError)
         throw new PublishingError("INVALID_SCHEDULE", scheduleError, 422);
     }
@@ -181,13 +184,15 @@ export class DirectPublisher {
       !accounts.items.some(
         (account) =>
           account.id === input.accountId &&
+          (account.platform ?? "douyin") === (input.platform ?? "douyin") &&
+          account.platform !== "xhs" &&
           account.deviceId === identity.deviceId &&
           !account.unboundAt,
       )
     )
       throw new PublishingError(
         "ACCOUNT_UNAVAILABLE",
-        "请选择当前设备的有效抖音账号",
+        "请选择当前设备上对应平台的发布账号",
       );
     const assets = await validateHandoff(
       this.ports.exchange,

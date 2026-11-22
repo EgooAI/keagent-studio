@@ -22,6 +22,37 @@ if (origin) {
 }
 
 try {
+  const resources =
+    process.platform === "darwin"
+      ? path.resolve(path.dirname(executable), "../Resources")
+      : path.join(path.dirname(executable), "resources");
+  const worker = path.join(
+    resources,
+    "channels-runtime",
+    process.platform === "win32" ? "channels-worker.exe" : "channels-worker",
+  );
+  const workerResult = spawnSync(worker, ["--bundled-chrome-self-test"], {
+    encoding: "utf8",
+    timeout: 60000,
+    windowsHide: true,
+    env: environment,
+  });
+  const browser =
+    workerResult.status === 0 ? JSON.parse(workerResult.stdout) : null;
+  if (
+    workerResult.error ||
+    browser?.event !== "ready" ||
+    browser.browser !== "bundled" ||
+    browser.h264 !== true
+  ) {
+    throw (
+      workerResult.error ||
+      new Error(
+        "Installed WeChat Channels browser or H.264 self-test failed: " +
+          (workerResult.stderr || workerResult.stdout || workerResult.status),
+      )
+    );
+  }
   const result = spawnSync(
     executable,
     ["--smoke-test", "--hidden", `--user-data-dir=${root}`],

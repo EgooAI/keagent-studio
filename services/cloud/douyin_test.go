@@ -82,6 +82,49 @@ func TestDouyinScheduledPublishRecord(t *testing.T) {
 	createdDouyin(t, s, a, retry)
 }
 
+func TestChannelsAndDouyinMayPublishSameArtifact(t *testing.T) {
+	s, a, input := douyinFixture(t)
+	input.Batch = true
+	first := createdDouyin(t, s, a, input)
+	first.State = "submitting"
+	mustDouyin(t, s, a, "records/report", first)
+	first.State, first.Progress, first.ResultSource = "accepted", 100, "platform"
+	first.ExternalID, first.URL = "123456789", "https://www.douyin.com/video/123456789"
+	mustDouyin(t, s, a, "records/report", first)
+
+	input.RequestKey, input.Platform = id(), "channels"
+	_, err := douyinCall(s, a, "records/create", input)
+	expectExchangeStatus(t, err, 409)
+	input.AccountID = id()
+	mustDouyin(t, s, a, "accounts/bind", object{"id": input.AccountID, "platform": "channels", "name": "视频号测试", "loginStatus": "logged_in"})
+	mustDouyin(t, s, a, "accounts/update", object{"id": input.AccountID, "platform": "channels", "name": "视频号测试", "loginStatus": "logged_in", "platformUserId": "fixture-channels", "savedProfile": true})
+	workspace := mustDouyin(t, s, a, "workspace", object{"platform": "channels", "status": "unpublished"}).(object)
+	if workspace["total"] != float64(1) {
+		t.Fatal("a Douyin submission hid the Channels work item")
+	}
+	input.Batch = false
+	input.ScheduledAt = time.Now().Add(24*time.Hour).Truncate(time.Hour).Unix() + 60
+	_, err = douyinCall(s, a, "records/create", input)
+	expectExchangeStatus(t, err, 422)
+	input.ScheduledAt, input.Batch = 0, true
+	record := createdDouyin(t, s, a, input)
+	record.State = "submitting"
+	mustDouyin(t, s, a, "records/report", record)
+	record.State, record.Progress, record.ResultSource = "accepted", 100, "platform"
+	mustDouyin(t, s, a, "records/report", record)
+	input.RequestKey = id()
+	_, err = douyinCall(s, a, "records/create", input)
+	expectExchangeStatus(t, err, 409)
+	list := mustDouyin(t, s, a, "records/list", object{"platform": "channels"}).(object)
+	if list["total"] != 1 {
+		t.Fatalf("unexpected Channels record count %v", list["total"])
+	}
+	var observed bool
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM keagent_douyin_observation WHERE record_id=$1)`, record.ID).Scan(&observed); err != nil || observed {
+		t.Fatal("Channels submission entered Douyin incident reporting", err)
+	}
+}
+
 func TestDouyinConfirmPublishedWithoutLink(t *testing.T) {
 	for _, scenario := range []string{"unknown", "scheduled"} {
 		t.Run(scenario, func(t *testing.T) {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { App, Button, Space, Tabs, Alert } from "antd";
 import { ArrowLeft, ArrowRight, ChevronLeft, RotateCw, X } from "lucide-react";
 import {
+  socialPlatformLabel,
   douyinDesktop,
   publishingFailureText,
   publishingMessage,
@@ -15,9 +16,9 @@ export default function DouyinBrowserWorkspace() {
   const viewport = useRef<HTMLDivElement>(null);
   const { message } = App.useApp();
   const [busy, setBusy] = useState(false);
-  const tab = data?.tabs.find(
-    (value) => value.accountId === data.activeAccountId,
-  );
+  const tabs =
+    data?.tabs.filter((value) => value.platform !== "channels") || [];
+  const tab = tabs.find((value) => value.accountId === data?.activeAccountId);
   const locked =
     !!tab &&
     data?.activeRecord?.accountId === tab.accountId &&
@@ -81,14 +82,12 @@ export default function DouyinBrowserWorkspace() {
         visible: false,
       }).catch(() => {});
     };
-  }, [tab?.accountId, locked]);
+  }, [tab?.accountId, tab?.platform, locked]);
   if (!tab) return null;
   return (
     <section
       className="douyin-browser-workspace"
-      aria-label={
-        tab.platform === "xhs" ? "小红书账号浏览器" : "抖音账号浏览器"
-      }
+      aria-label={socialPlatformLabel(tab.platform) + "账号浏览器"}
     >
       <div className="douyin-browser-tabs">
         <Button
@@ -101,13 +100,12 @@ export default function DouyinBrowserWorkspace() {
         <Tabs
           activeKey={tab.accountId}
           onChange={(accountId) => void action("account.open", { accountId })}
-          items={data!.tabs.map((value) => ({
+          items={tabs.map((value) => ({
             key: value.accountId,
             label: (
               <span className="account-browser-tab">
                 <span className="account-browser-tab-name" title={value.title}>
-                  {value.title ||
-                    (value.platform === "xhs" ? "小红书账号" : "抖音账号")}
+                  {value.title || socialPlatformLabel(value.platform) + "账号"}
                 </span>
                 <Button
                   type="text"
@@ -191,10 +189,11 @@ export default function DouyinBrowserWorkspace() {
         <Alert
           type="warning"
           showIcon
-          title={publishVerificationLabel}
+          title={publishVerificationLabel(tab.platform)}
           description={publishingFailureText(
             publishVerificationCode,
             publishTask.state,
+            tab.platform,
           )}
         />
       )}

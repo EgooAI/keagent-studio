@@ -16,6 +16,12 @@ import type {
   DouyinPublishRecord,
 } from "@keagent/shared-types";
 import { XHS_HOME, checkXhsLogin } from "./plugins/checkLogin/xhs";
+import {
+  ChannelsLoginExpired,
+  runChannelsChrome,
+} from "./plugins/publish/channels";
+import { readFile, stat } from "node:fs/promises";
+import type { LoginCheckResult } from "./runtime/login/contracts";
 import { BrowserView } from "./runtime/browser/browser-view";
 import { ProfileManager } from "./runtime/profiles/profile-manager";
 import { LoginDetectionService } from "./runtime/login/login-detection";
@@ -35,6 +41,8 @@ import {
 import type { ProfileKey } from "./runtime/browser/contracts";
 import type { ExecutionStepReporter } from "./runtime/task-executor/execution-log";
 
+type AccountCheckReason = "background" | "manual" | "save" | "publish";
+
 export class DouyinBrowser {
   private profiles: ProfileManager;
   private views = new Map<
@@ -48,6 +56,31 @@ export class DouyinBrowser {
   >();
   private detection: LoginDetectionService;
   active?: string;
+  private chromeWindows = new Map<
+    string,
+    {
+      action: "login" | "manage";
+      controller: AbortController;
+      ready: Promise<void>;
+      done: Promise<DouyinAccount>;
+    }
+  >();
+  private qr?: {
+    accountId: string;
+    file: string;
+    identity: PublishingIdentity;
+    requestKey: string;
+  };
+  private loginError?: { accountId: string; message: string };
+  get channelsState() {
+    return {
+      channelsLoginAccountIds: [...this.chromeWindows]
+        .filter(([, job]) => job.action === "login")
+        .map(([id]) => id),
+      channelsLoginError: this.loginError,
+      channelsVerificationAccountId: this.qr?.accountId,
+    };
+  }
   private coordinator = new BrowserExecutionCoordinator();
   private lifetime = new AbortController();
   private timer: ReturnType<typeof setInterval>;
@@ -59,6 +92,7 @@ export class DouyinBrowser {
     private cloud: <T>(operation: string, input?: unknown) => Promise<T>,
     private changed: () => void,
     private configureSession?: (session: Session) => Promise<void>,
+    private readonly chrome = runChannelsChrome,
   ) {
     this.profiles = new ProfileManager(root);
     this.detection = new LoginDetectionService(
@@ -140,6 +174,7 @@ export class DouyinBrowser {
       .filter(
         (a) =>
           a.deviceId === identity.deviceId &&
+          a.platform !== "channels" &&
           !a.unboundAt &&
           a.loginStatus === "logged_in" &&
           a.platformUserId &&
@@ -149,6 +184,8 @@ export class DouyinBrowser {
   }
   private async ensure(accountId: string) {
     const account = await this.owned(accountId);
+    if (account.platform === "channels")
+      throw new PublishingError("INVALID_INPUT", "请在视频号专用窗口中操作");
     const existing = this.views.get(accountId);
     if (existing) return existing;
     const current = await this.identity();
@@ -183,6 +220,7 @@ export class DouyinBrowser {
   }
   private navigationChanged(accountId: string, url: string): void {
     if (
+      this.views.get(accountId)?.platform !== "douyin" ||
       this.coordinator.occupied(accountId) ||
       ![
         ...DOUYIN_LOGIN_CONFIG.loggedOutUrls,
@@ -215,7 +253,31 @@ export class DouyinBrowser {
         : this.lifetime.signal,
     );
   }
-  open(accountId: string) {
+  async open(accountId: string) {
+    const account = await this.owned(accountId);
+    if (account.platform === "channels") {
+      const opened = this.chromeWindows.get(accountId);
+      if (opened) return opened.ready;
+      return this.run(accountId, true, async () => {
+        const identity = await this.identity();
+        const profile = this.profileFor(identity, accountId);
+        if (this.profiles.hasChannelsBrowserState(profile)) {
+          const state = await this.chrome(
+            {
+              action: "check",
+              profileDir: this.profiles.chromePath(profile),
+              expectedAccountId: account.platformUserId,
+            },
+            this.lifetime.signal,
+          );
+          if (state?.status === "logged_in") {
+            await this.registerAccount(account, profile, state, true, identity);
+            return;
+          }
+        }
+        await this.chromeWindow("login", account, identity).ready;
+      });
+    }
     return this.run(accountId, true, async () => {
       const { view, platform } = await this.ensure(accountId);
       this.selectManual(accountId);
@@ -226,6 +288,108 @@ export class DouyinBrowser {
       this.changed();
     });
   }
+  private chromeWindow(
+    action: "login" | "manage",
+    account: DouyinAccount,
+    identity: PublishingIdentity,
+    signal = this.lifetime.signal,
+  ) {
+    const existing = this.chromeWindows.get(account.id);
+    if (existing) {
+      if (existing.action === action) return existing;
+      throw new PublishingError("ACCOUNT_BUSY", "请先关闭当前账号的视频号窗口");
+    }
+    const controller = new AbortController();
+    const lifetime = AbortSignal.any([
+      controller.signal,
+      signal,
+      this.lifetime.signal,
+    ]);
+    const profile = this.profileFor(identity, account.id);
+    let opened!: () => void, failed!: (error: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      opened = resolve;
+      failed = reject;
+    });
+    void ready.catch(() => {});
+    this.loginError = undefined;
+    const done = this.chrome(
+      {
+        action,
+        profileDir: this.profiles.chromePath(profile),
+        expectedAccountId: account.platformUserId,
+      },
+      lifetime,
+      { opened },
+    )
+      .then(async (result) => {
+        lifetime.throwIfAborted();
+        if (action === "manage") return account;
+        if (!result || result.status !== "logged_in")
+          throw new PublishingError("LOGIN_REQUIRED", "视频号尚未完成登录");
+        const saved = await this.registerAccount(
+          account,
+          profile,
+          result,
+          true,
+          identity,
+        );
+        lifetime.throwIfAborted();
+        if (!this.window.isDestroyed()) this.window.show();
+        return saved;
+      })
+      .then((value) => {
+        opened();
+        return value;
+      })
+      .catch((error: unknown) => {
+        failed(error);
+        if (!lifetime.aborted)
+          this.loginError = {
+            accountId: account.id,
+            message:
+              error instanceof PublishingError
+                ? error.message
+                : "请检查视频号登录窗口后重试",
+          };
+        throw error;
+      })
+      .finally(() => {
+        if (this.chromeWindows.get(account.id)?.controller === controller)
+          this.chromeWindows.delete(account.id);
+        this.changed();
+      });
+    void done.catch(() => {});
+    const entry = { action, ready, done, controller };
+    this.chromeWindows.set(account.id, entry);
+    this.changed();
+    return entry;
+  }
+  async verification(accountId: string, requestKey: string) {
+    const identity = await this.identity();
+    const qr = this.qr;
+    if (
+      !qr ||
+      qr.accountId !== accountId ||
+      qr.requestKey !== requestKey ||
+      !samePublisher(identity, qr.identity)
+    )
+      throw new PublishingError(
+        "VERIFICATION_REQUIRED",
+        "当前账号没有待处理的实名验证",
+      );
+    const file = await stat(qr.file);
+    if (!file.isFile() || file.size < 8 || file.size > 4 * 1024 * 1024)
+      throw new PublishingError("INVALID_INPUT", "实名二维码不可用");
+    const image = await readFile(qr.file);
+    if (
+      this.qr !== qr ||
+      !samePublisher(identity, await this.identity()) ||
+      !image.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))
+    )
+      throw new PublishingError("VERIFICATION_REQUIRED", "实名验证已结束");
+    return { image: "data:image/png;base64," + image.toString("base64") };
+  }
   openCommenter(
     identity: PublishingIdentity,
     accountId: string,
@@ -234,6 +398,12 @@ export class DouyinBrowser {
     return this.run(accountId, true, async () => {
       const account = await this.owned(accountId);
       const platform = account.platform ?? "douyin";
+      if (platform === "channels")
+        throw new PublishingError(
+          "INVALID_INPUT",
+          "视频号账号仅支持视频发布",
+          422,
+        );
       const profile = this.profileFor(identity, accountId);
       if (
         !account.platformUserId ||
@@ -321,18 +491,53 @@ export class DouyinBrowser {
   }
   check(
     accountId: string,
-    save = false,
-    manual = false,
+    reason: AccountCheckReason = "background",
   ): Promise<DouyinAccount> {
+    const manual = reason === "manual" || reason === "save";
     return this.run(accountId, manual, () =>
-      this.checkAccount(accountId, save),
+      this.checkAccount(accountId, reason),
     );
   }
   private async checkAccount(
     accountId: string,
-    save: boolean,
+    reason: AccountCheckReason,
   ): Promise<DouyinAccount> {
     const account = await this.owned(accountId);
+    const identity = await this.identity();
+    if (account.platform === "channels") {
+      const existing = this.chromeWindows.get(accountId);
+      if (existing) {
+        if (reason === "publish" && existing.action === "login")
+          return existing.done;
+        throw new PublishingError(
+          "ACCOUNT_BUSY",
+          "请先完成当前视频号窗口中的操作",
+        );
+      }
+      const profile = this.profileFor(identity, accountId);
+      const result = await this.chrome(
+        {
+          action: "check",
+          profileDir: this.profiles.chromePath(profile),
+          expectedAccountId: account.platformUserId,
+        },
+        this.lifetime.signal,
+      );
+      if (!result)
+        throw new PublishingError("LOGIN_REQUIRED", "未获取视频号登录状态");
+      if (
+        reason === "publish" &&
+        (result.status === "expired" || result.status === "logged_out")
+      )
+        return this.chromeWindow("login", account, identity).done;
+      return this.registerAccount(
+        account,
+        profile,
+        result,
+        reason === "save" || result.status === "logged_in",
+        identity,
+      );
+    }
     const { profile, platform, view } = await this.ensure(accountId);
     const result =
       platform === "xhs"
@@ -340,21 +545,50 @@ export class DouyinBrowser {
         : await this.detection.check(
             profile,
             "douyin",
-            save ? "profile_save" : "manual",
+            reason === "save" ? "profile_save" : "manual",
           );
+    return this.registerAccount(
+      account,
+      profile,
+      result,
+      reason === "save",
+      identity,
+    );
+  }
+  private async registerAccount(
+    account: DouyinAccount,
+    profile: ProfileKey,
+    result: LoginCheckResult,
+    save: boolean,
+    expected: PublishingIdentity,
+  ) {
+    if (!samePublisher(expected, await this.identity()))
+      throw new PublishingError("SESSION_CHANGED", "登录已变更");
+    const accountId = account.id,
+      platform = account.platform ?? "douyin";
     if (save && result.status !== "logged_in")
       throw new PublishingError(
         "LOGIN_REQUIRED",
         result.errorMessage || "请先在浏览器完成登录或验证",
       );
     const apiIdentity =
-      platform === "xhs" ? result : result.checks?.account_api;
+      platform === "douyin" ? result.checks?.account_api : result;
     const platformUserId =
       apiIdentity?.status === "logged_in" ? apiIdentity.accountId : undefined;
     if (save && (!platformUserId || platformUserId === accountId))
       throw new PublishingError(
         "ACCOUNT_IDENTITY_UNAVAILABLE",
         "无法确认平台账号身份，请刷新账号首页后重试",
+      );
+    if (
+      platform === "channels" &&
+      account.platformUserId &&
+      platformUserId &&
+      account.platformUserId !== platformUserId
+    )
+      throw new PublishingError(
+        "ACCOUNT_CHANGED",
+        "当前视频号与已绑定账号不一致",
       );
     if (save && !this.profiles.isSaved(profile)) {
       const identity = await this.identity();
@@ -391,9 +625,13 @@ export class DouyinBrowser {
         : {}),
     });
     if (save) {
-      await this.require(accountId).view.flushSession();
+      if (!samePublisher(expected, await this.identity()))
+        throw new PublishingError("SESSION_CHANGED", "登录已变更");
+      if (platform !== "channels") {
+        await this.require(accountId).view.flushSession();
+        this.require(accountId).view.markSaved();
+      } else this.loginError = undefined;
       this.profiles.save(profile);
-      this.require(accountId).view.markSaved();
     }
     this.changed();
     return saved;
@@ -403,11 +641,33 @@ export class DouyinBrowser {
     action: string,
     recordId?: string,
   ): Promise<void> {
+    const account = await this.owned(accountId);
+    if (account.platform === "channels") {
+      const current = this.chromeWindows.get(accountId);
+      if (action === "close") {
+        current?.controller.abort();
+        await current?.done.catch(() => {});
+        return;
+      }
+      if (action !== "manage")
+        throw new PublishingError("INVALID_INPUT", "请在视频号助手中查看详情");
+      if (current?.action === "manage") return current.ready;
+      return this.run(accountId, true, async () => {
+        await this.chromeWindow("manage", account, await this.identity()).ready;
+      });
+    }
     return this.run(accountId, true, async () => {
       await this.owned(accountId);
       const { view, platform } = this.require(accountId);
-      if ((action === "post" || action === "manage") && platform !== "douyin")
-        throw new PublishingError("INVALID_INPUT", "此入口仅支持抖音账号", 422);
+      if (
+        (action === "post" && platform !== "douyin") ||
+        (action === "manage" && platform === "xhs")
+      )
+        throw new PublishingError(
+          "INVALID_INPUT",
+          "此账号不支持该作品入口",
+          422,
+        );
       if (action === "back") view.goBack();
       else if (action === "forward") view.goForward();
       else if (action === "reload") await view.reload();
@@ -441,13 +701,27 @@ export class DouyinBrowser {
   }
   async unbind(accountId: string): Promise<void> {
     return this.run(accountId, true, async () => {
+      const identity = await this.identity();
       const account = await this.owned(accountId);
-
+      if (account.platform === "channels") {
+        const current = this.chromeWindows.get(accountId);
+        current?.controller.abort();
+        await current?.done.catch(() => {});
+        if (!samePublisher(identity, await this.identity()))
+          throw new PublishingError("SESSION_CHANGED", "登录已变更");
+      }
       await this.cloud("accounts/unbind", {
         id: accountId,
         name: account.name,
         loginStatus: account.loginStatus,
       });
+      if (account.platform === "channels") {
+        await this.profiles.delete(this.profileFor(identity, accountId));
+        if (this.loginError?.accountId === accountId)
+          this.loginError = undefined;
+        this.changed();
+        return;
+      }
       const { profile, view } = await this.ensureForDeletion(accountId);
       view.destroy();
       this.views.delete(accountId);
@@ -483,22 +757,71 @@ export class DouyinBrowser {
     steps: ExecutionStepReporter,
     beforeSubmit: () => Promise<void>,
     onProgress: (value: number) => void,
-  ): Promise<{ externalId: string; url: string }> {
+  ): Promise<{ externalId?: string; url?: string }> {
+    signal = AbortSignal.any([signal, this.lifetime.signal]);
     return this.run(
       accountId,
       false,
       async () => {
+        const account = await this.owned(accountId);
+        const platform = account.platform ?? "douyin";
+        if (platform !== (input.platform ?? "douyin"))
+          throw new PublishingError(
+            "INVALID_INPUT",
+            "所选账号与发布平台不一致",
+            422,
+          );
+        if (platform === "channels") {
+          const identity = await this.identity();
+          const profile = this.profileFor(identity, accountId);
+          if (!account.platformUserId || !this.profiles.isSaved(profile))
+            throw new PublishingError(
+              "ACCOUNT_NOT_SAVED",
+              "请先登录并保存视频号",
+            );
+          const job = {
+            action: "publish" as const,
+            profileDir: this.profiles.chromePath(profile),
+            expectedAccountId: account.platformUserId,
+            input,
+            files,
+          };
+          const active = this.chromeWindows.get(accountId);
+          if (active && active.action !== "login")
+            throw new PublishingError("ACCOUNT_BUSY", "请先关闭视频号管理窗口");
+          if (active) await active.done;
+          const publish = () =>
+            this.chrome(job, signal, {
+              beforeSubmit,
+              progress: onProgress,
+              verification: (file) => {
+                this.qr = file
+                  ? { accountId, file, identity, requestKey: input.requestKey }
+                  : undefined;
+                this.changed();
+              },
+            });
+          await steps.run(
+            "platform_publish",
+            "通过视频号助手发布视频",
+            async () => {
+              try {
+                await publish();
+              } catch (error) {
+                if (!(error instanceof ChannelsLoginExpired)) throw error;
+                await this.chromeWindow("login", account, identity, signal)
+                  .done;
+                signal.throwIfAborted();
+                await publish();
+              }
+            },
+          );
+          return {};
+        }
         const view = await steps.run(
           "check_login",
           "检查抖音登录",
           async () => {
-            const account = await this.owned(accountId);
-            if (account.platform === "xhs")
-              throw new PublishingError(
-                "INVALID_INPUT",
-                "视频发布只支持抖音账号",
-                422,
-              );
             const { view, profile } = await this.ensure(accountId);
             const login = await this.detection.check(
               profile,
@@ -592,6 +915,12 @@ export class DouyinBrowser {
     ) => Promise<T>,
     expectedIdentity?: PublishingIdentity,
   ) {
+    if (platform === "channels")
+      throw new PublishingError(
+        "INVALID_INPUT",
+        "视频号账号仅支持视频发布",
+        422,
+      );
     signal = AbortSignal.any([signal, this.lifetime.signal]);
     return this.run(
       accountId,
@@ -710,6 +1039,10 @@ export class DouyinBrowser {
     );
   }
   shutdown(): void {
+    this.qr = undefined;
+    this.loginError = undefined;
+    for (const job of this.chromeWindows.values()) job.controller.abort();
+    this.chromeWindows.clear();
     this.lifetime.abort(new PublishingError("INTERRUPTED", "浏览器执行已中断"));
     this.lifetime = new AbortController();
     this.coordinator.reset();

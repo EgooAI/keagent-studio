@@ -1509,6 +1509,16 @@ svg {
   flex-direction: column;
   background: var(--surface);
 }
+.channels-verification-code {
+  text-align: center;
+}
+.channels-verification-code img {
+  display: block;
+  max-width: 100%;
+  max-height: 55vh;
+  margin: 12px auto;
+  object-fit: contain;
+}
 .douyin-browser-tabs,
 .douyin-browser-toolbar {
   display: flex;

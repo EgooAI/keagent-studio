@@ -47,7 +47,7 @@ export class WorkMonitor {
   }
   async status(identity: PublishingIdentity) {
     const accounts = (await this.browser.socialAccounts(identity)).filter(
-      (a) => a.loginStatus === "logged_in",
+      (a) => a.loginStatus === "logged_in" && a.platform !== "channels",
     );
     return {
       health: "ready",
@@ -97,6 +97,11 @@ export class WorkMonitor {
         "请先登录并保存所选平台账号",
       );
     const platform = account.platform ?? "douyin";
+    if (platform !== "douyin" && platform !== "xhs")
+      throw new PublishingError(
+        "ACCOUNT_UNAVAILABLE",
+        "该平台账号不支持读取作品评论",
+      );
     const target = await resolveCommentTarget(
       platform,
       input.url,

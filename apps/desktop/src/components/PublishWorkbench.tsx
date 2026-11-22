@@ -14,11 +14,7 @@ import {
   Table,
   Tag,
 } from "antd";
-import {
-  keepPreviousData,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ListChecks,
   Pause,
@@ -32,6 +28,9 @@ import { Link } from "react-router-dom";
 import { artifactExchange } from "@keagent/api-client";
 import {
   douyinStateLabels,
+  douyinRecordLabel,
+  publishPlatformLabels,
+  type PublishPlatform,
   formatDouyinSchedule,
   validateDouyinInput,
   type ArtifactReviewState,
@@ -43,6 +42,8 @@ import {
   type DouyinWorkspaceStatus,
 } from "@keagent/shared-types";
 import {
+  publishPlatformOptions,
+  socialPlatformLabel,
   douyinApi,
   douyinDesktop,
   publishingFailureText,
@@ -90,6 +91,7 @@ const queueFailureText = (row: DouyinQueueRow) =>
   publishingFailureText(
     row.errorCode || "",
     row.kind === "message" ? undefined : row.state,
+    row.platform,
   );
 const queueStatus = (row: DouyinQueueRow) =>
   row.state === "queued"
@@ -108,9 +110,11 @@ const queueStatus = (row: DouyinQueueRow) =>
             unknown: "结果待核对",
             canceled: "已取消",
           }[row.state]
-        : row.resultSource === "manual" && row.state === "accepted"
-          ? "已发布"
-          : douyinStateLabels[row.state];
+        : douyinRecordLabel({
+            state: row.state,
+            platform: row.platform === "channels" ? "channels" : "douyin",
+            resultSource: row.resultSource,
+          });
 
 export type PublishDetailSurface = (
   content: ReactNode,
@@ -120,7 +124,11 @@ export type PublishDetailSurface = (
 export function PublishWorkbench({
   detail,
 }: {
-  detail: (artifactId: string, surface: PublishDetailSurface) => ReactNode;
+  detail: (
+    artifactId: string,
+    platform: PublishPlatform,
+    surface: PublishDetailSurface,
+  ) => ReactNode;
 }) {
   const { message, modal } = App.useApp();
   const client = useQueryClient();
@@ -130,6 +138,7 @@ export function PublishWorkbench({
     queryKey: ["douyin", "accounts"],
     queryFn: douyinApi.accounts,
   });
+  const [platform, setPlatform] = useState<PublishPlatform>("channels");
   const [mode, setMode] = useState<"artifacts" | "queue">("artifacts");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -146,16 +155,17 @@ export function PublishWorkbench({
   const focus = useRef<HTMLElement>(null);
   const detailTrigger = useRef<HTMLElement>(null);
   const query = useQuery({
-    queryKey: ["douyin", "workbench", search, review, status, page],
+    queryKey: ["douyin", "workbench", platform, search, review, status, page],
     queryFn: () =>
       douyinApi.workspace({
+        platform,
         search,
         review,
         status,
         limit: 50,
         offset: (page - 1) * 50,
       }),
-    placeholderData: keepPreviousData,
+
     retry: false,
     refetchInterval: 10_000,
   });
@@ -163,16 +173,23 @@ export function PublishWorkbench({
   const active = desktop.data?.activeRecord;
   const localAccounts = (accounts.data?.items || []).filter(
     (account) =>
-      account.platform !== "xhs" &&
-      account.deviceId === desktop.data?.deviceId &&
-      !account.unboundAt,
+      account.deviceId === desktop.data?.deviceId && !account.unboundAt,
   );
-  const accountName = (id: string) =>
-    localAccounts.find((account) => account.id === id)?.name || "原发布账号";
+  const accountName = (row: DouyinQueueRow) => {
+    const account = localAccounts.find((a) => a.id === row.accountId);
+    return (
+      socialPlatformLabel(row.platform ?? account?.platform) +
+      " · " +
+      (account?.name || "原发布账号")
+    );
+  };
   const outstanding = new Map(
     queue.rows
       .filter(
-        (row) => pending(row) || ["unknown", "interrupted"].includes(row.state),
+        (row) =>
+          row.kind !== "message" &&
+          (row.platform ?? "douyin") === platform &&
+          (pending(row) || ["unknown", "interrupted"].includes(row.state)),
       )
       .map((row) => [row.artifactId, row]),
   );
@@ -192,18 +209,17 @@ export function PublishWorkbench({
           已排期 · {formatDouyinSchedule(row.scheduledAt).slice(5)}
         </Tag>
       );
-    if (
-      !task &&
-      row.status === "accepted" &&
-      (row.scheduledAt || row.resultSource === "manual")
-    )
-      return <Tag color={colors.accepted}>已发布</Tag>;
     return (
       <Tag color={colors[task?.state || row.status]}>
         {task
           ? queueStatus(task)
           : row.recordState
-            ? douyinStateLabels[row.recordState]
+            ? douyinRecordLabel({
+                state: row.recordState,
+                platform,
+                scheduledAt: row.scheduledAt,
+                resultSource: row.resultSource ?? undefined,
+              })
             : "未发布"}
       </Tag>
     );
@@ -212,7 +228,9 @@ export function PublishWorkbench({
     const record =
       pending(row) && active?.requestKey === row.id ? active : undefined;
     if (needsPublishVerification(row))
-      return <Tag color="warning">{publishVerificationLabel}</Tag>;
+      return (
+        <Tag color="warning">{publishVerificationLabel(row.platform)}</Tag>
+      );
     return (
       <Tag color={colors[record?.state || row.state]}>
         {record && ["running", "submitting"].includes(record.state)
@@ -247,7 +265,9 @@ export function PublishWorkbench({
     if (wide && selectedId) focus.current?.focus({ preventScroll: true });
   }, [wide, selectedId]);
 
-  function openDetail(id: string, trigger?: HTMLElement) {
+  function openDetail(id: string, trigger?: HTMLElement, row?: DouyinQueueRow) {
+    if (row && row.kind !== "message")
+      setPlatform(row.platform === "channels" ? "channels" : "douyin");
     if (trigger) detailTrigger.current = trigger;
     setSelectedId(id);
     if (!id)
@@ -289,7 +309,7 @@ export function PublishWorkbench({
         actions={
           <Space>
             <Link className="publish-account-link" to="/settings/platforms">
-              <Users size={16} aria-hidden="true" /> 管理抖音账号
+              <Users size={16} aria-hidden="true" /> 管理平台账号
             </Link>
             <Button
               icon={<RefreshCw size={15} />}
@@ -316,6 +336,18 @@ export function PublishWorkbench({
           onChange={setMode}
         />
         <Space wrap>
+          {mode === "artifacts" && (
+            <Segmented<PublishPlatform>
+              aria-label="发布平台"
+              value={platform}
+              options={publishPlatformOptions}
+              onChange={(value) => {
+                setPlatform(value);
+                resetPage();
+                setSelectedId("");
+              }}
+            />
+          )}
           {desktop.data?.queue && (
             <Button
               loading={busy}
@@ -617,7 +649,11 @@ export function PublishWorkbench({
                         <button
                           className="publish-row-title"
                           onClick={(event) =>
-                            openDetail(row.artifactId!, event.currentTarget)
+                            openDetail(
+                              row.artifactId!,
+                              event.currentTarget,
+                              row,
+                            )
                           }
                           title={row.title}
                         >
@@ -627,7 +663,7 @@ export function PublishWorkbench({
                       {compact && (
                         <div className="publish-mobile-facts">
                           {queueTag(row)}
-                          <small>{accountName(row.accountId)}</small>
+                          <small>{accountName(row)}</small>
                           {row.errorCode && (
                             <small>{queueFailureText(row)}</small>
                           )}
@@ -641,7 +677,7 @@ export function PublishWorkbench({
                   responsive: ["md"],
                   width: 120,
                   ellipsis: true,
-                  render: (_, row) => accountName(row.accountId),
+                  render: (_, row) => accountName(row),
                 },
                 {
                   title: "状态",
@@ -668,29 +704,34 @@ export function PublishWorkbench({
                   width: compact ? 82 : 120,
                   render: (_, row) => (
                     <Space size={4} wrap={needsPublishVerification(row)}>
-                      {needsPublishVerification(row) && (
-                        <Button
-                          size="small"
-                          type="link"
-                          aria-label="输入验证码，打开抖音账号浏览器"
-                          disabled={busy}
-                          onClick={() => {
-                            void douyinDesktop("account.open", {
-                              accountId: row.accountId,
-                            }).catch((error: unknown) =>
-                              message.error(publishingMessage(error)),
-                            );
-                          }}
-                        >
-                          输入验证码
-                        </Button>
-                      )}
+                      {needsPublishVerification(row) &&
+                        row.platform !== "channels" && (
+                          <Button
+                            size="small"
+                            type="link"
+                            aria-label={`完成验证，打开${socialPlatformLabel(row.platform)}账号浏览器`}
+                            disabled={busy}
+                            onClick={() => {
+                              void douyinDesktop("account.open", {
+                                accountId: row.accountId,
+                              }).catch((error: unknown) =>
+                                message.error(publishingMessage(error)),
+                              );
+                            }}
+                          >
+                            输入验证码
+                          </Button>
+                        )}
                       {row.artifactId && (
                         <Button
                           size="small"
                           type="link"
                           onClick={(event) =>
-                            openDetail(row.artifactId!, event.currentTarget)
+                            openDetail(
+                              row.artifactId!,
+                              event.currentTarget,
+                              row,
+                            )
                           }
                         >
                           详情
@@ -752,7 +793,7 @@ export function PublishWorkbench({
                                   "publish-dialog publish-confirm-dialog",
                                 title: "清除这条中断记录？",
                                 content:
-                                  "清除本机队列标记，抖音发布记录仍可在成片详情核对。",
+                                  "清除本机队列标记，发布记录仍可在成片详情核对。",
                                 onOk: () =>
                                   queueAction("clear-interrupted", row.id),
                               })
@@ -768,7 +809,7 @@ export function PublishWorkbench({
             />
           )}
           {selectedId &&
-            detail(selectedId, (content, suspended) =>
+            detail(selectedId, platform, (content, suspended) =>
               wide ? (
                 <aside
                   ref={focus}
@@ -802,7 +843,10 @@ export function PublishWorkbench({
       {!!batchRows.length && (
         <PublishBatch
           rows={batchRows}
-          accounts={localAccounts}
+          accounts={localAccounts.filter(
+            (a) => (a.platform ?? "douyin") === platform,
+          )}
+          platform={platform}
           onClose={() => setBatchRows([])}
           onQueued={(updated) => {
             client.setQueryData(["douyin", "desktop"], {
@@ -821,11 +865,13 @@ export function PublishWorkbench({
 }
 
 function PublishBatch({
+  platform,
   rows,
   accounts,
   onClose,
   onQueued,
 }: {
+  platform: PublishPlatform;
   rows: DouyinWorkspaceRow[];
   accounts: DouyinAccount[];
   onClose: () => void;
@@ -886,6 +932,7 @@ function PublishBatch({
         attempt.current = { fingerprint, key: crypto.randomUUID() };
       const input: DouyinBatchInput = {
         requestKey: attempt.current.key,
+        platform,
         accountId,
         entries,
       };
@@ -923,15 +970,19 @@ function PublishBatch({
       <Alert
         showIcon
         type="info"
-        title="确认后按列表顺序发布到同一账号"
-        description="可见范围、下载权限和同步选项沿用抖音页面当前设置。每条成片的封面将上传为抖音竖封面。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
+        title={`确认后按列表顺序发布到同一${publishPlatformLabels[platform]}账号`}
+        description={
+          platform === "douyin"
+            ? "可见范围、下载权限和同步选项沿用抖音页面当前设置。每条成片的封面将上传为抖音竖封面。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
+            : "标题、正文和竖版封面将提交至视频号助手。短标题从标题生成，每条成片会在执行时重新核对验收版本。"
+        }
       />
       <div className="publish-batch-account">
         <label htmlFor="publish-batch-account-id">发布账号</label>
         <Select
           id="publish-batch-account-id"
           aria-label="批次发布账号"
-          placeholder="选择已登录的本机抖音账号"
+          placeholder={`选择已登录的本机${publishPlatformLabels[platform]}账号`}
           value={accountId}
           disabled={busy}
           onChange={setAccount}
@@ -940,7 +991,11 @@ function PublishBatch({
             label: account.name,
           }))}
         />
-        {!eligible.length && <Link to="/settings/platforms">登录抖音账号</Link>}
+        {!eligible.length && (
+          <Link to="/settings/platforms">
+            登录{publishPlatformLabels[platform]}账号
+          </Link>
+        )}
       </div>
       {(error || query.error) && (
         <Alert

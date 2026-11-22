@@ -356,7 +356,7 @@ export function PublishDetailPage() {
             </p>
           )}
           <Tabs
-            items={(["douyin", "xiaohongshu"] as Platform[]).map(
+            items={(["channels", "douyin", "xiaohongshu"] as Platform[]).map(
               (platform) => ({
                 key: platform,
                 label: platformLabels[platform],

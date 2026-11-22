@@ -220,7 +220,7 @@ function validWorkspace(value: unknown): value is Workspace {
         ]) &&
         numbers(row, ["productionRevision", "progress"]) &&
         strings(row.hashtags) &&
-        ["douyin", "xiaohongshu"].includes(String(row.platform)) &&
+        ["channels", "douyin", "xiaohongshu"].includes(String(row.platform)) &&
         [
           "queued",
           "running",
@@ -249,7 +249,7 @@ function validWorkspace(value: unknown): value is Workspace {
       "accounts",
       (row) =>
         fields(row, ["name", "lastCheckedAt"]) &&
-        ["douyin", "xiaohongshu"].includes(String(row.platform)) &&
+        ["channels", "douyin", "xiaohongshu"].includes(String(row.platform)) &&
         typeof row.connected === "boolean",
     ) &&
     rows(

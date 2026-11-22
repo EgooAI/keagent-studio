@@ -17,6 +17,7 @@ import {
 } from "./core";
 import { desktopErrorMessage } from "./errors";
 import { DouyinBrowser } from "./browser";
+import type { runChannelsChrome } from "./plugins/publish/channels";
 import { PublishingFiles } from "./files";
 import { PublishQueue, samePublisher } from "./queue";
 import type {
@@ -36,6 +37,7 @@ export interface PublishingDependencies {
   resolver?: LocalMediaAssetResolver;
   /** Main-only dependency injection for controlled Electron integration tests. */
   configureSession?: (session: Electron.Session) => Promise<void>;
+  channelsChrome?: typeof runChannelsChrome;
 }
 export function registerPublishing(
   window: BrowserWindow,
@@ -81,6 +83,7 @@ export function registerPublishing(
     cloud,
     emit,
     dependencies.configureSession,
+    dependencies.channelsChrome,
   );
   const observations = new CommentObservationService(
     browser,
@@ -222,12 +225,12 @@ export function registerPublishing(
     execute: async (entry, _identity, assertCurrent, started) => {
       await publisher.idle();
       await assertCurrent();
-      const account = await browser.check(entry.accountId);
+      const account = await browser.check(entry.accountId, "publish");
       await assertCurrent();
       if (account.loginStatus === "verification_required")
         throw new PublishingError(
           "VERIFICATION_REQUIRED",
-          "抖音需要完成安全验证",
+          "发布账号需要完成安全验证",
         );
       if (account.loginStatus !== "logged_in")
         throw new PublishingError("LOGIN_REQUIRED", "批次账号需要重新登录");
@@ -242,6 +245,7 @@ export function registerPublishing(
           requestKey: entry.id,
           handoffId: handoff.id,
           accountId: entry.accountId,
+          platform: entry.platform === "channels" ? "channels" : "douyin",
           title: entry.title,
           description: entry.description,
           hashtags: [],
@@ -324,6 +328,7 @@ export function registerPublishing(
       resolverAvailable: !!resolver,
       tabs: browser.tabs(),
       activeAccountId: browser.active,
+      ...browser.channelsState,
       queue: queue.view(identity),
       activeRecord:
         publisher.active?.ownerId === identity.userId &&
@@ -355,6 +360,7 @@ export function registerPublishing(
     "account.add",
     "account.open",
     "account.check",
+    "channels.verification",
     "account.save",
     "account.unbind",
     "browser.action",
@@ -477,13 +483,21 @@ export function registerPublishing(
           data = await state();
         } else if (method === "account.add") {
           const platform = value.platform ?? "douyin";
-          if (platform !== "douyin" && platform !== "xhs")
+          if (
+            platform !== "channels" &&
+            platform !== "douyin" &&
+            platform !== "xhs"
+          )
             throw new PublishingError("INVALID_INPUT", "账号平台无效", 422);
           const id = randomBytes(16).toString("hex");
           await cloud("accounts/bind", {
             id,
             platform,
-            name: platform === "xhs" ? "新的小红书账号" : "新的抖音账号",
+            name: {
+              channels: "新的微信视频号账号",
+              xhs: "新的小红书账号",
+              douyin: "新的抖音账号",
+            }[platform],
             loginStatus: "logged_out",
           });
           await browser.open(id);
@@ -491,11 +505,23 @@ export function registerPublishing(
         } else if (method === "account.open") {
           await browser.open(accountId);
           data = await state();
+        } else if (method === "channels.verification") {
+          const record = publisher.active;
+          if (
+            !record ||
+            record.accountId !== accountId ||
+            record.platform !== "channels" ||
+            record.state !== "running"
+          )
+            throw new PublishingError(
+              "VERIFICATION_REQUIRED",
+              "当前账号没有待处理的实名验证",
+            );
+          data = await browser.verification(accountId, record.requestKey);
         } else if (method === "account.check" || method === "account.save")
           data = await browser.check(
             accountId,
-            method === "account.save",
-            true,
+            method === "account.save" ? "save" : "manual",
           );
         else if (method === "account.unbind") {
           await browser.unbind(accountId);
@@ -613,7 +639,7 @@ export function registerPublishing(
         buttons: ["继续发布", "退出应用"],
         defaultId: 0,
         cancelId: 0,
-        message: "抖音发布仍在执行",
+        message: "视频发布仍在执行",
         detail: "退出会中断操作；已经提交的结果需要重新打开应用后核对。",
       });
       if (answer === 0) event.preventDefault();

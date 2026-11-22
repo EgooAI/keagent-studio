@@ -1,0 +1,10 @@
+{
+  "project": "social-auto-upload",
+  "license": "MIT",
+  "sha256": {
+    "LICENSE": "8fd1171ac198090942b3e7f15887ec682cf010227e7afe74ee97f57351fd9f36",
+    "uploader/base_video.py": "d82274f29b67b4503a371a3b64b0a9fe68468db82b1c8e53d052d280b84cf307",
+    "uploader/tencent_uploader/main.py": "7869fed61138ea3d39b7efdb63b64059373ffbeaec811b59a3a9f3ad25a88b9a",
+    "utils/base_social_media.py": "374ac8633f1e1cf795693c4b2291346d39701f0f3518470851bfd74e0bdd01ae"
+  }
+}

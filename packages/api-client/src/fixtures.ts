@@ -208,6 +208,13 @@ export function createInitialWorkspace(): Workspace {
     ],
     accounts: [
       {
+        id: "account-channels",
+        platform: "channels",
+        name: "林悦看房 · 视频号演示账号",
+        connected: true,
+        lastCheckedAt: now,
+      },
+      {
         id: "account-douyin",
         platform: "douyin",
         name: "林悦说房 · 演示账号",

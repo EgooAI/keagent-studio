@@ -288,7 +288,7 @@ export default function SettingsPage() {
     <>
       <h2>平台账号</h2>
       <p>当前连接仅用于演示，不会打开平台登录或读取真实会话。</p>
-      {(["douyin", "xiaohongshu"] as const).map((platform) => {
+      {(["channels", "douyin", "xiaohongshu"] as const).map((platform) => {
         const account = data.accounts.find(
           (item) => item.platform === platform,
         );
@@ -423,7 +423,7 @@ export default function SettingsPage() {
             key: "platform",
             label: "平台会话",
             children: isLive
-              ? "抖音账号由客户端连接并用于发布；设置页不展示敏感会话内容。"
+              ? "在客户端连接微信视频号和抖音账号后即可发布。登录资料保存在本机。"
               : "未接入；不收集或保存真实 Cookie",
           },
           {
@@ -451,7 +451,7 @@ export default function SettingsPage() {
       </div>
       <p style={{ color: "#667085", maxWidth: 640, lineHeight: 1.8 }}>
         {isLive
-          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原始 VR 全景素材、配音与本地视频合成，并可将正式成果交接至抖音发布中心。各服务状态可在“制作服务状态”中查看。"
+          ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原始 VR 全景素材、配音与本地视频合成，并可将正式成果交接至发布中心。各服务状态可在“制作服务状态”中查看。"
           : "面向房产经纪人的内容生产工作台。当前提供前端演示操作与模拟任务流程。"}
       </p>
       <Button

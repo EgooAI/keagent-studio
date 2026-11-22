@@ -8,11 +8,12 @@ import (
 
 func (s *server) publishWorkspace(ctx context.Context, a actor, body []byte) (object, error) {
 	var in struct {
-		Search string `json:"search"`
-		Review string `json:"review"`
-		Status string `json:"status"`
-		Limit  int    `json:"limit"`
-		Offset int    `json:"offset"`
+		Platform string `json:"platform"`
+		Search   string `json:"search"`
+		Review   string `json:"review"`
+		Status   string `json:"status"`
+		Limit    int    `json:"limit"`
+		Offset   int    `json:"offset"`
 	}
 	if err := decodeExchange(body, &in); err != nil {
 		return nil, err
@@ -20,8 +21,11 @@ func (s *server) publishWorkspace(ctx context.Context, a actor, body []byte) (ob
 	if in.Limit == 0 {
 		in.Limit = 50
 	}
+	if in.Platform == "" {
+		in.Platform = "douyin"
+	}
 	validStatus := map[string]bool{"": true, "unpublished": true, "running": true, "accepted": true, "scheduled": true, "unknown": true, "failed": true}
-	if in.Limit < 1 || in.Limit > 100 || in.Offset < 0 || in.Offset > 1000000 ||
+	if (in.Platform != "douyin" && in.Platform != "channels") || in.Limit < 1 || in.Limit > 100 || in.Offset < 0 || in.Offset > 1000000 ||
 		len(in.Search) > 512 || !validStatus[in.Status] || (in.Review != "" && !validReview(in.Review)) {
 		return nil, exchangeFail(422, "INVALID_INPUT", "发布工作台筛选无效")
 	}
@@ -45,7 +49,7 @@ WITH matches AS (
   FROM keagent_video_artifact a
   LEFT JOIN LATERAL (
     SELECT id,state,payload FROM keagent_douyin_publish
-    WHERE owner_id=a.owner_id AND artifact_id=a.id
+    WHERE owner_id=a.owner_id AND artifact_id=a.id AND COALESCE(payload->>'platform','douyin')=$8
     ORDER BY (state='unknown') DESC,created_at DESC,id DESC LIMIT 1
   ) r ON true
   LEFT JOIN keagent_media_asset v ON v.owner_id=a.owner_id AND v.id=a.video_asset_id
@@ -64,7 +68,7 @@ SELECT jsonb_build_object(
   'counts', COALESCE((SELECT jsonb_object_agg(status,n) FROM (SELECT status,count(*) n FROM matches GROUP BY status) counts),'{}'::jsonb)
 )`
 	var raw []byte
-	if err := s.db.QueryRowContext(ctx, statement, a.UserID, in.Review, strings.TrimSpace(in.Search), in.Status, in.Limit, a.DeviceID, in.Offset).Scan(&raw); err != nil {
+	if err := s.db.QueryRowContext(ctx, statement, a.UserID, in.Review, strings.TrimSpace(in.Search), in.Status, in.Limit, a.DeviceID, in.Offset, in.Platform).Scan(&raw); err != nil {
 		return nil, err
 	}
 	var result object

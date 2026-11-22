@@ -1,0 +1,8 @@
+playwright==1.64.1
+greenlet==3.3.2
+pyee==13.0.1
+typing-extensions==4.15.0
+loguru==0.7.3
+colorama==0.4.6; sys_platform == "win32"
+win32-setctime==1.2.0; sys_platform == "win32"
+pyinstaller==6.19.0
