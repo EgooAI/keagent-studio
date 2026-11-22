@@ -39,6 +39,7 @@ import { VoiceLibraryPanel } from "../components/VoiceLibrary";
 import { ProductionServiceStatus } from "../components/ProductionServiceStatus";
 import { CreditsPanel } from "../components/CreditsPanel";
 import { OpeningVideos } from "../components/OpeningVideos";
+import { MusicLibrary } from "../components/MusicLibrary";
 import { ThemeSettings } from "@keagent/theme";
 import { platformLabels } from "@keagent/shared-types";
 import { PageHeader } from "../components/common";
@@ -464,6 +465,7 @@ export default function SettingsPage() {
   const items = [
     { key: "account", label: "账号信息", children: accountSettings },
     { key: "appearance", label: "开场视频库", children: <OpeningVideos /> },
+    { key: "music", label: "背景音乐库", children: <MusicLibrary /> },
     {
       key: "voices",
       label: "声音与音色",

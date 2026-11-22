@@ -1,4 +1,5 @@
 import type {
+  BackgroundMusicSelection,
   PanoramaCapabilities,
   PanoramaConfig,
   PanoramaDraft,
@@ -49,6 +50,7 @@ export type FactoryBundle = {
   description?: string;
   thumbnail?: string;
   parts: TemplateBundle["parts"];
+  backgroundMusic?: BackgroundMusicSelection;
 };
 export type FactoryPart = TemplatePartOption & {
   available: boolean;
@@ -72,6 +74,8 @@ export function matchesMix(a: FactoryBundle, b: FactoryBundle) {
   return (
     a.id === b.id &&
     a.version === b.version &&
+    a.backgroundMusic?.id === b.backgroundMusic?.id &&
+    a.backgroundMusic?.volume === b.backgroundMusic?.volume &&
     partKinds.every(
       (kind) => templateKey(a.parts[kind]) === templateKey(b.parts[kind]),
     )

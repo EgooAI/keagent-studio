@@ -16,6 +16,7 @@ import {
   Check,
   ChevronRight,
   Image as Picture,
+  Music2,
   RefreshCw,
   Scissors,
   TextAlignStart,
@@ -207,6 +208,7 @@ export function FactoryMixComposer({
   library,
   current,
   onChange,
+  onApply,
   onSave,
   onRefresh,
   refreshing,
@@ -214,10 +216,12 @@ export function FactoryMixComposer({
   sceneIds,
   disabled,
   voiceSelect,
+  musicSelect,
 }: {
   library: FactoryLibrary;
   current?: FactoryBundle;
   onChange: (value: FactoryBundle) => void;
+  onApply: (value: FactoryBundle) => void;
   onSave: (value: FactoryBundle, name: string) => Promise<void>;
   onRefresh: () => void;
   refreshing: boolean;
@@ -225,6 +229,7 @@ export function FactoryMixComposer({
   sceneIds?: string[];
   disabled: boolean;
   voiceSelect: ReactNode;
+  musicSelect: ReactNode;
 }) {
   const [tab, setTab] = useState<"recommended" | "personal">(
     !library.recommended.length && library.personal.length
@@ -316,7 +321,7 @@ export function FactoryMixComposer({
                       aria-pressed={applied}
                       aria-label={bundle.name + "，" + action}
                       disabled={disabled || !available}
-                      onClick={() => onChange(bundle)}
+                      onClick={() => onApply(bundle)}
                       className={"mix-card" + (applied ? " selected" : "")}
                     >
                       <img
@@ -380,6 +385,13 @@ export function FactoryMixComposer({
               </span>
               <b>配音音色</b>
               {voiceSelect}
+            </div>
+            <div className="mix-row">
+              <span className="mix-row-icon" aria-hidden="true">
+                <Music2 size={19} />
+              </span>
+              <b>背景音乐</b>
+              {musicSelect}
             </div>
             {current &&
               partKinds.map((k) => {

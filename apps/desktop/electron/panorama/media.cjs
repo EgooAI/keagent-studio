@@ -519,6 +519,7 @@ async function render(
   signal,
   onProgress,
   spatialClips,
+  musicFile,
 ) {
   const c = job.config;
   const spatial = c.cameraMode === "spatial";
@@ -740,6 +741,14 @@ async function render(
       )
       .join("\n"),
   );
+  ensure(!c.backgroundMusic || musicFile, "本机背景音乐不可用");
+  const musicOffset =
+    (c.openingVideo || c.openingClip) && audio[0]?.kind === "opening"
+      ? audio[0].duration
+      : 0;
+  const musicDuration = elapsed - musicOffset;
+  const mixMusic = !!musicFile && musicDuration > 0;
+  const fade = Math.min(0.4, musicDuration / 2);
   await run(
     ffmpeg(),
     [
@@ -754,16 +763,32 @@ async function render(
       list,
       "-i",
       path.join(jobDir, "narration.wav"),
+      ...(mixMusic
+        ? [
+            "-stream_loop",
+            "-1",
+            "-i",
+            musicFile,
+            "-filter_complex",
+            [
+              `[2:a:0]aformat=sample_rates=48000:channel_layouts=stereo,atrim=duration=${musicDuration}`,
+              `afade=t=in:d=${fade},afade=t=out:st=${musicDuration - fade}:d=${fade}`,
+              `volume=${c.backgroundMusic.volume / 100},adelay=${Math.round(musicOffset * 1000)}:all=1[music]`,
+            ].join(",") +
+              ";[1:a:0]aformat=sample_rates=48000:channel_layouts=stereo[voice];" +
+              "[voice][music]amix=inputs=2:duration=first:normalize=0,alimiter=limit=1:level=0:latency=1[final_audio]",
+          ]
+        : []),
       "-map",
       "0:v:0",
       "-map",
-      "1:a:0",
+      mixMusic ? "[final_audio]" : "1:a:0",
       "-c:v",
       "copy",
       "-c:a",
       "aac",
       "-ar",
-      "24000",
+      mixMusic ? "48000" : "24000",
       "-b:a",
       "128k",
       "-t",

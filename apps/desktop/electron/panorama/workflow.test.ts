@@ -153,6 +153,51 @@ describe("panorama domain", () => {
     expect(persist).toHaveBeenCalledOnce();
   });
 
+  it("stores personal mix music outside the cloud catalog and restores it from the local cache", async () => {
+    const { workflow } = fixture();
+    const saved = { id: "mine:weekend", version: "1.0.0", name: "周末带看" };
+    const backgroundMusic = { id: "warm-v1", volume: 19 };
+    const input = { name: saved.name, parts: {} };
+    const library = { recommended: [], parts: [], personal: [saved] };
+    const capability = { catalogVersion: "1", library };
+    vi.mocked(workflow.capabilities).mockResolvedValue(capability);
+    workflow.remote = vi.fn().mockResolvedValue(saved);
+
+    expect(
+      await workflow.handle("user-a", "factory-save-mix", {
+        ...input,
+        backgroundMusic,
+      }),
+    ).toEqual({ ...saved, backgroundMusic });
+    expect(workflow.remote).toHaveBeenCalledWith("mix-save", input);
+    expect(await workflow.handle("user-a", "factory-catalog")).toMatchObject({
+      library: { personal: [{ ...saved, backgroundMusic }] },
+    });
+    expect(saved).not.toHaveProperty("backgroundMusic");
+    expect(await workflow.handle("user-b", "factory-catalog")).toMatchObject({
+      library: { personal: [saved] },
+    });
+
+    const restarted = new PanoramaWorkflow(
+      workflow.root,
+      "",
+      {},
+      workflow.remote,
+    );
+    const cached = (user: string) =>
+      restarted.handle(user, "factory-catalog", { cachedOnly: true });
+    expect(
+      (await cached("user-a")).library.personal[0].backgroundMusic,
+    ).toEqual(backgroundMusic);
+    expect(
+      (await cached("user-b")).library.personal[0].backgroundMusic,
+    ).toBeUndefined();
+    await restarted.handle("user-a", "factory-save-mix", input);
+    expect(
+      (await cached("user-a")).library.personal[0].backgroundMusic,
+    ).toBeUndefined();
+  });
+
   it("saves reusable templates without property-specific or identity fields and freezes draft versions", async () => {
     const { workflow, scenes, config } = fixture();
     const template = await workflow.handle("user-a", "template-save", {
@@ -1342,6 +1387,98 @@ describe("production queue", () => {
     expect(await workflow.handle("user-a", "opening-videos")).toMatchObject([
       second,
     ]);
+  });
+
+  it("keeps music private and preserves the selected track when it is removed from the library", async () => {
+    const { workflow, owner, call, pairs } = batchFixture();
+    await call("pause");
+    const builtIns = await workflow.handle("user-a", "music-tracks");
+    expect(builtIns.map((track: { name: string }) => track.name)).toEqual([
+      "暖意",
+      "晴日",
+      "静庭",
+    ]);
+    for (const track of builtIns)
+      expect(
+        fs.statSync(workflow.mediaFile("user-a", new URL(track.url))).size,
+      ).toBeGreaterThan(0);
+
+    const source = path.join(workflow.root, "我的曲目.wav");
+    const contents = "test audio".repeat(10);
+    fs.writeFileSync(source, contents);
+    workflow.dialogs.openMusic = vi.fn().mockResolvedValue(source);
+    const probe = vi
+      .spyOn(media, "probe")
+      .mockResolvedValueOnce({
+        format: { duration: "12" },
+        streams: [{ codec_type: "video" }],
+      })
+      .mockResolvedValue({
+        format: { duration: "12" },
+        streams: [{ codec_type: "audio" }],
+      });
+    await expect(workflow.handle("user-a", "music-import")).rejects.toThrow(
+      "无法读取音频",
+    );
+    const local = await workflow.handle("user-a", "music-import");
+    expect(probe).toHaveBeenCalledTimes(2);
+    await workflow.handle("user-a", "music-rename", {
+      id: local.id,
+      name: "房源配乐",
+    });
+    expect(await workflow.handle("user-a", "music-import")).toMatchObject({
+      name: "房源配乐",
+    });
+
+    const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    const saved = (await restarted.handle("user-a", "music-tracks")).at(-1);
+    expect(saved).toMatchObject({ id: local.id, name: "房源配乐" });
+    expect(await restarted.handle("user-b", "music-tracks")).toHaveLength(3);
+    const localURL = new URL(saved.url);
+    expect(() => restarted.mediaFile("user-b", localURL)).toThrow("无权访问");
+    expect(() =>
+      restarted.mediaFile("user-a", new URL("invalid", localURL)),
+    ).toThrow("引用无效");
+
+    await call("create", { requestId: "silent", pairs: [pairs[0]] });
+    const backgroundMusic = { id: local.id, volume: 15 };
+    const input = { requestId: "music", pairs: [pairs[0]], backgroundMusic };
+    await call("create", input);
+    await expect(
+      call("create", {
+        ...input,
+        requestId: "invalid-volume",
+        backgroundMusic: { ...backgroundMusic, volume: 31 },
+      }),
+    ).rejects.toThrow("音量无效");
+    await expect(
+      call("create", {
+        ...input,
+        backgroundMusic: { ...backgroundMusic, volume: 20 },
+      }),
+    ).rejects.toThrow("提交标识");
+    await workflow.handle("user-a", "music-remove", { id: local.id });
+    expect(await workflow.handle("user-a", "music-tracks")).toHaveLength(3);
+    expect(await call("create", input)).toMatchObject({ batchId: "music" });
+    await expect(
+      call("create", { ...input, requestId: "removed" }),
+    ).rejects.toThrow("已移除");
+
+    const items = workflow.store(owner).production.items;
+    expect(
+      items.find((item: any) => item.batchId === "silent").config
+        .backgroundMusic,
+    ).toBeUndefined();
+    expect(
+      items.find((item: any) => item.batchId === "music").config
+        .backgroundMusic,
+    ).toEqual(backgroundMusic);
+    const retained = await workflow.resolveMusic(owner, local.id);
+    expect(fs.readFileSync(retained, "utf8")).toBe(contents);
+    fs.unlinkSync(retained);
+    await expect(workflow.resolveMusic(owner, local.id)).rejects.toThrow(
+      "已丢失",
+    );
   });
 
   it("sends only walkthrough information to the cloud and puts local opening audio before narration", async () => {

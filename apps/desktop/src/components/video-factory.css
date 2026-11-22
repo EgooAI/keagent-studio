@@ -104,6 +104,33 @@
   display: block;
   margin-bottom: 6px;
 }
+.factory-music-select {
+  width: 240px;
+  max-width: 100%;
+}
+.factory-music-controls {
+  flex: 1;
+  min-width: 0;
+}
+.factory-music-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.factory-music-preview,
+.factory-music-preview label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.factory-music-preview {
+  margin-top: 10px;
+}
+.factory-music-preview input {
+  accent-color: var(--accent);
+}
 .factory-compose-parameters {
   border-top: 1px solid var(--factory-line);
   padding-top: 16px;

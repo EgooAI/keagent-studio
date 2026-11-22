@@ -1,3 +1,8 @@
+export interface BackgroundMusicSelection {
+  id: string;
+  volume: number;
+}
+
 export interface PanoramaConfig {
   cameraMode?: "panorama" | "spatial";
   materialMode?: "panorama" | "expand";
@@ -11,6 +16,7 @@ export interface PanoramaConfig {
   ttsProvider: "system" | "bailian" | "personal";
   voice: string;
   rate: number;
+  backgroundMusic?: BackgroundMusicSelection;
   openingVideo?: string;
   openingClip?: string;
   openingPhoto?: string;

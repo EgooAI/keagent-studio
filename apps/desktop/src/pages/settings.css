@@ -152,6 +152,25 @@
   gap: 14px;
   margin: 20px 0;
 }
+.settings-music-heading {
+  margin: 24px 0 8px;
+}
+.settings-music-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-music-row > div:first-child {
+  min-width: 120px;
+  overflow-wrap: anywhere;
+}
+.settings-music-row small {
+  display: block;
+  color: var(--muted);
+}
 .settings-material {
   display: flex;
   flex-direction: column;

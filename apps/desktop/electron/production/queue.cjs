@@ -9,6 +9,7 @@ const {
   currentSpeechConfig,
   currentVoiceId,
   renderOverrides,
+  backgroundMusic,
 } = require("../panorama/domain.cjs");
 
 const MAX_BATCH = 200;
@@ -43,6 +44,21 @@ const now = () => new Date().toISOString();
 const reason = (error) => (error instanceof Error ? error.message : "操作失败");
 const validID = (id) =>
   typeof id === "string" && id.length > 0 && id.length <= 160;
+const mixKey = ({ id, version }) => JSON.stringify([id, version]);
+
+function withMixMusic(catalog, preferences) {
+  if (!catalog?.library || !preferences) return catalog;
+  return {
+    ...catalog,
+    library: {
+      ...catalog.library,
+      personal: catalog.library.personal.map((mix) => ({
+        ...mix,
+        backgroundMusic: preferences[mixKey(mix)],
+      })),
+    },
+  };
+}
 
 class ProductionQueue {
   constructor(workflow) {
@@ -176,9 +192,22 @@ class ProductionQueue {
     const state = this.workflow.store(owner);
     const scope = { userId, owner, assertCurrent };
     if (method === "save-mix") {
-      const saved = await this.workflow.remote("mix-save", input);
+      const { backgroundMusic: selection, ...bundle } = input;
+      const music = backgroundMusic(selection);
+      if (music) {
+        await this.workflow.batchMusic(owner, music.id);
+        assertCurrent();
+      }
+      const saved = await this.workflow.remote("mix-save", bundle);
       assertCurrent();
-      return saved;
+      const key = mixKey(saved);
+      if (music || state.mixMusic?.[key]) {
+        const mixMusic = { ...state.mixMusic };
+        if (music) mixMusic[key] = music;
+        else delete mixMusic[key];
+        this.update(owner, state, { mixMusic });
+      }
+      return { ...saved, backgroundMusic: music };
     }
     if (method === "cover-image") {
       const selected = factory.selectScenes(
@@ -199,7 +228,8 @@ class ProductionQueue {
     }
     if (method === "catalog") {
       const cached = state.factoryCatalog;
-      if (input.cachedOnly === true) return cached?.data ?? null;
+      if (input.cachedOnly === true)
+        return withMixMusic(cached?.data ?? null, state.mixMusic);
       const request = {};
       this.catalogRequests.set(state, request);
       const { catalogVersion, library, ...fresh } =
@@ -216,9 +246,10 @@ class ProductionQueue {
         ...fresh,
         library: cached?.version === version ? cached.data.library : library,
       };
-      if (this.catalogRequests.get(state) !== request) return data;
+      if (this.catalogRequests.get(state) !== request)
+        return withMixMusic(data, state.mixMusic);
       if (cached?.version === version && hash(data) === hash(cached.data))
-        return cached.data;
+        return withMixMusic(cached.data, state.mixMusic);
       state.factoryCatalog = { version, data };
       try {
         this.workflow.persist(owner);
@@ -226,7 +257,7 @@ class ProductionQueue {
         state.factoryCatalog = cached;
         throw error;
       }
-      return data;
+      return withMixMusic(data, state.mixMusic);
     }
     if (method === "materials") {
       ensure(validID(input.propertyId), "请选择房源");
@@ -406,6 +437,7 @@ class ProductionQueue {
   async create({ owner, assertCurrent }, input) {
     const data = this.data(owner);
     const overrides = renderOverrides(input.renderOverrides);
+    const music = backgroundMusic(input.backgroundMusic);
     const estimate = input.billingEstimate;
     const billingEstimate =
       Number.isInteger(estimate?.estimatedCredits) &&
@@ -469,6 +501,7 @@ class ProductionQueue {
       input.sceneIdsByProperty,
       input.voiceId,
       input.openingVideo,
+      ...(music ? [{ backgroundMusic: music }] : []),
       ...(overrides ? [{ renderOverrides: overrides }] : []),
       ...(mixes ? [{ mixes }] : []),
     ]);
@@ -485,6 +518,10 @@ class ProductionQueue {
     };
     const previous = existing();
     if (previous) return previous;
+    if (music) {
+      await this.workflow.batchMusic(owner, music.id);
+      assertCurrent();
+    }
     ensure(this.workflow.factoryProperties, "房源服务未连接");
     const [propertyData, caps, voices, resolvedMixes] = await Promise.all([
       this.workflow.factoryProperties({
@@ -650,6 +687,7 @@ class ProductionQueue {
               : (personal || publicVoice).id,
           openingVideo:
             recipe.videoMode === "avatar" ? openingVideo : undefined,
+          backgroundMusic: music,
         },
         [template],
       );

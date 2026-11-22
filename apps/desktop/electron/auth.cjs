@@ -36,6 +36,14 @@ function registerAuth(
         });
         return result.canceled ? undefined : result.filePaths[0];
       },
+      openMusic: async () => {
+        const result = await dialog.showOpenDialog({
+          title: "添加背景音乐",
+          properties: ["openFile"],
+          filters: [{ name: "MP3 / WAV 音频", extensions: ["mp3", "wav"] }],
+        });
+        return result.canceled ? undefined : result.filePaths[0];
+      },
       save: async (defaultPath) => {
         const result = await dialog.showSaveDialog({
           defaultPath,

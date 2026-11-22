@@ -302,6 +302,58 @@ async function fixture(
             }
             if (method === "panorama.opening-videos")
               return state.openingVideos;
+            if (method.startsWith("panorama.music-")) {
+              const tracks = JSON.parse(
+                sessionStorage.getItem("music-tracks") || "[]",
+              );
+              const url = "/media/bgm-test.mp3";
+              if (method === "panorama.music-tracks") {
+                return [
+                  {
+                    id: "warm-v1",
+                    name: "暖意",
+                    duration: 45.2,
+                    builtin: true,
+                    url,
+                  },
+                  {
+                    id: "bright-v1",
+                    name: "晴日",
+                    duration: 34.3,
+                    builtin: true,
+                    url,
+                  },
+                  {
+                    id: "calm-v1",
+                    name: "静庭",
+                    duration: 53.3,
+                    builtin: true,
+                    url,
+                  },
+                  ...tracks,
+                ];
+              }
+              const track = {
+                id: "a".repeat(64) + ".mp3",
+                name: "我的试听",
+                duration: 45.2,
+                url,
+              };
+              const next =
+                method === "panorama.music-import"
+                  ? [track]
+                  : method === "panorama.music-remove"
+                    ? tracks.filter(
+                        (track: { id: string }) => track.id !== input.id,
+                      )
+                    : tracks.map((track: { id: string }) =>
+                        track.id === input.id
+                          ? { ...track, name: input.name }
+                          : track,
+                      );
+              sessionStorage.setItem("music-tracks", JSON.stringify(next));
+              return track;
+            }
             if (method === "panorama.opening-video-remove") {
               state.openingVideos = state.openingVideos.filter(
                 (clip: any) => clip.id !== input.id,
@@ -349,6 +401,7 @@ async function fixture(
                 id: "mine-1",
                 name: input.name,
                 version: "1.0.0",
+                backgroundMusic: input.backgroundMusic,
                 parts: Object.fromEntries(
                   Object.entries(input.parts).map(([k, v]) => [
                     k,
@@ -678,6 +731,12 @@ test("推荐同款独立换三项，保存后重新打开并跨房源批量使�
   }
   await expect(page.locator(".mix-poster")).toHaveClass(/poster-standard/);
   await expect(page.locator(".mix-poster figcaption span")).toHaveCount(0);
+  const currentMix = page.getByRole("region", { name: "当前搭配" });
+  await expect(
+    currentMix.getByRole("combobox", { name: "选择背景音乐" }),
+  ).toBeVisible();
+  await choose(page, "选择背景音乐", "暖意");
+  await currentMix.getByRole("slider", { name: "音乐音量" }).press("End");
   await page.getByRole("button", { name: "存为我的搭配" }).click();
   await page.getByRole("textbox", { name: "搭配名称" }).fill("周末带看");
   await page.getByRole("button", { name: "保存搭配", exact: true }).click();
@@ -687,6 +746,10 @@ test("推荐同款独立换三项，保存后重新打开并跨房源批量使�
   await page.reload();
   await page.getByText("我的搭配", { exact: true }).click();
   await page.getByRole("button", { name: "周末带看，用同款" }).click();
+  await expect(currentMix.getByText("暖意", { exact: true })).toBeVisible();
+  await expect(
+    currentMix.getByRole("slider", { name: "音乐音量" }),
+  ).toHaveValue("30");
   await expect(
     page.getByRole("button", { name: "更换剪辑模板" }),
   ).toContainText("短视频带看");
@@ -697,7 +760,6 @@ test("推荐同款独立换三项，保存后重新打开并跨房源批量使�
     page.getByRole("button", { name: "更换文案模板" }),
   ).toContainText("逐室讲解");
   const voice = page.getByRole("combobox", { name: "批次音色" });
-  const currentMix = page.getByRole("region", { name: "当前搭配" });
   await expect(
     currentMix
       .locator(".mix-row")
@@ -738,6 +800,7 @@ test("推荐同款独立换三项，保存后重新打开并跨房源批量使�
   );
   expect(submitted.pairs).toHaveLength(2);
   expect(submitted.voiceId).toBe("public-zh");
+  expect(submitted.backgroundMusic).toEqual({ id: "warm-v1", volume: 30 });
   expect(submitted.mixes).toEqual([
     {
       id: "mine-1",
@@ -892,6 +955,70 @@ test("素材不足或读取失败时不能确认选图", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "生成 1 条文案" }),
   ).toBeDisabled();
+});
+
+test("背景音乐库和新建视频共用本机曲目，默认不配乐", async ({ page }, info) => {
+  await fixture(page);
+  await page.route("**/media/bgm-test.mp3", (route) =>
+    route.fulfill({
+      path: "apps/desktop/electron/panorama/music/warm-v1.mp3",
+      contentType: "audio/mpeg",
+    }),
+  );
+  await page.goto("/#/settings/music");
+  await expect(page.getByRole("heading", { name: "背景音乐库" })).toBeVisible();
+  await expect(page.locator("audio")).toHaveCount(3);
+  await page.getByRole("button", { name: "上传音乐" }).click();
+  await expect(page.getByText("我的试听", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "改名", exact: true }).click();
+  await page.getByRole("textbox", { name: "曲目名称" }).fill("带看配乐");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText("带看配乐", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "修改曲目名称" })).toBeHidden();
+  await page.screenshot({
+    path: info.outputPath("music-library.png"),
+    animations: "disabled",
+  });
+
+  await page.goto("/#/studio/create");
+  await expect(page.getByText("不使用背景音乐", { exact: true })).toBeVisible();
+  await selectTemplates(page, ["标准房源带看 · 1.0.0"]);
+  await page.getByRole("button", { name: "选择房源", exact: true }).click();
+  await page
+    .getByRole("checkbox", { name: "选择本人房源联调测试", exact: true })
+    .check();
+  await page.getByRole("button", { name: "确认选择（1）" }).click();
+  await chooseImages(page);
+  await choose(page, "选择背景音乐", "带看配乐");
+  const audio = page.locator('audio[aria-label="试听 带看配乐"]');
+  await expect(audio).toBeVisible();
+  await expect(audio).toHaveJSProperty("volume", 0.15);
+  const volume = page.getByRole("slider", { name: "音乐音量" });
+  await volume.press("End");
+  await expect(volume).toHaveValue("30");
+  await audio.evaluate(async (element: HTMLAudioElement) => {
+    await element.play();
+    element.pause();
+  });
+  const create = page.getByRole("button", { name: "生成 1 条文案" });
+  await create.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath("factory-background-music.png"),
+    animations: "disabled",
+  });
+  await create.click();
+  const submission = await page.evaluate(
+    () =>
+      (window as any).factorySettingsTest.calls.find(
+        (c: any) => c.method === "panorama.factory-create",
+      ).input,
+  );
+  expect(submission.backgroundMusic).toEqual({
+    id: "a".repeat(64) + ".mp3",
+    volume: 30,
+  });
+  await page.getByRole("tab", { name: "新建视频", exact: true }).click();
+  await expect(page.getByText("不使用背景音乐", { exact: true })).toBeVisible();
 });
 
 test("经纪人开场每批必选，可选择本机视频库或临时上传，审核只显示带看文案", async ({

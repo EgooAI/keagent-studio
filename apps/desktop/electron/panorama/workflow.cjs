@@ -4,6 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const domain = require("./domain.cjs");
 const media = require("./media.cjs");
+const music = require("./music.cjs");
 const sources = require("../production/sources.cjs");
 const templateLibrary = require("../production/templates.cjs");
 const factory = require("../production/factory.cjs");
@@ -145,6 +146,7 @@ class PanoramaWorkflow {
       imports: undefined,
       production: undefined,
       factoryCatalog: undefined,
+      mixMusic: undefined,
       imageTasks: state.imageTasks.map(({ id, sceneId, status, error }) => ({
         id,
         sceneId,
@@ -301,6 +303,36 @@ class PanoramaWorkflow {
       this.persist(owner);
     } catch (error) {
       state.openingVideos = previous;
+      throw error;
+    }
+  }
+  async musicTracks(owner, state) {
+    await Promise.all(
+      music.builtIns.map((track) => this.resolveMusic(owner, track.id)),
+    );
+    return [
+      ...music.builtIns.map((track) => ({ ...track, builtin: true })),
+      ...(state.musicTracks ?? []),
+    ].map((track) => ({ ...track, url: this.url(owner, `music/${track.id}`) }));
+  }
+  resolveMusic(owner, id) {
+    return music.resolve(this.root, this.directory(owner), id);
+  }
+  async batchMusic(owner, id) {
+    domain.ensure(
+      music.builtIns.some((track) => track.id === id) ||
+        this.store(owner).musicTracks?.some((track) => track.id === id),
+      "所选背景音乐已移除，请重新选择",
+    );
+    await this.resolveMusic(owner, id);
+  }
+  saveMusicTracks(owner, state, tracks) {
+    const previous = state.musicTracks;
+    state.musicTracks = tracks;
+    try {
+      this.persist(owner);
+    } catch (error) {
+      state.musicTracks = previous;
       throw error;
     }
   }
@@ -526,6 +558,42 @@ class PanoramaWorkflow {
       }
     }
     if (method === "state") return this.view(owner, state);
+    if (method === "music-tracks") return this.musicTracks(owner, state);
+    if (method === "music-import") {
+      const source = await this.dialogs.openMusic();
+      assertCurrent();
+      if (!source) return null;
+      const track = await music.importTrack(
+        this.root,
+        this.directory(owner),
+        source,
+        assertCurrent,
+      );
+      const tracks = state.musicTracks ?? [];
+      const existing = tracks.find((item) => item.id === track.id);
+      if (!existing) this.saveMusicTracks(owner, state, [...tracks, track]);
+      return existing ?? track;
+    }
+    if (method === "music-rename" || method === "music-remove") {
+      const tracks = state.musicTracks ?? [];
+      domain.ensure(
+        tracks.some((track) => track.id === input.id),
+        "本机音乐不存在",
+      );
+      this.saveMusicTracks(
+        owner,
+        state,
+        method === "music-remove"
+          ? // shortcut: retain removed files for task retries until local media cleanup is available.
+            tracks.filter((track) => track.id !== input.id)
+          : tracks.map((track) =>
+              track.id === input.id
+                ? { ...track, name: domain.text(input.name, "曲目名称", 80) }
+                : track,
+            ),
+      );
+      return null;
+    }
     if (method === "opening-clip-import")
       return this.importOpeningClip(
         owner,
@@ -672,6 +740,11 @@ class PanoramaWorkflow {
         );
         if (recipe.cameraMode === undefined) delete c.cameraMode;
       }
+      domain.ensure(
+        domain.hash(c.backgroundMusic ?? null) ===
+          domain.hash(draft.config.backgroundMusic ?? null),
+        "背景音乐已随任务保存，请创建新任务更换",
+      );
       domain.ensure(
         c.leadSceneId === (draft.config.leadSceneId || ""),
         "开场镜头改变后，请重新生成文案",
@@ -1070,15 +1143,15 @@ class PanoramaWorkflow {
                       room,
                       description,
                     })),
-                    template: c.openingVideo
-                      ? Object.fromEntries(
-                          Object.entries(c).filter(
-                            ([key]) =>
-                              key !== "openingVideo" &&
-                              key !== "openingTemplate",
-                          ),
-                        )
-                      : c,
+                    template: Object.fromEntries(
+                      Object.entries(c).filter(
+                        ([key]) =>
+                          key !== "backgroundMusic" &&
+                          (!c.openingVideo ||
+                            (key !== "openingVideo" &&
+                              key !== "openingTemplate")),
+                      ),
+                    ),
                     language: c.language,
                     segments: expected,
                   },
@@ -1206,6 +1279,8 @@ class PanoramaWorkflow {
       "旧版生成开场已停用，请改用房源开场，或新建任务选择开场视频",
     );
     const clip = draft.config.openingVideo || draft.config.openingClip;
+    if (draft.config.backgroundMusic)
+      await this.resolveMusic(owner, draft.config.backgroundMusic.id);
     if (clip) {
       domain.ensure(
         await media.exists(this.openingVideoFile(owner, clip)),
@@ -1248,6 +1323,9 @@ class PanoramaWorkflow {
       await fsp.mkdir(jobDir, { recursive: true });
       this.scenes(owner, job.scenes);
       domain.ensure(!job.config.openingPhoto, "旧版生成开场已停用");
+      const musicFile = job.config.backgroundMusic
+        ? await this.resolveMusic(owner, job.config.backgroundMusic.id)
+        : undefined;
       const audio = [];
       if (job.config.openingVideo)
         audio.push({
@@ -1317,6 +1395,7 @@ class PanoramaWorkflow {
           }
         },
         spatialClips,
+        musicFile,
       );
       signal.throwIfAborted();
       Object.assign(job, result, {
@@ -1391,6 +1470,8 @@ class PanoramaWorkflow {
     const prefix = `/${owner}/`;
     domain.ensure(url.pathname.startsWith(prefix), "无权访问此素材");
     const relative = url.pathname.slice(prefix.length);
+    if (relative.startsWith("music/"))
+      return music.file(this.root, this.directory(owner), relative.slice(6));
     domain.ensure(
       /^assets\/[a-f0-9]{64}\.(jpg|png)$/.test(relative) ||
         /^opening\/[a-f0-9]{64}\.mp4$/.test(relative) ||

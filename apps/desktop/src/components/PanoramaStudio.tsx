@@ -55,6 +55,7 @@ import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryImagePicker } from "./FactoryImagePicker";
 import { FactoryMixComposer } from "./FactoryMixComposer";
+import { MusicPreview, useMusicTracks } from "./MusicLibrary";
 import {
   FactoryRenderSettings,
   renderKeys,
@@ -209,6 +210,11 @@ export function PanoramaStudio() {
   >({});
   const [voiceId, setVoiceId] = useState<string>();
   const [batchRenderEdits, setBatchRenderEdits] = useState<RenderEdits>({});
+  const [musicId, setMusicId] = useState("");
+  const [musicVolume, setMusicVolume] = useState(15);
+  const backgroundMusic = musicId
+    ? { id: musicId, volume: musicVolume }
+    : undefined;
   const [savedOpeningId, setSavedOpeningId] = useState<string>();
   const [temporaryOpening, setTemporaryOpening] =
     useState<FactoryOpeningClip>();
@@ -445,10 +451,16 @@ export function PanoramaStudio() {
     setIssues([]);
     setPairPage(1);
   }
+  function applySavedMix(mix: FactoryBundle) {
+    applyMix(mix);
+    setMusicId(mix.backgroundMusic?.id ?? "");
+    setMusicVolume(mix.backgroundMusic?.volume ?? 15);
+  }
   async function saveMix(mix: FactoryBundle, name: string) {
     const saved = await factoryRequest<FactoryBundle>("save-mix", {
       ...mixRequest(mix),
       name,
+      ...(backgroundMusic ? { backgroundMusic } : {}),
     });
     await client.cancelQueries({ queryKey: ["factory-catalog"] });
     client.setQueryData<FactoryCatalog>(["factory-catalog"], (previous) =>
@@ -465,7 +477,7 @@ export function PanoramaStudio() {
           }
         : previous,
     );
-    applyMix(saved);
+    applySavedMix(saved);
     void client.invalidateQueries({ queryKey: ["factory-catalog"] });
     void message.success("已保存到我的搭配");
   }
@@ -554,6 +566,8 @@ export function PanoramaStudio() {
   const openingClip =
     temporaryOpening ??
     openingVideos.data?.find((clip) => clip.id === savedOpeningId);
+  const musicTracks = useMusicTracks(desktop && creating);
+  const selectedMusic = musicTracks.data?.find((track) => track.id === musicId);
   const costEstimate = useMemo(
     () => estimateBatchCost(pricing.data, pairs.length),
     [pricing.data, pairs.length],
@@ -712,6 +726,7 @@ export function PanoramaStudio() {
       selectedImages,
       voiceId,
       openingClipId,
+      backgroundMusic,
       overrides,
       mixes,
     ]);
@@ -727,6 +742,7 @@ export function PanoramaStudio() {
       sceneIdsByProperty: selectedImages,
       voiceId,
       openingVideo: openingClipId,
+      ...(backgroundMusic ? { backgroundMusic } : {}),
       ...(costEstimate && pricing.data
         ? {
             billingEstimate: {
@@ -746,6 +762,8 @@ export function PanoramaStudio() {
     setBatchRenderEdits({});
     setSavedOpeningId(undefined);
     setTemporaryOpening(undefined);
+    setMusicId("");
+    setMusicVolume(15);
     setExcluded(new Set());
     setPairPage(1);
     setBatchId(result.batchId);
@@ -916,6 +934,70 @@ export function PanoramaStudio() {
       }}
       options={voiceOptions}
     />
+  );
+  const musicSelect = creating && (
+    <div className="factory-music-controls">
+      <div className="factory-music-options">
+        <Select
+          aria-label="选择背景音乐"
+          value={musicId}
+          className="factory-music-select"
+          disabled={busy}
+          loading={musicTracks.isLoading}
+          options={[
+            { value: "", label: "不使用背景音乐" },
+            ...(musicId && !selectedMusic
+              ? [{ value: musicId, label: "所选曲目不可用", disabled: true }]
+              : []),
+            ...["内置音乐", "我的音乐"].map((label, index) => ({
+              label,
+              options: (musicTracks.data ?? [])
+                .filter((track) => !!track.builtin === (index === 0))
+                .map((track) => ({
+                  value: track.id,
+                  label: track.name,
+                })),
+            })),
+          ]}
+          onChange={(id) => {
+            setMusicId(id);
+            setIssues([]);
+          }}
+        />
+        <Link to="/settings/music">管理背景音乐库</Link>
+        {musicTracks.isError && (
+          <Button type="link" onClick={() => void musicTracks.refetch()}>
+            重新加载音乐
+          </Button>
+        )}
+      </div>
+      {musicId && !selectedMusic && musicTracks.isSuccess && (
+        <p role="status">所选曲目已从音乐库移除，请重新选择。</p>
+      )}
+      {selectedMusic && (
+        <div className="factory-music-preview">
+          <MusicPreview
+            key={selectedMusic.id}
+            track={selectedMusic}
+            volume={musicVolume}
+          />
+          <label>
+            音乐音量 {musicVolume}%
+            <input
+              type="range"
+              min={1}
+              max={30}
+              value={musicVolume}
+              disabled={busy}
+              aria-label="音乐音量"
+              aria-valuetext={`${musicVolume}%`}
+              onChange={(event) => setMusicVolume(Number(event.target.value))}
+            />
+          </label>
+          <small className="muted">应用于本批所有视频</small>
+        </div>
+      )}
+    </div>
   );
   const detailPanel = row ? (
     <FactoryTaskDetail
@@ -1132,8 +1214,9 @@ export function PanoramaStudio() {
             {library ? (
               <FactoryMixComposer
                 library={library}
-                current={currentMix}
+                current={currentMix && { ...currentMix, backgroundMusic }}
                 onChange={applyMix}
+                onApply={applySavedMix}
                 onSave={saveMix}
                 onRefresh={() => void catalog.refetch()}
                 refreshing={catalog.isFetching}
@@ -1141,6 +1224,7 @@ export function PanoramaStudio() {
                 sceneIds={firstProperty && sceneIdsByProperty[firstProperty.id]}
                 disabled={busy}
                 voiceSelect={voiceSelect}
+                musicSelect={musicSelect}
               />
             ) : (
               <>
@@ -1446,6 +1530,12 @@ export function PanoramaStudio() {
                 )}
               </div>
             )}
+            {creating && !library && (
+              <div className="factory-compose-note">
+                <strong>背景音乐</strong>
+                {musicSelect}
+              </div>
+            )}
             <div className="factory-compose-submit">
               {library && (
                 <div className="mix-batch-inputs">
@@ -1511,6 +1601,7 @@ export function PanoramaStudio() {
                   busy ||
                   !pairs.length ||
                   !!renderSettingsError(batchRenderEdits, spatialBatch) ||
+                  (!!musicId && !selectedMusic) ||
                   pairs.length > 200 ||
                   selectedPropertyCount !== imageProperties.length ||
                   (needsOpeningForBatch && !openingClip) ||

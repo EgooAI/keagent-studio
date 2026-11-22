@@ -131,6 +131,21 @@ function currentSpeechConfig(config) {
   if (Object.hasOwn(next, "voice")) next.voice = voice;
   return next;
 }
+function backgroundMusic(input) {
+  if (input === undefined) return;
+  ensure(
+    typeof input?.id === "string" &&
+      /^(?:(?:warm|bright|calm)-v1|[a-f0-9]{64}\.(?:mp3|wav))$/.test(
+        input.id,
+      ) &&
+      Number.isInteger(input.volume) &&
+      input.volume >= 1 &&
+      input.volume <= 30,
+    "背景音乐或音量无效",
+  );
+  return { id: input.id, volume: input.volume };
+}
+
 function config(input, personalTemplates = []) {
   ensure(input && typeof input === "object", "缺少制作配置");
   input = currentSpeechConfig(input);
@@ -140,6 +155,8 @@ function config(input, personalTemplates = []) {
       input[key] ?? defaultConfig[key],
     ]),
   );
+  if (input.backgroundMusic !== undefined)
+    c.backgroundMusic = backgroundMusic(input.backgroundMusic);
   if (input.cameraMode !== undefined) {
     ensure(["panorama", "spatial"].includes(input.cameraMode), "镜头模式无效");
     c.cameraMode = input.cameraMode;
@@ -358,6 +375,7 @@ module.exports = {
   defaultConfig,
   currentVoiceId,
   currentSpeechConfig,
+  backgroundMusic,
   config,
   renderOverrides,
   renderOverrideKeys,
