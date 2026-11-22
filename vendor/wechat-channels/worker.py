@@ -21,6 +21,7 @@ from uploader.tencent_uploader.main import (
     TENCENT_PUBLISH_STRATEGY_IMMEDIATE,
     TENCENT_PUBLISH_STRATEGY_SCHEDULED,
     TencentVideo,
+    format_str_for_short_title,
 )
 from utils.log import tencent_logger
 
@@ -240,12 +241,16 @@ def require_account(result, expected, stage="preflight"):
 
 async def upload(page, job, commands):
     data = job["input"]
+    short_title = data.get("shortTitle")
+    if short_title is not None and short_title != format_str_for_short_title(short_title):
+        raise JobError("INVALID_SHORT_TITLE", "请修改短标题中视频号无法原样保留的字符")
     scheduled_at = data.get("scheduledAt")
     date = datetime.fromtimestamp(scheduled_at, timezone(timedelta(hours=8))) if scheduled_at else None
     if date and (date.minute or date.second or date.microsecond):
         raise ValueError("视频号定时发布只支持北京时间整点")
     uploader = ChromeVideo(
         title=data["title"],
+        short_title=short_title,
         tags=[tag.removeprefix("#") for tag in data["hashtags"]],
         desc=data["description"],
         file_path=job["videoPath"],

@@ -577,7 +577,11 @@ export class PublishQueue {
         !id(entry.artifactId) ||
         !Number.isSafeInteger(entry.expectedReviewRevision) ||
         entry.expectedReviewRevision < 1 ||
-        validateDouyinInput({ ...entry, hashtags: [] })
+        validateDouyinInput({
+          ...entry,
+          platform: input.platform,
+          hashtags: entry.hashtags === undefined ? [] : entry.hashtags,
+        })
       )
         throw new PublishingError(
           "INVALID_INPUT",
@@ -638,7 +642,9 @@ export class PublishQueue {
           artifactId: entry.artifactId,
           expectedReviewRevision: entry.expectedReviewRevision,
           title: entry.title,
+          shortTitle: entry.shortTitle,
           description: entry.description,
+          hashtags: entry.hashtags,
           id: randomUUID(),
           batchId: requestKey,
           accountId,

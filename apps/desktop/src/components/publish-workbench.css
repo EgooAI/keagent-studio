@@ -457,6 +457,72 @@
   gap: 5px;
   margin-top: 10px;
 }
+.channels-config-platform {
+  grid-column: 1 / -1;
+}
+.channels-copy-fields {
+  display: grid;
+  gap: 5px;
+  margin-block: 12px;
+  min-width: 0;
+}
+.channels-short-title-heading,
+.channels-schedule-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.channels-short-title-heading {
+  justify-content: space-between;
+  min-height: 25px;
+}
+.channels-short-title-heading label {
+  margin: 0;
+  font-weight: 600;
+}
+.channels-copy-fields small {
+  color: var(--muted);
+}
+.channels-copy-fields .channels-copy-error {
+  color: var(--ant-color-error-text, #a83a32);
+}
+.channels-copy-preview {
+  margin-top: 5px;
+}
+.channels-copy-preview summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+}
+.channels-copy-preview > div {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--canvas);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.channels-cover-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  color: var(--muted);
+}
+.channels-cover-preview img {
+  width: 54px;
+  height: 72px;
+  object-fit: contain;
+  background: var(--canvas);
+  border-radius: 4px;
+}
+.channels-schedule-picker > input {
+  flex: 1;
+  min-width: 0;
+}
+.channels-schedule-picker > .ant-select {
+  min-width: 92px;
+}
 .publish-demo-list .property-toolbar {
   margin: 0;
   padding-bottom: 9px;

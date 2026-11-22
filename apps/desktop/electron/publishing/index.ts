@@ -247,8 +247,9 @@ export function registerPublishing(
           accountId: entry.accountId,
           platform: entry.platform === "channels" ? "channels" : "douyin",
           title: entry.title,
+          shortTitle: entry.shortTitle,
           description: entry.description,
-          hashtags: [],
+          hashtags: entry.hashtags ?? [],
           batch: true,
         };
       }
@@ -558,8 +559,12 @@ export function registerPublishing(
             value.artifactId,
           );
           const identity = await dependencies.identity();
+          const assetIds =
+            value.coverOnly === true
+              ? [artifact.assets.cover]
+              : Object.values(artifact.assets);
           const assets: MediaAsset[] = await Promise.all(
-            Object.values(artifact.assets)
+            assetIds
               .filter(Boolean)
               .map((id) => dependencies.exchange.getAsset(id)),
           );

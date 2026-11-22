@@ -44,6 +44,7 @@ type douyinInput struct {
 	HandoffID   string   `json:"handoffId"`
 	AccountID   string   `json:"accountId"`
 	Title       string   `json:"title"`
+	ShortTitle  *string  `json:"shortTitle,omitempty"`
 	Description string   `json:"description"`
 	Hashtags    []string `json:"hashtags"`
 	CoverRef    string   `json:"coverRef,omitempty"`
@@ -77,6 +78,7 @@ type douyinRecord struct {
 var douyinWord = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 var douyinStep = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 var douyinPostID = regexp.MustCompile(`^[0-9]{5,30}$`)
+var channelsShortTitle = regexp.MustCompile(`^[\p{L}\p{N}《》“”:+?%°]{7,15}$`)
 
 func (v douyinInput) fingerprint() string {
 	// Old desktop requests omitted the platform for Douyin.
@@ -89,6 +91,9 @@ func (v douyinInput) fingerprint() string {
 func validateDouyinInput(v douyinInput) error {
 	if v.Platform != "" && v.Platform != "channels" && v.Platform != "douyin" {
 		return exchangeFail(422, "INVALID_INPUT", "发布平台无效")
+	}
+	if v.ShortTitle != nil && (v.Platform != "channels" || !channelsShortTitle.MatchString(*v.ShortTitle)) {
+		return exchangeFail(422, "INVALID_INPUT", "视频号短标题须为 7 至 15 个字符，可使用文字、数字及《》“”:+?%°")
 	}
 	caption := strings.TrimSpace(v.Description)
 	if v.Hashtags == nil || len(v.Hashtags) > 30 {
