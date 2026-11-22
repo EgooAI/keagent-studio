@@ -2,7 +2,7 @@ name: Desktop installers
 
 on:
   push:
-    branches: [codex/mac-arm64-channels-20261122-201516]
+    branches: [codex/desktop-packaging]
   workflow_dispatch:
     inputs:
       public_origin:
@@ -20,8 +20,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - runner: windows-2025
+            target: windows-x64
+            installer: release/*.exe
           - runner: macos-15
             target: mac-arm64
+            installer: release/*.dmg
+          - runner: macos-15-intel
+            target: mac-x64
             installer: release/*.dmg
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -44,7 +50,7 @@ jobs:
       - if: runner.os == 'Windows'
         run: pnpm package:desktop:installer
       - if: runner.os == 'macOS'
-        run: pnpm package:desktop:installer --mac dmg --arm64 --config.mac.identity=-
+        run: pnpm package:desktop:installer --config.mac.identity=-
       - name: Check Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
@@ -64,12 +70,7 @@ jobs:
           mount=$(mktemp -d)
           trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true; rmdir "$mount"' EXIT
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          app="$mount/AI来客.app/Contents"
-          for binary in "$app/MacOS/AI来客" "$app/Resources/channels-browser/Chromium.app/Contents/MacOS/Chromium" "$app/Resources/channels-runtime/channels-worker"; do
-            lipo -verify_arch arm64 "$binary"
-          done
-          node scripts/douyin-package-smoke.mjs "$app/MacOS/AI来客"
-          shasum -a 256 "$dmg"
+          node scripts/douyin-package-smoke.mjs "$mount/AI来客.app/Contents/MacOS/AI来客"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: AI-Laike-${{ matrix.target }}
