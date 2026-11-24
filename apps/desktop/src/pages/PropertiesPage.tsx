@@ -14,6 +14,7 @@ import {
   Form,
   Input,
   Modal,
+  Pagination,
   Segmented,
   Select,
   Skeleton,
@@ -32,7 +33,6 @@ import {
   Pencil,
   Play,
   Plus,
-  Search,
   Upload as UploadIcon,
 } from "lucide-react";
 import { demoApi, isLive } from "@keagent/api-client";
@@ -49,6 +49,11 @@ import { PropertyMaterialsTab } from "../components/PropertyMaterialsTab";
 import { PropertyRelatedTasks } from "../components/PropertyRelatedTasks";
 import { DeletePropertyButton } from "../components/DeletePropertyButton";
 import type { PanoramaScene } from "@keagent/shared-types";
+import { PropertySearchFilters } from "../components/PropertySearchFilters";
+import {
+  initialPropertyFilters,
+  matchesProperty,
+} from "../lib/propertyFilters";
 import "./property-library.css";
 import "./property-cards.css";
 import "./property-detail.css";
@@ -56,8 +61,9 @@ import "./property-detail.css";
 export default function PropertiesPage() {
   const { data } = useWorkspace();
   const navigate = useNavigate();
-  const [search, setSearch] = useState("");
+  const [criteria, setCriteria] = useState(initialPropertyFilters);
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [view, setView] = useState("grid");
   const [searchParams] = useSearchParams();
   const [importOpen, setImportOpen] = useState(
@@ -75,14 +81,30 @@ export default function PropertiesPage() {
   );
   const filtered = data.properties.filter(
     (p) =>
-      `${p.title} ${p.community} ${p.propertyNumber} ${p.city} ${p.district}`.includes(
-        search,
-      ) &&
-      (filter === "all" ||
+      matchesProperty(p, criteria) &&
+      (criteria.mode === "number" ||
+        filter === "all" ||
         (filter === "published"
           ? publishedIds.has(p.id)
           : !publishedIds.has(p.id))),
   );
+  const pageSize = 8;
+  const currentPage = Math.min(
+    page,
+    Math.max(1, Math.ceil(filtered.length / pageSize)),
+  );
+  const pageRows = filtered.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+  const pagination = {
+    current: currentPage,
+    pageSize,
+    total: filtered.length,
+    onChange: setPage,
+    showSizeChanger: false,
+    hideOnSinglePage: true,
+  };
   return (
     <div className="studio-index-page property-library">
       <PageHeader
@@ -107,38 +129,39 @@ export default function PropertiesPage() {
         }
       />
       <div className="panel library-toolbar">
-        <div className="library-filters" role="group" aria-label="房源发布分类">
-          {[
-            ["all", "全部房源"],
-            ["unpublished", "未发布过"],
-            ["published", "已发布过"],
-          ].map(([key, label]) => (
-            <button
-              type="button"
-              aria-pressed={filter === key}
-              key={key}
-              onClick={() => setFilter(key)}
-            >
-              {label}
-              <span>
-                {key === "all"
-                  ? data.properties.length
-                  : key === "published"
-                    ? publishedIds.size
-                    : data.properties.length - publishedIds.size}
-              </span>
-            </button>
-          ))}
-        </div>
+        {criteria.mode !== "number" && (
+          <div
+            className="library-filters"
+            role="group"
+            aria-label="房源发布分类"
+          >
+            {[
+              ["all", "全部房源"],
+              ["unpublished", "未发布过"],
+              ["published", "已发布过"],
+            ].map(([key, label]) => (
+              <button
+                type="button"
+                aria-pressed={filter === key}
+                key={key}
+                onClick={() => {
+                  setFilter(key);
+                  setPage(1);
+                }}
+              >
+                {label}
+                <span>
+                  {key === "all"
+                    ? data.properties.length
+                    : key === "published"
+                      ? publishedIds.size
+                      : data.properties.length - publishedIds.size}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="library-tools">
-          <Input
-            aria-label="搜索房源"
-            placeholder="搜索房源号、小区、城市或区域"
-            prefix={<Search size={16} />}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            allowClear
-          />
           <Segmented
             aria-label="房源显示方式"
             value={view}
@@ -167,6 +190,14 @@ export default function PropertiesPage() {
             ]}
           />
         </div>
+        <PropertySearchFilters
+          value={criteria}
+          onChange={(value) => {
+            setCriteria(value);
+            setPage(1);
+          }}
+          inventory={data.properties}
+        />
       </div>
       <div className="library-results">
         <strong role="status">共 {filtered.length} 套房源</strong>
@@ -174,11 +205,20 @@ export default function PropertiesPage() {
       </div>
       {!filtered.length ? (
         <div className="panel empty-panel">
-          <Empty description="没有匹配的房源">
+          <Empty
+            description={
+              criteria.mode === "number"
+                ? criteria.propertyNumber?.trim()
+                  ? "当前房源库未找到该房源号"
+                  : "请输入完整房源号"
+                : "没有匹配的房源"
+            }
+          >
             <Button
               onClick={() => {
-                setSearch("");
+                setCriteria(initialPropertyFilters);
                 setFilter("all");
+                setPage(1);
               }}
             >
               清除筛选
@@ -187,7 +227,7 @@ export default function PropertiesPage() {
         </div>
       ) : view === "grid" ? (
         <div className="property-grid">
-          {filtered.map((property) => (
+          {pageRows.map((property) => (
             <article className="property-card" key={property.id}>
               <Link to={`/properties/${property.id}`} className="card-cover">
                 <span className="sr-only">{property.community}房源详情</span>
@@ -278,7 +318,7 @@ export default function PropertiesPage() {
             rowKey="id"
             dataSource={filtered}
             scroll={{ x: 720 }}
-            pagination={{ pageSize: 8 }}
+            pagination={pagination}
             columns={[
               {
                 title: "房源",
@@ -325,6 +365,13 @@ export default function PropertiesPage() {
             ]}
           />
         </div>
+      )}
+      {view === "grid" && (
+        <Pagination
+          className="library-grid-pagination"
+          align="end"
+          {...pagination}
+        />
       )}
       {isLive ? (
         <BeikeImportModal
@@ -463,6 +510,7 @@ type MaterialImportKind = "panorama" | "reference";
 
 export function PropertyDetailPage() {
   const { propertyId } = useParams();
+  const [detailParams] = useSearchParams();
   const { data } = useWorkspace();
   const { message } = App.useApp();
   const navigate = useNavigate();
@@ -673,6 +721,9 @@ export function PropertyDetailPage() {
       )}
       <Tabs
         className="property-detail-tabs"
+        defaultActiveKey={
+          detailParams.get("tab") === "materials" ? "materials" : "info"
+        }
         items={[
           {
             key: "info",

@@ -21,6 +21,11 @@ import {
   type FactoryProperty,
   type FactoryTemplate,
 } from "./factoryClient";
+import type { Property } from "@keagent/shared-types";
+import { initialPropertyFilters, roomType } from "../lib/propertyFilters";
+import { PropertySearchFilters } from "./PropertySearchFilters";
+import { formatPrice } from "./common";
+import { Link } from "react-router-dom";
 import "./factory-picker.css";
 
 const PAGE_SIZE = 20;
@@ -98,16 +103,20 @@ export function FactoryPicker({
   kind,
   value,
   templates,
+  inventory,
   onClose,
   onConfirm,
   onProperties,
 }: {
   kind: "property" | "template";
   value: string[];
+  inventory: Property[];
   templates: FactoryTemplate[];
   onClose: () => void;
   onConfirm: (values: string[]) => void;
-  onProperties: (rows: Pick<FactoryProperty, "id" | "title">[]) => void;
+  onProperties: (
+    rows: Pick<FactoryProperty, "id" | "title" | "propertyNumber">[],
+  ) => void;
 }) {
   const { message } = App.useApp();
   const checkboxPrefix = useId();
@@ -117,8 +126,7 @@ export function FactoryPicker({
   const [selected, setSelected] = useState(() => new Set(value));
   const [selectedOnly, setSelectedOnly] = useState(false);
   const [search, setSearch] = useState("");
-  const [district, setDistrict] = useState<string>();
-  const [material, setMaterial] = useState<string>();
+  const [criteria, setCriteria] = useState(initialPropertyFilters);
   const [language, setLanguage] = useState<string>();
   const [mode, setMode] = useState<string>();
   const [ratio, setRatio] = useState<string>();
@@ -129,10 +137,31 @@ export function FactoryPicker({
   const confirmed = property
     ? [...selected]
     : templates.map(templateKey).filter((key) => selected.has(key));
+  const byNumber = criteria.mode === "number";
+  const chosenRooms = criteria.rooms ?? [];
+  const conditions = byNumber
+    ? { exactNumber: criteria.propertyNumber?.trim() || "" }
+    : {
+        search: criteria.search,
+        district: criteria.district,
+        community: criteria.community,
+        layouts: chosenRooms.length
+          ? [
+              ...new Set(
+                inventory
+                  .filter((p) => chosenRooms.includes(roomType(p.layout)))
+                  .map((p) => p.layout),
+              ),
+            ]
+          : undefined,
+        minPrice: criteria.minPrice,
+        maxPrice: criteria.maxPrice,
+        minArea: criteria.minArea,
+        maxArea: criteria.maxArea,
+        material: criteria.material,
+      };
   const query = {
-    search,
-    district,
-    material,
+    ...conditions,
     selectedIds: selectedOnly ? [...selected] : undefined,
   };
   const properties = useQuery({
@@ -194,7 +223,7 @@ export function FactoryPicker({
     setSelecting(true);
     try {
       const result = await factoryRequest<{
-        rows: Pick<FactoryProperty, "id" | "title">[];
+        rows: Pick<FactoryProperty, "id" | "title" | "propertyNumber">[];
       }>("properties", {
         ...query,
         all: true,
@@ -259,100 +288,94 @@ export function FactoryPicker({
         </div>
       )}
     >
-      <Space wrap className="factory-tools factory-picker-filters">
-        <Input
-          aria-label={property ? "搜索房源" : "搜索模板"}
-          allowClear
-          prefix={<Search size={15} />}
-          placeholder={property ? "房源号、小区或标题" : "搜索名称、描述或版本"}
-          value={search}
-          maxLength={120}
+      {property ? (
+        <PropertySearchFilters
+          inventory={inventory}
+          value={criteria}
           disabled={selecting}
-          onChange={(e) => {
-            setSearch(e.target.value);
+          onChange={(next) => {
+            if (next.mode !== criteria.mode) setSelectedOnly(false);
+            setCriteria(next);
             setPage(1);
           }}
-        />
-        {property ? (
-          <>
-            <Select
-              aria-label="区域"
-              placeholder="全部区域"
-              disabled={selecting}
-              className="factory-filter"
-              allowClear
-              showSearch
-              options={options(properties.data?.districts || [])}
-              value={district}
-              onChange={(v) => {
-                setDistrict(v);
-                setPage(1);
-              }}
-            />
+        >
+          <label className="property-filter-field">
+            <span>素材状态</span>
             <Select
               aria-label="素材状态"
               placeholder="全部素材状态"
               disabled={selecting}
-              className="factory-filter"
               allowClear
               options={[
                 { value: "ready", label: "素材就绪" },
                 { value: "incomplete", label: "缺少素材" },
               ]}
-              value={material}
-              onChange={(v) => {
-                setMaterial(v);
+              value={criteria.material}
+              onChange={(value) => {
+                setCriteria({ ...criteria, material: value });
                 setPage(1);
               }}
             />
-          </>
-        ) : (
-          <>
-            <Select
-              aria-label="语言"
-              placeholder="全部语言"
-              className="factory-filter"
-              allowClear
-              value={language}
-              options={[
-                { value: "zh-CN", label: "中文" },
-                { value: "en-US", label: "英文" },
-              ]}
-              onChange={(v) => {
-                setLanguage(v);
-                setPage(1);
-              }}
-            />
-            <Select
-              aria-label="视频模式"
-              placeholder="全部模式"
-              className="factory-filter"
-              allowClear
-              value={mode}
-              options={[
-                { value: "voiceover", label: "配音" },
-                { value: "avatar", label: "露脸" },
-              ]}
-              onChange={(v) => {
-                setMode(v);
-                setPage(1);
-              }}
-            />
-            <Select
-              aria-label="视频比例"
-              placeholder="全部比例"
-              className="factory-filter"
-              allowClear
-              value={ratio}
-              options={options(["9:16", "16:9"])}
-              onChange={(v) => {
-                setRatio(v);
-                setPage(1);
-              }}
-            />
-          </>
-        )}
-      </Space>
+          </label>
+        </PropertySearchFilters>
+      ) : (
+        <Space wrap className="factory-tools factory-picker-filters">
+          <Input
+            aria-label="搜索模板"
+            allowClear
+            prefix={<Search size={15} />}
+            placeholder="搜索名称、描述或版本"
+            value={search}
+            maxLength={120}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+          />
+          <Select
+            aria-label="语言"
+            placeholder="全部语言"
+            className="factory-filter"
+            allowClear
+            value={language}
+            options={[
+              { value: "zh-CN", label: "中文" },
+              { value: "en-US", label: "英文" },
+            ]}
+            onChange={(v) => {
+              setLanguage(v);
+              setPage(1);
+            }}
+          />
+          <Select
+            aria-label="视频模式"
+            placeholder="全部模式"
+            className="factory-filter"
+            allowClear
+            value={mode}
+            options={[
+              { value: "voiceover", label: "配音" },
+              { value: "avatar", label: "露脸" },
+            ]}
+            onChange={(v) => {
+              setMode(v);
+              setPage(1);
+            }}
+          />
+          <Select
+            aria-label="视频比例"
+            placeholder="全部比例"
+            className="factory-filter"
+            allowClear
+            value={ratio}
+            options={options(["9:16", "16:9"])}
+            onChange={(v) => {
+              setRatio(v);
+              setPage(1);
+            }}
+          />
+        </Space>
+      )}
       <Space wrap className="factory-tools factory-picker-selection">
         <Checkbox
           checked={selectedOnly}
@@ -406,6 +429,34 @@ export function FactoryPicker({
           }
         />
       )}
+      {property &&
+        byNumber &&
+        !!criteria.propertyNumber?.trim() &&
+        properties.isSuccess &&
+        !propertyRows.length &&
+        !selectedOnly && <Link to="/properties?import=1">导入房源</Link>}
+      {property && byNumber && propertyRows.length === 1 && (
+        <div className="factory-number-action">
+          {propertyRows[0].importStatus === "ready" ? (
+            <Button
+              size="small"
+              disabled={selecting}
+              onClick={() => {
+                onProperties(propertyRows);
+                onConfirm([propertyRows[0].id]);
+              }}
+            >
+              {[...selected].some((id) => id !== propertyRows[0].id)
+                ? "只制作这套"
+                : "选用这套"}
+            </Button>
+          ) : (
+            <Link to={`/properties/${propertyRows[0].id}?tab=materials`}>
+              去补素材
+            </Link>
+          )}
+        </div>
+      )}
       {property ? (
         <Table
           className="factory-picker-table factory-property-table"
@@ -429,7 +480,11 @@ export function FactoryPicker({
           locale={{
             emptyText: properties.isError
               ? "暂时无法显示房源"
-              : "没有符合条件的房源",
+              : byNumber
+                ? criteria.propertyNumber?.trim()
+                  ? "当前房源库未找到该房源号"
+                  : "请输入完整房源号"
+                : "没有符合条件的房源",
           }}
           columns={[
             {
@@ -463,7 +518,11 @@ export function FactoryPicker({
                   <span className="factory-property-name">
                     <strong>{row.title}</strong>
                     <small>
-                      {[row.propertyNumber || "无房源号", row.community]
+                      {[
+                        row.propertyNumber || "无房源号",
+                        row.community,
+                        row.priceCents != null && formatPrice(row.priceCents),
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                     </small>

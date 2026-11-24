@@ -137,6 +137,7 @@ export type FactoryProperty = Pick<
   | "propertyNumber"
   | "district"
   | "layout"
+  | "priceCents"
   | "areaSqm"
   | "image"
   | "importStatus"

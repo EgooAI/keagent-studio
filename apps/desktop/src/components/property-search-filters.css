@@ -1,0 +1,63 @@
+.property-search-filters {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+.property-filter-modes,
+.property-filter-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.property-condition-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  align-items: start;
+  gap: 10px 14px;
+}
+.property-filter-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.property-filter-field > span:first-child {
+  font-size: 13px;
+  color: var(--muted);
+}
+.property-filter-field .ant-select,
+.property-filter-field .ant-input-number {
+  width: 100%;
+  min-width: 0;
+}
+.property-number-input {
+  max-width: 380px;
+}
+.property-filter-range > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.property-search-filters > small {
+  color: var(--error, #b42318);
+}
+.factory-property-picker-modal .property-search-filters {
+  margin-bottom: 12px;
+}
+.property-number-review {
+  max-height: 9rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+.property-number-review summary {
+  cursor: pointer;
+}
+.property-number-review ul {
+  margin: 6px 0;
+  padding-inline-start: 24px;
+}
+
+.factory-number-action {
+  margin: 0 0 8px;
+  text-align: right;
+}

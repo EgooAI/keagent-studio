@@ -3,23 +3,28 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 )
 
 type factoryPropertyQuery struct {
-	IDs                        []string
-	ReadyIDs                   []string
-	SelectedIDs                []string
-	Search, District, Material string
-	Page                       int
-	All                        bool
+	IDs                                   []string
+	ReadyIDs                              []string
+	SelectedIDs                           []string
+	Search, District, Community, Material string
+	ExactNumber                           *string
+	Layouts                               []string
+	MinPrice, MaxPrice, MinArea, MaxArea  *float64
+	Page                                  int
+	All                                   bool
 }
 
 func (s *server) factoryProperties(ctx context.Context, a actor, body []byte) (object, error) {
 	var input factoryPropertyQuery
 	if json.Unmarshal(body, &input) != nil || len(input.IDs) > 200 || len(input.ReadyIDs) > 10000 || len(input.SelectedIDs) > 10000 ||
-		len(input.Search) > 512 || len(input.District) > 512 || len(input.Material) > 20 {
+		len(input.Search) > 512 || len(input.District) > 512 || len(input.Community) > 512 || len(input.Material) > 20 ||
+		(input.ExactNumber != nil && len(*input.ExactNumber) > 512) {
 		return nil, fail(422, "房源查询参数无效")
 	}
 	w, err := s.workspacePayload(ctx, a)
@@ -27,6 +32,10 @@ func (s *server) factoryProperties(ctx context.Context, a actor, body []byte) (o
 		return nil, err
 	}
 	return factoryPropertyPage(w, input), nil
+}
+
+func inPropertyRange(value float64, low, high *float64) bool {
+	return (low == nil || value >= *low) && (high == nil || value <= *high)
 }
 
 func factoryPropertyPage(w object, input factoryPropertyQuery) object {
@@ -67,7 +76,17 @@ func factoryPropertyPage(w object, input factoryPropertyQuery) object {
 		if input.SelectedIDs != nil && !selected[id] {
 			continue
 		}
-		if input.District != "" && input.District != district {
+		if input.ExactNumber != nil {
+			number := strings.TrimSpace(*input.ExactNumber)
+			if number == "" || number != strings.TrimSpace(str(p["propertyNumber"])) {
+				continue
+			}
+		}
+		if (input.District != "" && input.District != district) ||
+			(input.Community != "" && input.Community != str(p["community"])) ||
+			(input.Layouts != nil && !slices.Contains(input.Layouts, str(p["layout"]))) ||
+			!inPropertyRange(number(p["priceCents"])/1_000_000, input.MinPrice, input.MaxPrice) ||
+			!inPropertyRange(number(p["areaSqm"]), input.MinArea, input.MaxArea) {
 			continue
 		}
 		status := "incomplete"
@@ -78,17 +97,17 @@ func factoryPropertyPage(w object, input factoryPropertyQuery) object {
 		if input.Material != "" && input.Material != status {
 			continue
 		}
-		haystack := strings.ToLower(strings.Join([]string{str(p["title"]), str(p["community"]), str(p["propertyNumber"]), district}, " "))
+		haystack := strings.ToLower(strings.Join([]string{str(p["title"]), str(p["community"]), str(p["propertyNumber"]), str(p["city"]), district}, " "))
 		if !strings.Contains(haystack, search) {
 			continue
 		}
 		if input.All {
 			if status == "ready" {
-				matched = append(matched, pickFields(p, "id", "title"))
+				matched = append(matched, pickFields(p, "id", "title", "propertyNumber"))
 			}
 			continue
 		}
-		item := pickFields(p, "id", "title", "community", "propertyNumber", "district", "layout", "areaSqm", "image", "sample")
+		item := pickFields(p, "id", "title", "community", "propertyNumber", "district", "layout", "areaSqm", "priceCents", "image", "sample")
 		item["importStatus"] = status
 		matched = append(matched, item)
 	}

@@ -79,6 +79,9 @@ async function fixture(
           id: "batch-property-" + i,
           title: "测试房源 " + (i + 1),
           propertyNumber: "SH" + (100 + i),
+          layout: i % 2 ? "3室2厅" : "2室1厅",
+          areaSqm: i === 901 ? 90 : 80,
+          priceCents: i >= 900 ? 500_000_000 : 400_000_000,
         }));
         const template = catalog[0];
         catalog.push(
@@ -421,12 +424,30 @@ async function fixture(
             if (method === "panorama.factory-properties") {
               const matched = state.workspace.properties.filter(
                 (p) =>
+                  (input.exactNumber === undefined ||
+                    (!!input.exactNumber &&
+                      p.propertyNumber === input.exactNumber)) &&
                   (!input.search || p.title.includes(input.search)) &&
+                  (!input.district || p.district === input.district) &&
+                  (!input.community || p.community === input.community) &&
+                  (!input.layouts || input.layouts.includes(p.layout)) &&
+                  (input.minPrice == null ||
+                    p.priceCents / 1_000_000 >= input.minPrice) &&
+                  (input.maxPrice == null ||
+                    p.priceCents / 1_000_000 <= input.maxPrice) &&
+                  (input.minArea == null || p.areaSqm >= input.minArea) &&
+                  (input.maxArea == null || p.areaSqm <= input.maxArea) &&
                   (!input.selectedIds || input.selectedIds.includes(p.id)),
               );
               if (input.all)
                 return {
-                  rows: matched.map(({ id, title }) => ({ id, title })),
+                  rows: matched
+                    .filter((p) => p.importStatus === "ready")
+                    .map(({ id, title, propertyNumber }) => ({
+                      id,
+                      title,
+                      propertyNumber,
+                    })),
                 };
               const offset = ((input.page || 1) - 1) * 20;
               return {
@@ -1999,4 +2020,52 @@ test("任务和创建分开，切换保留批次选择，房源链接直接打�
   await expect(
     page.getByRole("button", { name: "房源 1 套", exact: true }),
   ).toBeVisible();
+});
+
+test("房源中心与视频工厂支持精确编号、组合筛选和制作前核对", async ({
+  page,
+}) => {
+  await fixture(page, true);
+  await page.goto("/#/properties");
+  for (const [name, option] of [
+    ["区域", "独立场景"],
+    ["小区", "内置全景测试样例"],
+    ["户型", "三居"],
+  ]) {
+    const select = page.getByRole("combobox", { name, exact: true });
+    await select.fill(option);
+    await page
+      .locator(".ant-select-dropdown:visible .ant-select-item-option-content")
+      .filter({ hasText: option })
+      .click();
+  }
+  await page.keyboard.press("Escape");
+  await page.getByRole("spinbutton", { name: "最高总价" }).fill("500");
+  await page.getByRole("spinbutton", { name: "最小面积" }).fill("90");
+  await expect(page.getByText("共 1 套房源")).toBeVisible();
+  await expect(page.getByText("房源号 SH1001", { exact: true })).toBeVisible();
+  await page.getByText("按房源号查找", { exact: true }).click();
+  await page.getByRole("textbox", { name: "完整房源号" }).fill(" SH100 ");
+  await expect(page.getByText("共 1 套房源")).toBeVisible();
+  await page.getByRole("link", { name: "创建视频" }).click();
+  await expect(page.getByText("房源号 SH100", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "房源 1 套" }).click();
+  const dialog = page.getByRole("dialog", { name: "选择房源" });
+  await dialog.getByText("按房源号查找", { exact: true }).click();
+  await dialog.getByRole("textbox", { name: "完整房源号" }).fill("SH1000");
+  await expect(dialog.getByText("符合条件 1 项")).toBeVisible();
+  await dialog.getByRole("button", { name: "只制作这套" }).click();
+  await expect(page.getByText("房源号 SH1000", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "房源 1 套" }).click();
+  await dialog.getByRole("spinbutton", { name: "最低总价" }).fill("500");
+  await dialog.getByRole("spinbutton", { name: "最小面积" }).fill("90");
+  await expect(dialog.getByText("符合条件 1 项")).toBeVisible();
+  await expect(dialog.getByText("SH1001", { exact: false })).toBeVisible();
+  await dialog.getByRole("button", { name: "全选筛选结果" }).click();
+  await dialog.getByRole("button", { name: "确认选择（2）" }).click();
+  await page.getByText("核对已选房源号（2 套）").click();
+  await expect(page.locator(".property-number-review li")).toHaveText([
+    /SH1000/,
+    /SH1001/,
+  ]);
 });
