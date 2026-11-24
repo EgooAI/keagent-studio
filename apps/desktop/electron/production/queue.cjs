@@ -293,6 +293,13 @@ class ProductionQueue {
       const result = await this.workflow.factoryProperties({
         search: input.search,
         district: input.district,
+        exactNumber: input.exactNumber,
+        community: input.community,
+        layouts: input.layouts,
+        minPrice: input.minPrice,
+        maxPrice: input.maxPrice,
+        minArea: input.minArea,
+        maxArea: input.maxArea,
         material: input.material,
         page: input.page,
         all: input.all === true,

@@ -206,7 +206,7 @@ export function PanoramaStudio() {
   const [chosenMix, setChosenMix] = useState<FactoryBundle>();
   const [additionalMixes, setAdditionalMixes] = useState<string[]>([]);
   const [knownProperties, setKnownProperties] = useState<
-    Record<string, string>
+    Record<string, Pick<FactoryProperty, "id" | "title" | "propertyNumber">>
   >({});
   const [voiceId, setVoiceId] = useState<string>();
   const [batchRenderEdits, setBatchRenderEdits] = useState<RenderEdits>({});
@@ -351,9 +351,7 @@ export function PanoramaStudio() {
         current.length ? current : [templateKey(preferred)],
       );
     setKnownProperties((current) => ({
-      ...Object.fromEntries(
-        defaults.data.rows.map((row) => [row.id, row.title]),
-      ),
+      ...Object.fromEntries(defaults.data.rows.map((row) => [row.id, row])),
       ...current,
     }));
   }, [defaults.data, catalog.data]);
@@ -486,8 +484,12 @@ export function PanoramaStudio() {
     : undefined;
   const propertyName =
     firstProperty?.community ||
-    knownProperties[propertyIds[0]] ||
+    knownProperties[propertyIds[0]]?.title ||
     firstProperty?.title;
+  const selectedHomes = useMemo(() => {
+    const byId = new Map(workspace?.properties.map((p) => [p.id, p]));
+    return propertyIds.map((id) => byId.get(id) ?? knownProperties[id]);
+  }, [workspace?.properties, knownProperties, propertyIds]);
   const templateName = templates.find(
     (t) => templateKey(t) === templateIds[0],
   )?.name;
@@ -684,15 +686,17 @@ export function PanoramaStudio() {
       });
     });
   }
-  function remember(rows: Pick<FactoryProperty, "id" | "title">[]) {
+  function remember(
+    rows: Pick<FactoryProperty, "id" | "title" | "propertyNumber">[],
+  ) {
     setKnownProperties((current) => ({
       ...current,
-      ...Object.fromEntries(rows.map((p) => [p.id, p.title])),
+      ...Object.fromEntries(rows.map((p) => [p.id, p])),
     }));
   }
   function propertyTitle(id: string) {
     return (
-      knownProperties[id] ||
+      knownProperties[id]?.title ||
       (firstProperty?.id === id && firstProperty.title) ||
       id
     );
@@ -1536,6 +1540,24 @@ export function PanoramaStudio() {
                 {musicSelect}
               </div>
             )}
+            {selectedHomes.length === 1 && (
+              <p className="property-number-review">
+                房源号 {selectedHomes[0]?.propertyNumber || "未提供"}
+              </p>
+            )}
+            {selectedHomes.length > 1 && (
+              <details className="property-number-review">
+                <summary>核对已选房源号（{selectedHomes.length} 套）</summary>
+                <ul>
+                  {selectedHomes.map((p, i) => (
+                    <li key={propertyIds[i]}>
+                      {p?.propertyNumber || "房源号未提供"} ·{" "}
+                      {p?.title || "房源信息待更新"}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             <div className="factory-compose-submit">
               {library && (
                 <div className="mix-batch-inputs">
@@ -1895,6 +1917,7 @@ export function PanoramaStudio() {
               kind={picker}
               templates={templates}
               value={picker === "property" ? propertyIds : templateIds}
+              inventory={workspace?.properties ?? []}
               onProperties={remember}
               onClose={() => setPicker(undefined)}
               onConfirm={(ids) => {

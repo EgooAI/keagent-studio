@@ -51,7 +51,7 @@
 }
 
 .library-tools {
-  flex: 1 1 330px;
+  margin-inline-start: auto;
   max-width: 520px;
   gap: 12px;
 }
@@ -167,4 +167,8 @@
     margin-block: 14px;
     font-size: 12px;
   }
+}
+
+.library-grid-pagination {
+  margin-block-start: 16px;
 }
