@@ -57,3 +57,34 @@ func TestFactoryExcludesRemovedSample(t *testing.T) {
 		}
 	}
 }
+
+func TestFactoryPropertyExactAndCombinedFilters(t *testing.T) {
+	properties := []any{}
+	for _, n := range []string{"A-001", "A-0010", "001"} {
+		properties = append(properties, object{"id": n, "propertyNumber": n, "title": "A-001", "community": "望京西园", "district": "朝阳", "layout": "3室1厅", "priceCents": 500_000_000.0, "areaSqm": 90.0})
+	}
+	obj(properties[1])["layout"] = "2室1厅"
+	obj(properties[2])["areaSqm"] = 89.9
+	w := object{"properties": properties}
+	for number, count := range map[string]int{" A-001 ": 1, "A-00": 0, "01": 0, "001": 1, "": 0} {
+		page := factoryPropertyPage(w, factoryPropertyQuery{ExactNumber: &number})
+		if page["total"] != count {
+			t.Fatalf("%q: %v", number, page)
+		}
+	}
+	price, area := 500.0, 90.0
+	query := factoryPropertyQuery{District: "朝阳", Community: "望京西园", Layouts: []string{"3室1厅", "4室2厅"}, MinPrice: &price, MaxPrice: &price, MinArea: &area, MaxArea: &area, ReadyIDs: []string{"A-001", "A-0010", "001"}}
+	page := factoryPropertyPage(w, query)
+	if page["total"] != 1 || obj(rows(page["rows"])[0])["priceCents"] != 500_000_000.0 {
+		t.Fatal(page)
+	}
+	query.All = true
+	all := rows(factoryPropertyPage(w, query)["rows"])
+	if len(all) != 1 || obj(all[0])["propertyNumber"] != "A-001" {
+		t.Fatal(all)
+	}
+	query.Community = "望京东园"
+	if len(rows(factoryPropertyPage(w, query)["rows"])) != 0 {
+		t.Fatal("community filter ignored")
+	}
+}
