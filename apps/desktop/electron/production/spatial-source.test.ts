@@ -5,6 +5,8 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const spatial = require("./spatial-source.cjs");
 const sources = require("./sources.cjs");
+const factory = require("./factory.cjs");
+const { verifyWorks } = require("./spatial-render.cjs");
 const { PanoramaWorkflow } = require("../panorama/workflow.cjs");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
@@ -21,7 +23,8 @@ afterEach(() => {
 });
 const pageURL = "https://open.realsee.com/ke/example/";
 const baseURL = "https://vr-public.realsee-cdn.cn/example/";
-function rawWork() {
+function rawWork(count = 2) {
+  const indices = Array.from({ length: count }, (_, index) => index);
   return {
     code: "example-work",
     initial: { pano_index: 0 },
@@ -31,17 +34,19 @@ function rawWork() {
       material_base_url: baseURL,
       material_textures: [baseURL + "texture_0.jpg"],
     },
-    observers: [0, 1].map((index) => ({
+    observers: indices.map((index) => ({
       index,
       position: [0, 0, -index],
       quaternion: { w: 1, x: 0, y: 0, z: 0 },
-      accessible_nodes: [1 - index],
-      visible_nodes: [1 - index],
+      accessible_nodes: [index - 1, index + 1].filter((i) =>
+        indices.includes(i),
+      ),
+      visible_nodes: [index - 1, index + 1].filter((i) => indices.includes(i)),
     })),
     panorama: {
       type: 0,
       base_url: baseURL,
-      list: [0, 1].map((index) => ({
+      list: indices.map((index) => ({
         index,
         ...Object.fromEntries(
           ["right", "left", "up", "down", "front", "back"].map((face) => [
@@ -53,7 +58,7 @@ function rawWork() {
     },
   };
 }
-function fixture() {
+function fixture(work = rawWork()) {
   const parent = path.resolve("output/spatial-source-tests");
   fs.mkdirSync(parent, { recursive: true });
   const root = fs.mkdtempSync(path.join(parent, "case-"));
@@ -100,7 +105,7 @@ function fixture() {
   vi.spyOn(spatial, "download").mockImplementation(async (url: unknown) =>
     url === pageURL
       ? Buffer.from(
-          `<script type="application/json">${JSON.stringify({ firstscreen: { defaultWork: rawWork() } })}</script>`,
+          `<script type="application/json">${JSON.stringify({ firstscreen: { defaultWork: work } })}</script>`,
         )
       : Buffer.concat([bytes, Buffer.from(String(url))]),
   );
@@ -194,7 +199,12 @@ describe("Realsee spatial import", () => {
       spatial.download(pageURL, signal, { bytes: 0 }, 2),
     ).rejects.toThrow("大小限制");
     await expect(
-      spatial.download(pageURL, signal, { bytes: 200 * 1024 * 1024 }, 100),
+      spatial.download(
+        pageURL,
+        signal,
+        { bytes: spatial.maxSpatialBytes },
+        100,
+      ),
     ).rejects.toThrow("大小限制");
     request.mockResolvedValueOnce(
       new Response(null, {
@@ -321,4 +331,77 @@ describe("Realsee spatial import", () => {
     ).rejects.toThrow("disk full");
     expect(workflow.store(owner).imports.p).toBe(previous);
   });
+  it("rejects more than 200 panorama points", () => {
+    expect(() => spatial.normalizeWork(rawWork(201), pageURL)).toThrow(
+      "该 VR 有 201 个全景点位，最多支持导入 200 个",
+    );
+  });
+  it("runs only one panorama conversion at a time across simultaneous imports", async () => {
+    const { workflow, property } = fixture();
+    const run = vi.mocked(media.run);
+    const convert = run.getMockImplementation()!;
+    let active = 0;
+    run.mockImplementation(async (...args: unknown[]) => {
+      active++;
+      try {
+        expect(active).toBe(1);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await convert(...args);
+      } finally {
+        active--;
+      }
+    });
+    await Promise.all(
+      ["p", "second"].map((id) =>
+        spatial.importProperty(
+          workflow,
+          workflow.owner(id),
+          { ...property, id },
+          { propertyId: id },
+          () => {},
+        ),
+      ),
+    );
+    expect(run).toHaveBeenCalledTimes(4);
+  });
+  it("imports all 200 gallery points and verifies the last point for spatial production", async () => {
+    const { workflow, owner, property } = fixture(rawWork(200));
+    const result = await sources.handle(
+      workflow,
+      owner,
+      "property-vr-import",
+      { propertyId: property.id },
+      () => {},
+      undefined,
+      property,
+    );
+    const restored = await sources.handle(workflow, owner, "source-restore", {
+      propertyId: property.id,
+    });
+    expect(result.count).toBe(200);
+    expect(restored.scenes).toHaveLength(200);
+    const last = restored.scenes.at(-1);
+    expect(last.spatial).toMatchObject({
+      panoIndex: 199,
+      targetPanoIndex: 198,
+    });
+    const works = await verifyWorks([last], workflow.directory(owner));
+    expect(works.get(result.workId).assetsByFile.size).toBe(1202);
+    const available = await factory.load(workflow, owner, property, () => {});
+    expect(available).toHaveLength(200);
+    expect(factory.selectScenes(available, [available[0].id, last.id])).toEqual(
+      [available[0], available.at(-1)],
+    );
+    vi.spyOn(workflow, "importFile").mockResolvedValue({ id: "floor-plan" });
+    workflow.dialogs.open = async () => ["floor-plan.jpg"];
+    await expect(
+      factory.importProperty(
+        workflow,
+        owner,
+        property,
+        { kind: "reference" },
+        () => {},
+      ),
+    ).resolves.toEqual({ count: 201 });
+  }, 15000);
 });

@@ -4,7 +4,12 @@ const path = require("node:path");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
 const faces = ["right", "left", "up", "down", "front", "back"];
-const maxBytes = 200 * 1024 * 1024;
+const maxSpatialPoints = 200;
+const maxModelTextures = 16;
+const maxSpatialAssets = 1 + maxModelTextures + maxSpatialPoints * faces.length;
+const maxSpatialAssetBytes = 32 * 1024 * 1024;
+const maxSpatialBytes = 2000 * 1024 * 1024;
+let panoramaConversion = Promise.resolve();
 function sourceURL(value, asset = false, base) {
   let url;
   try {
@@ -58,7 +63,7 @@ async function download(value, signal, budget, limit, asset = false, base) {
     length += chunk.byteLength;
     budget.bytes += chunk.byteLength;
     domain.ensure(
-      length <= limit && budget.bytes <= maxBytes,
+      length <= limit && budget.bytes <= maxSpatialBytes,
       "VR 素材超过导入大小限制",
     );
     chunks.push(chunk);
@@ -116,10 +121,13 @@ function normalizeWork(raw, pageURL) {
       raw?.panorama?.type === 0 &&
       Array.isArray(raw.observers) &&
       raw.observers.length >= 2 &&
-      raw.observers.length <= 20 &&
       Array.isArray(raw.panorama.list) &&
       raw.panorama.list.length === raw.observers.length,
-    "空间模型格式不受支持；需要 2–20 个带位置的原始全景点位",
+    "空间模型格式不受支持；需要至少 2 个带位置的原始全景点位",
+  );
+  domain.ensure(
+    raw.observers.length <= maxSpatialPoints,
+    `该 VR 有 ${raw.observers.length} 个全景点位，最多支持导入 ${maxSpatialPoints} 个`,
   );
   domain.ensure(
     typeof raw.code === "string" && /^[\w-]{1,160}$/.test(raw.code),
@@ -139,7 +147,7 @@ function normalizeWork(raw, pageURL) {
     );
     domain.ensure(
       Array.isArray(o.accessible_nodes) &&
-        o.accessible_nodes.length <= 20 &&
+        o.accessible_nodes.length <= maxSpatialPoints &&
         o.accessible_nodes.every(pointID),
       "VR 可达点位数据无效",
     );
@@ -185,7 +193,7 @@ function normalizeWork(raw, pageURL) {
   domain.ensure(
     Array.isArray(raw.model.material_textures) &&
       raw.model.material_textures.length >= 1 &&
-      raw.model.material_textures.length <= 16,
+      raw.model.material_textures.length <= maxModelTextures,
     "VR 模型纹理缺失或过多",
   );
   const model = {
@@ -337,7 +345,7 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
   workflow.previews.add(controller);
   const signal = AbortSignal.any([
     controller.signal,
-    AbortSignal.timeout(5 * 60 * 1000),
+    AbortSignal.timeout(30 * 60 * 1000),
   ]);
   const base = path.resolve(workflow.directory(owner), "spatial");
   await fs.mkdir(base, { recursive: true });
@@ -364,7 +372,7 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
           asset.source,
           signal,
           budget,
-          32 * 1024 * 1024,
+          maxSpatialAssetBytes,
           true,
         );
         domain.ensure(bytes.length > 32, "VR 素材为空或损坏");
@@ -410,24 +418,34 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
       );
       pano.size_list = [images[0].width];
       const file = `panorama-${pano.index}.jpg`;
-      await media.run(
-        process.env.FFMPEG_PATH || "ffmpeg",
-        [
-          "-v",
-          "error",
-          "-y",
-          ...images.flatMap((a) => ["-i", a.file]),
-          "-filter_complex",
-          "[0:v][1:v][2:v][3:v][4:v][5:v]hstack=inputs=6,v360=input=c6x1:in_forder=rludfb:output=e:w=4096:h=2048",
-          "-frames:v",
-          "1",
-          "-q:v",
-          "2",
-          file,
-        ],
-        temp,
-        signal,
-      );
+      // The 4K projection buffers can exhaust memory if two conversions overlap.
+      const conversion = panoramaConversion.then(() => {
+        signal.throwIfAborted();
+        return media.run(
+          process.env.FFMPEG_PATH || "ffmpeg",
+          [
+            "-v",
+            "error",
+            "-y",
+            "-filter_complex_threads",
+            "2",
+            ...images.flatMap((a) => ["-threads", "2", "-i", a.file]),
+            "-filter_complex",
+            "[0:v][1:v][2:v][3:v][4:v][5:v]hstack=inputs=6,v360=input=c6x1:in_forder=rludfb:output=e:w=4096:h=2048",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            "-threads",
+            "1",
+            file,
+          ],
+          temp,
+          signal,
+        );
+      });
+      panoramaConversion = conversion.catch(() => {});
+      await conversion;
       const bytes = await fs.readFile(path.join(temp, file));
       converted.push({
         index: pano.index,
@@ -511,10 +529,6 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
     }
     const state = workflow.store(owner);
     const previous = state.imports[property.id];
-    domain.ensure(
-      scenes.length + (previous?.references?.length || 0) <= 20,
-      "VR 点位与参考图合计不能超过20张",
-    );
     const previousProperties = state.properties;
     signal.throwIfAborted();
     assertCurrent();
@@ -547,11 +561,14 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
       path.resolve(temp).startsWith(base + path.sep),
       "导入临时路径无效",
     );
-    await fs.rm(temp, { recursive: true, force: true });
+    await fs.rm(temp, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
 module.exports = {
+  maxSpatialAssetBytes,
+  maxSpatialAssets,
+  maxSpatialBytes,
   sourceURL,
   download,
   parseWork,
