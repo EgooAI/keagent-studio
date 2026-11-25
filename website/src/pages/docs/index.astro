@@ -1,0 +1,102 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+const allDocs = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
+const categoryMeta = [
+  {
+    name: "快速上手",
+    desc: "从安装、登录到认识六个核心导航模块，快速跑通第一条房源视频。",
+  },
+  {
+    name: "核心功能",
+    desc: "深入掌握房源导入、AI 视频工厂、本人音色复刻、多平台发布与评论获客。",
+  },
+  {
+    name: "账号与计费",
+    desc: "了解免费本机项、云端积分扣费规则、兑换码充值与常见问题排查。",
+  },
+  {
+    name: "门店与运维",
+    desc: "面向门店管理员的独立 Web 管理后台功能、模板同步与部署边界说明。",
+  },
+] as const;
+
+const sections = categoryMeta
+  .map((cat) => ({
+    ...cat,
+    items: allDocs.filter((doc) => doc.data.category === cat.name),
+  }))
+  .filter((section) => section.items.length > 0);
+---
+
+<BaseLayout
+  title="使用帮助"
+  description="AI来客用户使用手册：覆盖快速上手、房源导入、AI 视频工厂、音色复刻、抖音与小红书发布、评论获客及门店管理后台说明。"
+>
+  <section class="border-b border-line bg-arch-grid">
+    <div class="bg-gradient-to-b from-white/60 via-white/85 to-white">
+      <div class="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
+        <div class="max-w-3xl">
+          <span class="inline-flex rounded-full border border-brand-border bg-brand-soft px-3 py-1 text-xs font-medium text-brand">
+            使用帮助中心
+          </span>
+          <h1 class="mt-4 text-3xl font-bold tracking-tight text-ink-strong sm:text-4xl">
+            AI来客 操作指南与帮助文档
+          </h1>
+          <p class="mt-3 text-base leading-relaxed text-muted">
+            无论您是一线房产经纪人还是门店运营管理员，都可以按以下主题快速查阅每个模块的操作步骤与规则说明。
+          </p>
+          <div class="mt-6 flex flex-wrap gap-3">
+            <a
+              href="/docs/getting-started"
+              class="inline-flex items-center rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
+            >
+              从快速上手开始 →
+            </a>
+            <a
+              href="/docs/faq"
+              class="inline-flex items-center rounded-xl border border-control bg-white px-5 py-2.5 text-sm font-semibold text-ink transition-colors hover:border-brand/50 hover:text-brand"
+            >
+              常见问题 FAQ
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-canvas/50 py-12 sm:py-16">
+    <div class="mx-auto max-w-6xl space-y-12 px-4 sm:px-6 lg:px-8">
+      {
+        sections.map((section) => (
+          <div>
+            <div class="border-b border-line pb-4">
+              <h2 class="text-xl font-bold text-ink-strong">{section.name}</h2>
+              <p class="mt-1 text-sm text-muted">{section.desc}</p>
+            </div>
+
+            <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {section.items.map((doc) => (
+                <a
+                  href={`/docs/${doc.id}`}
+                  class="group flex flex-col justify-between rounded-2xl border border-line bg-white p-5 transition-colors hover:border-brand/60"
+                >
+                  <div>
+                    <h3 class="text-base font-bold text-ink-strong group-hover:text-brand">
+                      {doc.data.title}
+                    </h3>
+                    <p class="mt-2 text-sm leading-relaxed text-muted">
+                      {doc.data.description}
+                    </p>
+                  </div>
+                  <div class="mt-4 text-xs font-semibold text-brand">阅读详情 →</div>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+</BaseLayout>

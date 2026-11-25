@@ -1,0 +1,174 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import type { CollectionEntry } from "astro:content";
+import type { MarkdownHeading } from "astro";
+
+interface Props {
+  doc: CollectionEntry<"docs">;
+  allDocs: CollectionEntry<"docs">[];
+  headings: MarkdownHeading[];
+}
+
+const { doc, allDocs, headings } = Astro.props;
+
+const categoryOrder = ["快速上手", "核心功能", "账号与计费", "门店与运维"] as const;
+const sortedDocs = [...allDocs].sort((a, b) => a.data.order - b.data.order);
+const grouped = categoryOrder
+  .map((category) => ({
+    category,
+    items: sortedDocs.filter((item) => item.data.category === category),
+  }))
+  .filter((group) => group.items.length > 0);
+
+const currentIndex = sortedDocs.findIndex((item) => item.id === doc.id);
+const prevDoc = currentIndex > 0 ? sortedDocs[currentIndex - 1] : null;
+const nextDoc = currentIndex < sortedDocs.length - 1 ? sortedDocs[currentIndex + 1] : null;
+const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+
+<BaseLayout title={`${doc.data.title} - 使用帮助`} description={doc.data.description}>
+  <div class="border-b border-line bg-canvas/70">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 text-xs text-muted sm:px-6 lg:px-8">
+      <div class="flex items-center gap-2">
+        <a href="/docs" class="hover:text-brand">使用帮助</a>
+        <span>/</span>
+        <span>{doc.data.category}</span>
+        <span>/</span>
+        <span class="font-medium text-ink">{doc.data.title}</span>
+      </div>
+      {doc.data.updatedAt && <span class="hidden sm:inline">更新于 {doc.data.updatedAt}</span>}
+    </div>
+  </div>
+
+  <div class="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+    <div class="grid gap-8 lg:grid-cols-[230px_minmax(0,1fr)_200px]">
+      <!-- Left sidebar -->
+      <aside class="lg:sticky lg:top-24 lg:self-start">
+        <div class="rounded-xl border border-line bg-soft/60 p-4 lg:border-none lg:bg-transparent lg:p-0">
+          <div class="mb-4 flex items-center justify-between lg:hidden">
+            <span class="text-xs font-semibold text-ink-strong">文档目录</span>
+            <a href="/docs" class="text-xs text-brand">全部文档</a>
+          </div>
+          <nav aria-label="帮助文档导航" class="space-y-5">
+            {
+              grouped.map((group) => (
+                <div>
+                  <h2 class="px-2.5 text-xs font-semibold tracking-wider text-muted uppercase">
+                    {group.category}
+                  </h2>
+                  <ul class="mt-2 space-y-1">
+                    {group.items.map((item) => {
+                      const active = item.id === doc.id;
+                      return (
+                        <li>
+                          <a
+                            href={`/docs/${item.id}`}
+                            aria-current={active ? "page" : undefined}
+                            class:list={[
+                              "block rounded-lg px-2.5 py-2 text-sm transition-colors",
+                              active
+                                ? "bg-brand-soft font-semibold text-brand"
+                                : "text-ink hover:bg-canvas hover:text-ink-strong",
+                            ]}
+                          >
+                            {item.data.title}
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))
+            }
+          </nav>
+        </div>
+      </aside>
+
+      <!-- Main article -->
+      <article class="min-w-0">
+        <header class="border-b border-line pb-6">
+          <div class="inline-flex items-center rounded-md bg-brand-soft px-2.5 py-1 text-xs font-medium text-brand">
+            {doc.data.category}
+          </div>
+          <h1 class="mt-3 text-2xl font-bold tracking-tight text-ink-strong sm:text-3xl">
+            {doc.data.title}
+          </h1>
+          <p class="mt-2.5 text-base leading-relaxed text-muted">{doc.data.description}</p>
+        </header>
+
+        <div class="doc-prose mt-6">
+          <slot />
+        </div>
+
+        <nav aria-label="上下篇文档" class="mt-12 grid gap-4 border-t border-line pt-6 sm:grid-cols-2">
+          {
+            prevDoc ? (
+              <a
+                href={`/docs/${prevDoc.id}`}
+                class="group rounded-xl border border-line bg-white p-4 transition-colors hover:border-brand/50"
+              >
+                <div class="text-xs text-muted">上一篇</div>
+                <div class="mt-1 font-semibold text-ink-strong group-hover:text-brand">
+                  ← {prevDoc.data.title}
+                </div>
+              </a>
+            ) : (
+              <div />
+            )
+          }
+          {
+            nextDoc && (
+              <a
+                href={`/docs/${nextDoc.id}`}
+                class="group rounded-xl border border-line bg-white p-4 text-right transition-colors hover:border-brand/50"
+              >
+                <div class="text-xs text-muted">下一篇</div>
+                <div class="mt-1 font-semibold text-ink-strong group-hover:text-brand">
+                  {nextDoc.data.title} →
+                </div>
+              </a>
+            )
+          }
+        </nav>
+      </article>
+
+      <!-- Right TOC -->
+      <aside class="hidden lg:block">
+        <div class="sticky top-24">
+          <div class="text-xs font-semibold tracking-wider text-ink-strong uppercase">本页目录</div>
+          {
+            tocHeadings.length > 0 ? (
+              <ul class="mt-3 space-y-2 border-l border-line pl-3 text-xs leading-relaxed">
+                {tocHeadings.map((h) => (
+                  <li class:list={[h.depth === 3 && "pl-2.5"]}>
+                    <a
+                      href={`#${h.slug}`}
+                      class="block text-muted transition-colors hover:text-brand"
+                    >
+                      {h.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p class="mt-3 text-xs text-muted">本页为单节内容</p>
+            )
+          }
+
+          <div class="mt-8 rounded-xl border border-line bg-soft p-4">
+            <div class="text-xs font-semibold text-ink-strong">还没安装桌面端？</div>
+            <p class="mt-1.5 text-xs leading-relaxed text-muted">
+              查看 Windows 与 macOS 安装说明及最新版本状态。
+            </p>
+            <a
+              href="/download"
+              class="mt-3 inline-flex items-center text-xs font-semibold text-brand hover:underline"
+            >
+              前往下载中心 →
+            </a>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</BaseLayout>

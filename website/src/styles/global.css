@@ -1,0 +1,201 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #722ed1;
+  --color-brand-hover: #9254de;
+  --color-brand-active: #531dab;
+  --color-brand-soft: #f4eefb;
+  --color-brand-border: #d9c2f8;
+
+  --color-ink: #1e293b;
+  --color-ink-strong: #0f172a;
+  --color-muted: #5f6b7a;
+  --color-canvas: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-soft: #f7f9fc;
+  --color-line: #e1e5eb;
+  --color-control: #d8dfe8;
+
+  --color-price: #aa4c2b;
+  --color-price-soft: #fdf3ef;
+  --color-amber-ink: #9a5b0c;
+  --color-amber-soft: #fff6e5;
+  --color-success-ink: #0f766e;
+  --color-success-soft: #ecfdf5;
+
+  --font-sans: "PingFang SC", "Segoe UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background-color: var(--color-surface);
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    line-height: 1.6;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Subtle architectural grid for hero & section framing */
+.bg-arch-grid {
+  background-image:
+    linear-gradient(to right, rgba(114, 46, 209, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(114, 46, 209, 0.045) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+
+/* Clean documentation prose styling */
+.doc-prose {
+  color: var(--color-ink);
+  font-size: 0.9625rem;
+  line-height: 1.8;
+}
+
+.doc-prose h2 {
+  margin-top: 2.25rem;
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-line);
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--color-ink-strong);
+  scroll-margin-top: 5.5rem;
+}
+
+.doc-prose h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.625rem;
+  font-size: 1.075rem;
+  font-weight: 620;
+  color: var(--color-ink-strong);
+  scroll-margin-top: 5.5rem;
+}
+
+.doc-prose p {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  color: #334155;
+}
+
+.doc-prose ul,
+.doc-prose ol {
+  margin: 0.875rem 0;
+  padding-left: 1.375rem;
+  color: #334155;
+}
+
+.doc-prose ul {
+  list-style-type: disc;
+}
+
+.doc-prose ol {
+  list-style-type: decimal;
+}
+
+.doc-prose li {
+  margin: 0.375rem 0;
+}
+
+.doc-prose strong {
+  color: var(--color-ink-strong);
+  font-weight: 600;
+}
+
+.doc-prose a {
+  color: var(--color-brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.doc-prose a:hover {
+  color: var(--color-brand-active);
+}
+
+.doc-prose blockquote {
+  margin: 1.25rem 0;
+  padding: 0.875rem 1.125rem;
+  border-left: 3px solid var(--color-brand);
+  background: var(--color-brand-soft);
+  border-radius: 0 8px 8px 0;
+  color: #3b2260;
+}
+
+.doc-prose blockquote p {
+  margin: 0;
+  color: inherit;
+}
+
+.doc-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+  padding: 0.12rem 0.4rem;
+  color: var(--color-ink-strong);
+}
+
+.doc-prose pre {
+  margin: 1.25rem 0;
+  padding: 1rem 1.125rem;
+  background: #141b26;
+  color: #e2e8f0;
+  border-radius: 10px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+
+.doc-prose pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.doc-prose table {
+  width: 100%;
+  margin: 1.25rem 0;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.doc-prose th,
+.doc-prose td {
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--color-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-prose th {
+  background: var(--color-soft);
+  font-weight: 600;
+  color: var(--color-ink-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

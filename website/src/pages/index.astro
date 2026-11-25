@@ -1,0 +1,275 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import WorkbenchPreview from "../components/WorkbenchPreview";
+import CapabilityShowcase from "../components/CapabilityShowcase";
+import RoleSolutions from "../components/RoleSolutions";
+import { releaseDownloads, hasAnyDownloadUrl } from "../config/downloads";
+
+const downloadReady = hasAnyDownloadUrl();
+
+const workflowSteps = [
+  {
+    step: "01",
+    title: "批量导入房源与全景素材",
+    desc: "支持房源号批量录入、Excel/CSV 导入与人工补录；每套房源挂载 2–7 张 VR 全景原图，缺失素材自动提示。",
+    tags: ["房源号批量导入", "Excel / CSV", "VR 全景原图"],
+  },
+  {
+    step: "02",
+    title: "AI 视频工厂批量出片",
+    desc: "多选房源共用一套配置，一次创建 N 条独立任务。AI 看图写口播，人工审核定稿后再配音，本机自动合成镜头与字幕。",
+    tags: ["双开场模式", "文案先审后制", "本人音色复刻"],
+  },
+  {
+    step: "03",
+    title: "抖音与小红书独立分发",
+    desc: "同一成片可为抖音和小红书分别设置标题、话题与封面，草稿与正式发布状态严格核对，不混淆结果。",
+    tags: ["双平台独立队列", "草稿/发布区分", "成片版本追溯"],
+  },
+  {
+    step: "04",
+    title: "评论监控与 AI 线索获客",
+    desc: "持续巡检作品评论，基于原文提取预算、区域与户型意向，生成可编辑跟进话术，经人工确认后精准触达。",
+    tags: ["15 分钟巡检", "原文证据引用", "人工确认私信"],
+  },
+];
+---
+
+<BaseLayout>
+  <!-- Hero Section -->
+  <section class="relative overflow-hidden border-b border-line bg-arch-grid">
+    <div class="bg-gradient-to-b from-white/55 via-white/80 to-white">
+      <div class="mx-auto max-w-6xl px-4 pt-12 pb-16 sm:px-6 sm:pt-16 sm:pb-20 lg:px-8">
+        <div class="mx-auto max-w-3xl text-center">
+          <div class="inline-flex flex-wrap items-center justify-center gap-2 rounded-full border border-brand-border bg-brand-soft/80 px-3.5 py-1 text-xs font-medium text-brand">
+            <span>Windows & macOS 桌面客户端</span>
+            <span class="text-brand/40">|</span>
+            <span class="tabular-nums">v{releaseDownloads.version} {releaseDownloads.channel}</span>
+          </div>
+
+          <h1 class="mt-5 text-3xl font-bold tracking-tight text-ink-strong sm:text-5xl sm:leading-[1.18]">
+            把房源资料批量变成
+            <span class="text-brand">带看视频与成交线索</span>
+          </h1>
+
+          <p class="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">
+            专为房产经纪人与房产门店打造的桌面创作工作台。一次配置批量生成多套房源独立视频，支持全景运镜、经纪人实拍原声开场与本人音色复刻，一站打通抖音、小红书发布与评论获客。
+          </p>
+
+          <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href="/download"
+              class="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-brand px-6 text-sm font-semibold text-white transition-colors hover:bg-brand-hover active:bg-brand-active"
+            >
+              <span>{downloadReady ? "下载桌面客户端" : "查看客户端下载"}</span>
+              <span aria-hidden="true">→</span>
+            </a>
+            <a
+              href="#solutions"
+              class="inline-flex h-11 items-center justify-center rounded-xl border border-control bg-white px-6 text-sm font-semibold text-ink transition-colors hover:border-brand/50 hover:text-brand"
+            >
+              个人与门店方案
+            </a>
+            <a
+              href="/docs"
+              class="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-muted transition-colors hover:text-ink-strong"
+            >
+              阅读使用帮助
+            </a>
+          </div>
+
+          <div class="mt-7 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted">
+            <span>✓ 内置合成环境，开箱即用</span>
+            <span>✓ 本机渲染与开场拼接免费</span>
+            <span>✓ 个人经纪人与门店后台双端协同</span>
+          </div>
+        </div>
+
+        <!-- Interactive Desktop Workbench Preview -->
+        <div class="mt-12">
+          <WorkbenchPreview client:visible />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4-Step Business Workflow -->
+  <section id="workflow" class="border-b border-line bg-canvas/55 py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <div class="max-w-2xl">
+        <div class="text-xs font-semibold tracking-wider text-brand uppercase">完整业务闭环</div>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight text-ink-strong sm:text-3xl">
+          从房源入库到评论找客，四步在一个工作台完成
+        </h2>
+        <p class="mt-3 text-sm leading-relaxed text-muted sm:text-base">
+          围绕房产带看短视频的真实作业流程设计，不需要在剪辑软件、表格、配音工具和多个浏览器窗口之间反复切换。
+        </p>
+      </div>
+
+      <div class="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {
+          workflowSteps.map((item) => (
+            <div class="flex flex-col justify-between rounded-2xl border border-line bg-white p-6">
+              <div>
+                <div class="tabular-nums inline-flex h-8 w-8 items-center justify-center rounded-lg bg-brand-soft text-xs font-bold text-brand">
+                  {item.step}
+                </div>
+                <h3 class="mt-4 text-base font-bold text-ink-strong">{item.title}</h3>
+                <p class="mt-2.5 text-sm leading-relaxed text-muted">{item.desc}</p>
+              </div>
+              <div class="mt-5 flex flex-wrap gap-1.5 border-t border-line/80 pt-4">
+                {item.tags.map((tag) => (
+                  <span class="rounded bg-soft px-2 py-0.5 text-[11px] text-muted">{tag}</span>
+                ))}
+              </div>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Capabilities Deep Dive -->
+  <section id="capabilities" class="border-b border-line bg-white py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <div class="max-w-2xl">
+        <div class="text-xs font-semibold tracking-wider text-brand uppercase">核心产品能力</div>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight text-ink-strong sm:text-3xl">
+          把控每个关键环节，让批量生产既快又靠谱
+        </h2>
+        <p class="mt-3 text-sm leading-relaxed text-muted sm:text-base">
+          切换下方标签，了解 AI来客如何在开场形式、文案审核、平台核对和线索筛选上区别于普通通用剪辑工具。
+        </p>
+      </div>
+
+      <div class="mt-10">
+        <CapabilityShowcase client:visible />
+      </div>
+    </div>
+  </section>
+
+  <!-- Dual Persona Solutions: Agent vs Store -->
+  <section id="solutions" class="border-b border-line bg-canvas/55 py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-2xl text-center">
+        <div class="text-xs font-semibold tracking-wider text-brand uppercase">双场景适配</div>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight text-ink-strong sm:text-3xl">
+          兼顾一线经纪人提效，也满足房产门店统一管理
+        </h2>
+        <p class="mt-3 text-sm leading-relaxed text-muted sm:text-base">
+          桌面工作台面向经纪人日常作业，独立 Web 管理后台面向门店管理员，两者各司其职、数据按账号清晰隔离。
+        </p>
+      </div>
+
+      <div class="mt-10">
+        <RoleSolutions client:visible />
+      </div>
+    </div>
+  </section>
+
+  <!-- Transparent Billing & Hybrid Architecture -->
+  <section id="billing" class="border-b border-line bg-white py-16 sm:py-20">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <div class="max-w-2xl">
+        <div class="text-xs font-semibold tracking-wider text-brand uppercase">透明计费与安全边界</div>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight text-ink-strong sm:text-3xl">
+          本机执行不收费，云端 AI 按真实调用清晰计费
+        </h2>
+        <p class="mt-3 text-sm leading-relaxed text-muted sm:text-base">
+          采用“云端协同 + 本机渲染”混合架构，不捆绑复杂会员套餐，只对真正调用云端 AI 供应商产生算力成本的环节扣除积分。
+        </p>
+      </div>
+
+      <div class="mt-10 grid gap-6 lg:grid-cols-2">
+        <div class="rounded-2xl border border-line bg-soft p-6 sm:p-7">
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-bold text-ink-strong">本机免费执行项</h3>
+            <span class="rounded-md bg-success-soft px-2.5 py-1 text-xs font-semibold text-success-ink">
+              0 积分消耗
+            </span>
+          </div>
+          <p class="mt-2 text-sm text-muted">
+            依托内置在本机客户端的媒体与执行引擎，高频重算力渲染环节直接在本机完成：
+          </p>
+          <ul class="mt-5 space-y-2.5 text-sm text-ink">
+            <li>• VR 全景图旋转运镜、句级字幕压制与封面合成</li>
+            <li>• 经纪人实拍开场 MP4 原声拼接与成片校验</li>
+            <li>• 房源库管理、批量导入、任务重试命中缓存</li>
+            <li>• 抖音与小红书本机发布队列与作品评论监控</li>
+          </ul>
+        </div>
+
+        <div class="rounded-2xl border border-brand-border bg-brand-soft/30 p-6 sm:p-7">
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-bold text-ink-strong">云端 AI 按量计费项</h3>
+            <span class="rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-brand border border-brand-border">
+              兑换码 / 后台充值
+            </span>
+          </div>
+          <p class="mt-2 text-sm text-muted">
+            仅在触发真实云端模型调用时按账本冻结并结算，失败自动释放，单价由管理后台透明配置：
+          </p>
+          <ul class="mt-5 space-y-2.5 text-sm text-ink">
+            <li>• <strong>AI 看图写文案 / 改写：</strong>按次计费，审核前可精细调整</li>
+            <li>• <strong>云端语音合成（TTS）：</strong>按实际合成字符数精准结算</li>
+            <li>• <strong>本人音色复刻：</strong>一次性按次计费，复刻就绪后可反复用于配音</li>
+            <li>• <strong>充值积分不过期：</strong>支持兑换码自助兑换与门店后台统一发放</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="mt-6 grid gap-4 rounded-2xl border border-line bg-canvas/70 p-6 sm:grid-cols-3">
+        <div>
+          <div class="text-sm font-semibold text-ink-strong">账号与素材边界清晰</div>
+          <p class="mt-1 text-xs leading-relaxed text-muted">
+            平台登录会话、开场原片与执行缓存均按账号隔离保存在本机，不上传个人会话凭据。
+          </p>
+        </div>
+        <div>
+          <div class="text-sm font-semibold text-ink-strong">历史任务快照不可篡改</div>
+          <p class="mt-1 text-xs leading-relaxed text-muted">
+            创建任务时冻结房源资料与模板版本，后续修改资料或升级模板不会破坏历史成片记录。
+          </p>
+        </div>
+        <div>
+          <div class="text-sm font-semibold text-ink-strong">开箱即用的桌面安装包</div>
+          <p class="mt-1 text-xs leading-relaxed text-muted">
+            内置 FFmpeg、FFprobe 与配套浏览器运行时，经纪人只需安装一个客户端即可开工。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="bg-canvas py-16 sm:py-20">
+    <div class="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
+      <h2 class="text-2xl font-bold tracking-tight text-ink-strong sm:text-3xl">
+        准备好了解 AI来客 的完整操作流程了吗？
+      </h2>
+      <p class="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
+        前往下载中心查看 Windows 与 macOS 安装包状态，或先浏览使用帮助文档，提前熟悉从房源导入到评论获客的每一步。
+      </p>
+      <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <a
+          href="/download"
+          class="inline-flex h-11 items-center justify-center rounded-xl bg-brand px-6 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
+        >
+          前往下载中心
+        </a>
+        <a
+          href="/docs/getting-started"
+          class="inline-flex h-11 items-center justify-center rounded-xl border border-control bg-white px-6 text-sm font-semibold text-ink transition-colors hover:border-brand/50 hover:text-brand"
+        >
+          阅读快速上手指南
+        </a>
+        <a
+          href="/changelog"
+          class="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-muted transition-colors hover:text-ink-strong"
+        >
+          查看更新日志
+        </a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
