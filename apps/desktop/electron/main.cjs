@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  ipcMain,
   protocol,
   net,
   dialog,
@@ -34,6 +35,7 @@ if (!app.requestSingleInstanceLock()) {
 let mainWindow;
 let tray;
 let closingForQuit = false;
+let updates;
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -143,6 +145,7 @@ function returnWindowSetup(window) {
   publishing = require("./publishing/dist/runtime.cjs").registerPublishing(
     window,
     {
+      updateClosing: () => updates?.state().phase === "closing",
       identity: () => identity.publishingIdentity(),
       request: (route, input) => identity.businessRequest(route, input),
       exchange,
@@ -151,6 +154,51 @@ function returnWindowSetup(window) {
     devOrigin,
   );
   identity.onInvalidated(() => publishing.stop());
+  const enabled =
+    releaseOrigin &&
+    ["win32-x64", "darwin-arm64"].includes(
+      process.platform + "-" + process.arch,
+    );
+  const updater = enabled ? require("./updater-runtime.cjs") : undefined;
+  updates = require("./updates.cjs").createUpdates({
+    version: app.isPackaged
+      ? app.getVersion()
+      : require("../../../package.json").version,
+    updater,
+    busy: () => publishing.updateBusy || identity.updateBusy,
+    closeWindow: () => {
+      closingForQuit = true;
+      window.close();
+    },
+    changed: () => {
+      if (!window.isDestroyed()) window.webContents.send("updates:changed");
+    },
+  });
+  ipcMain.handle("updates:request", (event, action) => {
+    const frame = event.senderFrame;
+    const url = new URL(frame?.url || "about:blank");
+    const trusted =
+      app.isPackaged || process.argv.includes("--built")
+        ? url.protocol === "keagent:" && url.host === "app"
+        : url.origin === devOrigin;
+    if (
+      event.sender !== window.webContents ||
+      frame !== window.webContents.mainFrame ||
+      !trusted
+    )
+      throw new Error("非法更新请求");
+    if (action === "state") return updates.state();
+    if (action === "check") return updates.check();
+    if (action === "install") return updates.install();
+    throw new Error("未知更新操作");
+  });
+  if (enabled && !process.argv.includes("--smoke-test")) {
+    window.webContents.once("did-finish-load", () => updates.check());
+    const timer = setInterval(() => updates.check(), 4 * 60 * 60 * 1000);
+    timer.unref();
+    window.once("closed", () => clearInterval(timer));
+  }
+  window.once("closed", () => ipcMain.removeHandler("updates:request"));
 }
 
 function createWindow() {
@@ -236,6 +284,7 @@ function createWindow() {
       detail: "关闭会丢弃尚未保存的修改。",
     });
     if (choice === 1) event.preventDefault();
+    else updates.cancelClose();
   });
   if (app.isPackaged || process.argv.includes("--built"))
     window.loadURL("keagent://app/index.html");
@@ -298,6 +347,7 @@ app.whenReady().then(() => {
     (runId, generation) => publishing?.targetStopped(runId, generation),
     devOrigin,
     (record, generation) => publishing?.reconciled(record, generation),
+    releaseOrigin,
   );
   protocol.handle("keagent", async (request) => {
     const url = new URL(request.url);
@@ -360,4 +410,13 @@ app.whenReady().then(() => {
   });
   createWindow();
 });
-app.on("window-all-closed", () => app.quit());
+app.on("window-all-closed", () => {
+  if (updates?.state().phase !== "closing") return app.quit();
+  // macOS stages the verified ZIP asynchronously after the last window closes.
+  const updater = require("./updater-runtime.cjs");
+  updater.once("error", () => {
+    app.relaunch();
+    app.quit();
+  });
+  updates.installAfterClose();
+});

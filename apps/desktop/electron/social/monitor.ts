@@ -23,6 +23,10 @@ export class WorkMonitor {
     private request: (route: string, body?: unknown) => Promise<unknown>,
     private directory: (identity: PublishingIdentity) => string,
   ) {}
+  get busy() {
+    return !!this.active;
+  }
+
   private file(identity: PublishingIdentity) {
     return path.join(this.directory(identity), "work-monitors.json");
   }

@@ -28,6 +28,7 @@ const files = [
   "apps/desktop/dist",
   "apps/desktop/electron/main.cjs",
   "apps/desktop/electron/auth.cjs",
+  "apps/desktop/electron/updates.cjs",
   "apps/desktop/electron/preload.cjs",
   "apps/desktop/electron/panorama",
   "apps/desktop/electron/production",
@@ -58,6 +59,10 @@ for (const file of files) {
   await mkdir(path.dirname(target), { recursive: true });
   await cp(path.join(root, file), target, { recursive: true });
 }
+await cp(
+  path.join(root, "output/desktop-updater/runtime.cjs"),
+  path.join(stage, "apps/desktop/electron/updater-runtime.cjs"),
+);
 const source = JSON.parse(
   await readFile(path.join(root, "package.json"), "utf8"),
 );

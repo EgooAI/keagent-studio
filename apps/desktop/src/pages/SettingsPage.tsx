@@ -1,3 +1,4 @@
+import { DesktopUpdates } from "../components/DesktopUpdates";
 import DouyinAccounts from "../components/DouyinAccounts";
 import { useEffect, useState } from "react";
 import {
@@ -444,9 +445,6 @@ export default function SettingsPage() {
         <img src="./keagent-icon.png" width="54" height="54" alt="" />
         <div>
           <strong style={{ fontSize: 20 }}>AI来客</strong>
-          <p style={{ color: "#667085", margin: "8px 0" }}>
-            v0.1.0 · {isLive ? "开发测试版" : "前端演示版"}
-          </p>
         </div>
       </div>
       <p style={{ color: "#667085", maxWidth: 640, lineHeight: 1.8 }}>
@@ -454,12 +452,7 @@ export default function SettingsPage() {
           ? "面向房产经纪人的内容生产工作台。支持后台公共模板、原始 VR 全景素材、配音与本地视频合成，并可将正式成果交接至发布中心。各服务状态可在“制作服务状态”中查看。"
           : "面向房产经纪人的内容生产工作台。当前提供前端演示操作与模拟任务流程。"}
       </p>
-      <Button
-        icon={<RefreshCw size={15} />}
-        onClick={() => message.info("当前为本地开发版本，尚未接入自动更新服务")}
-      >
-        检查更新
-      </Button>
+      <DesktopUpdates />
     </>
   );
   const items = [

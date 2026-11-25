@@ -95,6 +95,26 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
   const navigate = useNavigate();
   const { message } = AntApp.useApp();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    const api = window.desktop?.updates;
+    if (!api) return;
+    let active = true;
+    const refresh = () => {
+      void api
+        .request("state")
+        .then((state) => {
+          if (active) setUpdateReady(state.phase === "ready");
+        })
+        .catch(() => {});
+    };
+    const unsubscribe = api.subscribe(refresh);
+    refresh();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
   useEffect(
     () =>
       demoApi.subscribe(() => {
@@ -195,13 +215,13 @@ export default function App({ onLogout }: { onLogout?: () => Promise<void> }) {
         </nav>
         <div className="sidebar-bottom">
           <NavLink
-            to="/settings"
-            aria-label="设置"
-            title="设置"
+            to={updateReady ? "/settings/about" : "/settings"}
+            aria-label={updateReady ? "设置，有新版可安装" : "设置"}
+            title={updateReady ? "新版已下载，查看更新" : "设置"}
             className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
           >
             <Settings size={23} strokeWidth={1.9} aria-hidden="true" />
-            <span>设置</span>
+            <span>{updateReady ? "更新已就绪" : "设置"}</span>
           </NavLink>
           <Dropdown
             trigger={["click"]}

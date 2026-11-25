@@ -7,6 +7,7 @@ function registerAuth(
   onTargetStopped,
   devOrigin = "http://127.0.0.1:5173",
   onReconciled,
+  releaseOrigin,
 ) {
   const { PanoramaWorkflow } = require("./panorama/workflow.cjs");
   const workflow = new PanoramaWorkflow(
@@ -66,6 +67,12 @@ function registerAuth(
       return result.data;
     },
   );
+  if (releaseOrigin)
+    workflow.desktopConfig =
+      require("./panorama/desktop-config.cjs").desktopConfig(
+        releaseOrigin,
+        app.getPath("userData"),
+      );
   workflow.factoryProperties = (input) =>
     request("/v1/factory/properties", input).then((value) => value.data);
   const base = (
@@ -549,6 +556,16 @@ function registerAuth(
   });
   app.on("will-quit", () => workflow.stop());
   return {
+    get updateBusy() {
+      return (
+        workflow.sourceFlight.size > 0 ||
+        workflow.active.size > 0 ||
+        workflow.previews.size > 0 ||
+        workflow.queue.preparing.size > 0 ||
+        workflow.queue.rendering ||
+        workflow.queue.archiving
+      );
+    },
     setArchiveOutput(register) {
       workflow.archiveOutput = async (userId, jobId, assertCurrent) => {
         const identity = await this.publishingIdentity();

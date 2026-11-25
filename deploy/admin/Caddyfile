@@ -4,6 +4,13 @@ admin.example.com {
 		reverse_proxy 127.0.0.1:18180
 	}
 
+	handle_path /desktop-updates/* {
+		root * /opt/keagent/desktop-updates
+		@manifest path *.yml /config-v1.json
+		header @manifest Cache-Control "no-cache"
+		file_server
+	}
+
 	@cloud path /v1 /v1/* /health
 	handle @cloud {
 		reverse_proxy 127.0.0.1:18181

@@ -130,6 +130,7 @@ export interface PanoramaState {
   jobs: PanoramaJob[];
 }
 export interface PanoramaCapabilities {
+  catalogRefreshSeconds?: number;
   beike?: boolean;
   ffmpeg: boolean;
   ffprobe: boolean;

@@ -195,7 +195,10 @@ class PanoramaWorkflow {
         this.capabilityPromise = null;
         throw error;
       });
-    const local = await this.capabilityPromise;
+    const [local, desktopConfig] = await Promise.all([
+      this.capabilityPromise,
+      this.desktopConfig?.(),
+    ]);
     const cloud = this.remote
       ? await this.remote(
           "capabilities",
@@ -227,7 +230,11 @@ class PanoramaWorkflow {
               scene: template.production.config.sceneTemplate,
               closing: template.production.config.closingTemplate,
             })),
-      defaultConfig: domain.defaultConfig,
+      catalogRefreshSeconds: desktopConfig?.catalogRefreshSeconds ?? 60,
+      defaultConfig: {
+        ...domain.defaultConfig,
+        ...desktopConfig?.renderDefaults,
+      },
       ai: !!cloud.ai,
       bailianTts: !!cloud.bailianTts,
       minimaxOpening: !!cloud.minimaxOpening,

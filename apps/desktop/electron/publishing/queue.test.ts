@@ -70,6 +70,7 @@ it("keeps an existing Douyin batch independent from a Channels batch for the sam
   const queue = new PublishQueue(ports);
   const batch = { ...input, entries: input.entries.slice(0, 1) };
   queue.add(identity, batch);
+  expect(queue.updateBusy).toBe(true);
   queue.add(identity, {
     ...batch,
     accountId: "d".repeat(32),
@@ -89,6 +90,7 @@ it("keeps an existing Douyin batch independent from a Channels batch for the sam
       ["douyin", "accepted"],
     ]),
   );
+  expect(queue.updateBusy).toBe(false);
 });
 
 it("runs each confirmed item once and pauses for unknown results", async () => {
