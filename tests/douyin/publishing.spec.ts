@@ -1234,10 +1234,10 @@ test("发布工作台可在详情旁筛选成片，并在明确确认后批量�
     .click();
   const batch = page.getByRole("dialog", { name: "配置批量发布 · 2 条" });
   await batch
-    .getByRole("textbox", { name: "第 1 条发布标题" })
+    .getByRole("textbox", { name: "第 1 条描述首行" })
     .fill("第一套发布标题");
   await batch
-    .getByRole("textbox", { name: "第 2 条发布标题" })
+    .getByRole("textbox", { name: "第 2 条描述首行" })
     .fill("第二套发布标题");
   await expect
     .poll(() => page.evaluate(() => (window as any).__batchRequests.length))
