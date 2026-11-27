@@ -31,6 +31,7 @@ import type {
 } from "@keagent/shared-types";
 
 export interface PublishingDependencies {
+  updateClosing?(): boolean;
   identity(): Promise<PublishingIdentity>;
   request(route: string, input?: unknown): Promise<unknown>;
   exchange: ArtifactExchange;
@@ -46,6 +47,7 @@ export function registerPublishing(
 ) {
   let resolver = dependencies.resolver;
   let recovering = false;
+  let inFlight = 0;
   let lifetime = new AbortController();
   const files = new PublishingFiles(
     path.join(app.getPath("userData"), "douyin"),
@@ -317,9 +319,15 @@ export function registerPublishing(
     }
   }
   const recoveryTimer = setInterval(() => {
-    void recover().catch(() => {});
-    void collection.recover().catch(() => {});
-    void monitor.tick().catch(() => {});
+    if (dependencies.updateClosing?.()) return;
+    inFlight++;
+    void Promise.allSettled([
+      recover(),
+      collection.recover(),
+      monitor.tick(),
+    ]).finally(() => {
+      inFlight--;
+    });
   }, 30000);
   recoveryTimer.unref();
   async function state(): Promise<DouyinDesktopState> {
@@ -376,7 +384,10 @@ export function registerPublishing(
   ipcMain.handle(
     "douyin:request",
     async (event, method: unknown, input: unknown = {}) => {
+      inFlight++;
       try {
+        if (dependencies.updateClosing?.())
+          throw new PublishingError("DEVICE_BUSY", "正在重启以安装更新");
         const url = new URL(event.senderFrame?.url || "about:blank");
         const trusted =
           app.isPackaged || process.argv.includes("--built")
@@ -628,6 +639,8 @@ export function registerPublishing(
             message: desktopErrorMessage(error),
           },
         };
+      } finally {
+        inFlight--;
       }
     },
   );
@@ -667,6 +680,19 @@ export function registerPublishing(
     ipcMain.removeHandler("douyin:request");
   });
   return {
+    get updateBusy() {
+      return (
+        inFlight > 0 ||
+        queue.updateBusy ||
+        observations.busy ||
+        collection.busy ||
+        monitor.busy ||
+        !!(
+          publisher.active &&
+          ["running", "submitting"].includes(publisher.active.state)
+        )
+      );
+    },
     stop,
     async reconciled(record: DouyinPublishRecord, generation: number) {
       const identity = await dependencies.identity();

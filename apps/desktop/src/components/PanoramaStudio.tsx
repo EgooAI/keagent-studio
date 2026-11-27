@@ -307,7 +307,9 @@ export function PanoramaStudio() {
     enabled: desktop,
     retry: false,
     staleTime: 60_000,
-    refetchInterval: creating ? 60_000 : false,
+    refetchInterval: (query) =>
+      (query.state.data?.catalogRefreshSeconds ?? 60) * 1000,
+    refetchOnMount: "always",
   });
   useEffect(() => {
     if (!desktop || client.getQueryData(["factory-catalog"])) return;

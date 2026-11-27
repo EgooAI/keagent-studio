@@ -3,12 +3,13 @@ const fs = require("node:fs/promises");
 const domain = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
 const providers = require("../panorama/providers.cjs");
+const maxSelectedScenes = 7;
 
 function selectScenes(scenes, ids) {
   domain.ensure(
     Array.isArray(ids) &&
       ids.length >= 2 &&
-      ids.length <= 7 &&
+      ids.length <= maxSelectedScenes &&
       new Set(ids).size === ids.length,
     "每套房源请选择 2–7 张不重复的 VR 全景图",
   );
@@ -156,9 +157,12 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
   const count =
     previous.filter((s) => !s.kind || s.kind === "panorama").length +
     references.length;
+  const spatialPoints = previous.filter((scene) => scene.spatial).length;
+  const maxImages =
+    spatialPoints > 20 ? spatialPoints + (20 - maxSelectedScenes) : 20;
   domain.ensure(
-    count + files.length <= 20,
-    "每套房源最多保存20张图片（含参考图）",
+    count + files.length <= maxImages,
+    `每套房源最多保存${maxImages}张图片（含参考图）`,
   );
   const added = [];
   for (const file of files) {

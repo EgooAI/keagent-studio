@@ -172,6 +172,7 @@ it.each(["finished", "running"] as const)(
       });
       online = false;
       onFinished!();
+      expect(first.busy).toBe(true);
       await vi.waitFor(() =>
         expect(request.mock.calls.some(([r]) => r.endsWith("/finish"))).toBe(
           true,

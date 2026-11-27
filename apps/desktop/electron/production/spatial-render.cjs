@@ -4,7 +4,13 @@ const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { ensure, hash } = require("../panorama/domain.cjs");
 const media = require("../panorama/media.cjs");
-const { validateSpatialScene, sourceURL } = require("./spatial-source.cjs");
+const {
+  maxSpatialAssetBytes,
+  maxSpatialAssets,
+  maxSpatialBytes,
+  validateSpatialScene,
+  sourceURL,
+} = require("./spatial-source.cjs");
 const { prepareViewer, captureFrame } = require("./spatial-viewer.cjs");
 
 // Capture the original public viewer; no vendor SDK or signed Work is modified or bundled.
@@ -13,6 +19,19 @@ const filePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,159}$/;
 const vector = (value) =>
   Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
 const distance = (a, b) => Math.hypot(...a.map((n, index) => n - b[index]));
+
+async function readSpatialAsset(file, { bytes, sha256 }) {
+  ensure(
+    (await fs.stat(file)).size === bytes,
+    "空间原始素材已变更，请重新导入 VR 链接",
+  );
+  const content = await fs.readFile(file);
+  ensure(
+    content.length === bytes && hash(content) === sha256,
+    "空间原始素材已变更，请重新导入 VR 链接",
+  );
+  return content;
+}
 
 async function verifyWorks(runs, ownerDir) {
   const works = new Map();
@@ -43,17 +62,22 @@ async function verifyWorks(runs, ownerDir) {
       const work = JSON.parse(bytes.toString("utf8"));
       const assets = work._keagent?.assets;
       ensure(
-        Array.isArray(assets) && assets.length >= 13 && assets.length <= 137,
+        Array.isArray(assets) &&
+          assets.length >= 13 &&
+          assets.length <= maxSpatialAssets,
         "空间素材清单不完整",
       );
       const files = new Map([["work.json", path.join(directory, "work.json")]]);
-      const contents = new Map();
+      const assetsByFile = new Map();
       let total = 0;
       for (const asset of assets) {
         ensure(
           filePattern.test(asset.file) &&
             !files.has(asset.file) &&
-            workIdPattern.test(asset.sha256),
+            workIdPattern.test(asset.sha256) &&
+            Number.isSafeInteger(asset.bytes) &&
+            asset.bytes > 0 &&
+            asset.bytes <= maxSpatialAssetBytes,
           "空间素材文件名或校验信息无效",
         );
         const file = path.join(directory, asset.file);
@@ -61,16 +85,14 @@ async function verifyWorks(runs, ownerDir) {
           (await fs.realpath(file)).startsWith(canonicalDirectory + path.sep),
           "空间素材路径无效",
         );
-        const content = await fs.readFile(file);
-        total += content.length;
+        total += asset.bytes;
         ensure(
-          content.length === asset.bytes &&
-            hash(content) === asset.sha256 &&
-            total <= 200 * 1024 * 1024,
-          "空间原始素材已变更，请重新导入 VR 链接",
+          total <= maxSpatialBytes,
+          "空间原始素材超过大小限制，请重新导入 VR 链接",
         );
+        await readSpatialAsset(file, asset);
         files.set(asset.file, file);
-        contents.set(asset.file, content);
+        assetsByFile.set(asset.file, asset);
       }
       ensure(
         files.has(work.model?.file_url) &&
@@ -121,7 +143,7 @@ async function verifyWorks(runs, ownerDir) {
           ),
         })),
       };
-      saved = { directory, work, files, contents, urls, source, expected };
+      saved = { directory, work, files, assetsByFile, urls, source, expected };
       works.set(spatial.workId, saved);
     }
     const from = saved.work.observers.find(
@@ -341,6 +363,7 @@ async function renderRuns(
   for (const saved of works.values()) {
     for (const [file, source] of saved.urls) {
       const url = new URL(source);
+      const asset = saved.assetsByFile.get(file);
       for (const hostname of [
         url.hostname,
         "vr-image-1.realsee-cdn.cn",
@@ -350,12 +373,12 @@ async function renderRuns(
         const key = `https://${hostname}${url.pathname}`;
         const previous = frozenAssets.get(key);
         ensure(
-          !previous || previous.bytes.equals(saved.contents.get(file)),
+          !previous || previous.sha256 === asset.sha256,
           "空间源图链接存在冲突，请重新导入 VR 链接",
         );
         frozenAssets.set(key, {
-          file,
-          bytes: saved.contents.get(file),
+          ...asset,
+          filePath: saved.files.get(file),
           sourceKey: url.origin + url.pathname,
         });
       }
@@ -388,6 +411,7 @@ async function renderRuns(
       return new Response(null, { status: 403 });
     const asset = frozenAssets.get(url.origin + url.pathname);
     if (asset) {
+      const bytes = await readSpatialAsset(asset.filePath, asset);
       replayedAssets.add(asset.sourceKey);
       const type =
         {
@@ -397,7 +421,7 @@ async function renderRuns(
           ".png": "image/png",
           ".webp": "image/webp",
         }[path.extname(asset.file)] || "application/octet-stream";
-      return new Response(asset.bytes, {
+      return new Response(bytes, {
         headers: {
           "Content-Type": type,
           "Access-Control-Allow-Origin": "*",

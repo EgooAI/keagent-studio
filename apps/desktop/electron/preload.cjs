@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld(
         return () => ipcRenderer.removeListener("douyin:changed", handler);
       },
     }),
+    updates: Object.freeze({
+      request: (action) => ipcRenderer.invoke("updates:request", action),
+      subscribe: (listener) => {
+        const handler = () => listener();
+        ipcRenderer.on("updates:changed", handler);
+        return () => ipcRenderer.removeListener("updates:changed", handler);
+      },
+    }),
     platform: process.platform,
     mode: "authenticated",
     request: (method, args) =>

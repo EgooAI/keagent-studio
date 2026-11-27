@@ -40,6 +40,7 @@ function outcome(record: CommentObservation): CollectionRunState {
 export class CollectionRunService {
   private readonly syncing = new Map<string, Promise<CollectionRun>>();
   private recovering = false;
+  private pendingFinishes = 0;
   private generation = 0;
 
   constructor(
@@ -55,6 +56,10 @@ export class CollectionRunService {
     private readonly directory: (identity: PublishingIdentity) => string,
     private readonly changed: () => void,
   ) {}
+
+  get busy() {
+    return this.recovering || this.syncing.size > 0 || this.pendingFinishes > 0;
+  }
 
   private async cloud<T>(
     identity: PublishingIdentity,
@@ -214,7 +219,9 @@ export class CollectionRunService {
         false,
         id,
         () => {
+          this.pendingFinishes++;
           setImmediate(() => {
+            this.pendingFinishes--;
             if (fs.existsSync(file))
               void this.sync(identity, id).catch(() => {});
           });

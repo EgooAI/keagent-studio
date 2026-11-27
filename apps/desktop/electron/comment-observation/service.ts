@@ -26,6 +26,10 @@ export class CommentObservationService {
     private changed: () => void,
   ) {}
 
+  get busy() {
+    return this.active.size > 0 || this.unsaved.size > 0;
+  }
+
   private recorder(identity: PublishingIdentity) {
     const recorder = new ObservationRecorder(
       path.join(this.directory(identity), "comment-observation"),

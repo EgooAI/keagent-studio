@@ -16,6 +16,21 @@ export class ServiceRequestError extends Error {
     this.name = "ServiceRequestError";
   }
 }
+export interface DesktopUpdateState {
+  phase:
+    | "unavailable"
+    | "idle"
+    | "checking"
+    | "current"
+    | "downloading"
+    | "ready"
+    | "closing"
+    | "error";
+  version: string;
+  nextVersion?: string;
+  percent: number;
+  busy: boolean;
+}
 declare global {
   interface Window {
     desktop?: {
@@ -24,6 +39,12 @@ declare global {
       };
       publishing?: {
         request(method: string, input?: unknown): Promise<unknown>;
+        subscribe(listener: () => void): () => void;
+      };
+      updates?: {
+        request(
+          action: "state" | "check" | "install",
+        ): Promise<DesktopUpdateState>;
         subscribe(listener: () => void): () => void;
       };
       platform: string;

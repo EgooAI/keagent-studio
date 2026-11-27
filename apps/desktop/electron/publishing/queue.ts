@@ -206,6 +206,13 @@ export class PublishQueue {
     },
   ) {}
 
+  get updateBusy() {
+    if (this.worker || this.checkingReceipt) return true;
+    if (!this.context) return false;
+    const data = this.data(this.context);
+    return !data.paused && data.entries.some(live);
+  }
+
   get busy() {
     return !!this.worker;
   }
