@@ -42,9 +42,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ inputs.baseline_run }}
         run: |
-          for version in 0.1.0 0.1.1; do
-            gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" -n "receipt-$version" -D "receipts/$version"
-          done
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" -n receipt-0.1.1 -D receipts/0.1.1
       - name: Read submission status
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -135,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['0.1.0', '0.1.1']
+        version: ['0.1.1']
     env:
       VERSION: ${{ matrix.version }}
       KEAGENT_PUBLIC_ORIGIN: https://updates.example.test
@@ -181,18 +179,20 @@ jobs:
       - name: Submit once and preserve the submission ID
         if: inputs.recovery == 'prepare'
         env:
+          BASELINE_RUN: ${{ inputs.baseline_run }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           mkdir receipt
+          echo "$BASELINE_RUN" > receipt/baseline-run.txt
           xcrun notarytool submit "payload/AI来客-$VERSION.zip" --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json > receipt/submission.json
           jq -er .id receipt/submission.json
       - if: inputs.recovery == 'prepare'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: receipt-${{ matrix.version }}
-          path: receipt/submission.json
+          path: receipt/
           retention-days: 30
       - name: Restore original signed bytes and receipt
         if: inputs.recovery == 'resume'
@@ -230,6 +230,7 @@ jobs:
           pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac zip --arm64 --prepackaged "$app" --publish never
           node scripts/douyin-package-smoke.mjs "$app/Contents/MacOS/AI来客"
           test -s release/latest-mac.yml && test -s release/*.zip.blockmap
+          cp receipt/baseline-run.txt release/
       - if: inputs.recovery == 'resume'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -238,6 +239,7 @@ jobs:
             release/*.zip
             release/*.zip.blockmap
             release/latest-mac.yml
+            release/baseline-run.txt
           if-no-files-found: error
           compression-level: 0
 
@@ -259,7 +261,9 @@ jobs:
         run: |
           npm install --global pnpm@10.33.3
           pnpm install --frozen-lockfile
-          gh run download "$ARTIFACT_RUN" -n approved-0.1.0 -D baseline
           gh run download "$ARTIFACT_RUN" -n approved-0.1.1 -D update
+          baseline_run=$(cat update/baseline-run.txt)
+          [[ "$baseline_run" =~ ^[0-9]+$ ]]
+          gh run download "$baseline_run" -n AI-Laike-mac-arm64 -D baseline
           npm pkg set version=0.1.1
           node scripts/verify-mac-upgrade.mjs baseline update
