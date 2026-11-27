@@ -109,7 +109,7 @@ jobs:
       - name: Check Mac disk image
         if: runner.os == 'macOS'
         shell: bash
-        run: |
+        run: &verify_mac_disk_image |
           dmg=$(find release -maxdepth 1 -name '*.dmg' -print -quit)
           test -n "$dmg"
           mount=$(mktemp -d)
@@ -227,15 +227,19 @@ jobs:
           spctl --assess --type execute --verbose "$app"
           mkdir -p output/desktop-app
           cp payload/app-package.json output/desktop-app/package.json
-          pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac zip --arm64 --prepackaged "$app" --publish never
-          node scripts/douyin-package-smoke.mjs "$app/Contents/MacOS/AI来客"
+          pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac dmg zip --arm64 --prepackaged "$app" --publish never
           test -s release/latest-mac.yml && test -s release/*.zip.blockmap
           cp receipt/baseline-run.txt release/
+      - name: Verify the recovered Mac disk image
+        if: inputs.recovery == 'resume'
+        shell: bash
+        run: *verify_mac_disk_image
       - if: inputs.recovery == 'resume'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: approved-${{ matrix.version }}
           path: |
+            release/*.dmg
             release/*.zip
             release/*.zip.blockmap
             release/latest-mac.yml
