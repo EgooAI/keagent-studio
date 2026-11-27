@@ -27,6 +27,7 @@ async function zip(dir) {
 const oldZip = await zip(oldDir),
   newZip = await zip(nextDir);
 const targetVersion = JSON.parse(await readFile("package.json")).version;
+const targetBytes = (await stat(path.join(nextDir, newZip))).size;
 const allowed = new Map([
   ["latest-mac.yml", path.join(nextDir, "latest-mac.yml")],
   [newZip, path.join(nextDir, newZip)],
@@ -99,6 +100,7 @@ try {
     const oldPid = proc.process().pid;
     try {
       const page = await proc.firstWindow();
+      await page.waitForFunction(() => !!window.desktop?.updates);
       await proc.evaluate(({ app }, url) => {
         const req = process
           .getBuiltinModule("node:module")
@@ -111,24 +113,25 @@ try {
         });
       }, feed);
       const deadline = Date.now() + 240000;
-      let ready = false;
+      let state;
       while (Date.now() < deadline) {
-        const state = await page.evaluate(() =>
+        state = await page.evaluate(() =>
           window.desktop.updates.request("check"),
         );
-        if (state.phase === "ready") {
-          assert.equal(state.nextVersion, targetVersion);
-          ready = true;
-          break;
-        }
+        if (state.phase === "ready") break;
         await delay(1000);
       }
-      assert.ok(ready, "Update did not reach ready state: " + mode);
+      assert.equal(state?.phase, "ready", mode + ": " + JSON.stringify(state));
+      assert.equal(state.version, initial);
+      assert.equal(state.nextVersion, targetVersion);
       assert.ok(
         requests.length &&
           requests.every((r) => r.range === (mode === "delta")),
         JSON.stringify(requests),
       );
+      const downloadedBytes = requests.reduce((n, r) => n + r.bytes, 0);
+      if (mode === "full") assert.equal(downloadedBytes, targetBytes);
+      else assert.ok(downloadedBytes > 0 && downloadedBytes < targetBytes);
       console.log(
         mode,
         initial,
@@ -137,7 +140,9 @@ try {
         "requests",
         requests.length,
         "ZIP bytes",
-        requests.reduce((n, r) => n + r.bytes, 0),
+        downloadedBytes,
+        "of",
+        targetBytes,
       );
 
       await page.evaluate(() => {
