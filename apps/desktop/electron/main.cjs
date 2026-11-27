@@ -260,7 +260,29 @@ function createWindow() {
       window.hide();
     }
   });
-  window.removeMenu();
+  const { webContents } = window;
+  const paste = () => webContents.paste();
+  const pasteMenu = Menu.buildFromTemplate([{ label: "粘贴", click: paste }]);
+  webContents.on("context-menu", (_event, { isEditable }) => {
+    if (isEditable) pasteMenu.popup({ window });
+  });
+  if (process.platform === "darwin") {
+    webContents.on("before-input-event", (event, input) => {
+      if (
+        input.type === "keyDown" &&
+        input.meta &&
+        !input.control &&
+        !input.alt &&
+        !input.shift &&
+        input.key.toLowerCase() === "v"
+      ) {
+        event.preventDefault();
+        paste();
+      }
+    });
+  } else {
+    window.removeMenu();
+  }
   returnWindowSetup(window);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {

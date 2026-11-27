@@ -26,6 +26,7 @@ const errors: Record<string, string> = {
   LOGIN_REQUIRED: "请在视频号助手窗口中扫码登录",
   ACCOUNT_MISMATCH: "当前视频号与已绑定账号不一致",
   ACCOUNT_CHANGED: "当前视频号与已绑定账号不一致",
+  INVALID_SHORT_TITLE: "请修改短标题中视频号无法原样保留的字符",
   VERIFICATION_REQUIRED: "视频号实名扫码验证未完成",
   CHROME_NOT_FOUND: "未找到视频号浏览器，请修复或更新 AI来客",
   BROWSER_COMPONENT_UNAVAILABLE:

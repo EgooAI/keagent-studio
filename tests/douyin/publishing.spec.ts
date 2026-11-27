@@ -454,6 +454,7 @@ async function desktopFixture(
                 return okay(queue);
               }
               if (method === "publish.start") {
+                Reflect.set(window, "__lastPublishInput", input);
                 const requests = window as unknown as {
                   __failPublish?: boolean;
                   __publishKeys?: unknown[];
@@ -627,18 +628,55 @@ test("微信视频号默认发布，验证定时整点并显示无公开链接�
   await config.getByLabel("发布账号").click();
   await expect(page.getByText(account.name, { exact: true })).toHaveCount(0);
   await page.getByText("测试视频号账号", { exact: true }).click();
+  const title = "知春大厦 2室2厅 116㎡ 699万";
+  const shortTitle = "知春大厦116平两居";
+  await config.getByLabel("描述首行").fill(title);
+  const shortTitleInput = config.getByRole("textbox", {
+    name: "短标题",
+    exact: true,
+  });
+  await expect(shortTitleInput).toHaveValue("知春大厦2室2厅116699万");
+  await shortTitleInput.fill(shortTitle);
+  await config.getByRole("combobox", { name: "话题" }).fill("两居");
+  await config.getByRole("combobox", { name: "话题" }).press("Enter");
+  await config.getByLabel("补充正文").fill("客厅朝南。");
+  await config.getByText("预览发布文案", { exact: true }).click();
+  await expect(config.locator(".channels-copy-preview > div")).toHaveJSProperty(
+    "textContent",
+    title + "\n#两居 \n客厅朝南。",
+  );
   await config.getByText("定时发布", { exact: true }).click();
-  const nextDay = new Date(Date.now() + 32 * 3600_000)
+  const targetDate = new Date(Date.now() + (48 + 8) * 3600_000)
     .toISOString()
-    .slice(0, 13);
-  await config.getByLabel("预约时间（北京时间）").fill(nextDay + ":30");
+    .slice(0, 10);
+  const hours = config.getByRole("combobox", { name: "预约整点" });
+  await expect(hours).toBeDisabled();
+  await config.getByLabel("预约日期（北京时间）").fill(targetDate);
   await expect(
-    config.getByText("微信视频号仅支持北京时间整点发布"),
-  ).toBeVisible();
+    config.getByRole("button", { name: "确认定时发布" }),
+  ).toBeDisabled();
+  await hours.click();
+  await page
+    .locator(".ant-select-item-option")
+    .filter({ hasText: /^00:00$/ })
+    .click();
+  await expect(
+    config.getByRole("button", {
+      name: `预约 ${targetDate.slice(5)} 00:00 发布`,
+    }),
+  ).toBeEnabled();
   await config.getByText("立即发布", { exact: true }).click();
   await config.getByRole("button", { name: "立即发布到微信视频号" }).click();
   const record = page.locator(".douyin-record");
   await expect(record.getByText("已提交视频号", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__lastPublishInput")),
+  ).toMatchObject({
+    title,
+    shortTitle,
+    description: "客厅朝南。",
+    hashtags: ["两居"],
+  });
   await expect(record.getByRole("link")).toHaveCount(0);
   expect(
     await page.evaluate(() => Reflect.get(window, "__browserActions")),

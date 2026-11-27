@@ -37,6 +37,7 @@ import {
   type DouyinAccount,
   type DouyinBatchInput,
   type DouyinQueue,
+  type DouyinQueueEntry,
   type DouyinQueueRow,
   type DouyinWorkspaceRow,
   type DouyinWorkspaceStatus,
@@ -53,6 +54,7 @@ import {
   useDouyinDesktop,
 } from "../lib/douyin";
 import { PageHeader, formatDate } from "./common";
+import { ChannelsCopyFields } from "./ChannelsCopyFields";
 import "./publish-workbench.css";
 
 export const reviewLabels: Record<ArtifactReviewState, string> = {
@@ -864,6 +866,32 @@ export function PublishWorkbench({
   );
 }
 
+function BatchChannelsCover({ artifactId }: { artifactId: string }) {
+  const preview = useQuery({
+    queryKey: ["douyin-preview-cover", artifactId],
+    queryFn: () =>
+      douyinDesktop<{ cover?: string }>("preview", {
+        artifactId,
+        coverOnly: true,
+      }),
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+  return (
+    <figure className="channels-cover-preview">
+      {preview.data?.cover && (
+        <img src={preview.data.cover} alt="成片竖版封面" loading="lazy" />
+      )}
+      <figcaption>
+        个人主页卡片 · 3:4
+        {!preview.data?.cover &&
+          (preview.isPending ? " · 正在读取封面" : " · 封面暂不可预览")}
+      </figcaption>
+    </figure>
+  );
+}
+
 function PublishBatch({
   platform,
   rows,
@@ -883,9 +911,16 @@ function PublishBatch({
   const [accountId, setAccount] = useState(
     eligible.length === 1 ? eligible[0].id : undefined,
   );
-  const [edits, setEdits] = useState<
-    Record<string, { title?: string; description?: string }>
-  >({});
+  type CopyEdit = Partial<
+    Pick<DouyinQueueEntry, "title" | "description" | "hashtags" | "shortTitle">
+  >;
+  const [edits, setEdits] = useState<Record<string, CopyEdit>>({});
+  function editCopy(artifactId: string, change: CopyEdit) {
+    setEdits((previous) => ({
+      ...previous,
+      [artifactId]: { ...previous[artifactId], ...change },
+    }));
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const submitting = useRef(false);
@@ -902,18 +937,27 @@ function PublishBatch({
       Promise.all(rows.map((row) => artifactExchange.getArtifact(row.id))),
     retry: false,
   });
+  const channels = platform === "channels";
   const entries =
     query.data?.map((artifact) => ({
       artifactId: artifact.id,
       expectedReviewRevision: artifact.review.revision,
       title: edits[artifact.id]?.title ?? artifact.content.title,
       description: edits[artifact.id]?.description ?? artifact.content.script,
+      ...(channels && {
+        hashtags: edits[artifact.id]?.hashtags,
+        shortTitle: edits[artifact.id]?.shortTitle,
+      }),
     })) || [];
   const issues = entries.map((entry, i) =>
     query.data?.[i].review.state !== "approved" ||
     entry.expectedReviewRevision !== rows[i].review.revision
       ? "验收已变化，请关闭后重新选择"
-      : validateDouyinInput({ ...entry, hashtags: [] }),
+      : validateDouyinInput({
+          ...entry,
+          hashtags: entry.hashtags ?? [],
+          platform,
+        }),
   );
   async function enqueue() {
     if (
@@ -974,7 +1018,7 @@ function PublishBatch({
         description={
           platform === "douyin"
             ? "可见范围、下载权限和同步选项沿用抖音页面当前设置。每条成片的封面将上传为抖音竖封面。标题和正文可逐条修改，成片验收版本会在执行时重新核对。"
-            : "标题、正文和竖版封面将提交至视频号助手。短标题从标题生成，每条成片会在执行时重新核对验收版本。"
+            : "逐条确认视频描述和短标题后，成片将按顺序在后台发布。"
         }
       />
       <div className="publish-batch-account">
@@ -1015,39 +1059,62 @@ function PublishBatch({
           <li key={entry.artifactId}>
             <strong>{rows[index].title}</strong>
             <label>
-              发布标题
+              {channels ? "描述首行" : "发布标题"}
               <Input
-                aria-label={"第 " + (index + 1) + " 条发布标题"}
+                aria-label={`第 ${index + 1} 条${channels ? "描述首行" : "发布标题"}`}
                 value={entry.title}
                 disabled={busy}
-                onChange={(e) => {
-                  const title = e.target.value;
-                  setEdits((old) => ({
-                    ...old,
-                    [entry.artifactId]: { ...old[entry.artifactId], title },
-                  }));
-                }}
+                onChange={(e) =>
+                  editCopy(entry.artifactId, { title: e.target.value })
+                }
               />
             </label>
+            {channels && (
+              <label>
+                话题
+                <Select
+                  aria-label={`第 ${index + 1} 条话题`}
+                  mode="tags"
+                  tokenSeparators={[" ", ","]}
+                  placeholder="输入话题后按回车"
+                  value={entry.hashtags ?? []}
+                  disabled={busy}
+                  onChange={(hashtags: string[]) =>
+                    editCopy(entry.artifactId, {
+                      hashtags: hashtags.length ? hashtags : undefined,
+                    })
+                  }
+                />
+              </label>
+            )}
             <label>
-              发布正文
+              {channels ? "补充正文" : "发布正文"}
               <Input.TextArea
-                aria-label={"第 " + (index + 1) + " 条发布正文"}
+                aria-label={`第 ${index + 1} 条${channels ? "补充正文" : "发布正文"}`}
                 value={entry.description}
                 disabled={busy}
                 autoSize={{ minRows: 2, maxRows: 4 }}
-                onChange={(e) => {
-                  const description = e.target.value;
-                  setEdits((old) => ({
-                    ...old,
-                    [entry.artifactId]: {
-                      ...old[entry.artifactId],
-                      description,
-                    },
-                  }));
-                }}
+                onChange={(e) =>
+                  editCopy(entry.artifactId, { description: e.target.value })
+                }
               />
             </label>
+            {channels && (
+              <>
+                <ChannelsCopyFields
+                  title={entry.title}
+                  description={entry.description}
+                  hashtags={entry.hashtags ?? []}
+                  shortTitle={entry.shortTitle}
+                  onShortTitleChange={(shortTitle) =>
+                    editCopy(entry.artifactId, { shortTitle })
+                  }
+                  labelPrefix={`第 ${index + 1} 条`}
+                  disabled={busy}
+                />
+                <BatchChannelsCover artifactId={entry.artifactId} />
+              </>
+            )}
             {issues[index] && (
               <span className="error-text">{issues[index]}</span>
             )}

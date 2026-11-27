@@ -26,6 +26,7 @@ import {
   ServiceRequestError,
 } from "@keagent/api-client";
 import {
+  channelsShortTitleIssue,
   douyinRecordLabel,
   formatDouyinSchedule,
   validateDouyinInput,
@@ -35,6 +36,7 @@ import {
   type ArtifactReviewState,
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
+import { ChannelsCopyFields } from "../components/ChannelsCopyFields";
 import { PageHeader } from "../components/common";
 import PublishExecutionSteps from "../components/PublishExecutionSteps";
 import {
@@ -92,6 +94,65 @@ interface EditValues {
   scheduleTime?: string;
 }
 const beijingSeconds = (value: string) => Date.parse(value + "+08:00") / 1000;
+
+function ChannelsSchedule({
+  id,
+  value = "",
+  onChange,
+}: {
+  id?: string;
+  value?: string;
+  onChange?: (value: string) => void;
+}) {
+  const [day, hour] = value.split("T");
+  const now = Date.now() / 1000;
+  const options = Array.from({ length: 24 }, (_, index) => {
+    const time = String(index).padStart(2, "0") + ":00";
+    return {
+      value: time,
+      label: time,
+      disabled: !!validatePublishSchedule(
+        "channels",
+        beijingSeconds(day + "T" + time),
+        now,
+      ),
+    };
+  });
+  return (
+    <div className="channels-schedule-picker">
+      <Input
+        id={id}
+        type="date"
+        aria-label="预约日期（北京时间）"
+        min={formatDouyinSchedule(
+          (Math.floor((now + 7200) / 3600) + 1) * 3600,
+        ).slice(0, 10)}
+        max={formatDouyinSchedule(now + 14 * 86400).slice(0, 10)}
+        value={day}
+        onChange={(event) => {
+          const date = event.target.value;
+          const next = date + "T" + hour;
+          onChange?.(
+            date &&
+              hour &&
+              !validatePublishSchedule("channels", beijingSeconds(next), now)
+              ? next
+              : date,
+          );
+        }}
+      />
+      <Select
+        aria-label="预约整点"
+        placeholder="整点"
+        disabled={day ? undefined : true}
+        value={hour || undefined}
+        options={options}
+        onChange={(time: string) => onChange?.(day + "T" + time)}
+      />
+    </div>
+  );
+}
+
 function ArtifactPublishDetail({
   artifactId,
   defaultPlatform = "channels",
@@ -136,6 +197,8 @@ function ArtifactPublishDetail({
   const values = Form.useWatch([], form) as EditValues | undefined;
   const platform = values?.platform ?? defaultPlatform;
   const platformName = publishPlatformLabels[platform];
+  const channels = platform === "channels";
+  const [shortTitle, setShortTitle] = useState<string>();
   const [configurationRevision, setConfigurationRevision] = useState<number>();
   const configuring = configurationRevision !== undefined;
   const [dirty, setDirty] = useState(false);
@@ -187,6 +250,7 @@ function ArtifactPublishDetail({
 
   function resetConfiguration() {
     setDirty(false);
+    setShortTitle(undefined);
     setConfigurationRevision(undefined);
     setError(undefined);
   }
@@ -230,13 +294,16 @@ function ArtifactPublishDetail({
   const running = publishing || sendingMessage;
   const invalid = values
     ? validateDouyinInput({
+        platform,
+        ...(channels && shortTitle !== undefined && { shortTitle }),
         title: values.title || "",
         description: values.description || "",
         hashtags: values.hashtags || [],
       })
     : undefined;
+  const shortTitleIssue = channels && channelsShortTitleIssue(shortTitle);
   const scheduled = values?.timing === "scheduled";
-  const scheduledAt = values?.scheduleTime
+  const scheduledAt = values?.scheduleTime?.includes("T")
     ? beijingSeconds(values.scheduleTime)
     : undefined;
   const scheduleIssue =
@@ -364,6 +431,8 @@ function ArtifactPublishDetail({
       accountId: edit.accountId,
       platform: edit.platform,
       title: edit.title,
+      ...(edit.platform === "channels" &&
+        shortTitle !== undefined && { shortTitle }),
       description: edit.description || "",
       hashtags: edit.hashtags || [],
       scheduledAt,
@@ -861,12 +930,9 @@ function ArtifactPublishDetail({
         <p className="muted publish-config-notice">
           <Send size={17} aria-hidden="true" />
           <span>
-            {scheduled
-              ? `由${platformName}按预约时间发布。`
-              : `确认后提交给${platformName}发布。`}
-            {platform === "douyin"
-              ? "可见范围、下载权限和同步选项沿用抖音页面当前设置。成片封面将上传为抖音竖封面。"
-              : "短标题从标题自动生成，使用成片的竖版封面。提交在后台进行，需要管理员扫码时会在工作台提示。"}
+            {channels
+              ? "视频号将在后台提交。如需管理员扫码，工作台会提示。"
+              : "可见范围、下载权限和同步选项沿用抖音页面当前设置。成片封面将上传为抖音竖封面。"}
           </span>
         </p>
         <Form
@@ -875,7 +941,13 @@ function ArtifactPublishDetail({
           layout="vertical"
           disabled={busy}
           onFinish={(edit) => {
-            if (canSubmit && accountReady && !publishing && !invalid)
+            if (
+              canSubmit &&
+              accountReady &&
+              !publishing &&
+              !invalid &&
+              (!scheduled || (scheduledAt && !scheduleIssue))
+            )
               void act(() => start(edit));
           }}
           initialValues={{
@@ -887,23 +959,50 @@ function ArtifactPublishDetail({
           onValuesChange={(changed) => {
             if (changed.platform) {
               form.resetFields(["accountId"]);
+              const time = form.getFieldValue("scheduleTime");
+              if (
+                time &&
+                changed.platform === "channels" &&
+                !time.endsWith(":00")
+              )
+                form.setFieldValue("scheduleTime", time.slice(0, 10));
+              else if (
+                time &&
+                changed.platform === "douyin" &&
+                !time.includes("T")
+              )
+                form.setFieldValue("scheduleTime", undefined);
               setError(undefined);
             }
             setDirty(true);
             publishKey.current = crypto.randomUUID();
           }}
         >
+          <Form.Item
+            name="platform"
+            label="发布平台"
+            className="channels-config-platform"
+          >
+            <Radio.Group options={publishPlatformOptions} />
+          </Form.Item>
           <div>
             <Form.Item
               name="title"
-              label="标题"
-              rules={[{ required: true, message: "请输入标题" }]}
+              label={channels ? "描述首行" : "标题"}
+              rules={[
+                {
+                  required: true,
+                  message: channels ? "请输入描述首行" : "请输入标题",
+                },
+              ]}
             >
               <Input showCount />
             </Form.Item>
-            <Form.Item name="description" label="正文">
-              <Input.TextArea rows={5} showCount />
-            </Form.Item>
+            {!channels && (
+              <Form.Item name="description" label="正文">
+                <Input.TextArea rows={5} showCount />
+              </Form.Item>
+            )}
             <Form.Item name="hashtags" label="话题">
               <Select
                 mode="tags"
@@ -911,11 +1010,27 @@ function ArtifactPublishDetail({
                 placeholder="输入话题后按回车"
               />
             </Form.Item>
+            {channels && (
+              <>
+                <Form.Item name="description" label="补充正文">
+                  <Input.TextArea rows={3} showCount />
+                </Form.Item>
+                <ChannelsCopyFields
+                  title={values?.title || ""}
+                  description={values?.description || ""}
+                  hashtags={values?.hashtags || []}
+                  shortTitle={shortTitle}
+                  disabled={busy}
+                  onShortTitleChange={(value) => {
+                    setShortTitle(value);
+                    setDirty(true);
+                    publishKey.current = crypto.randomUUID();
+                  }}
+                />
+              </>
+            )}
           </div>
           <div>
-            <Form.Item name="platform" label="发布平台">
-              <Radio.Group options={publishPlatformOptions} />
-            </Form.Item>
             <Form.Item
               name="accountId"
               label="发布账号"
@@ -944,31 +1059,45 @@ function ArtifactPublishDetail({
               />
             </Form.Item>
             {scheduled && (
-              <>
-                <Form.Item
-                  name="scheduleTime"
-                  label="预约时间（北京时间）"
-                  preserve={false}
-                  extra={
-                    platform === "channels"
-                      ? "请选择超过 2 小时、14 天内的北京时间整点。"
-                      : "请选择 2 小时后至 14 天内的时间。"
-                  }
-                  rules={[{ required: true, message: "请选择预约时间" }]}
-                >
+              <Form.Item
+                name="scheduleTime"
+                label={
+                  channels ? "预约日期（北京时间）" : "预约时间（北京时间）"
+                }
+                preserve={false}
+                extra={
+                  channels
+                    ? "可选超过 2 小时、14 天内的整点。"
+                    : "请选择 2 小时后至 14 天内的时间。"
+                }
+                rules={[{ required: true, message: "请选择预约时间" }]}
+              >
+                {channels ? (
+                  <ChannelsSchedule />
+                ) : (
                   <Input type="datetime-local" />
-                </Form.Item>
-                {previewSource?.cover && (
+                )}
+              </Form.Item>
+            )}
+            {previewSource?.cover &&
+              (channels ? (
+                <figure className="channels-cover-preview">
+                  <img src={previewSource.cover} alt="成片竖版封面" />
+                  <figcaption>个人主页卡片 · 3:4</figcaption>
+                </figure>
+              ) : (
+                scheduled && (
                   <img
                     className="douyin-cover-thumbnail"
                     src={previewSource.cover}
                     alt="预约发布封面"
                   />
-                )}
-              </>
-            )}
+                )
+              ))}
           </div>
-          {invalid && <Alert type="warning" title={invalid} />}
+          {invalid && invalid !== shortTitleIssue && (
+            <Alert type="warning" title={invalid} />
+          )}
           {scheduleIssue && <Alert type="warning" title={scheduleIssue} />}
           {configuring &&
             error &&

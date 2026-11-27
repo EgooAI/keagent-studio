@@ -23,6 +23,7 @@ export interface DouyinPublishInput {
   handoffId: string;
   accountId: string;
   title: string;
+  shortTitle?: string;
   description: string;
   hashtags: string[];
   coverRef?: string;
@@ -113,7 +114,9 @@ export interface DouyinQueueEntry {
   artifactId: string;
   expectedReviewRevision: number;
   title: string;
+  shortTitle?: string;
   description: string;
+  hashtags?: string[];
 }
 export interface DouyinBatchInput {
   platform?: PublishPlatform;
@@ -202,6 +205,39 @@ export function validatePublishSchedule(
   }
   return validateDouyinSchedule(seconds, now);
 }
+
+/** Mirrors format_str_for_short_title in the original Channels uploader. */
+export function channelsShortTitle(source: string): string {
+  const cleaned = source
+    .replace(/[^\p{L}\p{N}《》“”:+?%°,]/gu, "")
+    .replaceAll(",", " ")
+    .trim();
+  const chars = Array.from(cleaned);
+  if (!chars.length) return "精彩视频内容分享";
+  if (chars.length < 7)
+    return [...chars, ..."，精彩内容分享"].slice(0, 7).join("");
+  return chars.slice(0, 15).join("");
+}
+
+export function channelsShortTitleIssue(shortTitle?: string): string | null {
+  if (shortTitle === undefined) return null;
+  if (
+    typeof shortTitle !== "string" ||
+    !/^[\p{L}\p{N}《》“”:+?%°]{7,15}$/u.test(shortTitle)
+  )
+    return "短标题须为 7 至 15 个字符，可使用文字、数字及《》“”:+?%°";
+  return null;
+}
+
+export function channelsDescription(
+  title: string,
+  description: string,
+  hashtags: string[],
+): string {
+  const topics = hashtags.map((tag) => `#${tag.replace(/^#/, "")} `).join("");
+  return `${title}\n${topics}\n${description}`;
+}
+
 /** OpenCLI counts UTF-16 code units. Keep UI, Main and Go aligned, including emoji. */
 export function douyinCaption(description: string, hashtags: string[]): string {
   return [
@@ -212,8 +248,16 @@ export function douyinCaption(description: string, hashtags: string[]): string {
     .join(" ");
 }
 export function validateDouyinInput(
-  input: Pick<DouyinPublishInput, "title" | "description" | "hashtags">,
+  input: Pick<
+    DouyinPublishInput,
+    "platform" | "title" | "shortTitle" | "description" | "hashtags"
+  >,
 ): string | undefined {
+  if (input.shortTitle !== undefined) {
+    if (input.platform !== "channels") return "只有微信视频号支持短标题";
+    const issue = channelsShortTitleIssue(input.shortTitle);
+    if (issue) return issue;
+  }
   if (
     typeof input.title !== "string" ||
     !input.title.trim() ||
