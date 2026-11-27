@@ -1,7 +1,12 @@
 const { build } = require("../package.json");
-const origin = new URL(process.env.KEAGENT_PUBLIC_ORIGIN);
-if (origin.protocol !== "https:" || origin.href !== origin.origin + "/")
-  throw new Error("Expected an HTTPS release origin");
+const updateOrigin = new URL(
+  process.env.KEAGENT_UPDATE_ORIGIN || process.env.KEAGENT_PUBLIC_ORIGIN,
+);
+if (
+  updateOrigin.protocol !== "https:" ||
+  updateOrigin.href !== updateOrigin.origin + "/"
+)
+  throw new Error("Expected an HTTPS update origin");
 if (
   !["darwin-arm64", "win32-x64"].includes(process.platform + "-" + process.arch)
 )
@@ -17,7 +22,7 @@ module.exports = {
   publish: {
     provider: "generic",
     url:
-      origin.origin +
+      updateOrigin.origin +
       "/desktop-updates/" +
       process.platform +
       "-" +

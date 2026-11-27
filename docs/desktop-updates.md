@@ -3,8 +3,8 @@
 Windows x64 和 Apple 芯片 Mac 使用独立的 HTTPS 静态目录。每次应用发布前递增根 package.json 的 version。已经安装旧版的用户需手动安装一次带更新器的版本。
 
 1. 使用 Desktop installers 工作流，填写用户可以访问的 HTTPS 服务源。Mac 构建需要 MAC_CSC_LINK（含私钥的 Developer ID Application 证书）、MAC_CSC_KEY_PASSWORD、APPLE_ID、APPLE_APP_SPECIFIC_PASSWORD、APPLE_TEAM_ID。Windows 签名使用 WIN_CSC_LINK 和 WIN_CSC_KEY_PASSWORD；正式发布前确认安装包的 Authenticode 发布者。
-2. 下载工作流产物。将 Windows EXE 和 blockmap 放到 /opt/keagent/desktop-updates/win32-x64/。将 Apple 芯片的 DMG、ZIP 及 blockmap 放到 /opt/keagent/desktop-updates/darwin-arm64/。两端都先上传完整的版本化文件，保留旧版 blockmap，再原子替换对应目录的 latest.yml 或 latest-mac.yml。
-3. 部署仓库的 Caddyfile 更新路由。若使用 CDN，保留 HTTP Range 和原始文件字节，更新清单重新验证缓存。Mac 初次缺少旧 ZIP 时会下载整包，后续版本可使用缓存做差分。
+2. 工作流将 `https://update.laike.zhaihealth.com` 写入安装包的更新配置，业务 API 仍使用 `public_origin`。本地打包时设置 `KEAGENT_UPDATE_ORIGIN` 可指定独立的更新域名，省略时沿用业务源。公证恢复会读取签名时保存的两个地址。
+3. 下载并解开工作流最终产物。在北京 OSS Bucket `ai-laike-updates-egooai` 中，把 Windows EXE 和 blockmap 按原文件名放入 `desktop-updates/win32-x64/`，把 Apple 芯片的 DMG、ZIP 和 blockmap 放入 `desktop-updates/darwin-arm64/`。保留旧版 blockmap，并验证 ZIP 或 EXE 的 Range 请求返回 206。确认对用户发布时，最后上传对应的 `latest.yml` 或 `latest-mac.yml`，设置 `Cache-Control: no-cache`。上线此迁移时，将仓库的安装包重定向规则应用到业务服务器实际使用的 Caddy 站点，以便带旧更新地址的客户端也能访问 OSS。配置热更新继续使用原业务源。
 4. 用已安装的前一版在「设置 → 软件更新与关于」检查、下载并重启，确认新版版本号。发布或采集进行中可继续下载，任务完成后用户可手动重启。Mac 验收同时检查首次安装、Gatekeeper 和内置 Chromium；Windows 验收检查签名与升级后的发布者。
 
 ## Apple 芯片 Mac 异步公证
