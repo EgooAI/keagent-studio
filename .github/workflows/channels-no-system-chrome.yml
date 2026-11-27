@@ -1,8 +1,7 @@
 name: Channels on Windows without Chrome
 
 on:
-  push:
-    branches: [codex/qa-channels-win-no-chrome-20261122]
+  workflow_dispatch:
 
 permissions:
   contents: read
