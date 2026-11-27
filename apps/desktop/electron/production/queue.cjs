@@ -1,5 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const factory = require("./factory.cjs");
+const coverReasons = require("./cover-reasons.json");
+const { listingCoverError } = require("./presentation.cjs");
 const media = require("../panorama/media.cjs");
 const {
   ensure,
@@ -178,6 +180,7 @@ class ProductionQueue {
       stage: job?.stage,
       error: item.error || (item.phase === "failed" ? job?.error : undefined),
       revision: draft?.revision,
+      coverReason: draft?.coverReason,
       artifactId: item.artifactId,
       started: !!item.jobId,
     };
@@ -478,7 +481,9 @@ class ProductionQueue {
         pair &&
           validID(pair.propertyId) &&
           validID(pair.templateId) &&
-          validID(pair.version),
+          validID(pair.version) &&
+          (pair.coverReason === undefined ||
+            coverReasons.includes(pair.coverReason)),
         "房源或模板引用无效",
       );
     const mixes = input.mixes;
@@ -622,6 +627,13 @@ class ProductionQueue {
         issue("模板已更新或下架，请重新选择");
         continue;
       }
+      if (template.cover?.imageSource === "listing-frame") {
+        const error = listingCoverError(property);
+        if (error) {
+          issue(error);
+          continue;
+        }
+      }
       const recipe = template.production.config;
       const voiceId = currentVoiceId(input.voiceId || defaults.voiceId);
       if (
@@ -742,6 +754,9 @@ class ProductionQueue {
         templateVersion: template.version,
         templateName: template.name,
         templateSnapshot: { ...template, production },
+        ...(template.cover?.imageSource === "listing-frame" && pair.coverReason
+          ? { coverReason: pair.coverReason }
+          : {}),
         phase: "pending",
         createdAt,
       });

@@ -8,6 +8,7 @@ import {
   Space,
   Tag,
 } from "antd";
+import coverReasons from "../../electron/production/cover-reasons.json";
 import { Link } from "react-router-dom";
 import { Download, X } from "lucide-react";
 import type { PanoramaScene, PanoramaSegment } from "@keagent/shared-types";
@@ -46,6 +47,7 @@ export function FactoryTaskDetail({
   segments,
   scenes,
   coverTitle,
+  coverReason,
   renderSettings,
   dirty,
   busy,
@@ -53,7 +55,7 @@ export function FactoryTaskDetail({
   billingPath,
   onEdit,
   onCamera,
-  onCoverTitle,
+  onEditCover,
   onRenderSettings,
   onSave,
   onConfirm,
@@ -65,6 +67,7 @@ export function FactoryTaskDetail({
   segments: PanoramaSegment[];
   scenes: PanoramaScene[];
   coverTitle: string;
+  coverReason: string;
   renderSettings: RenderEdits;
   dirty: boolean;
   busy: boolean;
@@ -75,7 +78,7 @@ export function FactoryTaskDetail({
     id: string,
     camera: Partial<Pick<PanoramaScene, "yaw" | "direction" | "spatial">>,
   ) => void;
-  onCoverTitle: (title: string) => void;
+  onEditCover: (changes: { coverTitle?: string; coverReason?: string }) => void;
   onRenderSettings: (settings: RenderEdits) => void;
   onSave: () => void;
   onConfirm: () => void;
@@ -85,10 +88,14 @@ export function FactoryTaskDetail({
   const { draft, job, config } = row;
   const effectiveConfig = job?.config || draft?.config || config;
   const spatial = effectiveConfig?.cameraMode === "spatial";
+  const listingCover =
+    draft?.templateSnapshot?.cover?.imageSource === "listing-frame";
+  const titleLabel = listingCover ? "开场标题" : "开场／封面标题";
   const editable = reviewing && row.phase === "review";
   const reviewable =
     !!draft &&
     editable &&
+    (!listingCover || !!coverReason.trim()) &&
     segments.every((s) => s.text.trim()) &&
     !renderSettingsError(renderSettings, spatial);
   const finished = job?.status === "succeeded";
@@ -225,18 +232,59 @@ export function FactoryTaskDetail({
           镜头从当前拍摄点走向所选目标点，使用原房源三维模型与全景图。
         </p>
       )}
+      {listingCover && (
+        <div className="factory-detail-cover">
+          {editable ? (
+            <>
+              <label>
+                <span>封面售卖原因</span>
+                <Input
+                  value={coverReason}
+                  maxLength={24}
+                  disabled={busy}
+                  onChange={(e) => onEditCover({ coverReason: e.target.value })}
+                />
+              </label>
+              <div>
+                <Button
+                  size="small"
+                  disabled={busy}
+                  onClick={() => {
+                    const others = coverReasons.filter(
+                      (text) => text !== coverReason.trim(),
+                    );
+                    onEditCover({
+                      coverReason:
+                        others[Math.floor(Math.random() * others.length)],
+                    });
+                  }}
+                >
+                  换一句
+                </Button>
+              </div>
+              <span className="muted">
+                本地随机推荐，用在封面第二行。请核对是否符合房源实际情况，也可直接改写。
+              </span>
+            </>
+          ) : (
+            <p>封面售卖原因 · {coverReason}</p>
+          )}
+        </div>
+      )}
       {editable && draft?.config.design === "short-tour" && (
         <div className="factory-detail-cover">
           <label>
-            <span>开场／封面标题</span>
+            <span>{titleLabel}</span>
             <Input.TextArea
-              aria-label="开场／封面标题"
+              aria-label={titleLabel}
               rows={2}
               maxLength={120}
               value={coverTitle}
               disabled={busy}
               placeholder="留空使用房源名称和卖点"
-              onChange={(event) => onCoverTitle(event.target.value)}
+              onChange={(event) =>
+                onEditCover({ coverTitle: event.target.value })
+              }
             />
           </label>
           <span className="muted">最多两行，只填写已核实的房源信息。</span>

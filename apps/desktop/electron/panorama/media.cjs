@@ -524,6 +524,8 @@ async function render(
   const c = job.config;
   const spatial = c.cameraMode === "spatial";
   const shortTour = c.design === "short-tour";
+  const listingFrame =
+    job.templateSnapshot?.cover?.imageSource === "listing-frame";
   const fps = shortTour ? 30 : 25;
   const [width, height] =
     c.aspectRatio === "9:16"
@@ -608,6 +610,7 @@ async function render(
       label,
       localOpening || null,
       ...(uploadedOpening ? ["uploaded-opening"] : []),
+      ...(listingFrame && index === 0 ? ["clean-first-frame"] : []),
       presentation.card(job, segment.kind),
       ...(shortTour ? [camera, hFov, vFov] : []),
       ...(spatialClip
@@ -634,21 +637,28 @@ async function render(
             )
           : "",
       );
-      await fs.writeFile(
-        path.join(cache, ass),
-        presentation.decorate(
-          subtitles(
-            c.subtitles ? segment : { ...segment, captions: [] },
-            width,
-            height,
-            label,
-            elapsed - frame / fps,
-          ),
-          segment,
+      const overlay = presentation.decorate(
+        subtitles(
+          c.subtitles ? segment : { ...segment, captions: [] },
           width,
           height,
-          presentation.card(job, segment.kind),
+          label,
+          elapsed - frame / fps,
         ),
+        segment,
+        width,
+        height,
+        presentation.card(job, segment.kind),
+      );
+      // Reserve frame zero for the cover so the movie's opening titles do not appear twice.
+      await fs.writeFile(
+        path.join(cache, ass),
+        listingFrame && index === 0
+          ? overlay.replace(
+              /^Dialogue: (\d+),0:00:00\.00,/gm,
+              "Dialogue: $1,0:00:00.01,",
+            )
+          : overlay,
       );
       const base = spatialClip
         ? `trim=start_frame=${spatialClip.offsetFrames}:end_frame=${spatialClip.offsetFrames + frames},setpts=PTS-STARTPTS,scale=${width}:${height},setsar=1`
@@ -818,6 +828,10 @@ async function render(
   if (
     cover ? cover.imageSource !== "frame" : c.design === "standard" || shortTour
   ) {
+    if (listingFrame) {
+      const error = presentation.listingCoverError(job.property);
+      ensure(!error, error);
+    }
     const scene = cover
       ? cover.imageSource === "last"
         ? job.scenes.at(-1)
@@ -843,9 +857,11 @@ async function render(
             segment.sceneId === scene.id && segment.kind !== "opening",
         )
       ];
-    const base = spatialCover
-      ? `select=eq(n\\,0),scale=${width}:${height},setsar=1`
-      : coverProjection(width, height, hFov, vFov, scene.yaw);
+    const base = listingFrame
+      ? ""
+      : spatialCover
+        ? `select=eq(n\\,0),scale=${width}:${height},setsar=1`
+        : coverProjection(width, height, hFov, vFov, scene.yaw);
     await run(
       ffmpeg(),
       [
@@ -853,9 +869,14 @@ async function render(
         "error",
         "-y",
         "-i",
-        spatialCover?.file || path.join(ownerDir, "assets", scene.asset),
+        listingFrame
+          ? "final.mp4"
+          : spatialCover?.file || path.join(ownerDir, "assets", scene.asset),
+        "-map",
+        "0:V:0",
         "-vf",
-        `${base},ass=${caption}`,
+        [base, `ass=${caption}`].filter(Boolean).join(","),
+        ...(listingFrame ? ["-q:v", "2"] : []),
         "-frames:v",
         "1",
         "cover.jpg",

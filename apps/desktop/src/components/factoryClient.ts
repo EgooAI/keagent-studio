@@ -168,6 +168,7 @@ export const phaseLabel = {
   canceled: "已取消",
 };
 export type FactoryRow = {
+  coverReason?: string;
   id: string;
   batchId?: string;
   propertyId: string;

@@ -91,7 +91,7 @@ func validateCatalogTemplate(resource object) error {
 		return nil
 	case "cover":
 		if len(d) != 6 || (d["design"] != "classic" && d["design"] != "standard" && d["design"] != "short-tour") ||
-			!templateColor.MatchString(str(d["brandColor"])) || (d["imageSource"] != "first" && d["imageSource"] != "last" && d["imageSource"] != "frame") ||
+			!templateColor.MatchString(str(d["brandColor"])) || (d["imageSource"] != "first" && d["imageSource"] != "last" && d["imageSource"] != "frame" && d["imageSource"] != "listing-frame") ||
 			(d["titleSource"] != "opening" && d["titleSource"] != "property") {
 			return fail(422, "封面版式、品牌色或图文来源无效")
 		}
@@ -180,6 +180,9 @@ func libraryPartName(kind string, definition, source object) string {
 	name := str(source["name"])
 	switch kind {
 	case "cover":
+		if definition["imageSource"] == "listing-frame" {
+			return "成片首帧 · 三行房源封面"
+		}
 		if definition["imageSource"] == "frame" {
 			return "成片首秒截帧"
 		}

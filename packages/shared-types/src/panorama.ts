@@ -84,6 +84,7 @@ export interface PanoramaProperty {
   sample?: boolean;
 }
 export interface PanoramaDraft {
+  coverReason?: string;
   confirmation?: "whole";
   templateVersion?: string;
   templateSnapshot?: import("./production-template").ProductionTemplateSnapshot;

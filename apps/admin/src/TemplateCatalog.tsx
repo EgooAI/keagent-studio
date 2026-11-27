@@ -1,3 +1,4 @@
+import { ListingCoverPreview } from "@keagent/theme/listing-cover";
 import type { CSSProperties } from "react";
 import { Alert, Button, Empty, Form, Input, Select, Switch } from "antd";
 import { useQuery } from "@tanstack/react-query";
@@ -120,6 +121,8 @@ export function CatalogSummary({
       );
     }
     case "cover":
+      if (definition.imageSource === "listing-frame")
+        return <span>成片首帧 · 三行房源封面</span>;
       if (definition.imageSource === "frame")
         return <span>取成片首秒画面</span>;
       return (
@@ -284,7 +287,9 @@ export function CoverExample({
           } as CSSProperties
         }
       >
-        {cover.imageSource === "frame" ? (
+        {cover.imageSource === "listing-frame" ? (
+          <ListingCoverPreview landscape={aspect === "16:9"} />
+        ) : cover.imageSource === "frame" ? (
           <video
             aria-label="示例成片首秒画面"
             muted
@@ -324,7 +329,8 @@ export function CoverExample({
 
 export function CoverEditor() {
   const cover: CoverTemplate | undefined = Form.useWatch("cover");
-  const frame = cover?.imageSource === "frame";
+  const frame =
+    cover?.imageSource === "frame" || cover?.imageSource === "listing-frame";
   return (
     <div className="admin-cover-editor">
       <div>
@@ -337,6 +343,7 @@ export function CoverEditor() {
             options={[
               { value: "first", label: "首张视频素材" },
               { value: "last", label: "末张视频素材" },
+              { value: "listing-frame", label: "成片首帧 · 三行房源封面" },
               { value: "frame", label: "取成片首秒画面" },
             ]}
           />

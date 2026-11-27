@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"maps"
 	"reflect"
 	"testing"
@@ -235,5 +236,44 @@ func TestAgentTemplatePreviewOmitsCachedOpening(t *testing.T) {
 	segments := rows(obj(got)["segments"])
 	if len(segments) != 1 || obj(segments[0])["id"] != "preview-1" {
 		t.Fatalf("unexpected agent preview: %v", segments)
+	}
+}
+
+func TestListingFrameRecommendedBundles(t *testing.T) {
+	ctx, db := t.Context(), productionTestDB(t)
+	for _, setup := range []func(context.Context, *sql.DB) error{seedVideoTemplates, migrateTemplateLibrary, simplifyShortTourCatalog, publishListingFrameCover, publishListingFrameCover} {
+		if err := setup(ctx, db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	library, err := (&server{db: db}).factoryLibrary(ctx, "cover-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recommended := library["recommended"].([]object)
+	if len(recommended) != 2 {
+		t.Fatalf("unexpected bundles: %v", recommended)
+	}
+	var remaining int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM keagent_resource WHERE payload#>>'{definition,kind}'='cover' AND `+undeletedResourceSQL).Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("expected only the listing cover in the catalog: %d, %v", remaining, err)
+	}
+	var old object
+	var raw []byte
+	if err := db.QueryRowContext(ctx, `SELECT payload->'definition' FROM keagent_resource WHERE id=$1`, "bundle:"+shortTourDefaultID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bundleParts(ctx, db, old, false); err != nil {
+		t.Fatalf("historical bundle: %v", err)
+	}
+	for _, bundle := range recommended {
+		ref := obj(obj(bundle["parts"])["cover"])
+		var source string
+		if err := db.QueryRowContext(ctx, `SELECT payload#>>'{definition,imageSource}' FROM keagent_resource WHERE id=$1 AND payload->>'published'='true'`, ref["id"]).Scan(&source); err != nil || source != "listing-frame" {
+			t.Fatalf("missing first-frame cover: %v %s", err, source)
+		}
 	}
 }

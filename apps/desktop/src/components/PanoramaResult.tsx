@@ -183,7 +183,10 @@ export function PanoramaResult({
             <div className="panorama-cover-result">
               <img src={job.coverUrl} alt="成片封面" />
               <span className="muted">
-                生成的封面 · {job.config.coverTitle || job.property.title}
+                生成的封面 ·{" "}
+                {job.templateSnapshot?.cover?.imageSource === "listing-frame"
+                  ? job.property.community
+                  : job.config.coverTitle || job.property.title}
               </span>
             </div>
           )}

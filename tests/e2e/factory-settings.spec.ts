@@ -147,7 +147,7 @@ async function fixture(
                   kind,
                   design: i ? "standard" : "short-tour",
                   brandColor: "#FFD447",
-                  imageSource: i ? "last" : "first",
+                  imageSource: i ? "last" : "listing-frame",
                   titleSource: "opening",
                   showFacts: !i,
                 },
@@ -554,7 +554,21 @@ async function fixture(
                   property: p,
                   revision: 1,
                   config,
-                  templateSnapshot: structuredClone(t),
+                  templateSnapshot: {
+                    ...structuredClone(t),
+                    ...(withBundles
+                      ? {
+                          cover: mixParts.find(
+                            (part) =>
+                              part.id ===
+                              input.mixes.find(
+                                (mix: any) => mix.id === pair.templateId,
+                              ).parts.cover.id,
+                          )?.cover,
+                        }
+                      : {}),
+                  },
+                  coverReason: pair.coverReason,
                   scenes: withRoomFixture
                     ? [
                         {
@@ -640,6 +654,9 @@ async function fixture(
                 ...row.draft,
                 revision: row.revision,
                 config: input.config,
+                ...(input.coverReason !== undefined
+                  ? { coverReason: input.coverReason }
+                  : {}),
                 segments: input.segments,
                 scenes: input.scenes || row.draft.scenes,
               };
@@ -1141,6 +1158,43 @@ test("经纪人开场每批必选，可选择本机视频库或临时上传，�
   await expect(page.getByRole("heading", { name: "临时开场.mp4" })).toHaveCount(
     0,
   );
+});
+
+test("封面预览随机文案沿用到审核，可换一句并保存", async ({ page }) => {
+  await fixture(page, false, false, true);
+  await page.goto("/#/studio/create?propertyId=user-property");
+  const preview = page.locator(".mix-preview svg[role=img] text").nth(1);
+  await expect(preview).toBeVisible();
+  const previewReason = (await preview.textContent())!;
+  const reasons: string[] = JSON.parse(
+    readFileSync("apps/desktop/electron/production/cover-reasons.json", "utf8"),
+  );
+  expect(reasons).toContain(previewReason);
+  await page.getByRole("button", { name: "选择图片", exact: true }).click();
+  const images = page.getByRole("dialog", { name: "选择视频图片" });
+  await images.getByRole("button", { name: "选择全部", exact: true }).click();
+  await images.getByRole("button", { name: "确认选图" }).click();
+  await expect(preview).toHaveText(previewReason);
+  await page.getByRole("button", { name: "生成 1 条文案" }).click();
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  const reason = page.getByRole("textbox", { name: "封面售卖原因" });
+  await expect(reason).toHaveValue(previewReason);
+  await page.getByRole("button", { name: "换一句", exact: true }).click();
+  await expect(reason).not.toHaveValue(previewReason);
+  await reason.fill("");
+  await expect(
+    page.getByRole("button", { name: "确认并下一条" }),
+  ).toBeDisabled();
+  await reason.fill("换房方便照顾爸妈");
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "保存修改", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "审核", exact: true }).click();
+  await expect(reason).toHaveValue("换房方便照顾爸妈");
+  await page.getByRole("button", { name: "确认并下一条" }).click();
+  await expect(reason).toHaveCount(0);
 });
 
 test("短视频带看审核可单独保存两行开场封面标题", async ({ page }) => {

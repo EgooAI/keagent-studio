@@ -961,6 +961,64 @@ describe("production queue", () => {
     };
   }
 
+  it("draws a cover suggestion without a property reason and renders the reviewed revision", async () => {
+    const {
+      workflow,
+      owner,
+      call,
+      act,
+      pairs,
+      templates,
+      releaseScripts,
+      scriptCalls,
+    } = batchFixture();
+    const properties = (await workflow.factoryProperties()).rows;
+    properties[0].community = "测试小区";
+    Object.assign(templates[0], { cover: { imageSource: "listing-frame" } });
+    vi.spyOn(workflow, "execute").mockImplementation(() => {});
+    await call("pause");
+    const created = await call("create", {
+      requestId: "cover-review",
+      pairs: [{ ...pairs[0], coverReason: "新家交付 准备搬家" }],
+    });
+    expect(created.issues).toEqual([]);
+    releaseScripts();
+    await call("resume");
+    const state = workflow.store(owner);
+    await vi.waitFor(() =>
+      expect(state.production.items[0].phase).toBe("review"),
+    );
+    const draft = state.drafts[0];
+    const bank = require("../production/cover-reasons.json");
+    expect(new Set(bank).size).toBe(bank.length);
+    expect(bank).toContain(draft.coverReason);
+    expect(draft.coverReason).toBe("新家交付 准备搬家");
+    expect(draft.property.details?.saleReason).toBeUndefined();
+    const item = state.production.items[0];
+    expect((await call("detail", { id: item.id })).draft.coverReason).toBe(
+      draft.coverReason,
+    );
+    const save = (coverReason: string) =>
+      workflow.handle("user-a", "save", {
+        id: draft.id,
+        revision: draft.revision,
+        config: draft.config,
+        segments: draft.segments,
+        coverReason,
+      });
+    await expect(save(" ")).rejects.toThrow("封面售卖原因");
+    await expect(save("理由一\n理由二")).rejects.toThrow("一行");
+    const reviewed = await save("搬去和父母同住");
+    await act("confirm", { id: item.id, revision: reviewed.revision });
+    await vi.waitFor(() => expect(state.jobs).toHaveLength(1));
+    const job = state.jobs[0];
+    expect(job.coverReason).toBe(reviewed.coverReason);
+    expect(
+      require("../production/presentation.cjs").card(job, "cover").rows[1],
+    ).toBe("搬去和父母同住");
+    expect(scriptCalls()).toBe(1);
+  });
+
   it("resolves a personal mix once per batch and sends the pinned recipe to script generation for every property", async () => {
     const { workflow, owner, call, templates, releaseScripts } = batchFixture();
     const source = {

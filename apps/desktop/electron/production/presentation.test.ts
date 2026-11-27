@@ -6,6 +6,36 @@ const presentation = require("./presentation.cjs");
 const media = require("../panorama/media.cjs");
 
 describe("short tour presentation", () => {
+  it("uses the confirmed sale reason and keeps the three cover lines separate", () => {
+    const property = {
+      community: "云康园小区",
+      sellingPoints: ["采光好"],
+      areaSqm: 227,
+      layout: "5室2厅1厨3卫",
+    };
+    const card = presentation.card(
+      {
+        property,
+        coverReason: "为孩子安家 卖房变现",
+        templateSnapshot: { cover: { imageSource: "listing-frame" } },
+      },
+      "cover",
+    );
+    expect(card.rows).toEqual([
+      "云康园小区",
+      "为孩子安家 卖房变现",
+      "建面227㎡，5室2厅1厨3卫",
+    ]);
+    expect(
+      presentation.listingCoverError({ ...property, community: "" }),
+    ).toContain("小区名称");
+    expect(presentation.listingCoverError(property)).toBe("");
+    const overlay = presentation.decorate("", null, 720, 1280, card);
+    expect(overlay.match(/Dialogue:/g)).toHaveLength(3);
+    expect(overlay.match(/\\1c&H00D7FF&/g)).toHaveLength(2);
+    expect(overlay).toContain("\\1c&HFFFFFF&");
+    expect(overlay.match(/\\3c&H000000&/g)).toHaveLength(3);
+  });
   it("lets the cover pick its title, facts, layout and color separately from the movie", () => {
     const config = {
       design: "short-tour",

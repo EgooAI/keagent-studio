@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 )
 
 const shortTourDefaultID = "short-tour-vision-v1-1"
@@ -105,6 +106,76 @@ func simplifyShortTourCatalog(ctx context.Context, db *sql.DB) error {
 			SELECT id FROM keagent_resource WHERE payload->'definition' ? 'opening'
 		)
 	)`, retired, keep)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Publish new versions only for the two supplied bundles that are still active.
+func publishListingFrameCover(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	marker, err := tx.ExecContext(ctx, `INSERT INTO keagent_setting(id,payload) VALUES('listing-frame-cover-v1','{}') ON CONFLICT DO NOTHING`)
+	if err != nil {
+		return err
+	}
+	count, err := marker.RowsAffected()
+	if err != nil || count == 0 {
+		return err
+	}
+
+	definition := object{"kind": "cover", "design": "short-tour", "brandColor": "#FFD700", "imageSource": "listing-frame", "titleSource": "property", "showFacts": true}
+	cover, err := importTemplatePart(ctx, tx, object{"version": "1.0.0", "category": "房源带看"}, definition, "listing-frame", true, true)
+	if err != nil {
+		return err
+	}
+	for _, seed := range []string{shortTourDefaultID, shortTourLocalOpeningID} {
+		oldID := "bundle:" + seed
+		var raw []byte
+		err := tx.QueryRowContext(ctx, `SELECT payload FROM keagent_resource WHERE id=$1 AND payload->>'published'='true' AND `+undeletedResourceSQL+` FOR UPDATE`, oldID).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var bundle object
+		if err := json.Unmarshal(raw, &bundle); err != nil {
+			return err
+		}
+		// Respect versions already reserved by administrators, including drafts.
+		var version string
+		if err := tx.QueryRowContext(ctx, `SELECT split_part(v,'.',1)||'.'||split_part(v,'.',2)||'.'||(split_part(v,'.',3)::numeric+1)::text
+      FROM (SELECT payload->>'version' v FROM keagent_resource WHERE (payload->>'familyId'=$1 OR lower(trim(payload->>'name'))=lower(trim($2)))
+        AND payload#>>'{definition,kind}'='bundle' ORDER BY `+resourceVersionOrderSQL+` LIMIT 1) latest`, bundle["familyId"], bundle["name"]).Scan(&version); err != nil {
+			return err
+		}
+		obj(obj(bundle["definition"])["parts"])["cover"] = cover
+		bundle["id"], bundle["version"] = oldID+":listing-frame", version
+		bundle["previewDigest"] = productionDigest(bundle)
+		if err := validateResource(bundle); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE keagent_resource SET payload=payload||'{"published":false}'::jsonb WHERE id=$1`, oldID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO keagent_resource(id,payload) VALUES($1,$2)`, bundle["id"], mustJSON(bundle)); err != nil {
+			return err
+		}
+	}
+	// Historical versions still resolve the retired cover by its pinned ID.
+	_, err = tx.ExecContext(ctx, `UPDATE keagent_resource old SET payload=old.payload ||
+		jsonb_build_object('published',false,'deletedAt',now(),'publishedOnce',true)
+		WHERE old.id=(SELECT payload#>>'{definition,parts,cover,id}' FROM keagent_resource WHERE id=$1)
+		AND old.id<>$2 AND old.payload#>>'{definition,kind}'='cover' AND NOT old.payload ? 'deletedAt'
+		AND NOT EXISTS (SELECT 1 FROM keagent_resource b WHERE b.payload#>>'{definition,parts,cover,id}'=old.id
+			AND b.payload->>'published'='true' AND NOT b.payload ? 'deletedAt')
+		AND NOT EXISTS (SELECT 1 FROM keagent_factory_mix m WHERE m.saved AND m.parts#>>'{cover,id}'=old.id)`,
+		"bundle:"+shortTourDefaultID, cover["id"])
 	if err != nil {
 		return err
 	}

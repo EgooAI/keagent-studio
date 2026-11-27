@@ -1194,6 +1194,9 @@ func main() {
 	if err = simplifyShortTourCatalog(context.Background(), db); err != nil {
 		log.Fatalf("default template catalog migration failed: %v", err)
 	}
+	if err = publishListingFrameCover(context.Background(), db); err != nil {
+		log.Fatalf("listing cover migration failed: %v", err)
+	}
 	if _, err = db.Exec(voiceSchema); err != nil {
 		log.Fatal("voice migration failed")
 	}

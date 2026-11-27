@@ -6,6 +6,7 @@ const domain = require("./domain.cjs");
 const media = require("./media.cjs");
 const music = require("./music.cjs");
 const sources = require("../production/sources.cjs");
+const coverReasons = require("../production/cover-reasons.json");
 const templateLibrary = require("../production/templates.cjs");
 const factory = require("../production/factory.cjs");
 const spatialSource = require("../production/spatial-source.cjs");
@@ -58,6 +59,11 @@ class PanoramaWorkflow {
       !fs.existsSync(file + ".pre-batch")
     )
       fs.copyFileSync(file, file + ".pre-batch", fs.constants.COPYFILE_EXCL);
+    // Older listing covers stored the reviewed reason in the property snapshot.
+    for (const record of [...state.drafts, ...state.jobs]) {
+      if (record.templateSnapshot?.cover?.imageSource === "listing-frame")
+        record.coverReason ??= record.property.details?.saleReason;
+    }
     for (const job of state.jobs) {
       if (job.status === "running") {
         job.status = "failed";
@@ -839,7 +845,17 @@ class PanoramaWorkflow {
           })),
         );
       }
+      let coverReason = draft.coverReason;
+      if (input.coverReason !== undefined) {
+        domain.ensure(
+          draft.templateSnapshot?.cover?.imageSource === "listing-frame",
+          "该封面没有售卖原因",
+        );
+        coverReason = domain.text(input.coverReason, "封面售卖原因", 24);
+        domain.ensure(!/[\r\n\t]/.test(coverReason), "封面售卖原因请写在一行");
+      }
       const previous = {
+        coverReason: draft.coverReason,
         segments: draft.segments,
         scenes: draft.scenes,
         config: draft.config,
@@ -847,6 +863,7 @@ class PanoramaWorkflow {
       };
       draft.segments = domain.validateSegments(input.segments, draft.segments);
       draft.scenes = scenes;
+      draft.coverReason = coverReason;
       draft.config = c;
       draft.revision++;
       try {
@@ -885,6 +902,7 @@ class PanoramaWorkflow {
         id: crypto.randomUUID(),
         draftId: draft.id,
         draftRevision: draft.revision,
+        coverReason: draft.coverReason,
         property: structuredClone(draft.property),
         sample: draft.sample,
         confirmation: draft.confirmation,
@@ -1179,6 +1197,13 @@ class PanoramaWorkflow {
       const draft = {
         id: draftId,
         revision: 1,
+        ...(templateSnapshot?.cover?.imageSource === "listing-frame"
+          ? {
+              coverReason:
+                item?.coverReason ??
+                coverReasons[crypto.randomInt(coverReasons.length)],
+            }
+          : {}),
         property: structuredClone(property),
         sample: property.sample === true,
         confirmation: preparing ? "whole" : undefined,
@@ -1215,6 +1240,8 @@ class PanoramaWorkflow {
     }
   }
   async preflight(draft, owner, reviewOnly = false, checks = {}) {
+    if (draft.templateSnapshot?.cover?.imageSource === "listing-frame")
+      domain.text(draft.coverReason, "封面售卖原因", 24);
     domain.ensure(
       draft.config.cameraMode !== "spatial" ||
         draft.scenes.every((scene) => scene.spatial),

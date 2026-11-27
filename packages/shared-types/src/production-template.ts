@@ -78,7 +78,7 @@ export type CoverTemplate = {
   kind: "cover";
   design: ProductionRenderConfig["design"];
   brandColor: string;
-  imageSource: "first" | "last" | "frame";
+  imageSource: "first" | "last" | "frame" | "listing-frame";
   titleSource: "opening" | "property";
   showFacts: boolean;
 };

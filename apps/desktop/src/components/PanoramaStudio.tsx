@@ -54,6 +54,7 @@ import { useWorkspace } from "../lib/workspace";
 import { PageHeader, formatDate } from "./common";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryImagePicker } from "./FactoryImagePicker";
+import coverReasons from "../../electron/production/cover-reasons.json";
 import { FactoryMixComposer } from "./FactoryMixComposer";
 import { MusicPreview, useMusicTracks } from "./MusicLibrary";
 import {
@@ -69,6 +70,7 @@ import {
   factoryRequest,
   mixRequest,
   mixTemplate,
+  partFor,
   partKinds,
   pairKey,
   phaseLabel,
@@ -89,6 +91,10 @@ import {
 } from "./factoryClient";
 import { request, stageNames } from "./panoramaClient";
 import "./video-factory.css";
+
+const randomCoverReason = () =>
+  coverReasons[Math.floor(Math.random() * coverReasons.length)];
+const newPreviewReasons = () => new Map([["", randomCoverReason()]]);
 
 function isOrdinaryShortTour(template?: FactoryTemplate) {
   return (
@@ -248,6 +254,7 @@ export function PanoramaStudio() {
     segments: PanoramaSegment[];
     scenes: PanoramaScene[];
     coverTitle?: string;
+    coverReason?: string;
     renderSettings: RenderEdits;
   }>();
   const [busy, setBusy] = useState(false);
@@ -269,6 +276,8 @@ export function PanoramaStudio() {
             edits.draft.scenes[i].spatial?.targetPanoIndex,
       ) ||
       coverTitleChanged ||
+      (edits.coverReason !== undefined &&
+        edits.coverReason !== edits.draft.coverReason) ||
       renderKeys.some(
         (key) =>
           edits.renderSettings[key] !== undefined &&
@@ -481,6 +490,26 @@ export function PanoramaStudio() {
     void client.invalidateQueries({ queryKey: ["factory-catalog"] });
     void message.success("已保存到我的搭配");
   }
+  const [previewReasons, setPreviewReasons] = useState(newPreviewReasons);
+  const listingPreview =
+    currentMix &&
+    library &&
+    partFor(library.parts, currentMix, "cover")?.cover?.imageSource ===
+      "listing-frame";
+  const previewKey =
+    listingPreview && propertyIds.length
+      ? pairKey({
+          propertyId: propertyIds[0],
+          templateId: currentMix.id,
+          version: currentMix.version,
+        })
+      : "";
+  const previewReason =
+    previewReasons.get(previewKey) ??
+    (previewReasons.size === 1 ? previewReasons.get("")! : randomCoverReason());
+  if (!previewReasons.has(previewKey)) {
+    setPreviewReasons(new Map(previewReasons).set(previewKey, previewReason));
+  }
   const firstProperty = propertyIds.length
     ? workspace?.properties.find((property) => property.id === propertyIds[0])
     : undefined;
@@ -638,6 +667,7 @@ export function PanoramaStudio() {
   const scenes = edits?.scenes || row?.draft?.scenes || [];
   const coverTitle =
     edits?.coverTitle ?? (row?.draft ? reviewCoverTitle(row.draft) : "");
+  const coverReason = edits?.coverReason ?? row?.draft?.coverReason ?? "";
   const taskRenderEdits = edits?.renderSettings || {};
   const refresh = () =>
     Promise.all([
@@ -727,8 +757,12 @@ export function PanoramaStudio() {
           .filter((mix) => activeTemplateKeys.has(templateKey(mix)))
           .map(mixRequest)
       : undefined;
+    const submittedPairs = pairs.map((pair) => {
+      const coverReason = previewReasons.get(pairKey(pair));
+      return coverReason ? { ...pair, coverReason } : pair;
+    });
     const signature = JSON.stringify([
-      pairs,
+      submittedPairs,
       selectedImages,
       voiceId,
       openingClipId,
@@ -743,7 +777,7 @@ export function PanoramaStudio() {
       issues: FactoryIssue[];
     }>("create", {
       requestId: submission.current.id,
-      pairs,
+      pairs: submittedPairs,
       ...(mixes ? { mixes } : {}),
       sceneIdsByProperty: selectedImages,
       voiceId,
@@ -763,6 +797,7 @@ export function PanoramaStudio() {
     if (!result.batchId) return;
     void message.success("已创建 " + pairs.length + " 条视频任务");
     submission.current = undefined;
+    setPreviewReasons(newPreviewReasons());
     setPropertyIds([]);
     setSceneIdsByProperty({});
     setBatchRenderEdits({});
@@ -795,6 +830,7 @@ export function PanoramaStudio() {
     const saved = await request<PanoramaDraft>("save", {
       id: draft.id,
       revision: draft.revision,
+      ...(edits?.coverReason !== undefined ? { coverReason } : {}),
       config: {
         ...draft.config,
         ...renderOverrides(
@@ -884,9 +920,27 @@ export function PanoramaStudio() {
       modal.confirm({
         title: label + "（" + selected.length + " 条）",
         content:
-          action === "confirm"
-            ? "确认后将按顺序自动制作视频。"
-            : "取消所选任务，同批其他任务继续执行。",
+          action === "confirm" ? (
+            <>
+              确认后将按顺序自动制作视频。
+              {selected.some((item) => item.coverReason) && (
+                <>
+                  <p>请核对这些视频的封面售卖原因。</p>
+                  <ul className="factory-errors">
+                    {selected
+                      .filter((item) => item.coverReason)
+                      .map((item) => (
+                        <li key={item.id}>
+                          {item.propertyTitle} · {item.coverReason}
+                        </li>
+                      ))}
+                  </ul>
+                </>
+              )}
+            </>
+          ) : (
+            "取消所选任务，同批其他任务继续执行。"
+          ),
         okText: label,
         cancelText: "返回",
         onOk: submit,
@@ -1012,6 +1066,7 @@ export function PanoramaStudio() {
       segments={segments}
       scenes={scenes}
       coverTitle={coverTitle}
+      coverReason={coverReason}
       renderSettings={taskRenderEdits}
       dirty={dirty}
       busy={busy}
@@ -1025,12 +1080,12 @@ export function PanoramaStudio() {
         if (!row.draft) return;
         const draft = row.draft;
         setEdits((current) => ({
+          ...current,
           draft: current?.draft || draft,
           segments: (current?.segments || draft.segments).map((s) =>
             s.id === id ? { ...s, text } : s,
           ),
           scenes: current?.scenes || draft.scenes,
-          coverTitle: current?.coverTitle,
           renderSettings: current?.renderSettings || {},
         }));
       }}
@@ -1038,23 +1093,24 @@ export function PanoramaStudio() {
         if (!row.draft) return;
         const draft = row.draft;
         setEdits((current) => ({
+          ...current,
           draft: current?.draft || draft,
           segments: current?.segments || draft.segments,
           scenes: (current?.scenes || draft.scenes).map((scene) =>
             scene.id === id ? { ...scene, ...camera } : scene,
           ),
-          coverTitle: current?.coverTitle,
           renderSettings: current?.renderSettings || {},
         }));
       }}
-      onCoverTitle={(title) => {
+      onEditCover={(changes) => {
         if (!row.draft) return;
         const draft = row.draft;
         setEdits((current) => ({
+          ...current,
           draft: current?.draft || draft,
           segments: current?.segments || draft.segments,
           scenes: current?.scenes || draft.scenes,
-          coverTitle: title,
+          ...changes,
           renderSettings: current?.renderSettings || {},
         }));
       }}
@@ -1062,10 +1118,10 @@ export function PanoramaStudio() {
         if (!row.draft) return;
         const draft = row.draft;
         setEdits((current) => ({
+          ...current,
           draft: current?.draft || draft,
           segments: current?.segments || draft.segments,
           scenes: current?.scenes || draft.scenes,
-          coverTitle: current?.coverTitle,
           renderSettings,
         }));
       }}
@@ -1227,6 +1283,7 @@ export function PanoramaStudio() {
                 onRefresh={() => void catalog.refetch()}
                 refreshing={catalog.isFetching}
                 property={firstProperty}
+                previewReason={previewReason}
                 sceneIds={firstProperty && sceneIdsByProperty[firstProperty.id]}
                 disabled={busy}
                 voiceSelect={voiceSelect}

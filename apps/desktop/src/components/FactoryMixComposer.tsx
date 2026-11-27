@@ -1,3 +1,4 @@
+import { ListingCoverPreview } from "@keagent/theme/listing-cover";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -50,6 +51,7 @@ const sources = {
   first: "首张视频素材",
   last: "末张视频素材",
   frame: "成片首秒画面",
+  "listing-frame": "成片首帧 · 三行房源封面",
 };
 const thumbnail = (library: FactoryLibrary, bundle: FactoryBundle) =>
   partFor(library.parts, bundle, "edit")?.config?.videoMode === "avatar"
@@ -64,8 +66,9 @@ function describe(part: FactoryPart) {
       part.config.resolution,
     ].join(" · ");
   if (part.cover)
-    return part.cover.imageSource === "frame"
-      ? sources.frame
+    return part.cover.imageSource === "frame" ||
+      part.cover.imageSource === "listing-frame"
+      ? sources[part.cover.imageSource]
       : designs[part.cover.design] + " · " + sources[part.cover.imageSource];
   return part.language === "en-US" ? "英文口播" : "中文口播";
 }
@@ -74,19 +77,22 @@ function CoverPreview({
   cover,
   edit,
   property,
+  previewReason,
   sceneIds,
   language,
 }: {
   cover: CoverTemplate;
   edit: FactoryPart;
   property?: Property;
+  previewReason: string;
   sceneIds?: string[];
   language?: string;
 }) {
   const ratio = edit.config?.aspectRatio ?? "9:16";
   const frame = cover.imageSource === "frame";
   const shortTour = edit.config?.design === "short-tour";
-  const actual = !frame && !!property && !!sceneIds?.length;
+  const listingFrame = cover.imageSource === "listing-frame";
+  const actual = !listingFrame && !frame && !!property && !!sceneIds?.length;
   const preview = useQuery({
     queryKey: [
       "factory-cover-image",
@@ -147,7 +153,13 @@ function CoverPreview({
             } as CSSProperties
           }
         >
-          {frame ? (
+          {listingFrame ? (
+            <ListingCoverPreview
+              property={property}
+              reason={previewReason}
+              landscape={ratio === "16:9"}
+            />
+          ) : frame ? (
             <video
               aria-label="示例成片首秒"
               muted
@@ -194,11 +206,13 @@ function CoverPreview({
         </figure>
       </div>
       <small>
-        {frame
-          ? "示例首秒画面 · 制作完成后截取本片"
-          : home
-            ? home.title + " · " + sources[cover.imageSource]
-            : "示例房源"}
+        {listingFrame
+          ? "示例背景 · 制作完成后取本片第一帧"
+          : frame
+            ? "示例首秒画面 · 制作完成后截取本片"
+            : home
+              ? home.title + " · " + sources[cover.imageSource]
+              : "示例房源"}
       </small>
     </section>
   );
@@ -213,6 +227,7 @@ export function FactoryMixComposer({
   onRefresh,
   refreshing,
   property,
+  previewReason,
   sceneIds,
   disabled,
   voiceSelect,
@@ -226,6 +241,7 @@ export function FactoryMixComposer({
   onRefresh: () => void;
   refreshing: boolean;
   property?: Property;
+  previewReason: string;
   sceneIds?: string[];
   disabled: boolean;
   voiceSelect: ReactNode;
@@ -436,6 +452,7 @@ export function FactoryMixComposer({
           cover={cover}
           edit={edit}
           property={property}
+          previewReason={previewReason}
           sceneIds={sceneIds}
           language={
             current && partFor(library.parts, current, "script")?.language

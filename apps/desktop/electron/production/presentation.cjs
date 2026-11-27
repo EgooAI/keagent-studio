@@ -16,9 +16,34 @@ function lines(value, count, limit = 2) {
     result.push(chars.slice(i, i + count).join(""));
   return result;
 }
+function listingCoverRows(property, reason) {
+  return [
+    property.community,
+    reason,
+    [property.areaSqm > 0 && `建面${property.areaSqm}㎡`, property.layout]
+      .filter(Boolean)
+      .join("，"),
+  ].map((value) => escape(value).trim());
+}
+
+function listingCoverError(property) {
+  const missing = [];
+  if (!property.community?.trim()) missing.push("小区名称");
+  if (!(property.areaSqm > 0) && !property.layout?.trim())
+    missing.push("建筑面积或户型");
+  return missing.length
+    ? "请在房源资料中补充" + missing.join("、") + "后制作三行封面"
+    : "";
+}
+
 function card(job, kind) {
   const cover = kind === "cover" && job.templateSnapshot?.cover;
   if (cover) {
+    if (cover.imageSource === "listing-frame")
+      return {
+        design: "listing-frame",
+        rows: listingCoverRows(job.property, job.coverReason),
+      };
     if (cover.imageSource === "frame") return {};
     const opening = cover.titleSource === "opening" ? card(job, "opening") : {};
     return {
@@ -211,6 +236,36 @@ function shortCaptions(captions, pauses = []) {
   });
 }
 function decorate(ass, segment, width, height, theme = {}) {
+  if (theme.design === "listing-frame") {
+    const scale = Math.min(width, height) / 720;
+    ass = ass.replace(
+      "WrapStyle: 0",
+      "ScaledBorderAndShadow: yes\nWrapStyle: 2",
+    );
+    const headings = theme.rows.slice(0, 2);
+    const units = (text) =>
+      Array.from(text).reduce(
+        (sum, ch) => sum + (/^[\x20-\x7e]$/.test(ch) ? 0.65 : 1),
+        0,
+      );
+    const fit = (size, text) =>
+      Math.min(size * scale, (width * 0.92) / Math.max(1, units(text)));
+    const titleSize = Math.min(...headings.map((text) => fit(70, text)));
+    const top = Math.round(height * 0.105);
+    const step = Math.round(97 * scale);
+    return (
+      ass +
+      theme.rows
+        .map((text, i) => {
+          const size =
+            i < 2 ? titleSize : Math.min(fit(49, text), titleSize * 0.82);
+          const fill = i < 2 ? "00D7FF" : "FFFFFF";
+          const outline = Math.max(1, Math.round(size * 0.085));
+          return `Dialogue: 1,0:00:00.00,0:00:01.00,Caption,,0,0,0,,{\\an8\\q2\\pos(${width / 2},${top + i * step})\\b1\\fs${Math.round(size)}\\bord${outline}\\shad0\\1c&H${fill}&\\3c&H000000&}${text}\n`;
+        })
+        .join("")
+    );
+  }
   if (theme.design === "classic" && theme.title) {
     const x = Math.round(width * 0.07);
     const right = width - x;
@@ -315,4 +370,10 @@ function decorate(ass, segment, width, height, theme = {}) {
   const events = `Dialogue: 1,0:00:00.00,0:10:00.00,Accent,,0,0,0,,{\\an7\\pos(${left},${top - 18})\\p1}m 0 0 l ${Math.round(width * 0.1)} 0 l ${Math.round(width * 0.1)} 6 l 0 6{\\p0}\nDialogue: 1,0:00:00.00,0:10:00.00,Title,,0,0,0,,${titleLines.join("\\N")}\n${theme.facts ? `Dialogue: 1,0:00:00.00,0:10:00.00,Facts,,0,0,0,,${lines(theme.facts, width < height ? 22 : 48, 3).join("\\N")}\n` : ""}`;
   return ass + events;
 }
-module.exports = { card, decorate, shortCaptions, subtitleFont };
+module.exports = {
+  card,
+  decorate,
+  listingCoverError,
+  shortCaptions,
+  subtitleFont,
+};
