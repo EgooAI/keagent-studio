@@ -93,7 +93,7 @@ pnpm build
 pnpm package:desktop  # 当前系统的未签名、未压缩 Electron 前端目录
 ```
 
-内测安装包用 `pnpm package:desktop:installer` 在目标系统构建。构建时设置 `KEAGENT_PUBLIC_ORIGIN` 为测试服务器的 HTTPS 源，设置 `VITE_API_MODE=live`。安装包包含对应平台的 FFmpeg 和 FFprobe，安装包输出到 `release/`，文件名以 `AI-Laike-` 开头。私有仓库的 Desktop installers 工作流提供 Windows x64、Mac Apple Silicon 和 Mac Intel 安装包。
+内测安装包用 `pnpm package:desktop:installer` 在目标系统构建。构建时设置 `KEAGENT_PUBLIC_ORIGIN` 为测试服务器的 HTTPS 源，设置 `VITE_API_MODE=live`。安装包包含对应平台的 FFmpeg 和 FFprobe，安装包输出到 `release/`，文件名以 `AI-Laike-` 开头。正式打包分支的 Desktop installers 工作流生成 Windows x64 和 Apple 芯片 Mac 安装包。Mac 版本走异步公证，恢复与发布步骤见 [桌面更新发布](docs/desktop-updates.md)。
 
 新版沿用原应用 ID 和 `KeAgent Studio` 本地数据目录，供已有安装继续读取登录状态、平台账号和本地任务。
 

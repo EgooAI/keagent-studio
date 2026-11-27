@@ -18,7 +18,7 @@ import { _electron } from "@playwright/test";
 
 assert.equal(process.platform, "darwin");
 assert.equal(process.arch, "arm64");
-const [oldDir, nextDir, verificationMode] = process.argv.slice(2);
+const [oldDir, nextDir] = process.argv.slice(2);
 async function zip(dir) {
   const files = (await readdir(dir)).filter((f) => f.endsWith("-arm64.zip"));
   assert.equal(files.length, 1);
@@ -75,6 +75,7 @@ try {
         path.join(bundle, "Contents/Info.plist"),
       ]);
     run("ditto", ["-x", "-k", path.join(oldDir, oldZip), root]);
+    run("spctl", ["--assess", "--type", "execute", bundle]);
     const initial = appVersion();
     assert.notEqual(initial, targetVersion);
     const updateConfig = await readFile(
@@ -164,9 +165,8 @@ try {
         "Updated app did not relaunch",
       );
       run("codesign", ["--verify", "--deep", "--strict", bundle]);
-      if (verificationMode !== "preflight")
-        run("xcrun", ["stapler", "validate", bundle]);
-      console.log("Relaunched", appVersion(), "pid", pid, verificationMode);
+      run("xcrun", ["stapler", "validate", bundle]);
+      console.log("Relaunched notarized app", appVersion(), "pid", pid);
       process.kill(Number(pid), "SIGTERM");
     } finally {
       if (oldProcess.exitCode === null && oldProcess.signalCode == null)

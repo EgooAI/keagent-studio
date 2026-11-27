@@ -1,299 +1,296 @@
 name: Desktop installers
-run-name: Mac QA ${{ inputs.inspect_notary && 'status' || inputs.recovery }} from ${{ inputs.baseline_run }}
+run-name: ${{ inputs.notary_run && format('Mac notarization · build {0}', inputs.notary_run) || github.event.head_commit.message || 'Desktop installers' }}
 
 on:
   push:
     branches: [codex/desktop-packaging]
   workflow_dispatch:
     inputs:
-      inspect_notary:
-        description: Check Apple's status for today's AI来客 submissions
-        required: false
-        type: boolean
-        default: false
-      recovery:
-        description: Preserve signed archives or finish an existing submission
-        required: false
-        type: choice
-        options: [none, prepare, preflight, resume, verify]
-        default: none
-      baseline_run:
-        description: Signed baseline workflow run ID
-        required: true
-        type: string
       public_origin:
-        description: AI来客 HTTPS origin
+        description: AI来客 HTTPS origin for a new build
         required: true
         default: https://47.93.88.61
         type: string
+      notary_run:
+        description: Resume an existing signed Mac build (original run ID)
+        type: string
+      baseline_run:
+        description: Optional previous packaging run for the Mac upgrade test
+        type: string
+
+concurrency:
+  group: desktop-installers-${{ inputs.notary_run || github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
   actions: read
 
+env:
+  KEAGENT_PUBLIC_ORIGIN: ${{ inputs.public_origin || 'https://47.93.88.61' }}
+  VITE_API_MODE: live
+
 jobs:
-  notary-status:
-    if: inputs.inspect_notary
-    runs-on: macos-15
-    steps:
-      - if: inputs.recovery == 'prepare'
-        name: Fetch submission receipts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN: ${{ inputs.baseline_run }}
-        run: |
-          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" -n receipt-0.1.1 -D receipts/0.1.1
-      - name: Read submission status
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          TEAM: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [[ -d receipts ]]; then
-            for f in receipts/*/submission.json; do
-              id=$(jq -er .id "$f")
-              status=$(xcrun notarytool info "$id" --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json | jq -er .status)
-              echo "APPLE_STATUS $id $status"
-            done
-            exit 0
-          fi
-          xcrun notarytool history --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json |
-            jq '[.history[] | select(.name | contains("AI来客")) | {name, status, createdDate, id}] | .[:4]'
-  package:
-    if: ${{ !inputs.inspect_notary && inputs.recovery == 'none' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            target: mac-arm64
-
-    runs-on: ${{ matrix.runner }}
+  windows:
+    if: ${{ !inputs.notary_run }}
+    runs-on: windows-2025
     timeout-minutes: 90
-    env:
-      KEAGENT_PUBLIC_ORIGIN: ${{ inputs.public_origin || 'https://47.93.88.61' }}
-      VITE_API_MODE: live
-
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - &checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - &node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24.22.3
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.12"
-      - run: npm install --global pnpm@10.33.3
-      - run: pnpm install --frozen-lockfile
-      - name: Select next validation version
-        run: npm pkg set version=0.1.1
-      - if: runner.os == 'macOS'
-        env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          test -n "$CSC_LINK" && test -n "$APPLE_ID" && test -n "$APPLE_APP_SPECIFIC_PASSWORD" && test -n "$APPLE_TEAM_ID" || { echo "Configure Developer ID signing and notarization secrets"; exit 1; }
-          pnpm package:desktop:installer
-      - name: Check update feed
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            test -s release/latest.yml && test -s release/*.exe.blockmap
-          else
-            test -s release/latest-mac.yml && test -s release/*.zip && test -s release/*.zip.blockmap
-          fi
-      - name: Check Mac disk image
-        if: runner.os == 'macOS'
-        shell: bash
-        run: &verify_mac_disk_image |
-          dmg=$(find release -maxdepth 1 -name '*.dmg' -print -quit)
-          test -n "$dmg"
-          mount=$(mktemp -d)
-          trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true; rmdir "$mount"' EXIT
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          spctl --assess --type execute --verbose "$mount/AI来客.app"
-          xcrun stapler validate "$mount/AI来客.app"
-          node scripts/douyin-package-smoke.mjs "$mount/AI来客.app/Contents/MacOS/AI来客"
-      - name: Fetch verified baseline package
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASELINE_RUN: ${{ inputs.baseline_run }}
-        run: gh run download "$BASELINE_RUN" --repo "$GITHUB_REPOSITORY" --name AI-Laike-mac-arm64 --dir "$RUNNER_TEMP/baseline"
-      - name: Verify full and differential updates and relaunch
-        run: node scripts/verify-mac-upgrade.mjs "$RUNNER_TEMP/baseline" release
-
-  recovery:
-    if: ${{ !inputs.inspect_notary && (inputs.recovery == 'prepare' || inputs.recovery == 'resume') }}
-    runs-on: macos-15
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ['0.1.1']
-    env:
-      VERSION: ${{ matrix.version }}
-      KEAGENT_PUBLIC_ORIGIN: https://updates.example.test
-      VITE_API_MODE: live
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24.22.3
-      - if: inputs.recovery == 'prepare'
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      - &python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
-      - run: |
-          npm install --global pnpm@10.33.3
-          pnpm install --frozen-lockfile
-          npm pkg set version="$VERSION"
-      - name: Build signed app and preserve exact submission bytes
-        if: inputs.recovery == 'prepare'
+      - &pnpm
+        run: npm install --global pnpm@10.33.3
+      - &deps
+        run: pnpm install --frozen-lockfile
+      - env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: pnpm package:desktop:installer
+      - name: Check Windows installer
+        shell: pwsh
+        run: |
+          if (!(Test-Path release/latest.yml) -or !(Test-Path release/*.exe.blockmap)) { throw 'Missing Windows update feed' }
+          $installer = Get-ChildItem -LiteralPath release -Filter '*.exe'
+          if (@($installer).Count -ne 1) { throw 'Expected one Windows installer' }
+          $target = Join-Path $env:RUNNER_TEMP 'AI-Laike-Smoke'
+          $installation = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$target" -WindowStyle Hidden -Wait -PassThru
+          if ($installation.ExitCode -ne 0) { throw "Installer failed: $($installation.ExitCode)" }
+          node scripts/douyin-package-smoke.mjs (Join-Path $target 'AI来客.exe')
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: AI-Laike-windows-x64
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          compression-level: 0
+
+  mac-prepare:
+    if: ${{ !inputs.notary_run && github.ref == 'refs/heads/codex/desktop-packaging' }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - &saved
+        name: Check artifacts before retrying a job
+        id: saved
+        if: github.run_attempt != '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" |
+            jq -r '[.artifacts[] | select(.expired == false) | .name] |
+              "signed=\(contains(["mac-signed"]))",
+              "receipt=\(contains(["mac-notary-receipt"]))",
+              "installer=\(contains(["AI-Laike-mac-arm64"]))",
+              "indexed=\(any(.[]; startswith("mac-verified-")))"' >> "$GITHUB_OUTPUT"
+      - *checkout
+      - *node
+      - *python
+      - *pnpm
+      - *deps
+      - name: Build and sign Apple Silicon app
+        if: steps.saved.outputs.signed != 'true'
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          BASELINE_RUN: ${{ inputs.baseline_run }}
         run: |
+          if [[ "${{ steps.saved.outputs.receipt }}" == true ]]; then
+            echo "The signed archive for this receipt is missing; start a new build." >&2
+            exit 1
+          fi
           node scripts/provision-desktop-media.mjs
           pnpm prepare:desktop-package --installer
           pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac zip --arm64 --publish never
-          app=$(find release -maxdepth 2 -name 'AI来客.app' -print -quit)
-          codesign --verify --deep --strict "$app"
+          codesign --verify --deep --strict "release/mac-arm64/AI来客.app"
           mkdir payload
+          mv release/*-arm64.zip "payload/AI-Laike-$GITHUB_RUN_ID.zip"
           cp output/desktop-app/package.json payload/app-package.json
-          mv release/*-arm64.zip "payload/AI来客-$VERSION.zip"
+          jq -n --arg origin "$KEAGENT_PUBLIC_ORIGIN" --arg baseline "$BASELINE_RUN" '{origin:$origin,baseline:$baseline}' > payload/build.json
           (cd payload && shasum -a 256 *.zip > sha256.txt)
-      - if: inputs.recovery == 'prepare'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: steps.saved.outputs.signed != 'true'
         with:
-          name: signed-${{ matrix.version }}
+          name: mac-signed
           path: payload/
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
-      - name: Submit once and preserve the submission ID
-        if: inputs.recovery == 'prepare'
-        env:
-          BASELINE_RUN: ${{ inputs.baseline_run }}
+
+  mac-submit:
+    defaults:
+      run:
+        shell: bash
+    needs: mac-prepare
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - *saved
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: mac-signed
+          path: payload
+      - name: Submit saved archive to Apple
+        if: steps.saved.outputs.receipt != 'true'
+        env: &notary_credentials
           APPLE_ID: ${{ secrets.APPLE_ID }}
           PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          (cd payload && shasum -a 256 -c sha256.txt)
+          archive="AI-Laike-$GITHUB_RUN_ID.zip"
+          args=(--apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json)
           mkdir receipt
-          echo "$BASELINE_RUN" > receipt/baseline-run.txt
-          xcrun notarytool submit "payload/AI来客-$VERSION.zip" --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json > receipt/submission.json
+          if [[ "$GITHUB_RUN_ATTEMPT" != 1 ]]; then
+            xcrun notarytool history "${args[@]}" | jq --arg name "$archive" '[.history[] | select(.name == $name)][0] // empty' > receipt/submission.json
+          fi
+          if [[ ! -s receipt/submission.json ]]; then
+            xcrun notarytool submit "payload/$archive" "${args[@]}" > receipt/submission.json
+          fi
           jq -er .id receipt/submission.json
-      - if: inputs.recovery == 'prepare'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: steps.saved.outputs.receipt != 'true'
         with:
-          name: receipt-${{ matrix.version }}
-          path: receipt/
+          name: mac-notary-receipt
+          path: receipt/submission.json
           retention-days: 30
-      - name: Restore original signed bytes and receipt
-        if: inputs.recovery == 'resume'
+          if-no-files-found: error
+
+  mac-status:
+    defaults:
+      run:
+        shell: bash
+    needs: mac-submit
+    if: ${{ !cancelled() && github.ref == 'refs/heads/codex/desktop-packaging' && (needs.mac-submit.result == 'success' || inputs.notary_run) }}
+    runs-on: macos-15
+    timeout-minutes: 10
+    outputs:
+      decision: ${{ steps.apple.outputs.decision }}
+      commit: ${{ steps.source.outputs.commit }}
+      delay: ${{ steps.source.outputs.delay }}
+    steps:
+      - name: Identify the original packaging commit and receipt
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN: ${{ inputs.baseline_run }}
+          SOURCE_RUN: ${{ inputs.notary_run || github.run_id }}
         run: |
-          gh run download "$SOURCE_RUN" -n "signed-$VERSION" -D payload
-          gh run download "$SOURCE_RUN" -n "receipt-$VERSION" -D receipt
-          (cd payload && shasum -a 256 -c sha256.txt)
-      - name: Verify Apple decision and staple original application
-        if: inputs.recovery == 'resume'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.head_repository.full_name == $repo and .head_branch == "codex/desktop-packaging" and .path == ".github/workflows/desktop-installers.yml" and (.event == "push" or .event == "workflow_dispatch")' run.json
+          echo "commit=$(jq -er .head_sha run.json)" >> "$GITHUB_OUTPUT"
+          age=$(( $(date +%s) - $(jq -r '.created_at | fromdateiso8601' run.json) ))
+          if (( age < 3600 )); then delay=600; else delay=3600; fi
+          echo "delay=$delay" >> "$GITHUB_OUTPUT"
+          gh run download "$SOURCE_RUN" -R "$GITHUB_REPOSITORY" -n mac-notary-receipt -D receipt
+      - name: Check Apple decision
+        id: apple
+        env: *notary_credentials
         run: |
-          submission=$(jq -er .id receipt/submission.json)
+          id=$(jq -er .id receipt/submission.json)
           args=(--apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM")
-          status=$(xcrun notarytool info "$submission" "${args[@]}" --output-format json | jq -er .status)
-          echo "Apple status $status"
-          if [[ "$status" == Invalid ]]; then
-            xcrun notarytool log "$submission" "${args[@]}" | jq '.issues[]? | {path,message}'
-          fi
-          test "$status" = Accepted
-          mkdir -p "$RUNNER_TEMP/restore"
+          decision=$(xcrun notarytool info "$id" "${args[@]}" --output-format json | jq -er .status)
+          echo "$id · $decision" >> "$GITHUB_STEP_SUMMARY"
+          case "$decision" in
+            Accepted|"In Progress") echo "decision=$decision" >> "$GITHUB_OUTPUT" ;;
+            *) xcrun notarytool log "$id" "${args[@]}" | jq '.issues[]? | {path,message}'; exit 1 ;;
+          esac
+
+  check-later:
+    needs: mac-status
+    if: ${{ !cancelled() && needs.mac-status.outputs.decision == 'In Progress' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: write
+    steps:
+      - name: Schedule another check of the same submission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.notary_run || github.run_id }}
+          BASELINE_RUN: ${{ inputs.baseline_run }}
+          DELAY: ${{ needs.mac-status.outputs.delay }}
+        run: |
+          sleep "$DELAY"
+          gh workflow run desktop-installers.yml -R "$GITHUB_REPOSITORY" --ref codex/desktop-packaging -f notary_run="$SOURCE_RUN" -f baseline_run="$BASELINE_RUN"
+
+  mac-finish:
+    needs: mac-status
+    if: ${{ !cancelled() && needs.mac-status.outputs.decision == 'Accepted' }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - *saved
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.mac-status.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - *node
+      - *pnpm
+      - *deps
+      - name: Staple and package the original signed app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.notary_run || github.run_id }}
+        run: |
+          gh run download "$SOURCE_RUN" -n mac-signed -D payload
+          (cd payload && shasum -a 256 -c sha256.txt)
           app="$RUNNER_TEMP/restore/AI来客.app"
-          ditto -x -k "payload/AI来客-$VERSION.zip" "$RUNNER_TEMP/restore"
+          mkdir -p "$RUNNER_TEMP/restore" output/desktop-app
+          ditto -x -k "payload/AI-Laike-$SOURCE_RUN.zip" "$RUNNER_TEMP/restore"
           xcrun stapler staple "$app"
           xcrun stapler validate "$app"
           codesign --verify --deep --strict "$app"
           spctl --assess --type execute --verbose "$app"
-          mkdir -p output/desktop-app
           cp payload/app-package.json output/desktop-app/package.json
+          export KEAGENT_PUBLIC_ORIGIN="$(jq -er .origin payload/build.json)"
           pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac dmg zip --arm64 --prepackaged "$app" --publish never
           test -s release/latest-mac.yml && test -s release/*.zip.blockmap
-          cp receipt/baseline-run.txt release/
-      - name: Verify the recovered Mac disk image
-        if: inputs.recovery == 'resume'
-        shell: bash
-        run: *verify_mac_disk_image
-      - if: inputs.recovery == 'resume'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - name: Verify disk image and bundled runtime
+        run: |
+          mount=$(mktemp -d)
+          trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true; rmdir "$mount"' EXIT
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" release/*.dmg
+          spctl --assess --type execute --verbose "$mount/AI来客.app"
+          xcrun stapler validate "$mount/AI来客.app"
+          node scripts/douyin-package-smoke.mjs "$mount/AI来客.app/Contents/MacOS/AI来客"
+      - name: Find the previous Mac package
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_OVERRIDE: ${{ inputs.baseline_run }}
+        run: bash scripts/mac-upgrade-baseline.sh
+      - name: Verify full and differential installation and relaunch
+        if: steps.baseline.outputs.run != ''
+        run: node scripts/verify-mac-upgrade.mjs baseline release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: steps.saved.outputs.installer != 'true'
         with:
-          name: approved-${{ matrix.version }}
+          name: AI-Laike-mac-arm64
           path: |
             release/*.dmg
             release/*.zip
-            release/*.zip.blockmap
+            release/*.blockmap
             release/latest-mac.yml
-            release/baseline-run.txt
           if-no-files-found: error
           compression-level: 0
-
-  verify:
-    needs: recovery
-    if: always() && ((inputs.recovery == 'resume' && needs.recovery.result == 'success') || inputs.recovery == 'verify' || inputs.recovery == 'preflight')
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Index the verified version for future upgrade tests
+        if: steps.saved.outputs.indexed != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24.22.3
-      - name: Install validation tools
-        run: |
-          npm install --global pnpm@10.33.3
-          pnpm install --frozen-lockfile
-          npm pkg set version=0.1.1
-      - name: Prepare signed update while Apple processes the ticket
-        if: inputs.recovery == 'preflight'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN: ${{ inputs.baseline_run }}
-          KEAGENT_PUBLIC_ORIGIN: https://updates.example.test
-        run: |
-          gh run download "$SOURCE_RUN" -n signed-0.1.1 -D payload
-          gh run download "$SOURCE_RUN" -n receipt-0.1.1 -D receipt
-          (cd payload && shasum -a 256 -c sha256.txt)
-          mkdir -p "$RUNNER_TEMP/signed-app" output/desktop-app
-          ditto -x -k payload/*.zip "$RUNNER_TEMP/signed-app"
-          app="$RUNNER_TEMP/signed-app/AI来客.app"
-          codesign --verify --deep --strict "$app"
-          cp payload/app-package.json output/desktop-app/package.json
-          pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac zip --arm64 --prepackaged "$app" --publish never
-          mv release update
-          cp receipt/baseline-run.txt update/
-      - name: Fetch approved update
-        if: inputs.recovery != 'preflight'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_RUN: ${{ inputs.recovery == 'resume' && github.run_id || inputs.baseline_run }}
-        run: gh run download "$ARTIFACT_RUN" -n approved-0.1.1 -D update
-      - name: Exercise the packaged updater
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERIFY_MODE: ${{ inputs.recovery }}
-        run: |
-          baseline_run=$(cat update/baseline-run.txt)
-          [[ "$baseline_run" =~ ^[0-9]+$ ]]
-          gh run download "$baseline_run" -n AI-Laike-mac-arm64 -D baseline
-          node scripts/verify-mac-upgrade.mjs baseline update "$VERIFY_MODE"
+          name: mac-verified-${{ steps.baseline.outputs.version }}
+          path: release/latest-mac.yml
+          if-no-files-found: error
