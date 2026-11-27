@@ -61,28 +61,30 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const feed = "http://127.0.0.1:" + server.address().port;
 const apps = path.join(homedir(), "Applications");
 await mkdir(apps, { recursive: true });
-const root = await mkdtemp(path.join(apps, "Laike-upgrade-"));
-const bundle = path.join(root, "AI来客.app");
-const exe = path.join(bundle, "Contents/MacOS/AI来客");
 const run = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8" }).trim();
-const appVersion = () =>
-  run("/usr/libexec/PlistBuddy", [
-    "-c",
-    "Print CFBundleShortVersionString",
-    path.join(bundle, "Contents/Info.plist"),
-  ]);
 try {
-  run("ditto", ["-x", "-k", path.join(oldDir, oldZip), root]);
-  const initial = appVersion();
-  assert.notEqual(initial, targetVersion);
-  const updateConfig = await readFile(
-    path.join(bundle, "Contents/Resources/app-update.yml"),
-    "utf8",
-  );
-  const cacheName = updateConfig.match(/^updaterCacheDirName: ([\w-]+)$/m)?.[1];
-  assert.ok(cacheName);
-  const cache = path.join(homedir(), "Library/Caches", cacheName);
   for (const mode of ["full", "delta"]) {
+    const root = await mkdtemp(path.join(apps, "Laike-upgrade-"));
+    const bundle = path.join(root, "AI来客.app");
+    const exe = path.join(bundle, "Contents/MacOS/AI来客");
+    const appVersion = () =>
+      run("/usr/libexec/PlistBuddy", [
+        "-c",
+        "Print CFBundleShortVersionString",
+        path.join(bundle, "Contents/Info.plist"),
+      ]);
+    run("ditto", ["-x", "-k", path.join(oldDir, oldZip), root]);
+    const initial = appVersion();
+    assert.notEqual(initial, targetVersion);
+    const updateConfig = await readFile(
+      path.join(bundle, "Contents/Resources/app-update.yml"),
+      "utf8",
+    );
+    const cacheName = updateConfig.match(
+      /^updaterCacheDirName: ([\w-]+)$/m,
+    )?.[1];
+    assert.ok(cacheName);
+    const cache = path.join(homedir(), "Library/Caches", cacheName);
     requests.length = 0;
     if (mode === "delta") {
       await rename(cache, cache + "-" + path.basename(root));
@@ -137,7 +139,7 @@ try {
         "ZIP bytes",
         requests.reduce((n, r) => n + r.bytes, 0),
       );
-      if (mode === "full") continue;
+
       await page.evaluate(() => {
         void window.desktop.updates.request("install");
       });
@@ -160,7 +162,7 @@ try {
       console.log("Relaunched signed, stapled", appVersion(), "pid", pid);
       process.kill(Number(pid), "SIGTERM");
     } finally {
-      if (!proc.process().exitCode && proc.process().signalCode == null)
+      if (proc.process().exitCode === null && proc.process().signalCode == null)
         await proc.close().catch(() => {});
     }
   }
