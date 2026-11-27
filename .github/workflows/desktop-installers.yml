@@ -5,6 +5,10 @@ on:
     branches: [codex/desktop-packaging]
   workflow_dispatch:
     inputs:
+      baseline_run:
+        description: Signed baseline workflow run ID
+        required: true
+        type: string
       public_origin:
         description: AI来客 HTTPS origin
         required: true
@@ -13,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   package:
@@ -20,8 +25,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: windows-2025
-            target: windows-x64
           - runner: macos-15
             target: mac-arm64
 
@@ -43,11 +46,8 @@ jobs:
           python-version: "3.12"
       - run: npm install --global pnpm@10.33.3
       - run: pnpm install --frozen-lockfile
-      - if: runner.os == 'Windows'
-        env:
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: pnpm package:desktop:installer
+      - name: Select next validation version
+        run: npm pkg set version=0.1.1
       - if: runner.os == 'macOS'
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -66,16 +66,6 @@ jobs:
           else
             test -s release/latest-mac.yml && test -s release/*.zip && test -s release/*.zip.blockmap
           fi
-      - name: Check Windows installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem -LiteralPath release -Filter '*.exe'
-          if (@($installer).Count -ne 1) { throw 'Expected one Windows installer' }
-          $target = Join-Path $env:RUNNER_TEMP 'AI-Laike-Smoke'
-          $installation = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$target" -WindowStyle Hidden -Wait -PassThru
-          if ($installation.ExitCode -ne 0) { throw "Installer failed: $($installation.ExitCode)" }
-          node scripts/douyin-package-smoke.mjs (Join-Path $target 'AI来客.exe')
       - name: Check Mac disk image
         if: runner.os == 'macOS'
         shell: bash
@@ -88,14 +78,10 @@ jobs:
           spctl --assess --type execute --verbose "$mount/AI来客.app"
           xcrun stapler validate "$mount/AI来客.app"
           node scripts/douyin-package-smoke.mjs "$mount/AI来客.app/Contents/MacOS/AI来客"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: AI-Laike-${{ matrix.target }}
-          path: |
-            release/*.exe
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
-            release/latest*.yml
-          if-no-files-found: error
-          compression-level: 0
+      - name: Fetch verified baseline package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_RUN: ${{ inputs.baseline_run }}
+        run: gh run download "$BASELINE_RUN" --repo "$GITHUB_REPOSITORY" --name AI-Laike-mac-arm64 --dir "$RUNNER_TEMP/baseline"
+      - name: Verify full and differential updates and relaunch
+        run: node scripts/verify-mac-upgrade.mjs "$RUNNER_TEMP/baseline" release
