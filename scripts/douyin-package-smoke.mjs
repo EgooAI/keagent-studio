@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 const root = mkdtempSync(path.join(os.tmpdir(), "keagent-package-smoke-"));
@@ -26,6 +26,13 @@ try {
     process.platform === "darwin"
       ? path.resolve(path.dirname(executable), "../Resources")
       : path.join(path.dirname(executable), "resources");
+  if (process.env.KEAGENT_UPDATE_ORIGIN) {
+    const updateOrigin = new URL(process.env.KEAGENT_UPDATE_ORIGIN).origin;
+    const feed = `${updateOrigin}/desktop-updates/${process.platform}-${process.arch}/`;
+    const config = readFileSync(path.join(resources, "app-update.yml"), "utf8");
+    if (!config.split(/\r?\n/).includes(`url: ${feed}`))
+      throw new Error(`Packaged updater is missing the expected feed: ${feed}`);
+  }
   const worker = path.join(
     resources,
     "channels-runtime",

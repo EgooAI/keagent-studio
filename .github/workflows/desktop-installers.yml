@@ -32,6 +32,7 @@ permissions:
 
 env:
   KEAGENT_PUBLIC_ORIGIN: ${{ inputs.public_origin || 'https://47.93.88.61' }}
+  KEAGENT_UPDATE_ORIGIN: https://update.laike.zhaihealth.com
   VITE_API_MODE: live
 
 jobs:
@@ -122,7 +123,7 @@ jobs:
           mkdir payload
           mv release/*-arm64.zip "payload/AI-Laike-$GITHUB_RUN_ID.zip"
           cp output/desktop-app/package.json payload/app-package.json
-          jq -n --arg origin "$KEAGENT_PUBLIC_ORIGIN" --arg baseline "$BASELINE_RUN" '{origin:$origin,baseline:$baseline}' > payload/build.json
+          jq -n --arg origin "$KEAGENT_PUBLIC_ORIGIN" --arg updateOrigin "$KEAGENT_UPDATE_ORIGIN" --arg baseline "$BASELINE_RUN" '{origin:$origin,updateOrigin:$updateOrigin,baseline:$baseline}' > payload/build.json
           (cd payload && shasum -a 256 *.zip > sha256.txt)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: steps.saved.outputs.signed != 'true'
@@ -260,7 +261,10 @@ jobs:
           codesign --verify --deep --strict "$app"
           spctl --assess --type execute --verbose "$app"
           cp payload/app-package.json output/desktop-app/package.json
-          export KEAGENT_PUBLIC_ORIGIN="$(jq -er .origin payload/build.json)"
+          KEAGENT_PUBLIC_ORIGIN=$(jq -er .origin payload/build.json)
+          KEAGENT_UPDATE_ORIGIN=$(jq -er '.updateOrigin // .origin' payload/build.json)
+          echo "KEAGENT_PUBLIC_ORIGIN=$KEAGENT_PUBLIC_ORIGIN" >> "$GITHUB_ENV"
+          echo "KEAGENT_UPDATE_ORIGIN=$KEAGENT_UPDATE_ORIGIN" >> "$GITHUB_ENV"
           pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac dmg zip --arm64 --prepackaged "$app" --publish never
           test -s release/latest-mac.yml && test -s release/*.zip.blockmap
       - name: Verify disk image and bundled runtime

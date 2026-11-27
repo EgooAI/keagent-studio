@@ -4,6 +4,9 @@ admin.example.com {
 		reverse_proxy 127.0.0.1:18180
 	}
 
+	@installerFeeds path /desktop-updates/win32-x64/* /desktop-updates/darwin-arm64/*
+	redir @installerFeeds https://update.laike.zhaihealth.com{uri} 302
+
 	handle_path /desktop-updates/* {
 		root * /opt/keagent/desktop-updates
 		@manifest path *.yml /config-v1.json
