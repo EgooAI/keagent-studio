@@ -97,7 +97,8 @@ try {
       args: ["--user-data-dir=" + path.join(root, "profile-" + mode)],
       timeout: 60000,
     });
-    const oldPid = proc.process().pid;
+    const oldProcess = proc.process();
+    const oldPid = oldProcess.pid;
     try {
       const page = await proc.firstWindow();
       await page.waitForFunction(() => !!window.desktop?.updates);
@@ -168,7 +169,7 @@ try {
       console.log("Relaunched", appVersion(), "pid", pid, verificationMode);
       process.kill(Number(pid), "SIGTERM");
     } finally {
-      if (proc.process().exitCode === null && proc.process().signalCode == null)
+      if (oldProcess.exitCode === null && oldProcess.signalCode == null)
         await proc.close().catch(() => {});
     }
   }
