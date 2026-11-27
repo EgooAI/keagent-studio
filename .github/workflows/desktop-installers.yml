@@ -1,4 +1,5 @@
 name: Desktop installers
+run-name: Mac QA ${{ inputs.inspect_notary && 'status' || inputs.recovery }} from ${{ inputs.baseline_run }}
 
 on:
   push:
@@ -35,12 +36,29 @@ jobs:
     if: inputs.inspect_notary
     runs-on: macos-15
     steps:
+      - if: inputs.recovery == 'prepare'
+        name: Fetch submission receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.baseline_run }}
+        run: |
+          for version in 0.1.0 0.1.1; do
+            gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" -n "receipt-$version" -D "receipts/$version"
+          done
       - name: Read submission status
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [[ -d receipts ]]; then
+            for f in receipts/*/submission.json; do
+              id=$(jq -er .id "$f")
+              status=$(xcrun notarytool info "$id" --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json | jq -er .status)
+              echo "APPLE_STATUS $id $status"
+            done
+            exit 0
+          fi
           xcrun notarytool history --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json |
             jq '[.history[] | select(.name | contains("AI来客")) | {name, status, createdDate, id}] | .[:4]'
   package:
@@ -111,7 +129,7 @@ jobs:
         run: node scripts/verify-mac-upgrade.mjs "$RUNNER_TEMP/baseline" release
 
   recovery:
-    if: inputs.recovery == 'prepare' || inputs.recovery == 'resume'
+    if: ${{ !inputs.inspect_notary && (inputs.recovery == 'prepare' || inputs.recovery == 'resume') }}
     runs-on: macos-15
     timeout-minutes: 45
     strategy:
