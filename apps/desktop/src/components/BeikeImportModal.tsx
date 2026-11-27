@@ -33,8 +33,6 @@ type BeikeCliStatus = {
   reason: "not_configured" | "ready";
 };
 
-const showNumberLookup = false;
-
 const cityOptions = [
   "北京",
   "上海",
@@ -262,22 +260,20 @@ export function BeikeImportModal({
       }
     >
       <p className="beike-intro">选中房源后可导入房源中心。</p>
-      {showNumberLookup && (
-        <Segmented<typeof mode>
-          className="beike-search-mode"
-          aria-label="查找方式"
-          value={mode}
-          options={[
-            { value: "conditions", label: "按条件搜索" },
-            { value: "number", label: "按房源号查询" },
-          ]}
-          disabled={!!pending}
-          onChange={(value) => {
-            setMode(value);
-            clearResults();
-          }}
-        />
-      )}
+      <Segmented<typeof mode>
+        className="beike-search-mode"
+        aria-label="查找方式"
+        value={mode}
+        options={[
+          { value: "conditions", label: "按条件搜索" },
+          { value: "number", label: "按房源号查询" },
+        ]}
+        disabled={!!pending}
+        onChange={(value) => {
+          setMode(value);
+          clearResults();
+        }}
+      />
       <form
         id={formId}
         className="beike-search-form"

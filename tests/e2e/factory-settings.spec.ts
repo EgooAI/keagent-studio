@@ -184,6 +184,39 @@ async function fixture(
                 email: "fixture@example.test",
                 role: "user",
               };
+            if (method === "panorama.completed-outputs")
+              return [
+                {
+                  taskId: "local-only",
+                  revision: 1,
+                  propertyId: "user-property",
+                },
+                { taskId: "shared", revision: 1, propertyId: "user-property" },
+              ];
+            if (method === "artifact.list")
+              return {
+                ok: true,
+                data: {
+                  items: [
+                    {
+                      id: "shared-artifact",
+                      source: {
+                        producer: "panorama",
+                        taskId: "shared",
+                        revision: 1,
+                      },
+                      content: { property: { id: "user-property" } },
+                    },
+                  ],
+                  total: 1,
+                },
+              };
+            if (method === "douyin.cloud" && args[0] === "records/list") {
+              const items = args[1].offset
+                ? [{ artifactId: "shared-artifact", state: "accepted" }]
+                : [{ artifactId: "shared-artifact", state: "failed" }];
+              return { ok: true, data: { items, total: 2 } };
+            }
             if (method === "getWorkspace")
               return structuredClone(state.workspace);
             if (method === "credits.pricing" && state.creditPricing)
@@ -1629,9 +1662,7 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
     );
 
   await expect(city).toHaveValue("北京");
-  await expect(dialog.getByText("按房源号查询", { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(dialog.getByText("按房源号查询", { exact: true })).toBeVisible();
   await expect(dialog.getByLabel("贝壳房源号", { exact: true })).toHaveCount(0);
   await expect(location).toHaveValue("");
   await dialog.getByRole("button", { name: "望京 · 两居 · 500万以内" }).click();
@@ -1689,7 +1720,6 @@ test("贝壳跨预算勾选按结果城市导入，重试仅提交失败房源",
 });
 
 test("贝壳按房源号查询并确认导入精确匹配的房源", async ({ page }) => {
-  test.skip(true, "按房源号查询入口暂时隐藏，重新开放时恢复此测试");
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page);
   await page.goto("/#/properties");
@@ -2022,32 +2052,19 @@ test("任务和创建分开，切换保留批次选择，房源链接直接打�
   ).toBeVisible();
 });
 
-test("房源中心与视频工厂支持精确编号、组合筛选和制作前核对", async ({
-  page,
-}) => {
+test("房源中心移除库内条件栏，视频工厂保留选房筛选", async ({ page }) => {
   await fixture(page, true);
   await page.goto("/#/properties");
-  for (const [name, option] of [
-    ["区域", "独立场景"],
-    ["小区", "内置全景测试样例"],
-    ["户型", "三居"],
-  ]) {
-    const select = page.getByRole("combobox", { name, exact: true });
-    await select.fill(option);
-    await page
-      .locator(".ant-select-dropdown:visible .ant-select-item-option-content")
-      .filter({ hasText: option })
-      .click();
-  }
-  await page.keyboard.press("Escape");
-  await page.getByRole("spinbutton", { name: "最高总价" }).fill("500");
-  await page.getByRole("spinbutton", { name: "最小面积" }).fill("90");
-  await expect(page.getByText("共 1 套房源")).toBeVisible();
-  await expect(page.getByText("房源号 SH1001", { exact: true })).toBeVisible();
-  await page.getByText("按房源号查找", { exact: true }).click();
-  await page.getByRole("textbox", { name: "完整房源号" }).fill(" SH100 ");
-  await expect(page.getByText("共 1 套房源")).toBeVisible();
-  await page.getByRole("link", { name: "创建视频" }).click();
+  await expect(page.getByText("共 1000 套房源")).toBeVisible();
+  await expect(page.getByText("按房源号查找", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("spinbutton", { name: "最高总价" })).toHaveCount(
+    0,
+  );
+  await page
+    .locator(".property-card")
+    .filter({ has: page.getByText("房源号 SH100", { exact: true }) })
+    .getByRole("link", { name: "创建视频" })
+    .click();
   await expect(page.getByText("房源号 SH100", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "房源 1 套" }).click();
   const dialog = page.getByRole("dialog", { name: "选择房源" });
@@ -2068,4 +2085,25 @@ test("房源中心与视频工厂支持精确编号、组合筛选和制作前�
     /SH1000/,
     /SH1001/,
   ]);
+});
+
+test("房源卡片、列表和发布分类按真实成片去重并读取历史发布记录", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/#/properties");
+  const card = page
+    .locator(".property-card")
+    .filter({ hasText: "本人房源联调测试" });
+  await expect(card).toContainText("已生成 2 条视频");
+  await expect(card).toContainText("已发布过");
+  await page.getByRole("button", { name: /^已发布过\s*1$/ }).click();
+  await expect(page.locator(".property-card")).toHaveCount(1);
+  await page
+    .locator(".ant-segmented-item")
+    .filter({ hasText: "表格视图" })
+    .click();
+  const row = page.getByRole("row").filter({ hasText: "101140860601" });
+  await expect(row).toContainText("已生成 2 条视频");
+  await expect(row).toContainText("已发布过");
 });

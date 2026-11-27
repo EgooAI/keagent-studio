@@ -564,6 +564,14 @@ class PanoramaWorkflow {
         this.sourceFlight.delete(flightKey);
       }
     }
+    if (method === "completed-outputs")
+      return state.jobs
+        .filter((job) => job.status === "succeeded")
+        .map((job) => ({
+          taskId: job.id,
+          revision: job.draftRevision,
+          propertyId: job.property.id,
+        }));
     if (method === "state") return this.view(owner, state);
     if (method === "music-tracks") return this.musicTracks(owner, state);
     if (method === "music-import") {

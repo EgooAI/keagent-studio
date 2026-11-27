@@ -49,11 +49,11 @@ import { PropertyMaterialsTab } from "../components/PropertyMaterialsTab";
 import { PropertyRelatedTasks } from "../components/PropertyRelatedTasks";
 import { DeletePropertyButton } from "../components/DeletePropertyButton";
 import type { PanoramaScene } from "@keagent/shared-types";
-import { PropertySearchFilters } from "../components/PropertySearchFilters";
 import {
-  initialPropertyFilters,
-  matchesProperty,
-} from "../lib/propertyFilters";
+  demoPropertyActivity,
+  emptyActivity,
+  loadPropertyActivity,
+} from "../lib/propertyActivity";
 import "./property-library.css";
 import "./property-cards.css";
 import "./property-detail.css";
@@ -61,7 +61,13 @@ import "./property-detail.css";
 export default function PropertiesPage() {
   const { data } = useWorkspace();
   const navigate = useNavigate();
-  const [criteria, setCriteria] = useState(initialPropertyFilters);
+  const activity = useQuery({
+    queryKey: ["douyin", "property-activity"],
+    queryFn: loadPropertyActivity,
+    enabled: isLive && !!data?.properties.length,
+    refetchInterval: 30000,
+    retry: false,
+  });
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [view, setView] = useState("grid");
@@ -71,23 +77,30 @@ export default function PropertiesPage() {
   );
   const [manualOpen, setManualOpen] = useState(false);
   if (!data) return null;
-  const publishedIds = new Set(
-    data.publishTasks
-      .filter((p) => p.status === "published")
-      .map(
-        (p) => data.tasks.find((t) => t.id === p.productionTaskId)?.propertyId,
-      )
-      .filter((id) => data.properties.some((property) => property.id === id)),
-  );
-  const filtered = data.properties.filter(
-    (p) =>
-      matchesProperty(p, criteria) &&
-      (criteria.mode === "number" ||
-        filter === "all" ||
-        (filter === "published"
-          ? publishedIds.has(p.id)
-          : !publishedIds.has(p.id))),
-  );
+  const stats = isLive ? activity.data : demoPropertyActivity(data);
+  const pendingLabel = activity.isError ? "统计暂时无法获取" : "统计加载中";
+  const statusLabels = {
+    published: "已发布过",
+    unpublished: "未发布过",
+    scheduled: "已排期",
+  };
+  const statFor = (id: string) => stats?.get(id) ?? emptyActivity;
+  const statusLabel = (id: string) =>
+    stats ? statusLabels[statFor(id).status] : pendingLabel;
+  const videoLabel = (id: string) =>
+    stats ? `已生成 ${statFor(id).videos} 条视频` : pendingLabel;
+  const counts = {
+    all: data.properties.length,
+    published: 0,
+    unpublished: 0,
+    scheduled: 0,
+  };
+  if (stats) for (const p of data.properties) counts[statFor(p.id).status]++;
+  const filtered =
+    filter === "all"
+      ? data.properties
+      : data.properties.filter((p) => stats && statFor(p.id).status === filter);
+  const waitingForFilter = !stats && filter !== "all";
   const pageSize = 8;
   const currentPage = Math.min(
     page,
@@ -129,38 +142,34 @@ export default function PropertiesPage() {
         }
       />
       <div className="panel library-toolbar">
-        {criteria.mode !== "number" && (
-          <div
-            className="library-filters"
-            role="group"
-            aria-label="房源发布分类"
-          >
-            {[
-              ["all", "全部房源"],
-              ["unpublished", "未发布过"],
-              ["published", "已发布过"],
-            ].map(([key, label]) => (
-              <button
-                type="button"
-                aria-pressed={filter === key}
-                key={key}
-                onClick={() => {
-                  setFilter(key);
-                  setPage(1);
-                }}
-              >
-                {label}
-                <span>
-                  {key === "all"
-                    ? data.properties.length
-                    : key === "published"
-                      ? publishedIds.size
-                      : data.properties.length - publishedIds.size}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="library-filters" role="group" aria-label="房源发布分类">
+          {[
+            ["all", "全部房源"],
+            ["unpublished", "未发布过"],
+            ["published", "已发布过"],
+            ...(counts.scheduled || filter === "scheduled"
+              ? [["scheduled", "已排期"]]
+              : []),
+          ].map(([key, label]) => (
+            <button
+              type="button"
+              disabled={key !== "all" && !stats && !!counts.all}
+              aria-pressed={filter === key}
+              key={key}
+              onClick={() => {
+                setFilter(key);
+                setPage(1);
+              }}
+            >
+              {label}
+              <span>
+                {key === "all" || stats || !counts.all
+                  ? counts[key as keyof typeof counts]
+                  : "—"}
+              </span>
+            </button>
+          ))}
+        </div>
         <div className="library-tools">
           <Segmented
             aria-label="房源显示方式"
@@ -190,40 +199,26 @@ export default function PropertiesPage() {
             ]}
           />
         </div>
-        <PropertySearchFilters
-          value={criteria}
-          onChange={(value) => {
-            setCriteria(value);
-            setPage(1);
-          }}
-          inventory={data.properties}
-        />
       </div>
+      {activity.isError && (
+        <Alert
+          type="warning"
+          showIcon
+          title="房源统计暂时无法获取"
+          action={<Button onClick={() => void activity.refetch()}>重试</Button>}
+        />
+      )}
       <div className="library-results">
-        <strong role="status">共 {filtered.length} 套房源</strong>
+        <strong role="status">
+          {waitingForFilter ? pendingLabel : `共 ${filtered.length} 套房源`}
+        </strong>
         {!isLive && <span>房源资料为演示内容，不构成真实交易信息</span>}
       </div>
-      {!filtered.length ? (
+      {waitingForFilter ? null : !filtered.length ? (
         <div className="panel empty-panel">
           <Empty
-            description={
-              criteria.mode === "number"
-                ? criteria.propertyNumber?.trim()
-                  ? "当前房源库未找到该房源号"
-                  : "请输入完整房源号"
-                : "没有匹配的房源"
-            }
-          >
-            <Button
-              onClick={() => {
-                setCriteria(initialPropertyFilters);
-                setFilter("all");
-                setPage(1);
-              }}
-            >
-              清除筛选
-            </Button>
-          </Empty>
+            description={filter === "all" ? "暂无房源" : "该分类下暂无房源"}
+          />
         </div>
       ) : view === "grid" ? (
         <div className="property-grid">
@@ -247,15 +242,11 @@ export default function PropertiesPage() {
                   />
                 )}
                 <span className="card-cover-state">
-                  {property.sample
-                    ? "测试素材"
-                    : publishedIds.has(property.id)
-                      ? "已发布过"
-                      : "未发布过"}
+                  {statusLabel(property.id)}
                 </span>
                 <span className="card-cover-videos">
                   <Play size={12} fill="currentColor" aria-hidden="true" />
-                  {property.videoCount} 段视频
+                  {videoLabel(property.id)}
                 </span>
               </Link>
               <div className="card-property-info">
@@ -345,10 +336,12 @@ export default function PropertiesPage() {
                   p.sample ? "测试样例" : formatPrice(p.priceCents),
               },
               {
+                title: "成片",
+                render: (_, p: Property) => videoLabel(p.id),
+              },
+              {
                 title: "发布",
-                render: (_, p: Property) => (
-                  <Tag>{publishedIds.has(p.id) ? "已发布过" : "未发布过"}</Tag>
-                ),
+                render: (_, p: Property) => <Tag>{statusLabel(p.id)}</Tag>,
               },
               {
                 title: "操作",

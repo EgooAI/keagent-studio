@@ -84,12 +84,17 @@ export const douyinApi = {
     offset: number;
     limit: number;
   }) => cloud<DouyinWorkspace>("workspace", input),
-  records: (artifactId: string, offset = 0, platform?: PublishPlatform) =>
+  records: (
+    artifactId = "",
+    offset = 0,
+    platform?: PublishPlatform,
+    limit = 20,
+  ) =>
     cloud<{ items: DouyinPublishRecord[]; total: number }>("records/list", {
       artifactId,
       platform,
       offset,
-      limit: 20,
+      limit,
     }),
   record: (id: string) => cloud<DouyinPublishRecord>("records/get", { id }),
   reconcile: (id: string, published: boolean, url?: string) =>
