@@ -15,7 +15,7 @@ on:
         description: Preserve signed archives or finish an existing submission
         required: false
         type: choice
-        options: [none, prepare, resume, verify]
+        options: [none, prepare, preflight, resume, verify]
         default: none
       baseline_run:
         description: Signed baseline workflow run ID
@@ -249,7 +249,7 @@ jobs:
 
   verify:
     needs: recovery
-    if: always() && ((inputs.recovery == 'resume' && needs.recovery.result == 'success') || inputs.recovery == 'verify')
+    if: always() && ((inputs.recovery == 'resume' && needs.recovery.result == 'success') || inputs.recovery == 'verify' || inputs.recovery == 'preflight')
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -259,15 +259,41 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.3
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_RUN: ${{ inputs.recovery == 'resume' && github.run_id || inputs.baseline_run }}
+      - name: Install validation tools
         run: |
           npm install --global pnpm@10.33.3
           pnpm install --frozen-lockfile
-          gh run download "$ARTIFACT_RUN" -n approved-0.1.1 -D update
+          npm pkg set version=0.1.1
+      - name: Prepare signed update while Apple processes the ticket
+        if: inputs.recovery == 'preflight'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.baseline_run }}
+          KEAGENT_PUBLIC_ORIGIN: https://updates.example.test
+        run: |
+          gh run download "$SOURCE_RUN" -n signed-0.1.1 -D payload
+          gh run download "$SOURCE_RUN" -n receipt-0.1.1 -D receipt
+          (cd payload && shasum -a 256 -c sha256.txt)
+          mkdir -p "$RUNNER_TEMP/signed-app" output/desktop-app
+          ditto -x -k payload/*.zip "$RUNNER_TEMP/signed-app"
+          app="$RUNNER_TEMP/signed-app/AI来客.app"
+          codesign --verify --deep --strict "$app"
+          cp payload/app-package.json output/desktop-app/package.json
+          pnpm exec electron-builder --config scripts/desktop-installer.cjs --mac zip --arm64 --prepackaged "$app" --publish never
+          mv release update
+          cp receipt/baseline-run.txt update/
+      - name: Fetch approved update
+        if: inputs.recovery != 'preflight'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_RUN: ${{ inputs.recovery == 'resume' && github.run_id || inputs.baseline_run }}
+        run: gh run download "$ARTIFACT_RUN" -n approved-0.1.1 -D update
+      - name: Exercise the packaged updater
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_MODE: ${{ inputs.recovery }}
+        run: |
           baseline_run=$(cat update/baseline-run.txt)
           [[ "$baseline_run" =~ ^[0-9]+$ ]]
           gh run download "$baseline_run" -n AI-Laike-mac-arm64 -D baseline
-          npm pkg set version=0.1.1
-          node scripts/verify-mac-upgrade.mjs baseline update
+          node scripts/verify-mac-upgrade.mjs baseline update "$VERIFY_MODE"
