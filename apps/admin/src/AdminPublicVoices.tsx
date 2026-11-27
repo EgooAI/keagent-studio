@@ -11,6 +11,7 @@ import {
   Tag,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
+import { Plus, RefreshCw } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import type { AdminPublicVoice } from "@keagent/shared-types";
 import { useAdminAction } from "./admin-api";
@@ -55,41 +56,88 @@ export default function AdminPublicVoices() {
   const locked = !!editor && editor !== "new" && editor.publishedOnce;
   return (
     <>
-      <Alert
-        type="info"
-        showIcon
-        title="用户只能选择已上架的公共音色或本人音色"
-        description="千问 3.1 Plus 支持龙安灵心、许南川、龙安欢和龙安风悦。已上架过的音色编号和语言会保留在历史制作记录中，更换时请新增音色。"
-      />
-      <div className="admin-toolbar admin-block">
-        <Button onClick={() => void query.refetch()}>刷新列表</Button>
-        <Button type="primary" onClick={() => edit()}>
-          新增公共音色
-        </Button>
-      </div>
-      {query.isError && (
+      <section
+        className="admin-panel admin-table-panel"
+        aria-label="公共音色目录"
+      >
+        <div className="admin-section-heading">
+          <div>
+            <h2>公共音色目录</h2>
+            <p className="admin-secondary">
+              维护百炼千问 3.1 Plus 系统音色，用户可在视频创作中选择已上架项。
+            </p>
+          </div>
+          <Space>
+            <Button
+              icon={<RefreshCw size={14} />}
+              loading={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              刷新列表
+            </Button>
+            <Button
+              type="primary"
+              icon={<Plus size={15} />}
+              onClick={() => edit()}
+            >
+              新增公共音色
+            </Button>
+          </Space>
+        </div>
         <Alert
-          type="error"
-          title="无法读取公共音色"
-          description={query.error.message}
+          className="admin-notice"
+          type="info"
+          showIcon
+          title="用户只能选择已上架的公共音色或本人音色"
+          description="千问 3.1 Plus 支持龙安灵心、许南川、龙安欢和龙安风悦。已上架过的音色编号和语言会保留在历史制作记录中，更换时请新增音色。"
         />
-      )}
-      <section className="admin-panel" aria-label="公共音色目录">
+        {query.isError && (
+          <Alert
+            className="admin-notice"
+            type="error"
+            showIcon
+            title="无法读取公共音色"
+            description={query.error.message}
+          />
+        )}
         <Table<AdminPublicVoice>
           rowKey="id"
           loading={query.isPending}
           dataSource={query.data || []}
+          scroll={{ x: 760 }}
           columns={[
-            { title: "名称", dataIndex: "name" },
+            {
+              title: "名称",
+              dataIndex: "name",
+              render: (value: string) => (
+                <strong style={{ fontWeight: 550 }}>{value}</strong>
+              ),
+            },
             {
               title: "语言",
               dataIndex: "language",
-              render: (value) => (value === "zh-CN" ? "普通话" : "英语"),
+              width: 110,
+              render: (value) => (
+                <Tag>{value === "zh-CN" ? "普通话" : "英语"}</Tag>
+              ),
             },
-            { title: "音色编号", dataIndex: "speakerId" },
-            { title: "合成模型", dataIndex: "resourceId" },
+            {
+              title: "音色编号",
+              dataIndex: "speakerId",
+              render: (value: string) => (
+                <code className="admin-code">{value}</code>
+              ),
+            },
+            {
+              title: "合成模型",
+              dataIndex: "resourceId",
+              render: (value: string) => (
+                <code className="admin-code">{value}</code>
+              ),
+            },
             {
               title: "状态",
+              width: 100,
               render: (_, voice) =>
                 !voice.retired && voice.resourceId === publicVoiceModel ? (
                   <Tag color={voice.enabled ? "green" : "default"}>
@@ -101,15 +149,18 @@ export default function AdminPublicVoices() {
             },
             {
               title: "操作",
+              align: "right",
+              width: 140,
               render: (_, voice) =>
                 !voice.retired &&
                 voice.resourceId === publicVoiceModel && (
-                  <Space>
-                    <Button size="small" onClick={() => edit(voice)}>
+                  <Space className="admin-row-actions" size={4}>
+                    <Button type="link" onClick={() => edit(voice)}>
                       编辑
                     </Button>
                     <Button
-                      size="small"
+                      type="link"
+                      danger={voice.enabled}
                       loading={action.busy}
                       onClick={() =>
                         void action.run(
@@ -128,7 +179,7 @@ export default function AdminPublicVoices() {
                 ),
             },
           ]}
-          pagination={{ pageSize: 20 }}
+          pagination={{ pageSize: 20, hideOnSinglePage: true }}
         />
       </section>
       <Modal

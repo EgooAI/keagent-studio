@@ -22,12 +22,12 @@ colors:
   demo-bg: "#fff6e5"
   demo-ink: "#a66612"
   error-ink: "#b75243"
-  admin-primary: "#3d607d"
-  admin-ink: "#232b34"
-  admin-muted: "#555f6a"
-  admin-canvas: "#f4f1e9"
-  admin-surface: "#fffdf8"
-  admin-line: "#e6e0d5"
+  admin-primary: "#2563eb"
+  admin-ink: "#0f172a"
+  admin-muted: "#64748b"
+  admin-canvas: "#f5f7fa"
+  admin-surface: "#ffffff"
+  admin-line: "#e5e9f0"
 typography:
   headline:
     fontFamily: '"Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
@@ -55,8 +55,8 @@ typography:
     fontWeight: 400
     lineHeight: 1.65
   admin-headline:
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif'
-    fontSize: "25px"
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
+    fontSize: "22px"
     fontWeight: 650
     letterSpacing: "-0.02em"
 rounded:
@@ -257,9 +257,9 @@ components:
 - **Don't** 为新增次要文字随意选取更浅的灰色。
 - **Don't** 把桌面和后台的实际中性色差异当作尚未实现的统一主题。
 
-桌面默认配色为皇冠紫。管理后台采用米白工作面、暖灰侧栏与雾蓝主操作。后台工作台左侧放待排查任务，右侧集中运营指标与 AI 配置缺项。后台列表以横向细线和留白分组，使用浅米色表头标明列结构。
+桌面默认配色为皇冠紫。管理后台采用冷灰画布（#f5f7fa）、纯白工作面卡片（#ffffff）、白色分组侧栏（224px）与经典蓝主操作（#2563eb）。后台工作台顶部为 4 列 KPI 卡片行，下方左侧放失败任务排查，右侧展示 AI 配置状态。后台列表统一由白卡与浅灰表头（#f8fafc）承载。
 
-桌面设置和后台的「外观」可切换配色，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。后台的新浏览器默认雾蓝，已保存的配色优先。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量。成功、警告、错误语义色保留各自的含义。
+桌面设置和后台的「外观」可切换配色，选择保存在当前来源的 localStorage（keagent.appearance.color.v1），不随账号同步。后台的新浏览器默认经典蓝，已保存的配色优先。共享 ThemeProvider 同时更新 Ant Design 主色和 CSS accent 变量。成功、警告、错误语义色保留各自的含义。
 
 
 ## 用户端任务界面（2026-11-10）

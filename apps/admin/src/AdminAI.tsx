@@ -1,4 +1,5 @@
 import { Alert, App, Button, Empty, Skeleton, Tabs, Tag } from "antd";
+import { RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { serviceRequest } from "@keagent/api-client";
@@ -218,11 +219,15 @@ export default function AdminAI() {
                 className="admin-panel ai-service-panel"
                 aria-label="AI 服务配置"
               >
-                <div className="admin-toolbar">
-                  <p className="admin-secondary">
-                    查看当前服务状态。更新配置时，验证通过后自动启用。
-                  </p>
+                <div className="admin-section-heading">
+                  <div>
+                    <h2>服务配置清单</h2>
+                    <p className="admin-secondary">
+                      查看当前服务状态。更新配置时，验证通过后自动启用。
+                    </p>
+                  </div>
                   <Button
+                    icon={<RefreshCw size={14} />}
                     loading={query.isFetching}
                     onClick={() => void query.refetch()}
                   >
@@ -231,6 +236,7 @@ export default function AdminAI() {
                 </div>
                 {query.error && (
                   <Alert
+                    className="admin-notice"
                     type="error"
                     showIcon
                     title="无法读取服务状态"
@@ -239,7 +245,7 @@ export default function AdminAI() {
                 )}
                 {speechUpgradeRequired && (
                   <Alert
-                    className="admin-block"
+                    className="admin-notice"
                     type="warning"
                     showIcon
                     title={speechUpgradeTitle}
@@ -248,7 +254,7 @@ export default function AdminAI() {
                 )}
                 {query.data && !query.data.writable && (
                   <Alert
-                    className="admin-block"
+                    className="admin-notice"
                     type="warning"
                     showIcon
                     title="配置管理暂不可写"
@@ -262,99 +268,104 @@ export default function AdminAI() {
                   <Skeleton active paragraph={{ rows: 6 }} />
                 ) : (
                   rows.length > 0 && (
-                    <table className="ai-service-table">
-                      <thead>
-                        <tr>
-                          <th scope="col">服务</th>
-                          <th scope="col">配置状态</th>
-                          <th scope="col" className="ai-detail-column">
-                            最近测试
-                          </th>
-                          <th scope="col">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((row) => {
-                          const speech = row.summary.id === "tts";
-                          const label = speech
-                            ? bailianSpeechLabel
-                            : row.summary.label;
-                          const test = [
-                            row.active.test,
-                            speech ? voiceClone?.active.test : undefined,
-                          ]
-                            .filter((item): item is AdminAIProbe => !!item)
-                            .sort(
-                              (a, b) =>
-                                Date.parse(b.createdAt) -
-                                Date.parse(a.createdAt),
-                            )[0];
-                          return (
-                            <tr key={row.summary.id}>
-                              <th scope="row">
-                                <strong>{label}</strong>
-                                <span className="admin-secondary ai-provider">
-                                  {speech
-                                    ? "配音与声音复刻"
-                                    : row.summary.provider}
-                                </span>
-                              </th>
-                              <td>
-                                <ConfigState row={row} />
-                                {speech && voiceClone && !row.active.locked && (
-                                  <span className="admin-secondary ai-test-meta">
-                                    {voiceClone.summary.state === "configured"
-                                      ? "声音复刻已启用"
-                                      : "声音复刻尚未启用"}
+                    <div className="ai-service-table-wrap">
+                      <table className="ai-service-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">服务</th>
+                            <th scope="col">配置状态</th>
+                            <th scope="col" className="ai-detail-column">
+                              最近测试
+                            </th>
+                            <th scope="col">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((row) => {
+                            const speech = row.summary.id === "tts";
+                            const label = speech
+                              ? bailianSpeechLabel
+                              : row.summary.label;
+                            const test = [
+                              row.active.test,
+                              speech ? voiceClone?.active.test : undefined,
+                            ]
+                              .filter((item): item is AdminAIProbe => !!item)
+                              .sort(
+                                (a, b) =>
+                                  Date.parse(b.createdAt) -
+                                  Date.parse(a.createdAt),
+                              )[0];
+                            return (
+                              <tr key={row.summary.id}>
+                                <th scope="row">
+                                  <strong>{label}</strong>
+                                  <span className="admin-secondary ai-provider">
+                                    {speech
+                                      ? "配音与声音复刻"
+                                      : row.summary.provider}
                                   </span>
-                                )}
-                                {row.active.activatedAt && (
-                                  <span className="admin-secondary ai-test-meta">
-                                    更新于 {dateTime(row.active.activatedAt)}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="ai-detail-column">
-                                <AIProbeState test={test} />
-                                {test && (
-                                  <span className="admin-secondary ai-test-meta">
-                                    {probeModeLabel(test.mode)} ·{" "}
-                                    {dateTime(
-                                      test.finishedAt ?? test.createdAt,
+                                </th>
+                                <td>
+                                  <ConfigState row={row} />
+                                  {speech &&
+                                    voiceClone &&
+                                    !row.active.locked && (
+                                      <span className="admin-secondary ai-test-meta">
+                                        {voiceClone.summary.state ===
+                                        "configured"
+                                          ? "声音复刻已启用"
+                                          : "声音复刻尚未启用"}
+                                      </span>
                                     )}
-                                  </span>
-                                )}
-                              </td>
-                              <td>
-                                <Button
-                                  type="link"
-                                  aria-label={"管理" + label}
-                                  ref={(button) => {
-                                    if (button instanceof HTMLButtonElement)
-                                      serviceButtons.current.set(
-                                        row.summary.id,
-                                        button,
+                                  {row.active.activatedAt && (
+                                    <span className="admin-secondary ai-test-meta">
+                                      更新于 {dateTime(row.active.activatedAt)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="ai-detail-column">
+                                  <AIProbeState test={test} />
+                                  {test && (
+                                    <span className="admin-secondary ai-test-meta">
+                                      {probeModeLabel(test.mode)} ·{" "}
+                                      {dateTime(
+                                        test.finishedAt ?? test.createdAt,
+                                      )}
+                                    </span>
+                                  )}
+                                </td>
+                                <td>
+                                  <Button
+                                    type="link"
+                                    aria-label={"管理" + label}
+                                    ref={(button) => {
+                                      if (button instanceof HTMLButtonElement)
+                                        serviceButtons.current.set(
+                                          row.summary.id,
+                                          button,
+                                        );
+                                      else
+                                        serviceButtons.current.delete(
+                                          row.summary.id,
+                                        );
+                                    }}
+                                    onClick={() => {
+                                      setParams(
+                                        { service: row.summary.id },
+                                        false,
                                       );
-                                    else
-                                      serviceButtons.current.delete(
-                                        row.summary.id,
-                                      );
-                                  }}
-                                  onClick={() => {
-                                    setParams(
-                                      { service: row.summary.id },
-                                      false,
-                                    );
-                                  }}
-                                >
-                                  管理
-                                </Button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                    }}
+                                  >
+                                    管理
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   )
                 )}
               </section>

@@ -16,11 +16,20 @@ import {
   Timeline,
 } from "antd";
 import { Link } from "react-router-dom";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  HelpCircle,
+  Mail,
+  RefreshCw,
+  Send,
+} from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import {
   douyinStateLabels,
   type DouyinPublishRecord,
 } from "@keagent/shared-types";
+import { dateTime } from "./admin-api";
 import AdminUserSelect from "./AdminUserSelect";
 
 export default function AdminDouyin() {
@@ -76,77 +85,137 @@ export default function AdminDouyin() {
     });
     setPage(1);
   }
+  const hasFailures = (health.data?.failures ?? 0) > 0;
   return (
-    <>
+    <div className="admin-stack">
       {[records.error, summary.error, health.error]
         .filter(Boolean)
         .map((error, index) => (
-          <Alert
-            key={index}
-            className="admin-notice"
-            type="error"
-            showIcon
-            title={error!.message}
-          />
+          <Alert key={index} type="error" showIcon title={error!.message} />
         ))}
-      <section className="admin-panel admin-metrics" aria-label="发布指标">
-        <div>
-          <span>发布尝试</span>
-          <strong>{summary.data?.total ?? "—"}</strong>
+      <section className="admin-kpi-grid" aria-label="发布指标">
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span className="admin-kpi-icon" aria-hidden="true">
+                <Send size={15} />
+              </span>
+              发布尝试
+            </span>
+          </div>
+          <strong className="admin-kpi-value">
+            {summary.data?.total ?? "—"}
+          </strong>
         </div>
-        <div>
-          <span>已提交抖音</span>
-          <strong>
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className="admin-kpi-icon admin-kpi-icon-success"
+                aria-hidden="true"
+              >
+                <CheckCircle2 size={15} />
+              </span>
+              已提交抖音
+            </span>
+          </div>
+          <strong className="admin-kpi-value">
             {summary.data ? (summary.data.states.accepted ?? 0) : "—"}
           </strong>
         </div>
-        <div>
-          <span>结果待核对</span>
-          <strong>
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className="admin-kpi-icon admin-kpi-icon-warning"
+                aria-hidden="true"
+              >
+                <HelpCircle size={15} />
+              </span>
+              结果待核对
+            </span>
+          </div>
+          <strong className="admin-kpi-value">
             {summary.data ? (summary.data.states.unknown ?? 0) : "—"}
           </strong>
         </div>
-        <div>
-          <span>符合告警条件的连续失败</span>
-          <strong>{health.data?.failures ?? "—"}</strong>
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className={
+                  hasFailures
+                    ? "admin-kpi-icon admin-kpi-icon-danger"
+                    : "admin-kpi-icon admin-kpi-icon-success"
+                }
+                aria-hidden="true"
+              >
+                <AlertTriangle size={15} />
+              </span>
+              符合告警条件的连续失败
+            </span>
+          </div>
+          <strong
+            className={
+              hasFailures
+                ? "admin-kpi-value admin-kpi-value-danger"
+                : "admin-kpi-value"
+            }
+          >
+            {health.data?.failures ?? "—"}
+          </strong>
         </div>
       </section>
+
       <section
-        className="admin-panel admin-block"
+        className="admin-panel admin-panel-compact"
         aria-labelledby="admin-publish-alerts"
       >
-        <div className="admin-section-heading">
-          <Space wrap>
-            <h2 id="admin-publish-alerts">发布流程告警</h2>
-            <Tag
-              color={
-                health.data?.incident
-                  ? "red"
+        <div className="admin-alert-banner">
+          <div className="admin-alert-banner-main">
+            <Space wrap size={10} style={{ marginBottom: 4 }}>
+              <h2 id="admin-publish-alerts" style={{ margin: 0, fontSize: 15 }}>
+                发布流程告警
+              </h2>
+              <Tag
+                color={
+                  health.data?.incident
+                    ? "red"
+                    : health.data
+                      ? "green"
+                      : "default"
+                }
+              >
+                {health.data?.incident
+                  ? "发布流程异常"
                   : health.data
-                    ? "green"
-                    : "default"
-              }
-            >
-              {health.data?.incident
-                ? "发布流程异常"
-                : health.data
-                  ? "暂无流程告警"
-                  : "状态待获取"}
-            </Tag>
-          </Space>
-          <Link to="/admin/settings?tab=mail">管理邮件通知</Link>
+                    ? "暂无流程告警"
+                    : "状态待获取"}
+              </Tag>
+            </Space>
+            <p className="admin-secondary">
+              24 小时内连续 3
+              次执行失败时发送告警，之后首次自动成功时发送恢复通知。登录、文件、验收、未知结果和人工核对不计入。
+            </p>
+          </div>
+          <div className="admin-alert-banner-meta">
+            <span className="admin-alert-pending">
+              <Mail
+                size={13}
+                style={{ verticalAlign: -2, marginRight: 6 }}
+                aria-hidden="true"
+              />
+              待投递邮件：{health.data?.pendingEmails ?? "—"}（每 5 分钟重试）
+            </span>
+            <Link to="/admin/settings?tab=mail">
+              <Button>管理邮件通知</Button>
+            </Link>
+          </div>
         </div>
-        <p className="admin-secondary">
-          24 小时内连续 3
-          次执行失败时发送告警，之后首次自动成功时发送恢复通知。登录、文件、验收、未知结果和人工核对不计入。
-        </p>
-        <p className="admin-secondary">
-          待投递邮件：{health.data?.pendingEmails ?? "—"}。投递失败后每 5
-          分钟重试。
-        </p>
       </section>
+
       <section
-        className="admin-panel admin-table-panel admin-block"
+        className="admin-panel admin-table-panel"
         aria-labelledby="admin-publish-records"
       >
         <div className="admin-section-heading">
@@ -157,9 +226,18 @@ export default function AdminDouyin() {
               。用户在桌面客户端发起发布，作品审核结果以抖音为准。
             </p>
           </div>
+          <Button
+            icon={<RefreshCw size={14} />}
+            loading={records.isFetching}
+            onClick={() =>
+              void client.invalidateQueries({ queryKey: ["admin", "douyin"] })
+            }
+          >
+            刷新
+          </Button>
         </div>
-        <div className="admin-toolbar">
-          <Space wrap>
+        <div className="admin-filter-strip">
+          <Space wrap size={[10, 10]}>
             <AdminUserSelect
               label="所属用户"
               value={filters.ownerId}
@@ -168,6 +246,7 @@ export default function AdminDouyin() {
             <Input.Search
               aria-label="设备ID"
               placeholder="完整设备ID"
+              style={{ width: 190 }}
               onSearch={(value) => filter("deviceId", value)}
               allowClear
             />
@@ -176,7 +255,7 @@ export default function AdminDouyin() {
               placeholder="全部状态"
               allowClear
               value={filters.state}
-              style={{ width: 160 }}
+              style={{ width: 145 }}
               onChange={(value) => filter("state", value)}
               options={Object.entries(douyinStateLabels).map(
                 ([value, label]) => ({ value, label }),
@@ -185,6 +264,7 @@ export default function AdminDouyin() {
             <Input.Search
               aria-label="错误类别"
               placeholder="错误码，如 EXECUTION_FAILED"
+              style={{ width: 220 }}
               onSearch={(value) => filter("errorCode", value)}
               allowClear
             />
@@ -196,13 +276,6 @@ export default function AdminDouyin() {
               }}
             />
           </Space>
-          <Button
-            onClick={() =>
-              void client.invalidateQueries({ queryKey: ["admin", "douyin"] })
-            }
-          >
-            刷新
-          </Button>
         </div>
         <Table<DouyinPublishRecord>
           rowKey="id"
@@ -225,7 +298,7 @@ export default function AdminDouyin() {
             {
               title: "发布记录",
               dataIndex: "id",
-              width: 288,
+              width: 260,
               render: (id) => (
                 <Button
                   type="link"
@@ -236,15 +309,32 @@ export default function AdminDouyin() {
                 </Button>
               ),
             },
-            { title: "所属用户", dataIndex: "ownerId", width: 110 },
-            { title: "设备", dataIndex: "deviceId", width: 120 },
+            {
+              title: "所属用户",
+              dataIndex: "ownerId",
+              width: 130,
+              render: (value: string) => (
+                <code className="admin-code">{value}</code>
+              ),
+            },
+            {
+              title: "设备",
+              dataIndex: "deviceId",
+              width: 130,
+              render: (value: string) =>
+                value ? (
+                  <code className="admin-code">{value}</code>
+                ) : (
+                  <span className="admin-empty-val">—</span>
+                ),
+            },
             {
               title: "成片 / 账号",
               render: (_, row) => (
-                <>
-                  <div>{row.artifactId}</div>
-                  <small>{row.accountId}</small>
-                </>
+                <div className="admin-user-cell">
+                  <span>{row.artifactId}</span>
+                  <span className="admin-secondary">{row.accountId}</span>
+                </div>
               ),
             },
             {
@@ -267,12 +357,22 @@ export default function AdminDouyin() {
                 </Tag>
               ),
             },
-            { title: "错误类别", dataIndex: "errorCode", width: 145 },
+            {
+              title: "错误类别",
+              dataIndex: "errorCode",
+              width: 160,
+              render: (value?: string) =>
+                value ? (
+                  <Tag color="red">{value}</Tag>
+                ) : (
+                  <span className="admin-empty-val">—</span>
+                ),
+            },
             {
               title: "时间",
               dataIndex: "createdAt",
-              width: 170,
-              render: (value) => new Date(value).toLocaleString("zh-CN"),
+              width: 180,
+              render: dateTime,
             },
           ]}
         />
@@ -282,7 +382,7 @@ export default function AdminDouyin() {
         title="抖音发布诊断"
         open={!!selected}
         onClose={() => setSelected("")}
-        size={640}
+        width={640}
       >
         {detail.isPending && <Skeleton active />}
         {detail.error && (
@@ -295,7 +395,32 @@ export default function AdminDouyin() {
         )}
         {detail.data && (
           <>
+            <div className="admin-detail-summary">
+              <Tag
+                color={
+                  detail.data.state === "accepted"
+                    ? "green"
+                    : detail.data.state === "failed"
+                      ? "red"
+                      : detail.data.state === "unknown"
+                        ? "orange"
+                        : "default"
+                }
+              >
+                {douyinStateLabels[detail.data.state]}
+              </Tag>
+              <span>
+                {detail.data.resultSource === "manual"
+                  ? "用户人工核对"
+                  : "平台回报"}
+              </span>
+              {detail.data.errorCode && (
+                <Tag color="red">{detail.data.errorCode}</Tag>
+              )}
+            </div>
             <Descriptions
+              bordered
+              size="small"
               column={1}
               items={[
                 { key: "id", label: "记录", children: detail.data.id },
@@ -329,28 +454,27 @@ export default function AdminDouyin() {
                 },
               ]}
             />
-            <h3>安全执行日志</h3>
+            <h3 className="admin-detail-heading">安全执行日志</h3>
             <Timeline
               items={detail.data.logs?.map((log, index) => ({
                 key: index,
                 content: (
-                  <>
+                  <div>
                     <strong>{log.step}</strong>
-                    <p>
-                      {log.status} ·{" "}
-                      {new Date(log.timestamp).toLocaleString("zh-CN")}
+                    <p className="admin-secondary">
+                      {log.status} · {dateTime(log.timestamp)}
                       {log.durationMs === undefined
                         ? ""
                         : ` · ${log.durationMs}ms`}
                       {log.errorCode ? ` · ${log.errorCode}` : ""}
                     </p>
-                  </>
+                  </div>
                 ),
               }))}
             />
           </>
         )}
       </Drawer>
-    </>
+    </div>
   );
 }

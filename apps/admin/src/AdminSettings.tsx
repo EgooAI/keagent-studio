@@ -28,7 +28,7 @@ export default function AdminSettings() {
           children: (
             <section className="admin-panel admin-settings-panel">
               <ThemeSettings />
-              <p className="admin-secondary">
+              <p className="admin-secondary" style={{ marginTop: 12 }}>
                 配色仅应用于当前浏览器的管理后台。
               </p>
             </section>
@@ -89,6 +89,7 @@ function MailNotifications() {
       ) : (
         <>
           <Alert
+            className="admin-notice"
             type={query.data.smtpConfigured ? "success" : "warning"}
             showIcon
             title={
@@ -126,6 +127,7 @@ function MailNotifications() {
             >
               <Input
                 autoComplete="email"
+                placeholder="ops@example.com"
                 maxLength={254}
                 disabled={save.isPending}
               />

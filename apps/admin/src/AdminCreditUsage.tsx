@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Alert, Button, Input, Space, Table } from "antd";
 import { useQuery } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 
 interface CreditUsage {
@@ -38,41 +39,54 @@ export default function AdminCreditUsage({
     retry: false,
   });
   return (
-    <>
-      <p className="admin-muted">
-        汇总所有用户已结算的实际消耗，按北京时间统计，包含起止日期全天。冻结、退回、发放和过期不计入消耗。
-      </p>
-      <Space wrap style={{ marginBottom: 16 }}>
-        <label className="admin-date-filter">
-          开始日期
-          <Input
-            type="date"
-            aria-label="开始日期"
-            value={range.from}
-            max={range.to}
-            onChange={(event) =>
-              setRange({ ...range, from: event.target.value })
-            }
-          />
-        </label>
-        <label className="admin-date-filter">
-          结束日期
-          <Input
-            type="date"
-            aria-label="结束日期"
-            value={range.to}
-            min={range.from}
-            onChange={(event) => setRange({ ...range, to: event.target.value })}
-          />
-        </label>
-        <Button
-          disabled={!!rangeError}
-          loading={query.isFetching}
-          onClick={() => void query.refetch()}
-        >
-          刷新
-        </Button>
-      </Space>
+    <section
+      className="admin-panel admin-table-panel"
+      aria-labelledby="credits-usage-title"
+    >
+      <div className="admin-section-heading">
+        <div>
+          <h2 id="credits-usage-title">服务积分消耗</h2>
+          <p className="admin-muted">
+            汇总所有用户已结算的实际消耗，按北京时间统计，包含起止日期全天。冻结、退回、发放和过期不计入消耗。
+          </p>
+        </div>
+      </div>
+      <div className="admin-filter-strip">
+        <Space wrap size={[12, 10]}>
+          <label className="admin-date-filter">
+            开始日期
+            <Input
+              type="date"
+              aria-label="开始日期"
+              value={range.from}
+              max={range.to}
+              onChange={(event) =>
+                setRange({ ...range, from: event.target.value })
+              }
+            />
+          </label>
+          <label className="admin-date-filter">
+            结束日期
+            <Input
+              type="date"
+              aria-label="结束日期"
+              value={range.to}
+              min={range.from}
+              onChange={(event) =>
+                setRange({ ...range, to: event.target.value })
+              }
+            />
+          </label>
+          <Button
+            icon={<RefreshCw size={14} />}
+            disabled={!!rangeError}
+            loading={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            刷新
+          </Button>
+        </Space>
+      </div>
       {rangeError ? (
         <Alert type="warning" showIcon title={rangeError} />
       ) : query.error ? (
@@ -100,19 +114,27 @@ export default function AdminCreditUsage({
               title: "消耗积分",
               dataIndex: "spent",
               align: "right",
-              render: (spent: number) => spent.toLocaleString("zh-CN"),
+              width: 160,
+              render: (spent: number) => (
+                <span className="admin-num">
+                  {spent.toLocaleString("zh-CN")}
+                </span>
+              ),
             },
           ]}
           footer={
             query.data
-              ? () =>
-                  query.data.total === 0
-                    ? "该时间范围内暂无已结算消耗，合计 0 积分"
-                    : `合计消耗 ${query.data.total.toLocaleString("zh-CN")} 积分`
+              ? () => (
+                  <div className="admin-usage-footer">
+                    {query.data.total === 0
+                      ? "该时间范围内暂无已结算消耗，合计 0 积分"
+                      : `合计消耗 ${query.data.total.toLocaleString("zh-CN")} 积分`}
+                  </div>
+                )
               : undefined
           }
         />
       )}
-    </>
+    </section>
   );
 }

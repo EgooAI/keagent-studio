@@ -15,10 +15,12 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { Plus, RefreshCw } from "lucide-react";
 import { serviceRequest, type SessionUser } from "@keagent/api-client";
 import type { AdminDevice, AdminUser } from "@keagent/shared-types";
 import {
@@ -219,6 +221,7 @@ function UsersTable({
         </div>
         <Button
           type="primary"
+          icon={<Plus size={15} />}
           onClick={() => {
             createForm.resetFields();
             setCreateOpen(true);
@@ -244,7 +247,7 @@ function UsersTable({
             value={params.get("role") || undefined}
             onChange={(role) => setParams({ role })}
             allowClear
-            style={{ width: 140 }}
+            style={{ width: 136 }}
             options={[
               { value: "user", label: "普通用户" },
               { value: "admin", label: "管理员" },
@@ -256,20 +259,24 @@ function UsersTable({
             value={params.get("banned") || undefined}
             onChange={(banned) => setParams({ banned })}
             allowClear
-            style={{ width: 140 }}
+            style={{ width: 136 }}
             options={[
               { value: "false", label: "正常" },
               { value: "true", label: "已停用" },
             ]}
           />
         </Space>
-        <Button loading={query.isFetching} onClick={() => void query.refetch()}>
+        <Button
+          icon={<RefreshCw size={14} />}
+          loading={query.isFetching}
+          onClick={() => void query.refetch()}
+        >
           刷新列表
         </Button>
       </div>
       {query.error && (
         <Alert
-          className="admin-block"
+          className="admin-notice"
           type="error"
           showIcon
           title="用户列表加载失败"
@@ -292,44 +299,58 @@ function UsersTable({
           {
             title: "用户",
             key: "user",
-            width: 260,
+            width: 280,
             render: (_, row) => (
-              <>
-                <Button
-                  type="link"
-                  className="admin-cell-link"
-                  onClick={() => setParams({ userId: row.id }, false)}
-                >
-                  {row.name || "未命名用户"}
-                </Button>
-                <p className="admin-secondary">{row.email}</p>
-                {row.id === currentUser.userId && (
-                  <>
-                    <Tag>当前账号</Tag>
-                    <p className="admin-secondary">
-                      不能在此停用、重置密码或强制退出自己。
-                    </p>
-                  </>
-                )}
-              </>
+              <div className="admin-user-cell">
+                <div className="admin-user-cell-head">
+                  <Button
+                    type="link"
+                    className="admin-cell-link"
+                    onClick={() => setParams({ userId: row.id }, false)}
+                  >
+                    {row.name || "未命名用户"}
+                  </Button>
+                  {row.id === currentUser.userId && (
+                    <Tooltip title="不能在此停用、重置密码或强制退出自己。">
+                      <Tag color="blue">当前账号</Tag>
+                    </Tooltip>
+                  )}
+                </div>
+                <span className="admin-secondary">{row.email}</span>
+              </div>
             ),
           },
-          { title: "角色", dataIndex: "role", render: roleLabel },
+          {
+            title: "角色",
+            dataIndex: "role",
+            width: 120,
+            render: (value: string) => (
+              <Tag color={value.includes("admin") ? "purple" : "default"}>
+                {roleLabel(value)}
+              </Tag>
+            ),
+          },
           {
             title: "账号状态",
             key: "state",
+            width: 110,
             render: (_, row) => (
               <Tag color={row.banned ? "default" : "green"}>
                 {row.banned ? "已停用" : "正常"}
               </Tag>
             ),
           },
-          { title: "创建时间", dataIndex: "createdAt", render: dateTime },
+          {
+            title: "创建时间",
+            dataIndex: "createdAt",
+            width: 180,
+            render: dateTime,
+          },
           {
             title: "操作",
             align: "right",
             key: "actions",
-            width: 236,
+            width: 224,
             render: (_, row) => (
               <Space className="admin-row-actions" size={4}>
                 <Button
@@ -521,7 +542,7 @@ function DevicesTable() {
             defaultValue={params.get("q") || ""}
             onSearch={(q) => setParams({ q: q || undefined })}
             allowClear
-            style={{ width: 280 }}
+            style={{ width: 260 }}
           />
           <Select
             aria-label="设备绑定状态"
@@ -529,7 +550,7 @@ function DevicesTable() {
             value={params.get("revoked") || undefined}
             onChange={(revoked) => setParams({ revoked })}
             allowClear
-            style={{ width: 155 }}
+            style={{ width: 148 }}
             options={[
               { value: "false", label: "已绑定" },
               { value: "true", label: "已解绑" },
@@ -541,13 +562,17 @@ function DevicesTable() {
             label="所属用户"
           />
         </Space>
-        <Button loading={query.isFetching} onClick={() => void query.refetch()}>
+        <Button
+          icon={<RefreshCw size={14} />}
+          loading={query.isFetching}
+          onClick={() => void query.refetch()}
+        >
           刷新列表
         </Button>
       </div>
       {query.error && (
         <Alert
-          className="admin-block"
+          className="admin-notice"
           type="error"
           showIcon
           title="设备列表加载失败"
@@ -570,7 +595,11 @@ function DevicesTable() {
           {
             title: "设备名称",
             dataIndex: "name",
-            render: (value) => value || "未命名设备",
+            render: (value) => (
+              <strong style={{ fontWeight: 550 }}>
+                {value || "未命名设备"}
+              </strong>
+            ),
           },
           {
             title: "所属用户",
@@ -588,32 +617,45 @@ function DevicesTable() {
           {
             title: "操作系统",
             dataIndex: "platform",
-            render: (value: string) =>
-              ({
-                win32: "Windows",
-                darwin: "macOS",
-                linux: "Linux",
-                web: "浏览器",
-                test: "测试设备",
-              })[value] || (value ? "其他系统" : "未记录"),
+            width: 120,
+            render: (value: string) => (
+              <Tag>
+                {{
+                  win32: "Windows",
+                  darwin: "macOS",
+                  linux: "Linux",
+                  web: "浏览器",
+                  test: "测试设备",
+                }[value] || (value ? "其他系统" : "未记录")}
+              </Tag>
+            ),
           },
           {
             title: "绑定状态",
             key: "state",
+            width: 110,
             render: (_, row) => (
               <Tag color={row.revoked ? "default" : "green"}>
                 {row.revoked ? "已解绑" : "已绑定"}
               </Tag>
             ),
           },
-          { title: "最近活动", dataIndex: "lastSeenAt", render: dateTime },
+          {
+            title: "最近活动",
+            dataIndex: "lastSeenAt",
+            width: 180,
+            render: dateTime,
+          },
           {
             title: "操作",
             align: "right",
             key: "action",
+            width: 110,
             render: (_, row) => (
               <Button
+                type="link"
                 danger
+                className="admin-row-actions"
                 disabled={row.revoked || action.busy}
                 onClick={() =>
                   modal.confirm({
@@ -686,6 +728,17 @@ function UserDetail() {
       )}
       {user && (
         <>
+          <div className="admin-detail-summary">
+            <strong>{user.name || "未命名用户"}</strong>
+            <Tag color={user.banned ? "default" : "green"}>
+              {user.banned ? "已停用" : "正常"}
+            </Tag>
+            <Tag
+              color={(user.role || "").includes("admin") ? "purple" : "blue"}
+            >
+              {roleLabel(user.role || "user")}
+            </Tag>
+          </div>
           <Descriptions
             bordered
             column={1}

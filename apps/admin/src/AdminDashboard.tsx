@@ -1,7 +1,16 @@
-import { Alert, Button, Empty, Skeleton } from "antd";
+import { Alert, Button, Empty, Skeleton, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowUpRight, CircleAlert } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Boxes,
+  CheckCircle2,
+  CircleAlert,
+  Laptop,
+  RefreshCw,
+  Users,
+} from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import { stageLabels, type AdminOverview } from "@keagent/shared-types";
 import { dateTime, userLabel } from "./admin-api";
@@ -52,33 +61,140 @@ export default function AdminDashboard() {
       service.id !== "opening" &&
       (!isSpeechService(service) || isBailianSpeech(service)),
   );
+  const hasFailures = data.failedTasks > 0;
   return (
-    <div className="admin-workbench-grid">
-      <div className="admin-workbench-primary">
-        <section
-          className="admin-workbench-focus"
-          aria-labelledby="admin-workbench-focus"
-        >
-          <CircleAlert size={22} aria-hidden="true" />
-          <div>
-            <h2 id="admin-workbench-focus">{data.failedTasks} 项任务待排查</h2>
-            <p>
-              {data.failedTasks
-                ? "先查看失败阶段，再决定下一步。"
-                : "目前没有失败的云端任务。"}
-            </p>
+    <div className="admin-workbench-layout">
+      <section className="admin-kpi-grid" aria-label="业务指标">
+        <Link className="admin-kpi-card" to="/admin/users">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span className="admin-kpi-icon" aria-hidden="true">
+                <Users size={16} />
+              </span>
+              用户账号
+            </span>
+            <ArrowUpRight
+              size={15}
+              className="admin-kpi-arrow"
+              aria-hidden="true"
+            />
           </div>
-          <Link to="/admin/tasks?status=failed" className="admin-focus-action">
-            查看任务 <ArrowUpRight size={16} aria-hidden="true" />
-          </Link>
-        </section>
+          <strong className="admin-kpi-value">{data.users}</strong>
+        </Link>
+        <Link
+          className="admin-kpi-card"
+          to="/admin/users?tab=devices&revoked=false"
+        >
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span className="admin-kpi-icon" aria-hidden="true">
+                <Laptop size={16} />
+              </span>
+              已绑定设备
+            </span>
+            <ArrowUpRight
+              size={15}
+              className="admin-kpi-arrow"
+              aria-hidden="true"
+            />
+          </div>
+          <strong className="admin-kpi-value">{data.devices}</strong>
+        </Link>
+        <Link className="admin-kpi-card" to="/admin/resources?state=published">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className="admin-kpi-icon admin-kpi-icon-success"
+                aria-hidden="true"
+              >
+                <Boxes size={16} />
+              </span>
+              已上架推荐搭配
+            </span>
+            <ArrowUpRight
+              size={15}
+              className="admin-kpi-arrow"
+              aria-hidden="true"
+            />
+          </div>
+          <strong className="admin-kpi-value">{data.publishedResources}</strong>
+        </Link>
+        <Link className="admin-kpi-card" to="/admin/tasks?status=failed">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className={
+                  hasFailures
+                    ? "admin-kpi-icon admin-kpi-icon-danger"
+                    : "admin-kpi-icon admin-kpi-icon-success"
+                }
+                aria-hidden="true"
+              >
+                <AlertTriangle size={16} />
+              </span>
+              失败任务
+            </span>
+            <ArrowUpRight
+              size={15}
+              className="admin-kpi-arrow"
+              aria-hidden="true"
+            />
+          </div>
+          <strong
+            className={
+              hasFailures
+                ? "admin-kpi-value admin-kpi-value-danger"
+                : "admin-kpi-value"
+            }
+          >
+            {data.failedTasks}
+          </strong>
+        </Link>
+      </section>
+
+      <div className="admin-workbench-grid">
         <section
-          className="admin-workbench-queue"
+          className="admin-panel"
           aria-labelledby="admin-workbench-tasks"
         >
+          <div
+            className={
+              hasFailures
+                ? "admin-workbench-focus"
+                : "admin-workbench-focus admin-workbench-focus-ok"
+            }
+            aria-labelledby="admin-workbench-focus"
+          >
+            <span className="admin-workbench-focus-icon" aria-hidden="true">
+              {hasFailures ? (
+                <CircleAlert size={20} />
+              ) : (
+                <CheckCircle2 size={20} />
+              )}
+            </span>
+            <div>
+              <h2 id="admin-workbench-focus">
+                {data.failedTasks} 项任务待排查
+              </h2>
+              <p>
+                {hasFailures
+                  ? "先查看失败阶段，再决定下一步。"
+                  : "目前没有失败的云端任务。"}
+              </p>
+            </div>
+            <Link
+              to="/admin/tasks?status=failed"
+              className="admin-focus-action"
+            >
+              查看任务 <ArrowUpRight size={15} aria-hidden="true" />
+            </Link>
+          </div>
+
           <div className="admin-section-heading">
             <h2 id="admin-workbench-tasks">近期失败任务</h2>
             <Button
+              size="small"
+              icon={<RefreshCw size={14} />}
               loading={query.isFetching}
               onClick={() => void query.refetch()}
             >
@@ -108,8 +224,10 @@ export default function AdminDashboard() {
                     </p>
                   </div>
                   <div>
-                    <strong>{stageLabels[row.stage] || "未知阶段"}</strong>
-                    <p className="admin-secondary">
+                    <Tag color="red">
+                      {stageLabels[row.stage] || "未知阶段"}
+                    </Tag>
+                    <p className="admin-workbench-error">
                       {row.error || "尚未提供诊断"}
                     </p>
                   </div>
@@ -128,91 +246,54 @@ export default function AdminDashboard() {
             </ul>
           )}
         </section>
-      </div>
-      <aside className="admin-workbench-sidebar">
-        <h2>运营概况</h2>
-        <section className="admin-workbench-metrics" aria-label="业务指标">
-          <Link to="/admin/users">
-            <span className="admin-metric-label">
-              用户账号
-              <ArrowUpRight size={16} aria-hidden="true" />
-            </span>
-            <strong>{data.users}</strong>
-          </Link>
-          <Link to="/admin/users?tab=devices&revoked=false">
-            <span className="admin-metric-label">
-              已绑定设备
-              <ArrowUpRight size={16} aria-hidden="true" />
-            </span>
-            <strong>{data.devices}</strong>
-          </Link>
-          <Link to="/admin/resources?state=published">
-            <span className="admin-metric-label">
-              已上架推荐搭配
-              <ArrowUpRight size={16} aria-hidden="true" />
-            </span>
-            <strong>{data.publishedResources}</strong>
-          </Link>
-          <Link to="/admin/tasks?status=failed">
-            <span className="admin-metric-label">
-              失败任务
-              <ArrowUpRight size={16} aria-hidden="true" />
-            </span>
-            <strong
-              className={
-                data.failedTasks ? "admin-metric-attention" : undefined
-              }
-            >
-              {data.failedTasks}
-            </strong>
-          </Link>
-        </section>
-        <section
-          className="admin-workbench-health"
-          aria-labelledby="admin-workbench-ai"
-        >
-          <div className="admin-section-heading">
-            <h2 id="admin-workbench-ai">AI 配置缺项</h2>
-            <Link to="/admin/ai">查看 AI 服务</Link>
-          </div>
-          {speechUpgradeRequired && (
-            <Alert
-              type="warning"
-              showIcon
-              title={speechUpgradeTitle}
-              description={speechUpgradeMessage}
-            />
-          )}
-          {serviceIssues.length === 0 && !speechUpgradeRequired ? (
-            <p className="admin-secondary">
-              各项配置已齐全；实际连接和生成结果仍需在业务中验证。
-            </p>
-          ) : (
-            serviceIssues.map((service) => (
-              <div key={service.id} className="admin-service-row">
-                <div>
-                  <Link
-                    to={`/admin/ai?service=${encodeURIComponent(service.id)}`}
-                  >
-                    <strong>
-                      {service.id === "tts"
-                        ? bailianSpeechLabel
-                        : service.label}
-                    </strong>
-                  </Link>
-                  <p className="admin-secondary">
-                    {[
-                      ...service.missing.map(configLabel),
-                      ...service.issues,
-                    ].join("；") || service.note}
-                  </p>
-                </div>
-                <AIState state={service.state} />
+
+        <aside className="admin-panel">
+          <section aria-labelledby="admin-workbench-ai">
+            <div className="admin-section-heading">
+              <h2 id="admin-workbench-ai">AI 配置缺项</h2>
+              <Link to="/admin/ai">查看 AI 服务</Link>
+            </div>
+            {speechUpgradeRequired && (
+              <Alert
+                className="admin-notice"
+                type="warning"
+                showIcon
+                title={speechUpgradeTitle}
+                description={speechUpgradeMessage}
+              />
+            )}
+            {serviceIssues.length === 0 && !speechUpgradeRequired ? (
+              <div className="admin-health-ok">
+                <CheckCircle2 size={18} aria-hidden="true" />
+                <p>各项配置已齐全；实际连接和生成结果仍需在业务中验证。</p>
               </div>
-            ))
-          )}
-        </section>
-      </aside>
+            ) : (
+              serviceIssues.map((service) => (
+                <div key={service.id} className="admin-service-row">
+                  <div>
+                    <Link
+                      to={`/admin/ai?service=${encodeURIComponent(service.id)}`}
+                    >
+                      <strong>
+                        {service.id === "tts"
+                          ? bailianSpeechLabel
+                          : service.label}
+                      </strong>
+                    </Link>
+                    <p className="admin-secondary">
+                      {[
+                        ...service.missing.map(configLabel),
+                        ...service.issues,
+                      ].join("；") || service.note}
+                    </p>
+                  </div>
+                  <AIState state={service.state} />
+                </div>
+              ))
+            )}
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }

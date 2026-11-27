@@ -18,6 +18,7 @@ import {
   Typography,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
+import { Plus, RefreshCw } from "lucide-react";
 import { dateTime, useAdminAction } from "./admin-api";
 import { serviceRequest } from "@keagent/api-client";
 import AdminCreditUsage from "./AdminCreditUsage";
@@ -96,12 +97,41 @@ function OwnerBalances({
     total: number;
   }>(["admin", "credits-list"], "/v1/admin/credits/list");
   return (
-    <>
+    <section
+      className="admin-panel admin-table-panel"
+      aria-labelledby="credits-balances-title"
+    >
+      <div className="admin-section-heading">
+        <div>
+          <h2 id="credits-balances-title">用户积分余额</h2>
+          <p className="admin-secondary">
+            查看各账号充值积分与赠送积分可用余额及冻结情况，点击明细核对流水。
+          </p>
+        </div>
+        <Button
+          icon={<RefreshCw size={14} />}
+          loading={balances.isFetching}
+          onClick={() => void balances.refetch()}
+        >
+          刷新
+        </Button>
+      </div>
+      {balances.error && (
+        <Alert
+          className="admin-notice"
+          type="error"
+          showIcon
+          title="余额列表加载失败"
+          description={balances.error.message}
+        />
+      )}
       <Table<CreditBalanceRow>
         size="small"
         rowKey="ownerId"
         loading={balances.isLoading}
         dataSource={balances.data?.items ?? []}
+        scroll={{ x: 740 }}
+        locale={{ emptyText: <Empty description="还没有积分用户" /> }}
         pagination={{
           pageSize: 10,
           total: balances.data?.total,
@@ -111,36 +141,40 @@ function OwnerBalances({
           {
             title: "用户",
             render: (row: CreditBalanceRow) => (
-              <Space size={4} direction="vertical">
-                <span>{row.name || "未命名用户"}</span>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <div className="admin-user-cell">
+                <strong style={{ fontWeight: 550 }}>
+                  {row.name || "未命名用户"}
+                </strong>
+                <span className="admin-secondary">
                   {row.email || row.ownerId}
-                </Typography.Text>
-              </Space>
+                </span>
+              </div>
             ),
           },
           {
             title: "充值积分",
+            align: "right",
             render: (row: CreditBalanceRow) => (
-              <span>
+              <span className="admin-num">
                 {row.purchasedAvailable}
                 {row.purchasedHeld > 0 && (
-                  <Typography.Text type="secondary">
+                  <span className="admin-num-sub">
                     （冻结 {row.purchasedHeld}）
-                  </Typography.Text>
+                  </span>
                 )}
               </span>
             ),
           },
           {
             title: "赠送积分",
+            align: "right",
             render: (row: CreditBalanceRow) => (
-              <span>
+              <span className="admin-num">
                 {row.grantedAvailable}
                 {row.grantedHeld > 0 && (
-                  <Typography.Text type="secondary">
+                  <span className="admin-num-sub">
                     （冻结 {row.grantedHeld}）
-                  </Typography.Text>
+                  </span>
                 )}
               </span>
             ),
@@ -148,20 +182,31 @@ function OwnerBalances({
           {
             title: "最近过期",
             dataIndex: "nextExpiry",
-            render: (value?: string) => (value ? dateTime(value) : "—"),
+            width: 175,
+            render: (value?: string) =>
+              value ? (
+                dateTime(value)
+              ) : (
+                <span className="admin-empty-val">—</span>
+              ),
           },
           {
-            title: "",
+            title: "操作",
+            align: "right",
+            width: 90,
             render: (row: CreditBalanceRow) => (
-              <Button size="small" onClick={() => onInspect(row.ownerId)}>
+              <Button
+                type="link"
+                className="admin-row-actions"
+                onClick={() => onInspect(row.ownerId)}
+              >
                 明细
               </Button>
             ),
           },
         ]}
       />
-      {balances.data?.total === 0 && <Empty description="还没有积分用户" />}
-    </>
+    </section>
   );
 }
 
@@ -209,15 +254,30 @@ function OwnerDetailDrawer({
       : "/v1/admin/credits/list",
   );
   return (
-    <Drawer open={!!ownerId} onClose={onClose} width={620} title="积分明细">
+    <Drawer
+      rootClassName="admin-detail-drawer"
+      open={!!ownerId}
+      onClose={onClose}
+      width={660}
+      title="积分明细"
+    >
       {detail.data && (
         <>
           <Descriptions
+            bordered
             size="small"
             column={2}
-            style={{ marginBottom: 16 }}
+            style={{ marginBottom: 18 }}
             items={[
-              { key: "id", label: "用户编号", children: detail.data.ownerId },
+              {
+                key: "id",
+                label: "用户编号",
+                children: (
+                  <Typography.Text copyable>
+                    {detail.data.ownerId}
+                  </Typography.Text>
+                ),
+              },
               {
                 key: "lots",
                 label: "积分批次",
@@ -225,21 +285,35 @@ function OwnerDetailDrawer({
               },
             ]}
           />
+          <h3 className="admin-detail-heading" style={{ marginTop: 0 }}>
+            积分批次
+          </h3>
           <Table
             size="small"
             rowKey="id"
             dataSource={detail.data.lots ?? []}
             pagination={false}
-            style={{ marginBottom: 16 }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description="暂无有效积分批次"
+                />
+              ),
+            }}
+            style={{ marginBottom: 18 }}
             columns={[
               {
                 title: "类别",
                 dataIndex: "kind",
-                render: (kind: string) =>
-                  kind === "purchased" ? "充值" : "赠送",
+                render: (kind: string) => (
+                  <Tag color={kind === "purchased" ? "blue" : "green"}>
+                    {kind === "purchased" ? "充值" : "赠送"}
+                  </Tag>
+                ),
               },
-              { title: "剩余", dataIndex: "remaining" },
-              { title: "冻结", dataIndex: "held" },
+              { title: "剩余", dataIndex: "remaining", align: "right" },
+              { title: "冻结", dataIndex: "held", align: "right" },
               {
                 title: "来源",
                 dataIndex: "source",
@@ -258,17 +332,31 @@ function OwnerDetailDrawer({
               },
             ]}
           />
+          <h3 className="admin-detail-heading">变动流水</h3>
           <Table
             size="small"
             rowKey={(row) => `${row.kind}-${row.createdAt}-${row.amount}`}
             dataSource={detail.data.ledger ?? []}
             pagination={{ pageSize: 8, hideOnSinglePage: true }}
             columns={[
-              { title: "类型", dataIndex: "kind", width: 80 },
-              { title: "余额变动", dataIndex: "amount", width: 90 },
+              {
+                title: "类型",
+                dataIndex: "kind",
+                width: 88,
+                render: (value: string) => (
+                  <code className="admin-code">{value}</code>
+                ),
+              },
+              {
+                title: "余额变动",
+                dataIndex: "amount",
+                width: 90,
+                align: "right",
+              },
               {
                 title: "实际消耗",
                 width: 90,
+                align: "right",
                 render: (row: NonNullable<OwnerDetail["ledger"]>[number]) =>
                   row.kind === "capture" ? (row.metadata?.spent ?? "—") : "—",
               },
@@ -289,7 +377,7 @@ function OwnerDetailDrawer({
               },
             ]}
           />
-          <p className="admin-muted">
+          <p className="admin-muted admin-block">
             余额在冻结时扣减，结算时的实际消耗单独列示。
           </p>
         </>
@@ -403,47 +491,78 @@ function OpenHolds() {
     );
   }
   return (
-    <>
-      <p className="admin-muted">
-        供应商结果未知时积分保持冻结；可在此人工确认成功（结算）或失败（退款）。
-      </p>
+    <section
+      className="admin-panel admin-table-panel"
+      aria-labelledby="credits-holds-title"
+    >
+      <div className="admin-section-heading">
+        <div>
+          <h2 id="credits-holds-title">在途冻结对账</h2>
+          <p className="admin-muted">
+            供应商结果未知时积分保持冻结；可在此人工确认成功（结算）或失败（退款）。
+          </p>
+        </div>
+        <Button
+          icon={<RefreshCw size={14} />}
+          loading={holds.isFetching}
+          onClick={() => void holds.refetch()}
+        >
+          刷新
+        </Button>
+      </div>
       <Table<CreditHoldRow>
         size="small"
         rowKey="id"
         loading={holds.isLoading}
         dataSource={holds.data ?? []}
+        scroll={{ x: 760 }}
+        locale={{ emptyText: <Empty description="当前没有待对账的在途冻结" /> }}
         pagination={{ pageSize: 10, hideOnSinglePage: true }}
         columns={[
           {
             title: "操作",
             dataIndex: "op",
-            render: (op: string) => opLabels[op] ?? op,
+            render: (op: string) => <Tag>{opLabels[op] ?? op}</Tag>,
           },
           {
             title: "用户",
             render: (row: CreditHoldRow) => row.name || row.ownerId,
           },
-          { title: "数额", dataIndex: "amount" },
-          { title: "价目版本", dataIndex: "priceVersion" },
+          {
+            title: "数额",
+            dataIndex: "amount",
+            align: "right",
+            render: (value: number) => (
+              <span className="admin-num">{value}</span>
+            ),
+          },
+          {
+            title: "价目版本",
+            dataIndex: "priceVersion",
+            render: (value: string) => (
+              <code className="admin-code">{value}</code>
+            ),
+          },
           {
             title: "冻结时间",
             dataIndex: "createdAt",
             render: (value: string) => dateTime(value),
           },
           {
-            title: "",
+            title: "操作",
+            align: "right",
+            width: 150,
             render: (row: CreditHoldRow) => (
-              <Space>
+              <Space className="admin-row-actions" size={4}>
                 <Button
-                  size="small"
-                  type="primary"
+                  type="link"
                   disabled={busy}
                   onClick={() => void settle(row.id, "capture")}
                 >
                   确认成功
                 </Button>
                 <Button
-                  size="small"
+                  type="link"
                   danger
                   disabled={busy}
                   onClick={() => void settle(row.id, "release")}
@@ -455,7 +574,7 @@ function OpenHolds() {
           },
         ]}
       />
-    </>
+    </section>
   );
 }
 
@@ -497,32 +616,50 @@ function PricingAndWelcome() {
     );
   }
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h3 style={{ marginTop: 0 }}>
-        计费单价（版本 {pricing.data?.version ?? "…"}）
-      </h3>
-      {pricing.data &&
-        Object.entries(pricing.data.prices)
-          .filter(([key]) => key !== "image_expand" && key !== "opening")
-          .map(([key, value]) => (
-            <PricingRow
-              key={key}
-              label={priceLabels[key] ?? key}
-              value={value}
-              onSave={(next) => void savePricing({ [key]: next })}
-              busy={busy}
-            />
-          ))}
-      <h3 style={{ marginTop: 28 }}>新用户欢迎赠送</h3>
-      {welcome.data && (
-        <WelcomeForm
-          initial={welcome.data}
-          busy={busy}
-          onSave={(enabled, amount, validityDays) =>
-            void saveWelcome(enabled, amount, validityDays)
-          }
-        />
-      )}
+    <div className="admin-pricing-grid">
+      <section className="admin-panel" aria-labelledby="credits-pricing-title">
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="credits-pricing-title">
+              计费单价（版本 {pricing.data?.version ?? "…"}）
+            </h2>
+            <p className="admin-muted">
+              调整单项 AI 服务的积分消耗单价，保存后对新任务生效。
+            </p>
+          </div>
+        </div>
+        {pricing.data &&
+          Object.entries(pricing.data.prices)
+            .filter(([key]) => key !== "image_expand" && key !== "opening")
+            .map(([key, value]) => (
+              <PricingRow
+                key={key}
+                label={priceLabels[key] ?? key}
+                value={value}
+                onSave={(next) => void savePricing({ [key]: next })}
+                busy={busy}
+              />
+            ))}
+      </section>
+      <section className="admin-panel" aria-labelledby="credits-welcome-title">
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="credits-welcome-title">新用户欢迎赠送</h2>
+            <p className="admin-muted">
+              新账号首次进入工作区时自动发放赠送积分；关闭后不发放。
+            </p>
+          </div>
+        </div>
+        {welcome.data && (
+          <WelcomeForm
+            initial={welcome.data}
+            busy={busy}
+            onSave={(enabled, amount, validityDays) =>
+              void saveWelcome(enabled, amount, validityDays)
+            }
+          />
+        )}
+      </section>
     </div>
   );
 }
@@ -540,13 +677,7 @@ function PricingRow({
 }) {
   const [draft, setDraft] = useState(value);
   return (
-    <Space
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        marginBottom: 10,
-      }}
-    >
+    <div className="admin-pricing-row">
       <span>{label}</span>
       <Space>
         <InputNumber
@@ -557,14 +688,14 @@ function PricingRow({
           style={{ width: 120 }}
         />
         <Button
-          size="small"
+          type={draft !== value ? "primary" : "default"}
           disabled={busy || draft === value}
           onClick={() => onSave(draft)}
         >
           保存
         </Button>
       </Space>
-    </Space>
+    </div>
   );
 }
 
@@ -581,36 +712,39 @@ function WelcomeForm({
   const [amount, setAmount] = useState(initial.amount);
   const [days, setDays] = useState(initial.validityDays);
   return (
-    <div>
-      <p className="admin-muted">
-        新账号首次进入工作区时自动发放赠送积分；关闭后不发放。
-      </p>
-      <Space style={{ marginBottom: 12 }}>
+    <div className="admin-stack">
+      <div className="admin-pricing-row" style={{ paddingTop: 0 }}>
+        <span>自动发放开关</span>
         <Switch
           checked={enabled}
           onChange={setEnabled}
           checkedChildren="开启"
           unCheckedChildren="关闭"
         />
-        <InputNumber
-          min={1}
-          max={1000000}
-          value={amount}
-          onChange={(next) => setAmount(next ?? 1)}
-          addonBefore="数额"
-        />
-        <InputNumber
-          min={1}
-          max={3650}
-          value={days}
-          onChange={(next) => setDays(next ?? 30)}
-          addonBefore="有效期（天）"
-        />
-      </Space>
+      </div>
+      <div className="admin-form-columns">
+        <Form.Item label="赠送数额（积分）" style={{ marginBottom: 0 }}>
+          <InputNumber
+            min={1}
+            max={1000000}
+            value={amount}
+            onChange={(next) => setAmount(next ?? 1)}
+            style={{ width: "100%" }}
+          />
+        </Form.Item>
+        <Form.Item label="有效期（天）" style={{ marginBottom: 0 }}>
+          <InputNumber
+            min={1}
+            max={3650}
+            value={days}
+            onChange={(next) => setDays(next ?? 30)}
+            style={{ width: "100%" }}
+          />
+        </Form.Item>
+      </div>
       <div>
         <Button
           type="primary"
-          size="small"
           disabled={
             busy ||
             (enabled === initial.enabled &&
@@ -667,56 +801,95 @@ function CreditCodes() {
   }
   return (
     <>
-      <Button
-        type="primary"
-        style={{ marginBottom: 16 }}
-        onClick={() => setCreating(true)}
+      <section
+        className="admin-panel admin-table-panel"
+        aria-labelledby="credits-codes-title"
       >
-        生成兑换码批次
-      </Button>
-      <Table<CreditBatchRow>
-        size="small"
-        rowKey="batchId"
-        loading={batches.isLoading}
-        dataSource={batches.data ?? []}
-        pagination={{ pageSize: 10, hideOnSinglePage: true }}
-        columns={[
-          {
-            title: "批次",
-            dataIndex: "batchId",
-            render: (value: string) => (
-              <Typography.Text copyable style={{ fontSize: 12 }}>
-                {value.slice(0, 8)}…
-              </Typography.Text>
-            ),
-          },
-          { title: "面额", dataIndex: "amount" },
-          {
-            title: "试点积分包",
-            render: (_, row) =>
-              row.packId
-                ? `${creditPackLabels[row.packId]}${row.priceFen ? ` · ¥${(row.priceFen / 100).toFixed(2)}` : ""}`
-                : "—",
-          },
-          { title: "数量", dataIndex: "total" },
-          { title: "已兑换", dataIndex: "used" },
-          {
-            title: "备注",
-            dataIndex: "note",
-            render: (value: string) => value || "—",
-          },
-          {
-            title: "兑换截止",
-            dataIndex: "expiresAt",
-            render: (value?: string) => (value ? dateTime(value) : "不限"),
-          },
-          {
-            title: "创建时间",
-            dataIndex: "createdAt",
-            render: (value: string) => dateTime(value),
-          },
-        ]}
-      />
+        <div className="admin-section-heading">
+          <div>
+            <h2 id="credits-codes-title">兑换码批次</h2>
+            <p className="admin-muted">
+              批量生成积分兑换码并跟踪兑换进度；明文码仅在生成时展示一次。
+            </p>
+          </div>
+          <Space>
+            <Button
+              icon={<RefreshCw size={14} />}
+              loading={batches.isFetching}
+              onClick={() => void batches.refetch()}
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<Plus size={15} />}
+              onClick={() => setCreating(true)}
+            >
+              生成兑换码批次
+            </Button>
+          </Space>
+        </div>
+        <Table<CreditBatchRow>
+          size="small"
+          rowKey="batchId"
+          loading={batches.isLoading}
+          dataSource={batches.data ?? []}
+          scroll={{ x: 860 }}
+          locale={{ emptyText: <Empty description="还没有生成过兑换码批次" /> }}
+          pagination={{ pageSize: 10, hideOnSinglePage: true }}
+          columns={[
+            {
+              title: "批次",
+              dataIndex: "batchId",
+              render: (value: string) => (
+                <Typography.Text copyable style={{ fontSize: 12 }}>
+                  {value.slice(0, 8)}…
+                </Typography.Text>
+              ),
+            },
+            {
+              title: "面额",
+              dataIndex: "amount",
+              align: "right",
+              render: (value: number) => (
+                <span className="admin-num">{value}</span>
+              ),
+            },
+            {
+              title: "试点积分包",
+              render: (_, row) =>
+                row.packId ? (
+                  <Tag color="blue">
+                    {creditPackLabels[row.packId]}
+                    {row.priceFen
+                      ? ` · ¥${(row.priceFen / 100).toFixed(2)}`
+                      : ""}
+                  </Tag>
+                ) : (
+                  <span className="admin-empty-val">—</span>
+                ),
+            },
+            { title: "数量", dataIndex: "total", align: "right" },
+            { title: "已兑换", dataIndex: "used", align: "right" },
+            {
+              title: "备注",
+              dataIndex: "note",
+              render: (value: string) =>
+                value || <span className="admin-empty-val">—</span>,
+            },
+            {
+              title: "兑换截止",
+              dataIndex: "expiresAt",
+              render: (value?: string) => (value ? dateTime(value) : "不限"),
+            },
+            {
+              title: "创建时间",
+              dataIndex: "createdAt",
+              render: (value: string) => dateTime(value),
+            },
+          ]}
+        />
+      </section>
       <Modal
         title="生成兑换码批次"
         open={creating}
@@ -793,12 +966,7 @@ function CreditCodes() {
         />
         <Typography.Paragraph
           copyable={{ text: (issued?.codes ?? []).join("\n") }}
-          style={{
-            maxHeight: 260,
-            overflow: "auto",
-            fontFamily: "monospace",
-            fontSize: 12,
-          }}
+          className="admin-codes-box"
         >
           {(issued?.codes ?? []).join("\n")}
         </Typography.Paragraph>
@@ -813,12 +981,17 @@ export default function AdminCredits() {
   const [granting, setGranting] = useState(false);
   return (
     <>
-      <Space style={{ marginBottom: 16 }}>
-        <Button type="primary" onClick={() => setGranting(true)}>
-          手动发放积分
-        </Button>
-      </Space>
       <Tabs
+        className="admin-credits-tabs"
+        tabBarExtraContent={
+          <Button
+            type="primary"
+            icon={<Plus size={15} />}
+            onClick={() => setGranting(true)}
+          >
+            手动发放积分
+          </Button>
+        }
         items={[
           {
             key: "usage",

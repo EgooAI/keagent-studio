@@ -16,7 +16,7 @@ import {
   Typography,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { ArrowLeft, BookOpen, Plus, RefreshCw } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import type { Resource, ResourceType, VideoMode } from "@keagent/shared-types";
 import type {
@@ -316,6 +316,7 @@ export default function ResourcesPanel() {
               )}
             </div>
             <Button
+              icon={<ArrowLeft size={14} />}
               disabled={busy}
               onClick={() =>
                 navigateEditor({
@@ -501,8 +502,21 @@ export default function ResourcesPanel() {
                   ]}
                 />
               </Space>
-              <Space>
-                {!legacy && (
+              <Space wrap>
+                {legacy ? (
+                  <Button
+                    type="link"
+                    onClick={() =>
+                      setParams({
+                        catalog: "bundle",
+                        q: undefined,
+                        state: undefined,
+                      })
+                    }
+                  >
+                    返回新版目录
+                  </Button>
+                ) : (
                   <Button
                     type="text"
                     onClick={() =>
@@ -516,10 +530,14 @@ export default function ResourcesPanel() {
                     旧版完整模板
                   </Button>
                 )}
-                <Button onClick={() => setRulesOpen(true)}>
+                <Button
+                  icon={<BookOpen size={14} />}
+                  onClick={() => setRulesOpen(true)}
+                >
                   {legacy ? "添加规则" : "管理规则"}
                 </Button>
                 <Button
+                  icon={<RefreshCw size={14} />}
                   onClick={() => void query.refetch()}
                   loading={query.isFetching}
                 >
@@ -555,7 +573,7 @@ export default function ResourcesPanel() {
                   title: "模板",
                   key: "name",
                   render: (_, r) => (
-                    <>
+                    <div className="admin-user-cell">
                       <Button
                         type="link"
                         className="admin-text-button"
@@ -563,13 +581,20 @@ export default function ResourcesPanel() {
                       >
                         {r.name}
                       </Button>
-                      <p className="admin-secondary">
+                      <span className="admin-secondary">
                         {r.category || "未分类"}
-                      </p>
-                    </>
+                      </span>
+                    </div>
                   ),
                 },
-                { title: "版本", dataIndex: "version", width: 100 },
+                {
+                  title: "版本",
+                  dataIndex: "version",
+                  width: 100,
+                  render: (value: string) => (
+                    <code className="admin-code">v{value}</code>
+                  ),
+                },
                 {
                   title: legacy
                     ? "适用模式"
@@ -590,7 +615,15 @@ export default function ResourcesPanel() {
                   key: "state",
                   width: 100,
                   render: (_, r) => (
-                    <Tag color={r.published ? "green" : "default"}>
+                    <Tag
+                      color={
+                        r.published
+                          ? "green"
+                          : r.publishedOnce
+                            ? "orange"
+                            : "blue"
+                      }
+                    >
                       {resourceState(r)}
                     </Tag>
                   ),
@@ -598,26 +631,27 @@ export default function ResourcesPanel() {
                 {
                   title: "操作",
                   key: "actions",
-                  width: 280,
+                  align: "right",
+                  width: 230,
                   render: (_, r) => (
-                    <Space wrap>
+                    <Space className="admin-row-actions" size={4}>
                       <Button
-                        size="small"
+                        type="link"
                         disabled={busy}
                         onClick={() => openEditor(r, true)}
                       >
                         更新版本
                       </Button>
                       <Button
-                        size="small"
+                        type="link"
                         disabled={busy}
                         onClick={() => void showPreview(r)}
                       >
                         预览校验
                       </Button>
                       <Button
+                        type="link"
                         danger
-                        size="small"
                         disabled={busy}
                         onClick={() => deleteTemplate(r)}
                       >

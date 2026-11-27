@@ -1265,16 +1265,19 @@ test("旧外观链接进入设置，刷新后保留主题", async ({ page }) => 
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("radio", { name: "雾蓝" })).toBeChecked();
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-palette",
-    "mist-blue",
-  );
-  await page.getByText("经典蓝", { exact: true }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-palette", "blue");
-  await page.reload();
   await expect(page.getByRole("radio", { name: "经典蓝" })).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-palette", "blue");
+  await page.getByText("皇冠紫", { exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-palette",
+    "royal-purple",
+  );
+  await page.reload();
+  await expect(page.getByRole("radio", { name: "皇冠紫" })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-palette",
+    "royal-purple",
+  );
 });
 
 test("服务端分页可查第123位用户，搜索和刷新保留URL", async ({ page }) => {

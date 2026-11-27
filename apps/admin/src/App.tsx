@@ -9,9 +9,9 @@ import "antd/dist/reset.css";
 import "./admin.css";
 
 const defaultAdminPalette = {
-  id: "mist-blue",
-  name: "雾蓝",
-  primary: "#3d607d",
+  id: "blue",
+  name: "经典蓝",
+  primary: "#2563eb",
 };
 
 const queryClient = new QueryClient({
@@ -50,11 +50,54 @@ export default function App() {
         locale={zhCN}
         theme={{
           token: {
-            colorBgLayout: "#f7f8fa",
-            colorText: "#111827",
+            colorBgLayout: "#f5f7fa",
+            colorBgContainer: "#ffffff",
+            colorBorder: "#d9e0ea",
+            colorBorderSecondary: "#e6ebf2",
+            colorText: "#0f172a",
+            colorTextSecondary: "#475569",
+            colorTextTertiary: "#64748b",
             borderRadius: 8,
+            borderRadiusLG: 12,
+            controlHeight: 34,
             fontFamily:
-              '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
+              '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+          },
+          components: {
+            Button: {
+              primaryShadow: "none",
+              defaultShadow: "none",
+              dangerShadow: "none",
+            },
+            Table: {
+              headerBg: "#f8fafc",
+              headerColor: "#475569",
+              headerSplitColor: "transparent",
+              rowHoverBg: "#f8fafc",
+              borderColor: "#edf1f7",
+              cellPaddingBlock: 13,
+              cellPaddingBlockSM: 10,
+              cellPaddingInline: 16,
+            },
+            Tabs: {
+              inkBarColor: "var(--accent)",
+              itemSelectedColor: "var(--accent)",
+              itemHoverColor: "var(--accent)",
+              titleFontSize: 14,
+              horizontalMargin: "0 0 18px 0",
+            },
+            Descriptions: {
+              labelBg: "#f8fafc",
+            },
+            Tag: {
+              borderRadiusSM: 6,
+            },
+            Drawer: {
+              colorBgElevated: "#ffffff",
+            },
+            Modal: {
+              borderRadiusLG: 14,
+            },
           },
         }}
       >

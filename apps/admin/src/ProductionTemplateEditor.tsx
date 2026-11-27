@@ -56,6 +56,7 @@ export function ProductionTemplateEditor({
   const videoMode = Form.useWatch(field("videoMode"));
   const shortTour = Form.useWatch(field("design")) === "short-tour";
   const spatial = Form.useWatch(field("cameraMode")) === "spatial";
+  const brandColor = Form.useWatch(field("brandColor")) as string | undefined;
   return (
     <>
       {section === "legacy" && (
@@ -199,7 +200,21 @@ export function ProductionTemplateEditor({
               },
             ]}
           >
-            <Input maxLength={7} placeholder="#167D8D" />
+            <Input
+              maxLength={7}
+              placeholder="#167D8D"
+              prefix={
+                <span
+                  className="admin-color-swatch"
+                  style={{
+                    backgroundColor: /^#[0-9a-fA-F]{6}$/.test(brandColor || "")
+                      ? brandColor
+                      : defaultProduction.config.brandColor,
+                  }}
+                  aria-hidden="true"
+                />
+              }
+            />
           </Form.Item>
           <Form.Item
             name={field("subtitles")}
@@ -281,6 +296,7 @@ export function ProductionPreview({
   return (
     <>
       <Alert
+        className="admin-notice"
         showIcon
         type="success"
         title="模板规则校验通过"
@@ -292,9 +308,11 @@ export function ProductionPreview({
               : "这是示例房源的文案和版式示意，不生成收费 AI 图片、配音或视频。真实文案会依据所选房源生成，最终效果以生成视频为准。"
         }
       />
-      <h2>
-        {value.template.name} · {value.template.version}
-      </h2>
+      <div className="admin-detail-summary">
+        <h2>
+          {value.template.name} · {value.template.version}
+        </h2>
+      </div>
       {value.definition?.kind === "bundle" && (
         <CatalogSummary definition={value.definition} />
       )}
@@ -392,6 +410,7 @@ export function ProductionPreview({
       {showEdit && (
         <>
           <Descriptions
+            bordered
             size="small"
             column={2}
             items={[
@@ -429,19 +448,13 @@ export function ProductionPreview({
         </>
       )}
       {kind && showScript && (
-        <h3>示例文案 · {c.language === "en-US" ? "英文" : "中文"}</h3>
+        <h3 className="admin-detail-heading">
+          示例文案 · {c.language === "en-US" ? "英文" : "中文"}
+        </h3>
       )}
       {value.segments.map((segment, index) => (
-        <div
-          key={segment.id}
-          style={{
-            marginTop: 18,
-            padding: 16,
-            background: "var(--ant-color-fill-quaternary, #f5f5f5)",
-            borderRadius: 8,
-          }}
-        >
-          <Tag>
+        <div key={segment.id} className="admin-preview-segment">
+          <Tag color="blue">
             {segment.id === "opening"
               ? "开场"
               : segment.id === "closing"
@@ -453,10 +466,9 @@ export function ProductionPreview({
               src={`/media/interior-${index}.jpg`}
               alt={`示例图片 ${index}`}
               width={180}
-              style={{ display: "block", marginTop: 8 }}
             />
           )}
-          <p style={{ whiteSpace: "pre-wrap" }}>{segment.text}</p>
+          <p>{segment.text}</p>
         </div>
       ))}
       {showScript && (

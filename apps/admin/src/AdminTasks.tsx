@@ -10,10 +10,12 @@ import {
   Skeleton,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { RefreshCw } from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import {
   stageLabels,
@@ -43,6 +45,11 @@ export default function AdminTasks() {
       ),
   });
   const task = detail.data?.task;
+  const hasFilters =
+    params.has("q") ||
+    params.has("ownerId") ||
+    params.has("status") ||
+    params.has("stage");
   return (
     <>
       <section
@@ -56,6 +63,13 @@ export default function AdminTasks() {
               在这里排查云端生产任务。文案审核、重试和本机全景制作在用户客户端完成。
             </p>
           </div>
+          <Button
+            icon={<RefreshCw size={14} />}
+            loading={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            刷新列表
+          </Button>
         </div>
         <div className="admin-toolbar">
           <Space wrap>
@@ -66,7 +80,7 @@ export default function AdminTasks() {
               defaultValue={params.get("q") || ""}
               onSearch={(q) => setParams({ q: q || undefined })}
               allowClear
-              style={{ width: 280 }}
+              style={{ width: 260 }}
             />
             <Select
               aria-label="任务状态"
@@ -74,7 +88,7 @@ export default function AdminTasks() {
               value={params.get("status") || undefined}
               onChange={(status) => setParams({ status })}
               allowClear
-              style={{ width: 150 }}
+              style={{ width: 140 }}
               options={Object.entries(statusLabels).map(([value, label]) => ({
                 value,
                 label,
@@ -86,7 +100,7 @@ export default function AdminTasks() {
               value={params.get("stage") || undefined}
               onChange={(stage) => setParams({ stage })}
               allowClear
-              style={{ width: 170 }}
+              style={{ width: 155 }}
               options={Object.entries(stageLabels).map(([value, label]) => ({
                 value,
                 label,
@@ -98,19 +112,10 @@ export default function AdminTasks() {
               label="所属用户"
             />
           </Space>
-          <Button
-            loading={query.isFetching}
-            onClick={() => void query.refetch()}
-          >
-            刷新列表
-          </Button>
         </div>
-        {(params.has("q") ||
-          params.has("ownerId") ||
-          params.has("status") ||
-          params.has("stage")) && (
+        {hasFilters && (
           <div className="admin-filter-note">
-            正在按条件筛选{" "}
+            <span>正在按条件筛选</span>
             <Button
               type="link"
               onClick={() =>
@@ -128,6 +133,7 @@ export default function AdminTasks() {
         )}
         {query.error && (
           <Alert
+            className="admin-notice"
             type="error"
             showIcon
             title="任务加载失败"
@@ -148,7 +154,7 @@ export default function AdminTasks() {
               key: "task",
               width: 240,
               render: (_, row) => (
-                <>
+                <div className="admin-user-cell">
                   <Button
                     type="link"
                     className="admin-cell-link"
@@ -158,10 +164,10 @@ export default function AdminTasks() {
                       row.propertyNumber ||
                       "房源信息不可用"}
                   </Button>
-                  <p className="admin-secondary">
+                  <span className="admin-secondary">
                     房源号：{row.propertyNumber || "未记录"}
-                  </p>
-                </>
+                  </span>
+                </div>
               ),
             },
             {
@@ -179,18 +185,25 @@ export default function AdminTasks() {
             {
               title: "视频模式",
               key: "mode",
-              render: (_, row) =>
-                row.videoMode === "avatar" ? "经纪人露脸" : "纯口播",
+              width: 115,
+              render: (_, row) => (
+                <Tag>
+                  {row.videoMode === "avatar" ? "经纪人露脸" : "纯口播"}
+                </Tag>
+              ),
             },
             {
               title: "当前阶段",
               dataIndex: "stage",
-              render: (value: AdminTaskSummary["stage"]) =>
-                stageLabels[value] || "未知阶段",
+              width: 120,
+              render: (value: AdminTaskSummary["stage"]) => (
+                <Tag>{stageLabels[value] || "未知阶段"}</Tag>
+              ),
             },
             {
               title: "状态",
               dataIndex: "status",
+              width: 110,
               render: (value: AdminTaskSummary["status"]) => (
                 <TaskStatus value={value} />
               ),
@@ -198,9 +211,18 @@ export default function AdminTasks() {
             {
               title: "失败原因",
               dataIndex: "error",
-              width: 230,
+              width: 240,
               ellipsis: true,
-              render: (value) => value || "无",
+              render: (value?: string) =>
+                value ? (
+                  <Tooltip title={value}>
+                    <span style={{ color: "var(--admin-danger)" }}>
+                      {value}
+                    </span>
+                  </Tooltip>
+                ) : (
+                  <span className="admin-empty-val">—</span>
+                ),
             },
             {
               title: "创建时间",
@@ -236,12 +258,13 @@ export default function AdminTasks() {
             </div>
             {(task.status === "failed" || task.error) && (
               <Alert
+                className="admin-notice"
                 type="error"
                 showIcon
                 title="失败原因"
                 description={
                   <>
-                    <p>
+                    <p style={{ marginBottom: 6 }}>
                       {task.error ||
                         "服务端尚未提供诊断，请核对任务阶段与服务配置。"}
                     </p>
@@ -303,6 +326,7 @@ export default function AdminTasks() {
             <h3 className="admin-detail-heading">生成配置快照</h3>
             <Descriptions
               column={1}
+              bordered
               size="small"
               items={[
                 {

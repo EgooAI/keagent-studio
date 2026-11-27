@@ -3,7 +3,6 @@ import {
   Alert,
   App,
   Button,
-  Card,
   Form,
   Input,
   Layout,
@@ -11,6 +10,7 @@ import {
   Modal,
   Space,
   Spin,
+  type MenuProps,
 } from "antd";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -27,7 +27,9 @@ import {
   Coins,
   Cpu,
   LayoutDashboard,
+  LogOut,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Users,
   Video,
@@ -53,60 +55,85 @@ const pages = [
   {
     key: "dashboard",
     label: "管理工作台",
-    icon: <LayoutDashboard size={18} />,
+    group: "总览",
+    icon: <LayoutDashboard size={17} />,
     description: "掌握账号、设备与视频制作情况。",
   },
   {
     key: "users",
     label: "用户与设备",
-    icon: <Users size={18} />,
+    group: "运营与生产",
+    icon: <Users size={17} />,
     description: "开通或停用用户账号，处理登录问题，查看并解绑用户设备。",
   },
   {
     key: "resources",
     label: "公共模板",
-    icon: <Boxes size={18} />,
+    group: "运营与生产",
+    icon: <Boxes size={17} />,
     description: "维护剪辑、封面与文案模板，为视频创作发布推荐搭配。",
   },
   {
     key: "tasks",
     label: "云端任务",
-    icon: <ClipboardList size={18} />,
+    group: "运营与生产",
+    icon: <ClipboardList size={17} />,
     description:
       "按用户和房源定位云端生产任务，查看当前阶段、失败原因与生成配置。",
   },
   {
     key: "ai",
     label: "AI 服务",
-    icon: <Cpu size={18} />,
+    group: "运营与生产",
+    icon: <Cpu size={17} />,
     description: "配置、测试和启用制作服务，维护用户可以选择的公共音色。",
   },
   {
     key: "audit",
     label: "操作记录",
-    icon: <ShieldCheck size={18} />,
+    group: "审计与商业化",
+    icon: <ShieldCheck size={17} />,
     description:
       "追溯谁在什么时间对哪个对象做了什么，区分业务操作与账号安全记录。",
   },
   {
     key: "credits",
     label: "积分管理",
-    icon: <Coins size={18} />,
+    group: "审计与商业化",
+    icon: <Coins size={17} />,
     description: "发放和调整积分、对账在途扣费、维护价目与兑换码。",
   },
   {
     key: "douyin",
     label: "抖音发布",
-    icon: <Video size={18} />,
+    group: "审计与商业化",
+    icon: <Video size={17} />,
     description: "查看抖音发布回执、执行日志和流程告警。",
   },
   {
     key: "settings",
     label: "设置",
-    icon: <Settings size={18} />,
+    group: "系统",
+    icon: <Settings size={17} />,
     description: "管理告警通知和当前浏览器的后台外观。",
   },
 ];
+
+const menuGroups = ["总览", "运营与生产", "审计与商业化", "系统"] as const;
+
+const menuItems: MenuProps["items"] = menuGroups.map((group) => ({
+  type: "group",
+  key: `group-${group}`,
+  label: group,
+  children: pages
+    .filter((item) => item.group === group)
+    .map(({ key, label, icon }) => ({
+      key,
+      label,
+      icon,
+      "aria-label": label,
+    })),
+}));
 
 export default function LiveAdmin() {
   const client = useQueryClient();
@@ -179,19 +206,37 @@ export default function LiveAdmin() {
   if (!ready)
     return (
       <main className="admin-login">
-        <Spin tip="正在验证管理员身份…" />
+        <div className="admin-login-loading">
+          <Spin size="large" tip="正在验证管理员身份…" />
+        </div>
       </main>
     );
   if (!user)
     return (
       <main className="admin-login">
-        <Card title="登录 AI来客管理后台" className="admin-login-card">
-          <p className="admin-secondary">
-            使用管理员账号维护用户、公共模板与云端服务。
-          </p>
+        <section
+          className="admin-login-card"
+          aria-labelledby="admin-login-title"
+        >
+          <div className="admin-login-brand">
+            <img
+              className="admin-brand-mark"
+              src="./keagent-icon.png"
+              width="40"
+              height="40"
+              alt=""
+            />
+            <div>
+              <h1 id="admin-login-title">登录 AI来客管理后台</h1>
+              <p className="admin-secondary">
+                使用管理员账号维护用户、公共模板与云端服务。
+              </p>
+            </div>
+          </div>
           {error && <Alert type="error" showIcon title={error} />}
           <Form
             layout="vertical"
+            requiredMark={false}
             onFinish={async (values) => {
               setBusy(true);
               setError("");
@@ -214,36 +259,69 @@ export default function LiveAdmin() {
                 { required: true, type: "email", message: "请输入有效邮箱" },
               ]}
             >
-              <Input autoComplete="username" />
+              <Input
+                size="large"
+                placeholder="admin@example.com"
+                autoComplete="username"
+              />
             </Form.Item>
             <Form.Item
               name="password"
               label="密码"
               rules={[{ required: true, message: "请输入密码" }]}
             >
-              <Input.Password autoComplete="current-password" />
+              <Input.Password
+                size="large"
+                placeholder="输入登录密码"
+                autoComplete="current-password"
+              />
             </Form.Item>
-            <Button type="primary" htmlType="submit" loading={busy} block>
+            <Button
+              type="primary"
+              htmlType="submit"
+              size="large"
+              loading={busy}
+              block
+            >
               登录
             </Button>
           </Form>
-        </Card>
+        </section>
       </main>
     );
   if (!user.role.split(",").includes("admin"))
     return (
       <main className="admin-login">
-        <Card title="当前账号没有管理权限">
-          <p>{user.email}</p>
-          <p>请使用管理员账号登录。</p>
-          <Button onClick={() => void logout()} loading={busy}>
+        <section
+          className="admin-login-card admin-denied-card"
+          aria-labelledby="admin-denied-title"
+        >
+          <div className="admin-denied-icon" aria-hidden="true">
+            <ShieldAlert size={26} />
+          </div>
+          <h1 id="admin-denied-title">当前账号没有管理权限</h1>
+          <p className="admin-denied-email">{user.email}</p>
+          <p className="admin-secondary">请使用管理员账号登录。</p>
+          <Button
+            type="primary"
+            size="large"
+            onClick={() => void logout()}
+            loading={busy}
+            block
+          >
             退出并切换账号
           </Button>
-        </Card>
+        </section>
       </main>
     );
   if (new URLSearchParams(location.search).get("appearance") === "1")
     return <Navigate replace to="/admin/settings?tab=appearance" />;
+
+  const accountInitial = (user.name || user.email || "A")
+    .trim()
+    .slice(0, 1)
+    .toUpperCase();
+
   return (
     <Layout className="admin-shell">
       <a
@@ -258,51 +336,49 @@ export default function LiveAdmin() {
       </a>
       <Layout.Sider
         theme="light"
-        width={204}
+        width={224}
         breakpoint="lg"
         collapsedWidth={68}
       >
-        <Link
-          to="/admin/dashboard"
-          className="admin-brand"
-          aria-label="AI来客 · 管理后台"
-        >
-          <img
-            className="admin-brand-mark"
-            src="./keagent-icon.png"
-            width="34"
-            height="34"
-            alt=""
-          />
-          <div>
-            <strong>AI来客</strong>
-            <small>管理后台</small>
+        <div className="admin-sider-inner">
+          <Link
+            to="/admin/dashboard"
+            className="admin-brand"
+            aria-label="AI来客 · 管理后台"
+          >
+            <img
+              className="admin-brand-mark"
+              src="./keagent-icon.png"
+              width="34"
+              height="34"
+              alt=""
+            />
+            <div className="admin-brand-text">
+              <strong>AI来客</strong>
+              <small>管理后台</small>
+            </div>
+          </Link>
+          <div className="admin-sider-menu">
+            <Menu
+              mode="inline"
+              selectedKeys={[page?.key || "dashboard"]}
+              items={menuItems}
+              onClick={({ key }) => navigate(`/admin/${key}`)}
+            />
           </div>
-        </Link>
-        <Menu
-          mode="inline"
-          selectedKeys={[page?.key || "dashboard"]}
-          items={pages.map(({ key, label, icon }) => ({
-            key,
-            label,
-            icon,
-            "aria-label": label,
-          }))}
-          onClick={({ key }) => navigate(`/admin/${key}`)}
-        />
-        <div className="admin-sidebar-foot">
-          <ShieldCheck size={17} />
-          <span>管理员工作区</span>
+          <div className="admin-sidebar-foot">
+            <span className="admin-avatar" aria-hidden="true">
+              {accountInitial}
+            </span>
+            <div className="admin-sidebar-user">
+              <strong>{user.name || "系统管理员"}</strong>
+              {user.email && <span title={user.email}>{user.email}</span>}
+            </div>
+          </div>
         </div>
       </Layout.Sider>
-      <Layout>
-        <Layout.Content
-          className={
-            page?.key === "ai" ? "admin-content" : "admin-content admin-refined"
-          }
-          id="admin-main"
-          tabIndex={-1}
-        >
+      <Layout className="admin-workspace">
+        <Layout.Content className="admin-content" id="admin-main" tabIndex={-1}>
           <header className="admin-page-head">
             {page && (
               <div className="admin-page-heading">
@@ -311,8 +387,14 @@ export default function LiveAdmin() {
               </div>
             )}
             <Space wrap className="admin-account-controls">
-              <span className="admin-account-email">{user.email}</span>
-              <Button loading={busy} onClick={() => void logout()}>
+              {user.email && (
+                <span className="admin-account-email">{user.email}</span>
+              )}
+              <Button
+                icon={<LogOut size={15} />}
+                loading={busy}
+                onClick={() => void logout()}
+              >
                 退出登录
               </Button>
             </Space>

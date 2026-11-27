@@ -9,11 +9,16 @@ import {
   Modal,
   Select,
   Space,
-  Statistic,
   Table,
-  Tabs,
   Tag,
 } from "antd";
+import {
+  Activity,
+  AlertCircle,
+  DollarSign,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import { serviceRequest } from "@keagent/api-client";
 import { dateTime, useAdminAction } from "./admin-api";
 
@@ -146,10 +151,10 @@ function DateRangeFields() {
   return (
     <>
       <Form.Item name="from" label="开始日期" rules={[{ required: true }]}>
-        <Input type="date" />
+        <Input type="date" style={{ width: 148 }} />
       </Form.Item>
       <Form.Item name="to" label="结束日期" rules={[{ required: true }]}>
-        <Input type="date" />
+        <Input type="date" style={{ width: 148 }} />
       </Form.Item>
     </>
   );
@@ -187,47 +192,56 @@ function CostHistory() {
   }
 
   return (
-    <Space orientation="vertical" size="middle" style={{ display: "flex" }}>
-      <p className="admin-muted">
-        按北京时间筛选。成本按已配置的供应商费率估算，待核算的调用单独统计。
-      </p>
-      <Form<Filters>
-        form={form}
-        layout="inline"
-        initialValues={filters}
-        onFinish={(values) => {
-          setFilters(values);
-          setPage(1);
-        }}
-      >
-        <DateRangeFields />
-        <Form.Item name="operation" label="功能">
-          <Select
-            allowClear
-            style={{ width: 140 }}
-            options={Object.entries(operations).map(([value, label]) => ({
-              value,
-              label,
-            }))}
-          />
-        </Form.Item>
-        <Form.Item name="taskId" label="任务编号">
-          <Input allowClear maxLength={200} style={{ width: 140 }} />
-        </Form.Item>
-        <Form.Item name="batchId" label="批次编号">
-          <Input allowClear maxLength={200} style={{ width: 140 }} />
-        </Form.Item>
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit">
-              查询
-            </Button>
-            <Button loading={isFetching} onClick={() => void refetch()}>
-              刷新
-            </Button>
-          </Space>
-        </Form.Item>
-      </Form>
+    <div className="admin-stack">
+      <section className="admin-panel admin-panel-compact">
+        <p className="admin-muted" style={{ marginTop: 0, marginBottom: 14 }}>
+          按北京时间筛选。成本按已配置的供应商费率估算，待核算的调用单独统计。
+        </p>
+        <Form<Filters>
+          form={form}
+          layout="inline"
+          initialValues={filters}
+          style={{ rowGap: 10 }}
+          onFinish={(values) => {
+            setFilters(values);
+            setPage(1);
+          }}
+        >
+          <DateRangeFields />
+          <Form.Item name="operation" label="功能">
+            <Select
+              allowClear
+              placeholder="全部功能"
+              style={{ width: 140 }}
+              options={Object.entries(operations).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="taskId" label="任务编号">
+            <Input allowClear maxLength={200} style={{ width: 140 }} />
+          </Form.Item>
+          <Form.Item name="batchId" label="批次编号">
+            <Input allowClear maxLength={200} style={{ width: 140 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                icon={<RefreshCw size={14} />}
+                loading={isFetching}
+                onClick={() => void refetch()}
+              >
+                刷新
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </section>
+
       {error && (
         <Alert
           showIcon
@@ -236,132 +250,209 @@ function CostHistory() {
           description={error.message}
         />
       )}
-      <Space size="large" wrap>
-        <Statistic
-          title="已估算成本"
-          value={data?.total ? formatCost(cost) : "—"}
-        />
-        <Statistic title="供应商调用" value={data?.total ?? "—"} />
-        <Statistic title="待核算调用" value={data ? missing : "—"} />
-      </Space>
-      <Table<CostGroup>
-        size="small"
-        loading={isFetching}
-        rowKey={(row) =>
-          JSON.stringify([row.operation, row.provider, row.model])
-        }
-        dataSource={summary}
-        pagination={{ pageSize: 10, hideOnSinglePage: true }}
-        locale={{ emptyText: "此范围内暂无供应商用量" }}
-        columns={[
-          {
-            title: "功能",
-            dataIndex: "operation",
-            render: (value: string) => operations[value] ?? value,
-          },
-          {
-            title: "供应商",
-            dataIndex: "provider",
-            render: (value: string) => providers[value] ?? value,
-          },
-          { title: "模型", dataIndex: "model" },
-          { title: "调用次数", dataIndex: "count", align: "right" },
-          { title: "待核算", dataIndex: "unknown", align: "right" },
-          {
-            title: "已估算成本",
-            dataIndex: "costMicros",
-            align: "right",
-            render: formatCost,
-          },
-        ]}
-      />
-      <Table<CostEvent>
-        size="small"
-        loading={isFetching}
-        rowKey="id"
-        dataSource={data?.items ?? []}
-        scroll={{ x: 1000 }}
-        locale={{ emptyText: "暂无调用明细" }}
-        pagination={{
-          current: page,
-          pageSize: data?.pageSize ?? 50,
-          total: data?.total ?? 0,
-          showSizeChanger: false,
-          onChange: setPage,
-        }}
-        columns={[
-          { title: "时间", dataIndex: "createdAt", render: dateTime },
-          { title: "账号", dataIndex: "ownerId", ellipsis: true },
-          {
-            title: "功能 / 模型",
-            render: (_, row) => (
-              <>
-                {operations[row.operation] ?? row.operation}
-                <br />
-                {row.model}
-              </>
-            ),
-          },
-          {
-            title: "任务 / 批次",
-            render: (_, row) =>
-              row.taskId || row.batchId ? (
-                <Space orientation="vertical" size={0}>
-                  {row.taskId && (
-                    <Button
-                      type="link"
-                      size="small"
-                      onClick={() => filterBy("taskId", row.taskId)}
-                    >
-                      {row.taskId}
-                    </Button>
-                  )}
-                  {row.batchId && (
-                    <Button
-                      type="link"
-                      size="small"
-                      onClick={() => filterBy("batchId", row.batchId)}
-                    >
-                      {row.batchId}
-                    </Button>
-                  )}
-                </Space>
-              ) : (
-                "—"
+
+      <div className="admin-kpi-grid admin-kpi-grid-3">
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span className="admin-kpi-icon" aria-hidden="true">
+                <DollarSign size={15} />
+              </span>
+              已估算成本
+            </span>
+          </div>
+          <strong className="admin-kpi-value">
+            {data?.total ? formatCost(cost) : "—"}
+          </strong>
+        </div>
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className="admin-kpi-icon admin-kpi-icon-success"
+                aria-hidden="true"
+              >
+                <Activity size={15} />
+              </span>
+              供应商调用
+            </span>
+          </div>
+          <strong className="admin-kpi-value">{data?.total ?? "—"}</strong>
+        </div>
+        <div className="admin-kpi-card">
+          <div className="admin-kpi-top">
+            <span className="admin-kpi-label">
+              <span
+                className={
+                  missing > 0
+                    ? "admin-kpi-icon admin-kpi-icon-warning"
+                    : "admin-kpi-icon"
+                }
+                aria-hidden="true"
+              >
+                <AlertCircle size={15} />
+              </span>
+              待核算调用
+            </span>
+          </div>
+          <strong className="admin-kpi-value">{data ? missing : "—"}</strong>
+        </div>
+      </div>
+
+      <section className="admin-panel admin-table-panel">
+        <div className="admin-section-heading">
+          <h2>按功能与模型汇总</h2>
+        </div>
+        <Table<CostGroup>
+          size="small"
+          loading={isFetching}
+          rowKey={(row) =>
+            JSON.stringify([row.operation, row.provider, row.model])
+          }
+          dataSource={summary}
+          pagination={{ pageSize: 10, hideOnSinglePage: true }}
+          locale={{ emptyText: "此范围内暂无供应商用量" }}
+          columns={[
+            {
+              title: "功能",
+              dataIndex: "operation",
+              render: (value: string) => operations[value] ?? value,
+            },
+            {
+              title: "供应商",
+              dataIndex: "provider",
+              render: (value: string) => providers[value] ?? value,
+            },
+            {
+              title: "模型",
+              dataIndex: "model",
+              render: (value: string) => (
+                <code className="admin-code">{value}</code>
               ),
-          },
-          {
-            title: "用量",
-            render: (_, row) => (
-              <>
-                {usedUnits(row) || "—"}
-                <br />
-                <span className="admin-muted">
-                  {sourceLabels[row.source] ?? row.source}
-                </span>
-              </>
-            ),
-          },
-          {
-            title: "状态",
-            dataIndex: "status",
-            render: (value: string) => <Tag>{statuses[value] ?? value}</Tag>,
-          },
-          {
-            title: "供应商请求 / 任务 ID",
-            dataIndex: "providerRef",
-            ellipsis: true,
-            render: (value: string) => value || "—",
-          },
-          {
-            title: "预计成本",
-            dataIndex: "costMicros",
-            align: "right",
-            render: formatCost,
-          },
-        ]}
-      />
-    </Space>
+            },
+            { title: "调用次数", dataIndex: "count", align: "right" },
+            { title: "待核算", dataIndex: "unknown", align: "right" },
+            {
+              title: "已估算成本",
+              dataIndex: "costMicros",
+              align: "right",
+              render: (value: number | null) => (
+                <span className="admin-num">{formatCost(value)}</span>
+              ),
+            },
+          ]}
+        />
+      </section>
+
+      <section className="admin-panel admin-table-panel">
+        <div className="admin-section-heading">
+          <h2>调用明细</h2>
+        </div>
+        <Table<CostEvent>
+          size="small"
+          loading={isFetching}
+          rowKey="id"
+          dataSource={data?.items ?? []}
+          scroll={{ x: 1000 }}
+          locale={{ emptyText: "暂无调用明细" }}
+          pagination={{
+            current: page,
+            pageSize: data?.pageSize ?? 50,
+            total: data?.total ?? 0,
+            showSizeChanger: false,
+            onChange: setPage,
+          }}
+          columns={[
+            { title: "时间", dataIndex: "createdAt", render: dateTime },
+            { title: "账号", dataIndex: "ownerId", ellipsis: true },
+            {
+              title: "功能 / 模型",
+              render: (_, row) => (
+                <div className="admin-user-cell">
+                  <span>{operations[row.operation] ?? row.operation}</span>
+                  <span className="admin-secondary">{row.model}</span>
+                </div>
+              ),
+            },
+            {
+              title: "任务 / 批次",
+              render: (_, row) =>
+                row.taskId || row.batchId ? (
+                  <Space orientation="vertical" size={0}>
+                    {row.taskId && (
+                      <Button
+                        type="link"
+                        size="small"
+                        className="admin-cell-link"
+                        onClick={() => filterBy("taskId", row.taskId)}
+                      >
+                        {row.taskId}
+                      </Button>
+                    )}
+                    {row.batchId && (
+                      <Button
+                        type="link"
+                        size="small"
+                        className="admin-cell-link"
+                        onClick={() => filterBy("batchId", row.batchId)}
+                      >
+                        {row.batchId}
+                      </Button>
+                    )}
+                  </Space>
+                ) : (
+                  <span className="admin-empty-val">—</span>
+                ),
+            },
+            {
+              title: "用量",
+              render: (_, row) => (
+                <div className="admin-user-cell">
+                  <span>{usedUnits(row) || "—"}</span>
+                  <span className="admin-muted">
+                    {sourceLabels[row.source] ?? row.source}
+                  </span>
+                </div>
+              ),
+            },
+            {
+              title: "状态",
+              dataIndex: "status",
+              render: (value: string) => (
+                <Tag
+                  color={
+                    value === "succeeded"
+                      ? "green"
+                      : value === "failed"
+                        ? "red"
+                        : value === "unknown"
+                          ? "orange"
+                          : "default"
+                  }
+                >
+                  {statuses[value] ?? value}
+                </Tag>
+              ),
+            },
+            {
+              title: "供应商请求 / 任务 ID",
+              dataIndex: "providerRef",
+              ellipsis: true,
+              render: (value: string) =>
+                value || <span className="admin-empty-val">—</span>,
+            },
+            {
+              title: "预计成本",
+              dataIndex: "costMicros",
+              align: "right",
+              render: (value: number | null) => (
+                <span className="admin-num">{formatCost(value)}</span>
+              ),
+            },
+          ]}
+        />
+      </section>
+    </div>
   );
 }
 
@@ -385,29 +476,43 @@ function FinishedVideoCosts() {
     retry: false,
   });
   return (
-    <Space orientation="vertical" size="middle" style={{ display: "flex" }}>
-      <p className="admin-muted">
-        按北京时间统计本期首次归档且关联计费任务的视频，累加归档前的云端调用。均值和
-        P90 仅使用费用已完整估算的样本。
-      </p>
-      <Form<Filters> layout="inline" initialValues={range} onFinish={setRange}>
-        <DateRangeFields />
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit">
-              查询
-            </Button>
-            <Button
-              loading={stats.isFetching}
-              onClick={() => void stats.refetch()}
-            >
-              刷新
-            </Button>
-          </Space>
-        </Form.Item>
-      </Form>
+    <section className="admin-panel admin-table-panel">
+      <div className="admin-section-heading">
+        <div>
+          <h2>成片云端成本统计</h2>
+          <p className="admin-muted">
+            按北京时间统计本期首次归档且关联计费任务的视频，累加归档前的云端调用。均值和
+            P90 仅使用费用已完整估算的样本。
+          </p>
+        </div>
+      </div>
+      <div className="admin-filter-strip">
+        <Form<Filters>
+          layout="inline"
+          initialValues={range}
+          style={{ rowGap: 10 }}
+          onFinish={setRange}
+        >
+          <DateRangeFields />
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                icon={<RefreshCw size={14} />}
+                loading={stats.isFetching}
+                onClick={() => void stats.refetch()}
+              >
+                刷新
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </div>
       {stats.error && (
         <Alert
+          className="admin-notice"
           type="error"
           showIcon
           title="成片成本加载失败"
@@ -433,17 +538,21 @@ function FinishedVideoCosts() {
             title: "平均云端成本",
             dataIndex: "averageMicros",
             align: "right",
-            render: formatCost,
+            render: (value: number | null) => (
+              <span className="admin-num">{formatCost(value)}</span>
+            ),
           },
           {
             title: "P90 云端成本",
             dataIndex: "p90Micros",
             align: "right",
-            render: formatCost,
+            render: (value: number | null) => (
+              <span className="admin-num">{formatCost(value)}</span>
+            ),
           },
         ]}
       />
-    </Space>
+    </section>
   );
 }
 
@@ -501,17 +610,19 @@ function RateEditor({ rate, onClose }: { rate: Rate; onClose: () => void }) {
         <Form.Item name="model" label="模型" rules={[{ required: true }]}>
           <Input disabled={!!rate.model} maxLength={200} />
         </Form.Item>
-        {rateFields.map(([key, label]) => (
-          <Form.Item key={key} name={key} label={label}>
-            <InputNumber
-              min={0}
-              max={1000}
-              precision={6}
-              style={{ width: 180 }}
-            />
-          </Form.Item>
-        ))}
-        <p className="admin-muted">
+        <div className="admin-form-columns">
+          {rateFields.map(([key, label]) => (
+            <Form.Item key={key} name={key} label={label}>
+              <InputNumber
+                min={0}
+                max={1000}
+                precision={6}
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
+          ))}
+        </div>
+        <p className="admin-muted" style={{ marginBottom: 16 }}>
           留空表示该项费率未知，填 0
           表示该项免费。缓存输入留空时按普通输入费率估算。
         </p>
@@ -536,18 +647,25 @@ function RateCatalog() {
     retry: false,
   });
   return (
-    <Space orientation="vertical" size="middle" style={{ display: "flex" }}>
-      <p className="admin-muted">
-        填写商户实际适用的人民币费率。保存后补算已有用量中尚无费率的记录，已估算记录保留原金额。
-      </p>
-      <Button
-        type="primary"
-        onClick={() => setEditing({ provider: "", model: "" })}
-      >
-        添加费率
-      </Button>
+    <section className="admin-panel admin-table-panel">
+      <div className="admin-section-heading">
+        <div>
+          <h2>供应商费率目录</h2>
+          <p className="admin-muted">
+            填写商户实际适用的人民币费率。保存后补算已有用量中尚无费率的记录，已估算记录保留原金额。
+          </p>
+        </div>
+        <Button
+          type="primary"
+          icon={<Plus size={15} />}
+          onClick={() => setEditing({ provider: "", model: "" })}
+        >
+          添加费率
+        </Button>
+      </div>
       {rates.error && (
         <Alert
+          className="admin-notice"
           type="error"
           showIcon
           title="费率加载失败"
@@ -568,17 +686,33 @@ function RateCatalog() {
             dataIndex: "provider",
             render: (value: string) => providers[value] ?? value,
           },
-          { title: "模型", dataIndex: "model" },
+          {
+            title: "模型",
+            dataIndex: "model",
+            render: (value: string) => (
+              <code className="admin-code">{value}</code>
+            ),
+          },
           ...rateFields.map(([key, label]) => ({
             title: label,
             dataIndex: key,
+            align: "right" as const,
             render: (value: number | null | undefined) =>
-              value == null ? "—" : formatCost(value),
+              value == null ? (
+                <span className="admin-empty-val">—</span>
+              ) : (
+                formatCost(value)
+              ),
           })),
           {
             title: "操作",
+            align: "right",
             render: (_, row) => (
-              <Button type="link" onClick={() => setEditing(row)}>
+              <Button
+                type="link"
+                className="admin-row-actions"
+                onClick={() => setEditing(row)}
+              >
                 {row.updatedAt ? "编辑" : "配置"}
               </Button>
             ),
@@ -588,22 +722,41 @@ function RateCatalog() {
       {editing && (
         <RateEditor rate={editing} onClose={() => setEditing(null)} />
       )}
-    </Space>
+    </section>
   );
 }
 
+const subtabs = [
+  { key: "history", label: "用量与成本" },
+  { key: "finished", label: "成片成本" },
+  { key: "rates", label: "供应商费率" },
+] as const;
+
 export default function ProviderCostPanel() {
+  const [active, setActive] =
+    useState<(typeof subtabs)[number]["key"]>("history");
   return (
-    <Tabs
-      items={[
-        { key: "history", label: "用量与成本", children: <CostHistory /> },
-        {
-          key: "finished",
-          label: "成片成本",
-          children: <FinishedVideoCosts />,
-        },
-        { key: "rates", label: "供应商费率", children: <RateCatalog /> },
-      ]}
-    />
+    <div>
+      <div className="admin-subtabs" role="tablist" aria-label="供应商成本视图">
+        {subtabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={active === tab.key}
+            onClick={() => setActive(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {active === "history" ? (
+        <CostHistory />
+      ) : active === "finished" ? (
+        <FinishedVideoCosts />
+      ) : (
+        <RateCatalog />
+      )}
+    </div>
   );
 }

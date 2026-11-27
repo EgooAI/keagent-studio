@@ -366,7 +366,22 @@ export function CoverEditor() {
             },
           ]}
         >
-          <Input maxLength={7} />
+          <Input
+            maxLength={7}
+            prefix={
+              <span
+                className="admin-color-swatch"
+                style={{
+                  backgroundColor: /^#[\da-f]{6}$/i.test(
+                    cover?.brandColor || "",
+                  )
+                    ? cover?.brandColor
+                    : defaultCover.brandColor,
+                }}
+                aria-hidden="true"
+              />
+            }
+          />
         </Form.Item>
         <Form.Item
           name={["cover", "titleSource"]}

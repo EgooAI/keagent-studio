@@ -14,6 +14,7 @@ import {
   Typography,
 } from "antd";
 import { Link } from "react-router-dom";
+import { RefreshCw } from "lucide-react";
 import type { AdminAudit as AuditRecord } from "@keagent/shared-types";
 import {
   dateTime,
@@ -62,6 +63,14 @@ export const auditActionLabels: Record<string, string> = {
   resources: "模板目录变更（旧记录）",
   "devices/revoke": "解绑设备（旧记录）",
 };
+const sensitiveActions = new Set([
+  "admin.ban-user",
+  "admin.set-user-password",
+  "admin.revoke-user-sessions",
+  "admin.remove-user",
+  "device.revoke",
+  "resource.delete",
+]);
 const statusLabels: Record<string, string> = {
   started: "已开始",
   succeeded: "成功",
@@ -155,13 +164,20 @@ export default function AdminAudit() {
                 : "这里记录模板变更、设备解绑和 AI 服务管理操作。旧记录可能仅保留原始编号。"}
             </p>
           </div>
+          <Button
+            icon={<RefreshCw size={14} />}
+            onClick={() => void query.refetch()}
+            loading={query.isFetching}
+          >
+            刷新
+          </Button>
         </div>
-        <div className="admin-toolbar">
-          <Space wrap>
+        <div className="admin-filter-strip">
+          <Space wrap size={[10, 10]}>
             <Select
               aria-label="操作类型"
               value={params.get("action") || ""}
-              style={{ width: 200 }}
+              style={{ width: 195 }}
               onChange={(action) => setParams({ action })}
               options={[
                 { value: "", label: "全部操作" },
@@ -172,7 +188,7 @@ export default function AdminAudit() {
               <Select
                 aria-label="操作结果"
                 value={params.get("status") || ""}
-                style={{ width: 130 }}
+                style={{ width: 124 }}
                 onChange={(status) => setParams({ status })}
                 options={[
                   { value: "", label: "全部结果" },
@@ -203,7 +219,7 @@ export default function AdminAudit() {
                 placeholder="搜索操作对象"
                 allowClear
                 onSearch={(q) => setParams({ q })}
-                style={{ width: 240 }}
+                style={{ width: 220 }}
               />
             )}
             <label className="admin-date-filter">
@@ -252,12 +268,6 @@ export default function AdminAudit() {
               清除筛选
             </Button>
           </Space>
-          <Button
-            onClick={() => void query.refetch()}
-            loading={query.isFetching}
-          >
-            刷新
-          </Button>
         </div>
         {query.error && (
           <Alert
@@ -284,7 +294,7 @@ export default function AdminAudit() {
             {
               title: "时间（北京时间）",
               dataIndex: "createdAt",
-              width: 190,
+              width: 185,
               render: dateTime,
             },
             {
@@ -295,8 +305,13 @@ export default function AdminAudit() {
             {
               title: "操作",
               dataIndex: "action",
-              render: (action: string) =>
-                auditActionLabels[action] || "其他管理操作",
+              render: (action: string) => (
+                <Tag
+                  color={sensitiveActions.has(action) ? "orange" : "default"}
+                >
+                  {auditActionLabels[action] || "其他管理操作"}
+                </Tag>
+              ),
             },
             {
               title: "对象",
@@ -311,6 +326,7 @@ export default function AdminAudit() {
                   {
                     title: "结果",
                     key: "status",
+                    width: 100,
                     render: (_: unknown, r: AuditRecord) => (
                       <Tag
                         color={
@@ -333,7 +349,11 @@ export default function AdminAudit() {
               width: 85,
               align: "right",
               render: (_, r) => (
-                <Button size="small" onClick={() => setDetail(r)}>
+                <Button
+                  type="link"
+                  className="admin-row-actions"
+                  onClick={() => setDetail(r)}
+                >
                   查看
                 </Button>
               ),
@@ -349,87 +369,111 @@ export default function AdminAudit() {
         width={600}
       >
         {detail && (
-          <Descriptions
-            bordered
-            column={1}
-            items={[
-              {
-                key: "time",
-                label: "时间（北京时间）",
-                children: dateTime(detail.createdAt),
-              },
-              {
-                key: "actor",
-                label: "操作人",
-                children: userLabel(detail.actor, detail.actorId),
-              },
-              {
-                key: "action",
-                label: "操作",
-                children: auditActionLabels[detail.action] || "其他管理操作",
-              },
-              {
-                key: "target",
-                label: "对象",
-                children: detail.targetLabel || "对象不可用",
-              },
-              ...(account
-                ? [
-                    {
-                      key: "status",
-                      label: "结果",
-                      children: statusLabels[detail.status || ""] || "未记录",
-                    },
-                  ]
-                : []),
-              {
-                key: "targetId",
-                label: "对象编号",
-                children: (
-                  <Typography.Text copyable>
-                    {detail.targetId || "未记录"}
-                  </Typography.Text>
-                ),
-              },
-              ...(detail.reason
-                ? [{ key: "reason", label: "原因", children: detail.reason }]
-                : []),
-              ...Object.entries(detail.details || {}).map(([key, value]) => ({
-                key: `detail-${key}`,
-                label: detailLabels[key] || "补充说明",
-                children: (
-                  <span className="admin-prewrap">
-                    {detailValue(key, value)}
-                  </span>
-                ),
-              })),
-              {
-                key: "actionId",
-                label: "原始动作标识",
-                children: detail.action,
-              },
-              {
-                key: "id",
-                label: "记录编号",
-                children: (
-                  <Typography.Text copyable>{detail.id}</Typography.Text>
-                ),
-              },
-              ...(detail.operationId
-                ? [
-                    {
-                      key: "operationId",
-                      label: "关联操作编号",
-                      children: (
-                        <Typography.Text copyable>
-                          {detail.operationId}
-                        </Typography.Text>
-                      ),
-                    },
-                  ]
-                : []),
-            ]}
-          />
+          <>
+            <div className="admin-detail-summary">
+              <strong>
+                {auditActionLabels[detail.action] || "其他管理操作"}
+              </strong>
+              {account && (
+                <Tag
+                  color={
+                    detail.status === "failed"
+                      ? "red"
+                      : detail.status === "succeeded"
+                        ? "green"
+                        : "default"
+                  }
+                >
+                  {statusLabels[detail.status || ""] || "未记录"}
+                </Tag>
+              )}
+              <span className="admin-secondary" style={{ margin: 0 }}>
+                {dateTime(detail.createdAt)}
+              </span>
+            </div>
+            <Descriptions
+              bordered
+              size="small"
+              column={1}
+              items={[
+                {
+                  key: "time",
+                  label: "时间（北京时间）",
+                  children: dateTime(detail.createdAt),
+                },
+                {
+                  key: "actor",
+                  label: "操作人",
+                  children: userLabel(detail.actor, detail.actorId),
+                },
+                {
+                  key: "action",
+                  label: "操作",
+                  children: auditActionLabels[detail.action] || "其他管理操作",
+                },
+                {
+                  key: "target",
+                  label: "对象",
+                  children: detail.targetLabel || "对象不可用",
+                },
+                ...(account
+                  ? [
+                      {
+                        key: "status",
+                        label: "结果",
+                        children: statusLabels[detail.status || ""] || "未记录",
+                      },
+                    ]
+                  : []),
+                {
+                  key: "targetId",
+                  label: "对象编号",
+                  children: (
+                    <Typography.Text copyable>
+                      {detail.targetId || "未记录"}
+                    </Typography.Text>
+                  ),
+                },
+                ...(detail.reason
+                  ? [{ key: "reason", label: "原因", children: detail.reason }]
+                  : []),
+                ...Object.entries(detail.details || {}).map(([key, value]) => ({
+                  key: `detail-${key}`,
+                  label: detailLabels[key] || "补充说明",
+                  children: (
+                    <span className="admin-prewrap">
+                      {detailValue(key, value)}
+                    </span>
+                  ),
+                })),
+                {
+                  key: "actionId",
+                  label: "原始动作标识",
+                  children: <code className="admin-code">{detail.action}</code>,
+                },
+                {
+                  key: "id",
+                  label: "记录编号",
+                  children: (
+                    <Typography.Text copyable>{detail.id}</Typography.Text>
+                  ),
+                },
+                ...(detail.operationId
+                  ? [
+                      {
+                        key: "operationId",
+                        label: "关联操作编号",
+                        children: (
+                          <Typography.Text copyable>
+                            {detail.operationId}
+                          </Typography.Text>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </>
         )}
       </Drawer>
     </>
