@@ -5,6 +5,11 @@ on:
     branches: [codex/desktop-packaging]
   workflow_dispatch:
     inputs:
+      inspect_notary:
+        description: Check Apple's status for today's AI来客 submissions
+        required: false
+        type: boolean
+        default: false
       baseline_run:
         description: Signed baseline workflow run ID
         required: true
@@ -20,7 +25,20 @@ permissions:
   actions: read
 
 jobs:
+  notary-status:
+    if: inputs.inspect_notary
+    runs-on: macos-15
+    steps:
+      - name: Read submission status
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool history --apple-id "$APPLE_ID" --password "$PASSWORD" --team-id "$TEAM" --output-format json |
+            jq '[.history[] | select(.name | contains("AI来客")) | {name, status, createdDate, id}] | .[:4]'
   package:
+    if: ${{ !inputs.inspect_notary }}
     strategy:
       fail-fast: false
       matrix:
