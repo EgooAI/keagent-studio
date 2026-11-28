@@ -312,6 +312,53 @@ describe("Realsee spatial import", () => {
       ),
     ).rejects.toThrow("房源不存在");
   });
+  it("joins duplicate imports, scopes progress to the owner, and retries failed downloads", async () => {
+    const { workflow, property } = fixture();
+    const input = { propertyId: property.id, background: true };
+    const start = () =>
+      workflow.handle("owner-a", "property-vr-import", input, property);
+    const status = (user = "owner-a") =>
+      workflow.handle(user, "property-vr-status", input);
+    const download = vi.mocked(spatial.download);
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    download.mockImplementationOnce(async () => {
+      await blocked;
+      throw Error("network interruption");
+    });
+    expect((await start()).phase).toBe("downloading");
+    expect(await start()).toEqual(await status());
+    expect(await status("owner-b")).toBeNull();
+    release();
+    await vi.waitFor(async () =>
+      expect(await status()).toMatchObject({
+        phase: "failed",
+        error: "network interruption",
+      }),
+    );
+    expect(download).toHaveBeenCalledTimes(1);
+    await start();
+    const result = await workflow.handle(
+      "owner-a",
+      "property-vr-import",
+      { propertyId: property.id },
+      property,
+    );
+    expect(result.count).toBe(2);
+    expect(await status()).toMatchObject({
+      phase: "succeeded",
+      completed: 2,
+      total: 2,
+    });
+    const calls = download.mock.calls.length;
+    workflow
+      .store(workflow.owner("owner-a"))
+      .imports.p.scenes.push({ id: "local-photo" });
+    expect(await start()).toMatchObject({ phase: "succeeded", completed: 2 });
+    expect(download).toHaveBeenCalledTimes(calls);
+  });
   it("retains the prior gallery when the final checkpoint cannot be saved", async () => {
     const { workflow, owner, property, previous } = fixture();
     const persist = workflow.persist.bind(workflow);
@@ -366,13 +413,10 @@ describe("Realsee spatial import", () => {
   });
   it("imports all 200 gallery points and verifies the last point for spatial production", async () => {
     const { workflow, owner, property } = fixture(rawWork(200));
-    const result = await sources.handle(
-      workflow,
-      owner,
+    const result = await workflow.handle(
+      "owner-a",
       "property-vr-import",
       { propertyId: property.id },
-      () => {},
-      undefined,
       property,
     );
     const restored = await sources.handle(workflow, owner, "source-restore", {

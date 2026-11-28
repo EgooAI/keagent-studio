@@ -54,3 +54,22 @@ it("can check again after a failed download", () => {
   updater.emit("update-not-available");
   expect(updates.state().phase).toBe("current");
 });
+
+it("keeps notes for the target version through download and discards stale notes on retry", () => {
+  const { updates, updater } = setup();
+  const releaseNotes = "- 房源账号支持手动检查。";
+  updater.emit("update-available", { version: "1.1.0", releaseNotes });
+  updater.emit("download-progress", { percent: 50 });
+  expect(updates.state()).toMatchObject({ nextVersion: "1.1.0", releaseNotes });
+  updater.emit("update-downloaded", { version: "1.1.0" });
+  expect(updates.state()).toMatchObject({ phase: "ready", releaseNotes });
+  updater.emit("error", new Error("offline"));
+  expect(updates.check().releaseNotes).toBeUndefined();
+  updater.emit("update-available", { version: "1.2.0" });
+  expect(updates.state().releaseNotes).toBeUndefined();
+  updater.emit("update-downloaded", {
+    version: "1.2.0",
+    releaseNotes: [{ version: "1.2.0", note: "新版说明" }],
+  });
+  expect(updates.state().releaseNotes).toBe("新版说明");
+});

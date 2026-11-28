@@ -2,11 +2,13 @@
 function createUpdates({ updater, version, busy, closeWindow, changed }) {
   let phase = updater ? "idle" : "unavailable";
   let nextVersion;
+  let releaseNotes;
   let percent = 0;
   const state = () => ({
     phase,
     version,
     nextVersion,
+    releaseNotes,
     percent,
     busy: phase === "ready" && busy(),
   });
@@ -14,13 +16,25 @@ function createUpdates({ updater, version, busy, closeWindow, changed }) {
     phase = value;
     changed();
   };
+  const readTarget = (info) => {
+    if (nextVersion !== info.version) releaseNotes = undefined;
+    nextVersion = info.version;
+    const notes = Array.isArray(info.releaseNotes)
+      ? info.releaseNotes.find((entry) => entry.version === nextVersion)?.note
+      : info.releaseNotes;
+    if (typeof notes === "string") releaseNotes = notes.trim();
+  };
   if (updater) {
     updater.autoDownload = true;
     updater.autoInstallOnAppQuit = false;
     updater.disableDifferentialDownload = false;
-    updater.on("update-not-available", () => set("current"));
+    updater.on("update-not-available", () => {
+      nextVersion = undefined;
+      releaseNotes = undefined;
+      set("current");
+    });
     updater.on("update-available", (info) => {
-      nextVersion = info.version;
+      readTarget(info);
       percent = 0;
       set("downloading");
     });
@@ -29,7 +43,7 @@ function createUpdates({ updater, version, busy, closeWindow, changed }) {
       set("downloading");
     });
     updater.on("update-downloaded", (info) => {
-      nextVersion = info.version;
+      readTarget(info);
       set("ready");
     });
     updater.on("error", () => set("error"));
@@ -39,6 +53,7 @@ function createUpdates({ updater, version, busy, closeWindow, changed }) {
     check() {
       if (updater && ["idle", "current", "error"].includes(phase)) {
         nextVersion = undefined;
+        releaseNotes = undefined;
         set("checking");
         void updater
           .checkForUpdates()

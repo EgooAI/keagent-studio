@@ -528,9 +528,11 @@ function registerAuth(
       const cachedCatalog =
         method === "panorama.factory-catalog" && args[0]?.cachedOnly === true;
       if (cachedCatalog && (!token || !verifiedUserId)) return null;
-      const identity = cachedCatalog
-        ? { userId: verifiedUserId }
-        : (await request("/v1/session")).data;
+      const identity =
+        cachedCatalog ||
+        (method === "panorama.property-vr-status" && verifiedUserId)
+          ? { userId: verifiedUserId }
+          : (await request("/v1/session")).data;
       let property;
       if (
         [

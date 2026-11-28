@@ -50,18 +50,21 @@ export async function savePropertyVrLink(
   );
 }
 
-export async function importPropertyVr(
-  propertyId: string,
-  queryClient: QueryClient,
-) {
-  const { count } = await productionRequest<{ count: number }>(
-    "property-vr-import",
-    { propertyId },
-  );
-  await queryClient.invalidateQueries({
-    queryKey: ["property-production-material", propertyId],
-  });
-  return count;
+async function importPropertyVr(propertyId: string, queryClient: QueryClient) {
+  try {
+    const { count } = await productionRequest<{ count: number }>(
+      "property-vr-import",
+      { propertyId },
+    );
+    await queryClient.invalidateQueries({
+      queryKey: ["property-production-material", propertyId],
+    });
+    return count;
+  } finally {
+    await queryClient.invalidateQueries({
+      queryKey: ["property-vr-status", propertyId],
+    });
+  }
 }
 
 async function validateLink(_: unknown, value?: string) {
@@ -344,7 +347,7 @@ export function PropertyVrLinkForm({
 
   return (
     <Modal
-      title="添加房源 VR 链接"
+      title="粘贴 VR 链接下载全景图"
       open
       centered
       className="property-form-modal"
@@ -355,7 +358,7 @@ export function PropertyVrLinkForm({
       cancelButtonProps={{ disabled: busy }}
       confirmLoading={busy}
       onOk={() => form.submit()}
-      okText={phase === "importing" ? "正在导入全景图…" : "保存并导入"}
+      okText={phase === "importing" ? "正在导入全景图…" : "下载全景图"}
     >
       <Form
         form={form}
@@ -367,7 +370,7 @@ export function PropertyVrLinkForm({
         <Form.Item
           name="vrUrl"
           label="VR 看房链接"
-          extra="粘贴公开的如视 VR 看房链接，保存后自动导入全景图。"
+          extra="请粘贴可公开访问的如视 VR 看房链接。"
           rules={[
             { required: true, whitespace: true, message: "请输入 VR 看房链接" },
             { validator: validateLink },

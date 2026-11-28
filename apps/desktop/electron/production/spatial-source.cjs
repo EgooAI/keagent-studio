@@ -335,7 +335,14 @@ function validateSpatialScene(ownerDir, scene) {
   return { workId, panoIndex, targetPanoIndex, targets };
 }
 
-async function importProperty(workflow, owner, property, input, assertCurrent) {
+async function importProperty(
+  workflow,
+  owner,
+  property,
+  input,
+  assertCurrent,
+  progress = () => {},
+) {
   domain.ensure(
     property && property.id === input.propertyId && !property.sample,
     "房源不存在或不支持导入空间，请重新选择",
@@ -363,6 +370,8 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
       source,
     );
     let next = 0;
+    let downloaded = 0;
+    progress("downloading", 0, assets.length);
     const downloads = Array.from({ length: 4 }, async () => {
       for (;;) {
         const index = next++;
@@ -396,6 +405,7 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
           asset.height = stream.height;
         }
         assertCurrent();
+        progress("downloading", ++downloaded, assets.length);
       }
     });
     try {
@@ -406,6 +416,7 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
       throw error;
     }
     const converted = [];
+    progress("converting", 0, work.panorama.list.length);
     for (const pano of work.panorama.list) {
       const images = faces.map((face) =>
         assets.find((a) => a.file === pano[face]),
@@ -453,7 +464,9 @@ async function importProperty(workflow, owner, property, input, assertCurrent) {
         asset: `${domain.hash(bytes)}.jpg`,
       });
       assertCurrent();
+      progress("converting", converted.length, work.panorama.list.length);
     }
+    progress("saving", 0, converted.length);
     work._keagent = {
       schemaVersion: 1,
       assets: assets.map(({ file, sha256, bytes }) => ({

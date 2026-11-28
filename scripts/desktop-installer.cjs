@@ -1,4 +1,13 @@
-const { build } = require("../package.json");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
+const { build, version } = require("../package.json");
+const notesFile = path.join(
+  __dirname,
+  "../docs/desktop-releases",
+  version + ".md",
+);
+const releaseNotes = readFileSync(notesFile, "utf8").trim();
+if (!releaseNotes) throw new Error(`请补充 v${version} 的桌面更新日志`);
 const updateOrigin = new URL(
   process.env.KEAGENT_UPDATE_ORIGIN || process.env.KEAGENT_PUBLIC_ORIGIN,
 );
@@ -13,6 +22,7 @@ if (
   throw new Error("Build desktop releases on Apple Silicon or Windows x64");
 module.exports = {
   ...build,
+  releaseInfo: { releaseNotes },
   win: { ...build.win, signExts: ["!chrome.exe"] },
   mac: {
     ...build.mac,

@@ -26,6 +26,7 @@ class PanoramaWorkflow {
     this.previews = new Set();
     this.capabilityPromise = null;
     this.sourceFlight = new Map();
+    this.vrImports = new Map();
     this.queue = new ProductionQueue(this);
   }
   owner(userId) {
@@ -548,6 +549,10 @@ class PanoramaWorkflow {
       this.persist(owner);
       return result;
     }
+    if (method === "property-vr-status")
+      return this.vrImports.get(owner + ":" + input.propertyId)?.status ?? null;
+    if (method === "property-vr-import")
+      return this.importVr(owner, property, input, assertCurrent);
     if (sources.methods.has(method)) {
       const flightKey = `${owner}:${method}`;
       domain.ensure(
@@ -1464,8 +1469,79 @@ class PanoramaWorkflow {
     this.active.get(job.id).promise = promise;
     return promise;
   }
+  importVr(owner, property, input, assertCurrent) {
+    domain.ensure(
+      property && property.id === input.propertyId && !property.sample,
+      "请选择有效房源",
+    );
+    const key = owner + ":" + property.id;
+    const source = spatialSource.sourceURL(property.details?.vrUrl).href;
+    const current = this.vrImports.get(key);
+    if (current?.pending) {
+      domain.ensure(
+        current.source === source,
+        "该房源的其他 VR 链接正在导入，请稍后再试",
+      );
+      return input.background ? current.status : current.pending;
+    }
+    const saved = this.store(owner).imports[property.id];
+    const imported =
+      saved?.spatial?.source === source
+        ? saved.scenes.filter(
+            (scene) => scene.spatial?.workId === saved.spatial.workId,
+          )
+        : [];
+    if (imported.length) {
+      const count = imported.length;
+      const status = { phase: "succeeded", completed: count, total: count };
+      this.vrImports.set(key, { source, status });
+      return input.background
+        ? status
+        : { count, scenes: imported, workId: saved.spatial.workId };
+    }
+    const job = {
+      source,
+      status: { phase: "downloading", completed: 0, total: 0 },
+    };
+    this.vrImports.set(key, job);
+    job.pending = spatialSource
+      .importProperty(
+        this,
+        owner,
+        property,
+        input,
+        assertCurrent,
+        (phase, completed, total) => {
+          job.status = { phase, completed, total };
+        },
+      )
+      .then((result) => {
+        job.status = {
+          phase: "succeeded",
+          completed: result.count,
+          total: result.count,
+        };
+        return result;
+      })
+      .catch((error) => {
+        job.status = {
+          ...job.status,
+          phase: "failed",
+          error: error.message || "导入失败",
+        };
+        throw error;
+      })
+      .finally(() => {
+        delete job.pending;
+      });
+    if (!input.background) return job.pending;
+    // The initiating window can close before a background import settles.
+    job.pending.catch(() => {});
+    return job.status;
+  }
   stop() {
     this.queue.stop();
+    this.vrImports.clear();
     for (const { controller } of this.active.values()) controller.abort();
     for (const controller of this.previews) controller.abort();
   }

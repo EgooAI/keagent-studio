@@ -110,6 +110,11 @@ async function fixture(
         beikeVrWait: undefined as Promise<void> | undefined,
         failNextPropertyNumber: "",
         failNextVrImport: false,
+        vrJobs: {} as Record<
+          string,
+          { phase: string; completed: number; total: number; error?: string }
+        >,
+        vrDownloadWait: undefined as Promise<void> | undefined,
         spatialImports: new Set<string>(),
         publicVoices: [
           { id: "public-zh", name: "公共讲解音色", language: "zh-CN" },
@@ -265,6 +270,8 @@ async function fixture(
                 templates: [],
                 imageTasks: [],
               };
+            if (method === "panorama.property-vr-status")
+              return state.vrJobs[args[0].propertyId] ?? null;
             if (method === "panorama.source-restore")
               return {
                 scenes: state.spatialImports.has(args[0]?.propertyId)
@@ -346,6 +353,32 @@ async function fixture(
               );
               if (!saved?.details?.vrUrl?.startsWith("https://realsee.cn/"))
                 throw new Error("不支持的 VR 链接");
+              if (input.background) {
+                const id = input.propertyId;
+                if (state.failNextVrImport) {
+                  state.failNextVrImport = false;
+                  return (state.vrJobs[id] = {
+                    phase: "failed",
+                    completed: 0,
+                    total: 0,
+                    error: "模拟导入超时",
+                  });
+                }
+                state.vrJobs[id] = {
+                  phase: "downloading",
+                  completed: 1,
+                  total: 5,
+                };
+                void Promise.resolve(state.vrDownloadWait).then(() => {
+                  state.spatialImports.add(id);
+                  state.vrJobs[id] = {
+                    phase: "succeeded",
+                    completed: 1,
+                    total: 1,
+                  };
+                });
+                return state.vrJobs[id];
+              }
               if (state.failNextVrImport) {
                 state.failNextVrImport = false;
                 throw new Error("模拟导入超时");
@@ -1569,11 +1602,14 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
     0,
   );
   await expect(page.getByText(/AI 扩图|生成 AI 扩图/)).toHaveCount(0);
-  const addLink = page.getByRole("button", { name: "添加房源 VR 链接" });
+  const addLink = page.getByRole("button", { name: "粘贴 VR 链接下载" });
   await addLink.click();
-  const dialog = page.getByRole("dialog", { name: "添加房源 VR 链接" });
+  const dialog = page.getByRole("dialog", {
+    name: "粘贴 VR 链接下载全景图",
+    exact: true,
+  });
   const link = dialog.getByRole("textbox", { name: "VR 看房链接" });
-  const save = dialog.getByRole("button", { name: "保存并导入" });
+  const save = dialog.getByRole("button", { name: "下载全景图" });
   await expect(link).toHaveValue("");
   await save.click();
   await expect(dialog.getByText("请输入 VR 看房链接")).toBeVisible();
@@ -1597,7 +1633,7 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
   await expect(addLink).toBeDisabled();
   await expect(
-    page.getByRole("button", { name: "获取房源 VR 链接" }),
+    page.getByRole("button", { name: "从贝壳获取 VR 链接" }),
   ).toBeEnabled();
   const { details, requests } = await page.evaluate(() => {
     const { workspace, calls } = (window as any).factorySettingsTest;
@@ -1637,7 +1673,7 @@ test("制作素材用可见贝壳浏览器取链，失败保留旧链接，重�
     const state = (window as any).factorySettingsTest;
     state.workspace.properties[1].details.vrUrl = "https://realsee.cn/old";
   });
-  const fetchVr = page.getByRole("button", { name: "获取房源 VR 链接" });
+  const fetchVr = page.getByRole("button", { name: "自动从贝壳下载全景图" });
   await page.evaluate(() => {
     const state = (window as any).factorySettingsTest;
     state.beikeVrWait = new Promise<void>((resolve) => {
@@ -1668,9 +1704,44 @@ test("制作素材用可见贝壳浏览器取链，失败保留旧链接，重�
   });
   await fetchVr.click();
   await expect(page.getByText(/链接已保存，全景图导入失败/)).toBeVisible();
+  const openOtherAndReturn = async () => {
+    await page
+      .getByRole("link", { name: "房源中心", exact: true })
+      .last()
+      .click();
+    await page
+      .locator('a[href="#/properties/panorama-cc0-sample"]')
+      .first()
+      .click();
+    await expect(
+      page.getByText("链接已保存，全景图导入失败", { exact: false }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("link", { name: "房源中心", exact: true })
+      .last()
+      .click();
+    await page.locator('a[href="#/properties/user-property"]').first().click();
+    await page.getByRole("tab", { name: "制作素材" }).click();
+  };
+  await openOtherAndReturn();
+  await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    state.vrDownloadWait = new Promise<void>((resolve) => {
+      state.finishVrDownload = resolve;
+    });
+  });
   await page.getByRole("button", { name: "重试导入全景图" }).click();
+  await expect(page.getByText("正在下载 VR 素材 1/5")).toBeVisible();
+  await openOtherAndReturn();
+  await expect(page.getByText("正在下载 VR 素材 1/5")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "正在导入全景图…" }),
+  ).toBeDisabled();
+  await page.evaluate(() => {
+    (window as any).factorySettingsTest.finishVrDownload();
+  });
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
-  await fetchVr.click();
+  await page.getByRole("button", { name: "从贝壳获取 VR 链接" }).click();
   await expect(
     page.getByText("已保存房源 VR 链接", { exact: true }),
   ).toBeVisible();
@@ -1744,7 +1815,7 @@ test("保存新增或更换的 VR 链接自动导入对应房源", async ({ page
   expect(imports).toEqual(["new-property", "new-property", "new-property"]);
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "添加房源 VR 链接" }),
+    page.getByRole("button", { name: "粘贴 VR 链接下载" }),
   ).toBeDisabled();
 });
 

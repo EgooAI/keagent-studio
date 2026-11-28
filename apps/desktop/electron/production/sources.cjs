@@ -1,11 +1,7 @@
 const domain = require("../panorama/domain.cjs");
 const providers = require("../panorama/providers.cjs");
 
-const methods = new Set([
-  "beike-import",
-  "source-restore",
-  "property-vr-import",
-]);
+const methods = new Set(["beike-import", "source-restore"]);
 async function handle(
   workflow,
   owner,
@@ -16,14 +12,6 @@ async function handle(
   property,
 ) {
   const state = workflow.store(owner);
-  if (method === "property-vr-import")
-    return require("./spatial-source.cjs").importProperty(
-      workflow,
-      owner,
-      property,
-      input,
-      assertCurrent,
-    );
   if (method === "source-restore") {
     if (input.propertyId === "panorama-cc0-sample")
       await workflow.loadSample(owner, assertCurrent);

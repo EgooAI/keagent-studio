@@ -28,6 +28,7 @@ export interface DesktopUpdateState {
     | "error";
   version: string;
   nextVersion?: string;
+  releaseNotes?: string;
   percent: number;
   busy: boolean;
 }

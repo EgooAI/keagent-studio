@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
@@ -45,7 +45,6 @@ import {
   PropertyForm,
   PropertyVrLinkForm,
   savePropertyVrLink,
-  importPropertyVr,
 } from "../components/PropertyForm";
 import { BeikeImportModal } from "../components/BeikeImportModal";
 import { PropertyInfoTab } from "../components/PropertyInfoTab";
@@ -506,8 +505,21 @@ function ImportModal({
 
 type MaterialImportKind = "panorama" | "reference";
 
+type VrImportStatus = {
+  phase: "downloading" | "converting" | "saving" | "succeeded" | "failed";
+  completed: number;
+  total: number;
+  error?: string;
+};
+
 export function PropertyDetailPage() {
   const { propertyId } = useParams();
+  return propertyId ? (
+    <PropertyDetail key={propertyId} propertyId={propertyId} />
+  ) : null;
+}
+
+function PropertyDetail({ propertyId }: { propertyId: string }) {
   const [detailParams] = useSearchParams();
   const { data } = useWorkspace();
   const { message } = App.useApp();
@@ -518,10 +530,9 @@ export function PropertyDetailPage() {
     id: string;
     message: string;
   }>();
-  const [retryVrId, setRetryVrId] = useState<string>();
   const [addingVrLink, setAddingVrLink] = useState(false);
   const [activeImport, setActiveImport] = useState<
-    MaterialImportKind | "fetchVr" | "importVr" | null
+    MaterialImportKind | "fetchVr" | "startVr" | null
   >(null);
   const material = useQuery({
     queryKey: ["property-production-material", propertyId],
@@ -536,6 +547,37 @@ export function PropertyDetailPage() {
       }),
   });
   const property = data?.properties.find((p) => p.id === propertyId);
+  const vrJobKey = ["property-vr-status", propertyId];
+  const vrJob = useQuery({
+    queryKey: vrJobKey,
+    enabled: !!window.desktop && !!property && !property.sample,
+    queryFn: () =>
+      productionRequest<VrImportStatus | null>("property-vr-status", {
+        propertyId,
+      }),
+    refetchInterval: (query) => {
+      const phase = query.state.data?.phase;
+      return phase === "downloading" ||
+        phase === "converting" ||
+        phase === "saving"
+        ? 700
+        : false;
+    },
+    refetchOnMount: "always",
+    retry: false,
+  });
+  const job = vrJob.data;
+  const vrBusy =
+    job?.phase === "downloading" ||
+    job?.phase === "converting" ||
+    job?.phase === "saving";
+  useEffect(() => {
+    if (job?.phase === "succeeded") {
+      void queryClient.invalidateQueries({
+        queryKey: ["property-production-material", propertyId],
+      });
+    }
+  }, [job?.phase, propertyId, queryClient]);
   const addMaterial = async (kind: MaterialImportKind) => {
     setActiveImport(kind);
     try {
@@ -556,18 +598,21 @@ export function PropertyDetailPage() {
       setActiveImport(null);
     }
   };
-  async function importSavedVr(id: string) {
-    setActiveImport("importVr");
+  async function startSavedVr() {
+    setActiveImport("startVr");
+    setVrLookupError(undefined);
     try {
-      const count = await importPropertyVr(id, queryClient);
-      setRetryVrId(undefined);
-      message.success(`已保存房源 VR 链接，已导入 ${count} 张 VR 全景图`);
-    } catch (error) {
-      setRetryVrId(id);
-      message.warning(
-        `链接已保存，全景图导入失败（${error instanceof Error ? error.message : "请稍后重试"}）。`,
-        8,
+      const status = await productionRequest<VrImportStatus>(
+        "property-vr-import",
+        { propertyId, background: true },
       );
+      await queryClient.cancelQueries({ queryKey: vrJobKey });
+      queryClient.setQueryData(vrJobKey, status);
+    } catch (error) {
+      setVrLookupError({
+        id: propertyId,
+        message: error instanceof Error ? error.message : "未能启动 VR 导入",
+      });
     } finally {
       setActiveImport(null);
     }
@@ -612,20 +657,39 @@ export function PropertyDetailPage() {
       />
     );
   }
-  let materialNote: string | undefined;
+  let materialNote: ReactNode;
   let materialActions: ReactNode;
   if (property.sample) {
     if (hasPanoramas) materialNote = "内置素材已就绪，可直接创建视频任务。";
   } else if (window.desktop) {
     materialNote = hasPanoramas
       ? "已添加 VR 全景图，可用于制作视频。"
-      : "保存如视 VR 看房链接后会自动导入全景图，也可以直接添加本机图片。";
+      : "自动下载会打开贝壳房源页查找 VR 链接。已有如视链接时，可直接粘贴下载。";
+    let progress: string | undefined;
+    if (job?.phase === "downloading")
+      progress = job.total
+        ? `正在下载 VR 素材 ${job.completed}/${job.total}`
+        : "正在读取 VR 素材…";
+    if (job?.phase === "converting")
+      progress = `正在转换全景图 ${job.completed}/${job.total}`;
+    if (job?.phase === "saving") progress = "正在保存全景图…";
+    if (job?.phase === "succeeded" && hasPanoramas)
+      progress = `已完成 ${job.completed} 张 VR 全景图`;
+    if (job?.phase === "failed")
+      progress = `链接已保存，全景图导入失败（${job.error}）。`;
+    if (progress) materialNote = <span role="status">{progress}</span>;
     materialActions = (
       <>
         <Button
-          loading={activeImport === "fetchVr" || activeImport === "importVr"}
+          loading={
+            activeImport === "fetchVr" || activeImport === "startVr" || vrBusy
+          }
           disabled={
-            material.isPending || materialReadError || activeImport !== null
+            vrJob.isPending ||
+            material.isPending ||
+            materialReadError ||
+            activeImport !== null ||
+            vrBusy
           }
           onClick={async () => {
             setVrLookupError(undefined);
@@ -638,7 +702,7 @@ export function PropertyDetailPage() {
               if (hasPanoramas) {
                 message.success("已保存房源 VR 链接");
               } else {
-                await importSavedVr(property.id);
+                await startSavedVr();
               }
             } catch (error) {
               setVrLookupError({
@@ -658,44 +722,54 @@ export function PropertyDetailPage() {
         >
           {activeImport === "fetchVr"
             ? "正在获取 VR 链接…"
-            : activeImport === "importVr"
+            : activeImport === "startVr" || vrBusy
               ? "正在导入全景图…"
-              : "获取房源 VR 链接"}
+              : hasPanoramas
+                ? "从贝壳获取 VR 链接"
+                : "自动从贝壳下载全景图"}
         </Button>
-        {retryVrId === property.id && !hasPanoramas && (
-          <Button
-            disabled={
-              activeImport !== null || material.isPending || materialReadError
-            }
-            onClick={() => void importSavedVr(property.id)}
-          >
-            重试导入全景图
-          </Button>
-        )}
+        {property.details?.vrUrl &&
+          (!hasPanoramas || job?.phase === "failed") &&
+          !vrBusy && (
+            <Button
+              disabled={
+                activeImport !== null ||
+                vrBusy ||
+                material.isPending ||
+                materialReadError
+              }
+              onClick={() => void startSavedVr()}
+            >
+              {job?.phase === "failed"
+                ? "重试导入全景图"
+                : "从已存链接导入全景图"}
+            </Button>
+          )}
         <Button
           disabled={
             hasPanoramas ||
             material.isPending ||
             materialReadError ||
-            activeImport !== null
+            activeImport !== null ||
+            vrBusy
           }
           onClick={() => {
             setVrLookupError(undefined);
             setAddingVrLink(true);
           }}
         >
-          添加房源 VR 链接
+          粘贴 VR 链接下载
         </Button>
         <Button
           loading={activeImport === "panorama"}
-          disabled={activeImport !== null}
+          disabled={activeImport !== null || vrBusy}
           onClick={() => void addMaterial("panorama")}
         >
           添加 VR 全景图
         </Button>
         <Button
           loading={activeImport === "reference"}
-          disabled={activeImport !== null}
+          disabled={activeImport !== null || vrBusy}
           onClick={() => void addMaterial("reference")}
         >
           添加户型图／参考图
@@ -748,7 +822,7 @@ export function PropertyDetailPage() {
               onDeleted={() => navigate("/properties", { replace: true })}
             />
             <Button
-              disabled={property.sample || activeImport !== null}
+              disabled={property.sample || activeImport !== null || vrBusy}
               icon={<Pencil size={16} aria-hidden="true" />}
               onClick={() => setEditing(true)}
             >
