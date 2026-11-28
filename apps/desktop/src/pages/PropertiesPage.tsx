@@ -38,11 +38,15 @@ import {
 import { demoApi, isLive } from "@keagent/api-client";
 import type { ImportResult, Property } from "@keagent/shared-types";
 import { useWorkspace } from "../lib/workspace";
-import { propertyListingUrl } from "../lib/beike";
 import { PageHeader, PropertyPhoto, formatPrice } from "../components/common";
 import { parseCsv, propertyNumbersFromRows } from "../lib/importFile";
 import { request as productionRequest } from "../components/panoramaClient";
-import { PropertyForm, PropertyVrLinkForm } from "../components/PropertyForm";
+import {
+  PropertyForm,
+  PropertyVrLinkForm,
+  savePropertyVrLink,
+  importPropertyVr,
+} from "../components/PropertyForm";
 import { BeikeImportModal } from "../components/BeikeImportModal";
 import { PropertyInfoTab } from "../components/PropertyInfoTab";
 import { PropertyMaterialsTab } from "../components/PropertyMaterialsTab";
@@ -510,10 +514,15 @@ export function PropertyDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [vrLookupError, setVrLookupError] = useState<{
+    id: string;
+    message: string;
+  }>();
+  const [retryVrId, setRetryVrId] = useState<string>();
   const [addingVrLink, setAddingVrLink] = useState(false);
-  const [activeImport, setActiveImport] = useState<MaterialImportKind | null>(
-    null,
-  );
+  const [activeImport, setActiveImport] = useState<
+    MaterialImportKind | "fetchVr" | "importVr" | null
+  >(null);
   const material = useQuery({
     queryKey: ["property-production-material", propertyId],
     enabled: !!window.desktop && !!propertyId,
@@ -547,6 +556,22 @@ export function PropertyDetailPage() {
       setActiveImport(null);
     }
   };
+  async function importSavedVr(id: string) {
+    setActiveImport("importVr");
+    try {
+      const count = await importPropertyVr(id, queryClient);
+      setRetryVrId(undefined);
+      message.success(`已保存房源 VR 链接，已导入 ${count} 张 VR 全景图`);
+    } catch (error) {
+      setRetryVrId(id);
+      message.warning(
+        `链接已保存，全景图导入失败（${error instanceof Error ? error.message : "请稍后重试"}）。`,
+        8,
+      );
+    } finally {
+      setActiveImport(null);
+    }
+  }
   if (!data) return null;
   if (!property)
     return (
@@ -598,22 +623,55 @@ export function PropertyDetailPage() {
     materialActions = (
       <>
         <Button
+          loading={activeImport === "fetchVr" || activeImport === "importVr"}
+          disabled={
+            material.isPending || materialReadError || activeImport !== null
+          }
           onClick={async () => {
-            const url = propertyListingUrl(property);
-            if (!url) {
-              void message.warning("请在编辑房源中补充房源详情链接后再复制");
-              return;
-            }
+            setVrLookupError(undefined);
+            setActiveImport("fetchVr");
             try {
-              await navigator.clipboard.writeText(url);
-              void message.success("已复制房源网页，可在浏览器打开查看 VR");
-            } catch {
-              void message.error("复制房源网页失败，请重试");
+              const link = (await window.desktop!.request("beikeBrowser.vr", [
+                { city: property.city, number: property.propertyNumber },
+              ])) as string;
+              await savePropertyVrLink(property, link, queryClient);
+              if (hasPanoramas) {
+                message.success("已保存房源 VR 链接");
+              } else {
+                await importSavedVr(property.id);
+              }
+            } catch (error) {
+              setVrLookupError({
+                id: property.id,
+                message:
+                  error instanceof Error
+                    ? error.message.replace(
+                        /^Error invoking remote method 'identity:request': (?:Error: )?/,
+                        "",
+                      )
+                    : "获取或保存 VR 链接失败",
+              });
+            } finally {
+              setActiveImport(null);
             }
           }}
         >
-          获取房源 VR 链接
+          {activeImport === "fetchVr"
+            ? "正在获取 VR 链接…"
+            : activeImport === "importVr"
+              ? "正在导入全景图…"
+              : "获取房源 VR 链接"}
         </Button>
+        {retryVrId === property.id && !hasPanoramas && (
+          <Button
+            disabled={
+              activeImport !== null || material.isPending || materialReadError
+            }
+            onClick={() => void importSavedVr(property.id)}
+          >
+            重试导入全景图
+          </Button>
+        )}
         <Button
           disabled={
             hasPanoramas ||
@@ -621,7 +679,10 @@ export function PropertyDetailPage() {
             materialReadError ||
             activeImport !== null
           }
-          onClick={() => setAddingVrLink(true)}
+          onClick={() => {
+            setVrLookupError(undefined);
+            setAddingVrLink(true);
+          }}
         >
           添加房源 VR 链接
         </Button>
@@ -732,7 +793,13 @@ export function PropertyDetailPage() {
                 panoramas={panoramas}
                 references={material.data?.references ?? []}
                 readFeedback={materialReadFeedback}
-                note={materialNote}
+                note={
+                  vrLookupError?.id === property.id ? (
+                    <span role="status">{vrLookupError.message}</span>
+                  ) : (
+                    materialNote
+                  )
+                }
                 actions={materialActions}
               />
             ),

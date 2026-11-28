@@ -105,6 +105,9 @@ async function fixture(
         beikeDetail: undefined as BeikeDetailResult | undefined,
         beikeBrowserDetail: undefined as BeikeDetailResult | undefined,
         beikeLoggedIn: false,
+        beikeVrUrl: "",
+        beikeVrError: "",
+        beikeVrWait: undefined as Promise<void> | undefined,
         failNextPropertyNumber: "",
         failNextVrImport: false,
         spatialImports: new Set<string>(),
@@ -284,6 +287,13 @@ async function fixture(
               };
             if (method === "beikeCli.search") return state.beikeResult;
             if (method === "beikeCli.detail") return state.beikeDetail;
+            if (method === "beikeBrowser.vr") {
+              await state.beikeVrWait;
+              if (state.beikeVrError) throw new Error(state.beikeVrError);
+              if (!state.beikeVrUrl)
+                throw new Error("贝壳详情页显示该房源暂无 VR 看房。");
+              return state.beikeVrUrl;
+            }
             if (method === "beikeBrowser.detail")
               return state.beikeBrowserDetail;
             if (method === "beikeBrowser.login") state.beikeLoggedIn = true;
@@ -1532,26 +1542,9 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
   page,
 }) => {
   await fixture(page);
-  const copiedLinks: string[] = [];
-  await page.exposeFunction("recordCopiedLink", (link: string) => {
-    copiedLinks.push(link);
-  });
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: (window as any).recordCopiedLink },
-    });
-  });
   await page.goto("/#/properties/user-property");
   await page.getByRole("tab", { name: "制作素材" }).click();
   await expect(page.getByText("0 张 VR 全景图", { exact: true })).toBeVisible();
-  const copyListing = page.getByRole("button", { name: "获取房源 VR 链接" });
-  await copyListing.click();
-  await expect(
-    page.getByText("已复制房源网页，可在浏览器打开查看 VR"),
-  ).toBeVisible();
-  expect(copiedLinks).toEqual([
-    "https://m.ke.com/bj/ershoufang/101140860601.html",
-  ]);
   await expect(
     page.getByRole("button", { name: "添加 VR 全景图" }),
   ).toBeVisible();
@@ -1589,7 +1582,9 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
   ).toHaveAttribute("src", "/media/interior-1.jpg");
   await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
   await expect(addLink).toBeDisabled();
-  await expect(copyListing).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "获取房源 VR 链接" }),
+  ).toBeEnabled();
   const { details, requests } = await page.evaluate(() => {
     const { workspace, calls } = (window as any).factorySettingsTest;
     return {
@@ -1616,6 +1611,82 @@ test("从制作素材保存 VR 链接后自动导入，已有全景图时入口�
       method: "panorama.property-vr-import",
       input: { propertyId: "user-property" },
     },
+  ]);
+});
+
+test("制作素材用可见贝壳浏览器取链，失败保留旧链接，重试只导入全景图", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/#/properties/user-property?tab=materials");
+  await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    state.workspace.properties[1].details.vrUrl = "https://realsee.cn/old";
+  });
+  const fetchVr = page.getByRole("button", { name: "获取房源 VR 链接" });
+  await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    state.beikeVrWait = new Promise<void>((resolve) => {
+      state.finishVr = resolve;
+    });
+  });
+  await fetchVr.click();
+  const waiting = page.getByRole("button", { name: "正在获取 VR 链接…" });
+  await expect(waiting).toBeDisabled();
+  await waiting.evaluate((button) => (button as HTMLButtonElement).click());
+  await page.evaluate(() => (window as any).factorySettingsTest.finishVr());
+
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "贝壳详情页显示该房源暂无 VR 看房。" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).factorySettingsTest.beikeVrError = "贝壳浏览器操作已结束";
+  });
+  await fetchVr.click();
+  await expect(page.getByText("贝壳浏览器操作已结束")).toBeVisible();
+  await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    state.beikeVrError = "";
+    state.beikeVrUrl = "https://realsee.cn/new";
+    state.failNextVrImport = true;
+  });
+  await fetchVr.click();
+  await expect(page.getByText(/链接已保存，全景图导入失败/)).toBeVisible();
+  await page.getByRole("button", { name: "重试导入全景图" }).click();
+  await expect(page.getByText("1 张 VR 全景图", { exact: true })).toBeVisible();
+  await fetchVr.click();
+  await expect(
+    page.getByText("已保存房源 VR 链接", { exact: true }),
+  ).toBeVisible();
+  const { details, methods } = await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    return {
+      details: state.workspace.properties[1].details,
+      methods: state.calls
+        .filter((c: any) =>
+          [
+            "beikeBrowser.vr",
+            "updateProperty",
+            "panorama.property-vr-import",
+          ].includes(c.method),
+        )
+        .map((c: any) => c.method),
+    };
+  });
+  expect(details).toEqual({
+    orientation: "南",
+    vrUrl: "https://realsee.cn/new",
+  });
+  expect(methods).toEqual([
+    "beikeBrowser.vr",
+    "beikeBrowser.vr",
+    "beikeBrowser.vr",
+    "updateProperty",
+    "panorama.property-vr-import",
+    "panorama.property-vr-import",
+    "beikeBrowser.vr",
   ]);
 });
 

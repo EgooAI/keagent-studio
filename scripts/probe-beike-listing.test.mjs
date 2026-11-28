@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import browser from "../apps/desktop/electron/beike/browser.cjs";
 import { launch, listingURL, probe } from "./probe-beike-listing.mjs";
 
 test("每次先进入首页，等待人工验证，复用登录后仍先进入首页", async () => {
@@ -14,6 +15,7 @@ test("每次先进入首页，等待人工验证，复用登录后仍先进入�
     for (const firstVisit of [true, false]) {
       context = await launch(profile, true);
       const visited = [];
+      let vrOnly = false;
       await context.route("https://m.ke.com/**", async (route) => {
         const url = route.request().url();
         if (!route.request().isNavigationRequest()) return route.abort();
@@ -77,16 +79,27 @@ test("每次先进入首页，等待人工验证，复用登录后仍先进入�
                   ],
                   houseCode: id,
                   houseTitle: "测试房源",
-                  houseArea: "59.48m²",
+                  houseArea: vrOnly ? undefined : "59.48m²",
                   houseTotalPrice: "480万",
+                  isVr: !firstVisit,
                   vrInfo: {
-                    houseCode: firstVisit ? "other" : id,
+                    houseCode: firstVisit || vrOnly ? "other" : id,
                     vrUrl: "https://open.realsee.com/ke/other",
                   },
                 },
               },
             }) +
             "</script>";
+        if (url === target && vrOnly) {
+          body +=
+            '<aside><a href="https://open.realsee.com/ke/recommended">VR 看房</a></aside>';
+          if (!firstVisit)
+            body += `<script>setTimeout(() => {
+              window.__PRELOADED_STATE__.ershoufangDetail.houseInfo.vrInfo = {
+                houseCode: "${id}", vrUrl: "https://open.realsee.com/ke/late"
+              };
+            }, 1600)</script>`;
+        }
         await route.fulfill({ contentType: "text/html; charset=utf-8", body });
       });
       const page = context.pages()[0];
@@ -134,10 +147,77 @@ test("每次先进入首页，等待人工验证，复用登录后仍先进入�
       ]) {
         assert.equal(Object.hasOwn(result, key), false, key);
       }
+      vrOnly = true;
+      visited.length = 0;
+      const readVr = browser.runPage(page, "vr", { city: "北京", number: id });
+      if (firstVisit) {
+        await page.getByText("人机验证").waitFor();
+        await page.getByRole("button", { name: "测试放行" }).click();
+        await assert.rejects(readVr, /该房源暂无 VR/);
+      } else {
+        assert.equal(await readVr, "https://open.realsee.com/ke/late");
+      }
+      assert.deepEqual(visited, ["https://m.ke.com/", target]);
       await context.close();
     }
   } finally {
     await context?.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("慢加载不占用 VR 等待时间，页面加载完成后最多等五秒", async () => {
+  const profile = await mkdtemp(path.join(os.tmpdir(), "beike-vr-"));
+  const number = "101140860601";
+  const input = { city: "北京", number };
+  const target = listingURL(input.city, number);
+  const context = await launch(profile, true);
+  try {
+    let showTour = true;
+    await context.route("https://m.ke.com/**", async (route) => {
+      if (route.request().resourceType() === "image") {
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+        return route.fulfill({ status: 204 });
+      }
+      const state = { ershoufangDetail: { houseInfo: { houseCode: number } } };
+      const detail =
+        "<script>window.__PRELOADED_STATE__ = " +
+        JSON.stringify(state) +
+        "</script>" +
+        '<a href="https://open.realsee.com/ke/other">推荐房源 VR</a>' +
+        '<div class="__vr_header1_container__"></div>' +
+        (showTour
+          ? '<img src="/slow-photo.jpg"><script>window.addEventListener("load",()=>setTimeout(()=>{const a=document.createElement("a");a.href="https://open.realsee.com/ke/mine";document.querySelector(".__vr_header1_container__").append(a)}, 1300))</script>'
+          : "");
+      await route.fulfill({
+        contentType: "text/html; charset=utf-8",
+        body:
+          route.request().url() === target
+            ? detail
+            : '<a href="/bj/ershoufang/">北京二手房</a>',
+      });
+    });
+    const page = context.pages()[0];
+    assert.equal(
+      await browser.runPage(page, "vr", input),
+      "https://open.realsee.com/ke/mine",
+    );
+    showTour = false;
+    await assert.rejects(
+      browser.runPage(page, "vr", input),
+      /详情页加载完成后等待 5 秒/,
+    );
+    const waited = await page.evaluate(
+      () =>
+        performance.now() -
+        performance.getEntriesByType("navigation")[0].domComplete,
+    );
+    assert.ok(
+      waited >= 4900 && waited < 6500,
+      `页面加载完成后等待了 ${waited} 毫秒`,
+    );
+  } finally {
+    await context.close();
     await rm(profile, { recursive: true, force: true });
   }
 });

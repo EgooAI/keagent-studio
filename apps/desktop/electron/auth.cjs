@@ -335,6 +335,7 @@ function registerAuth(
     if (
       [
         "beikeBrowser.detail",
+        "beikeBrowser.vr",
         "beikeBrowser.login",
         "beikeBrowser.check",
       ].includes(method)

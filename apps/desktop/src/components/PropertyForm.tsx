@@ -31,7 +31,29 @@ type PropertyFormValues = Omit<
 
 const requiredText = [{ required: true, whitespace: true }];
 
-async function importPropertyVr(propertyId: string, queryClient: QueryClient) {
+export async function savePropertyVrLink(
+  property: Property,
+  link: string,
+  queryClient: QueryClient,
+) {
+  const workspace = await demoApi.getWorkspace();
+  const current = workspace.properties.find((item) => item.id === property.id);
+  if (!current || current.propertyNumber !== property.propertyNumber)
+    throw new Error("房源已变更，请重新打开房源");
+  if (current.details?.vrUrl === link) return;
+  await demoApi.updateProperty(current.id, {
+    details: { ...current.details, vrUrl: link },
+  });
+  await queryClient.invalidateQueries(
+    { queryKey: ["workspace"] },
+    { cancelRefetch: false },
+  );
+}
+
+export async function importPropertyVr(
+  propertyId: string,
+  queryClient: QueryClient,
+) {
   const { count } = await productionRequest<{ count: number }>(
     "property-vr-import",
     { propertyId },
@@ -302,15 +324,7 @@ export function PropertyVrLinkForm({
     setFailure(undefined);
     let linkSaved = false;
     try {
-      if (link !== property.details?.vrUrl) {
-        await demoApi.updateProperty(property.id, {
-          details: { ...property.details, vrUrl: link },
-        });
-        await queryClient.invalidateQueries(
-          { queryKey: ["workspace"] },
-          { cancelRefetch: false },
-        );
-      }
+      await savePropertyVrLink(property, link, queryClient);
       linkSaved = true;
       setPhase("importing");
       const count = await importPropertyVr(property.id, queryClient);
