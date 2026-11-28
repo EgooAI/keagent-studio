@@ -100,6 +100,8 @@ func (s *server) panorama(ctx context.Context, a actor, operation string, body [
 		return nil, fail(410, "AI 扩图已移除，请使用原始 VR 全景图")
 	case "beike-import":
 		return s.fetchBeike(ctx, input)
+	case "opening-asr":
+		return s.openingASR(ctx, input)
 	case "opening-submit":
 		return nil, fail(410, "MiniMax 开场生成已停用，请使用本机开场视频")
 	case "opening-query":

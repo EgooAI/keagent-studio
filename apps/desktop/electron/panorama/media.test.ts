@@ -8,6 +8,38 @@ const {
   spatialRuns,
 } = require("./media.cjs");
 
+it("renders uploaded opening captions at the original timestamps without a scene label", () => {
+  const { openingSubtitles } = require("./media.cjs");
+  const ass = openingSubtitles(
+    { duration: 3, captions: [{ start: 0.8, end: 2.45, text: "今天看房" }] },
+    1080,
+    1920,
+  );
+  expect(ass).toContain("0:00:00.80,0:00:02.45,Caption");
+  expect(ass).toContain(",68,&H00FFFFFF,&H00FFFFFF,&H00000000");
+  expect(ass).toContain(",1,5,0,2,40,40,307,1");
+  expect(ass).not.toMatch(/^Dialogue: .*?,Label,/m);
+});
+
+it("keeps the full three-bedroom sentence on screen as two lines in one timed event", () => {
+  const {
+    openingCaptionLines,
+  } = require("../production/opening-caption-lines.mjs");
+  const { openingSubtitles } = require("./media.cjs");
+  const text = "今天带大家看一套朝南的三居室，";
+  const lines = openingCaptionLines(text).split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines.join("")).toBe("今天带大家看一套朝南的三居室");
+  expect(lines[1]).toContain("三居室");
+  const ass = openingSubtitles(
+    { duration: 6, captions: [{ start: 1.24, end: 5.12, text }] },
+    1080,
+    1920,
+  );
+  expect(ass.match(/^Dialogue:/gm)).toHaveLength(1);
+  expect(ass).toContain(lines.join("\\N"));
+});
+
 const scenes = [
   { id: "living", yaw: 170, direction: 1 },
   { id: "bedroom", yaw: 40, direction: -1 },

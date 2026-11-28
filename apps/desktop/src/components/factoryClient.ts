@@ -33,10 +33,12 @@ export interface FactoryTemplate {
 }
 
 export type FactoryOpeningClip = {
+  needsWordTiming?: boolean;
   id: string;
   name: string;
   duration: number;
   url?: string;
+  captions?: import("@keagent/shared-types").OpeningCaption[];
 };
 
 export type FactoryCatalog = Omit<PanoramaCapabilities, "templates"> & {

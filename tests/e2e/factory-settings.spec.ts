@@ -405,6 +405,22 @@ async function fixture(
               }
               return clip;
             }
+            if (method === "panorama.opening-captions")
+              return JSON.parse(
+                sessionStorage.getItem("captions-" + input.id) ||
+                  '[{"start":0.8,"end":2,"text":"今天看房"}]',
+              );
+            if (method === "panorama.opening-captions-save") {
+              const captions = input.texts.map((text: string, i: number) => ({
+                ...input.previous[i],
+                text,
+              }));
+              sessionStorage.setItem(
+                "captions-" + input.id,
+                JSON.stringify(captions),
+              );
+              return captions;
+            }
             if (method === "panorama.opening-videos")
               return state.openingVideos;
             if (method.startsWith("panorama.music-")) {
@@ -1177,6 +1193,52 @@ test("经纪人开场每批必选，可选择本机视频库或临时上传，�
     page.getByRole("heading", { name: "保存的开场2.mp4" }),
   ).toBeVisible();
 
+  const card = page.getByRole("region", { name: "保存的开场2.mp4" });
+  const library = page.locator(".opening-library");
+  const firstToggle = library.getByRole("button", {
+    name: "保存的开场1.mp4",
+    exact: true,
+  });
+  const newestToggle = card.getByRole("button", {
+    name: "保存的开场2.mp4",
+    exact: true,
+  });
+  await expect(library.getByRole("heading").first()).toHaveText(
+    "保存的开场2.mp4",
+  );
+  await expect(library.locator("video")).toHaveCount(1);
+  await firstToggle.click();
+  await expect(newestToggle).toHaveAttribute("aria-expanded", "false");
+  await firstToggle.click();
+  await expect(library.locator("video")).toHaveCount(0);
+  await newestToggle.click();
+  const transcript = card.getByRole("textbox", { name: "第 1 句字幕" });
+  await expect(transcript).toBeVisible();
+  await expect(card.getByRole("button", { name: "试听第 1 句" })).toHaveText(
+    "0.80 – 2.00 秒",
+  );
+  await expect(card.getByText("调整时间")).toHaveCount(0);
+  await transcript.fill("正在校对");
+  await expect(firstToggle).toBeDisabled();
+  await card.getByRole("button", { name: "撤销修改" }).click();
+  await expect(firstToggle).toBeEnabled();
+  const inputBounds = await transcript.boundingBox(),
+    videoBounds = await card.locator("video").boundingBox();
+  expect(inputBounds!.x).toBeGreaterThan(videoBounds!.x + videoBounds!.width);
+  // The same editor also fits narrower composer panels.
+  await card.evaluate((node) => {
+    (node as HTMLElement).style.width = "420px";
+  });
+  await expect
+    .poll(async () => {
+      const field = await transcript.boundingBox(),
+        video = await card.locator("video").boundingBox();
+      return field!.y >= video!.y + video!.height;
+    })
+    .toBe(true);
+  await card.evaluate((node) => {
+    (node as HTMLElement).style.width = "";
+  });
   await page.goto("/#/studio/create");
   await selectTemplates(page, ["经纪人开场测试模板 · 1.0.0"]);
   async function configureBatch() {
@@ -1191,6 +1253,12 @@ test("经纪人开场每批必选，可选择本机视频库或临时上传，�
   const create = page.getByRole("button", { name: "生成 1 条文案" });
   await expect(create).toBeDisabled();
   await choose(page, "选择已保存的开场视频", "保存的开场2.mp4 · 3.0 秒");
+  await expect(
+    page.getByRole("textbox", { name: "第 1 句字幕" }),
+  ).toBeVisible();
+  await page.getByRole("textbox", { name: "第 1 句字幕" }).fill("今天看这套房");
+  await expect(create).toBeDisabled();
+  await page.getByRole("button", { name: "保存字幕" }).click();
   await expect(create).toBeEnabled();
   await create.click();
   await page.getByRole("button", { name: "审核", exact: true }).click();
@@ -1208,6 +1276,14 @@ test("经纪人开场每批必选，可选择本机视频库或临时上传，�
         .map((call: any) => call.input.openingVideo),
     );
   expect(await submitted()).toEqual(["2".repeat(64)]);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).factorySettingsTest.calls.find(
+          (c: any) => c.method === "panorama.factory-create",
+        ).input.openingCaptions,
+    ),
+  ).toEqual([{ start: 0.8, end: 2, text: "今天看这套房" }]);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "审核文案" })).toBeHidden();
   await page.getByRole("tab", { name: "新建视频", exact: true }).click();

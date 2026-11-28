@@ -4,6 +4,10 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const domain = require("./domain.cjs");
 const media = require("./media.cjs");
+const {
+  openingCaptionText,
+  openingCaptionPages,
+} = require("../production/opening-caption-lines.mjs");
 const music = require("./music.cjs");
 const sources = require("../production/sources.cjs");
 const coverReasons = require("../production/cover-reasons.json");
@@ -15,6 +19,31 @@ const { ProductionQueue } = require("../production/queue.cjs");
 const uuid = /^[a-f0-9-]{36}$/;
 const assetName = /^[a-f0-9]{64}\.(jpg|png)$/;
 
+// Earlier ASR versions cut at 12 characters, even in the middle of a word.
+function joinOpeningTails(cues) {
+  if (!cues) return cues;
+  const joined = [];
+  for (const cue of cues) {
+    const previous = joined.at(-1);
+    if (
+      previous &&
+      /^[\p{Script=Han}]{9,12}$/u.test(previous.text) &&
+      /^[\p{Script=Han}]{1,5}[，。？！、；]?$/u.test(cue.text) &&
+      previous.text.length + cue.text.length > 12 &&
+      cue.start >= previous.end &&
+      cue.start - previous.end < 0.35
+    ) {
+      previous.text += cue.text;
+      previous.end = cue.end;
+    } else joined.push({ ...cue });
+  }
+  return joined;
+}
+function cleanOpeningCaptions(cues) {
+  return cues
+    ?.map((cue) => ({ ...cue, text: openingCaptionText(cue.text) }))
+    .filter((cue) => cue.text);
+}
 class PanoramaWorkflow {
   constructor(root, sampleRoot, dialogs, remote) {
     this.root = root;
@@ -26,6 +55,7 @@ class PanoramaWorkflow {
     this.previews = new Set();
     this.capabilityPromise = null;
     this.sourceFlight = new Map();
+    this.openingFlights = new Map();
     this.vrImports = new Map();
     this.queue = new ProductionQueue(this);
   }
@@ -60,6 +90,15 @@ class PanoramaWorkflow {
       !fs.existsSync(file + ".pre-batch")
     )
       fs.copyFileSync(file, file + ".pre-batch", fs.constants.COPYFILE_EXCL);
+    for (const clip of Object.values(state.openingAssets ?? {})) {
+      if (clip.captionLayout === 3) continue;
+      for (const key of ["captions", "restoreCaptions"]) {
+        const cues =
+          clip.captionLayout === 2 ? clip[key] : joinOpeningTails(clip[key]);
+        clip[key] = cleanOpeningCaptions(cues);
+      }
+      clip.captionLayout = 3;
+    }
     // Older listing covers stored the reviewed reason in the property snapshot.
     for (const record of [...state.drafts, ...state.jobs]) {
       if (record.templateSnapshot?.cover?.imageSource === "listing-frame")
@@ -298,6 +337,8 @@ class PanoramaWorkflow {
       if (!(await media.exists(target))) await fsp.rename(temp, target);
       assertCurrent();
       const clip = { id, name: path.basename(file).slice(-120), duration };
+      const known = state.openingAssets?.[id];
+      this.saveOpeningAsset(owner, state, { ...known, ...clip });
       if (saveToLibrary) {
         const previous = state.openingVideos ?? [];
         this.saveOpeningVideos(owner, state, [
@@ -305,9 +346,156 @@ class PanoramaWorkflow {
           clip,
         ]);
       }
-      return clip;
+      return this.openingView(owner, state, clip);
     } finally {
       await fsp.rm(temp, { force: true });
+    }
+  }
+  openingView(owner, state, clip) {
+    return {
+      ...clip,
+      ...(state.openingAssets?.[clip.id]?.captions && {
+        captions: state.openingAssets[clip.id].captions,
+        ...(!state.openingAssets[clip.id].timedPhrases && {
+          needsWordTiming: true,
+        }),
+      }),
+      url: this.openingVideoURL(owner, clip.id),
+    };
+  }
+  saveOpeningAsset(owner, state, clip) {
+    const assets = (state.openingAssets ??= {});
+    const previous = assets[clip.id];
+    assets[clip.id] = { ...clip, captionLayout: 3 };
+    try {
+      this.persist(owner);
+    } catch (error) {
+      if (previous) assets[clip.id] = previous;
+      else delete assets[clip.id];
+      throw error;
+    }
+  }
+  async openingCaptionAction(owner, state, method, input, assertCurrent) {
+    const file = this.openingVideoFile(owner, input.id);
+    const clip =
+      state.openingAssets?.[input.id] ??
+      state.openingVideos?.find((v) => v.id === input.id);
+    domain.ensure(clip, "开场视频不存在，请重新导入");
+    if (method === "opening-video-save") {
+      this.saveOpeningVideos(owner, state, [
+        ...(state.openingVideos || []).filter((v) => v.id !== clip.id),
+        { id: clip.id, name: clip.name, duration: clip.duration },
+      ]);
+      return null;
+    }
+    if (method === "opening-captions-save") {
+      domain.ensure(
+        domain.hash(clip.captions ?? null) ===
+          domain.hash(input.previous ?? null),
+        "字幕已更新，请重新打开核对",
+      );
+      const texts = input.texts;
+      domain.ensure(
+        Array.isArray(texts) &&
+          (!texts.length || texts.length === clip.captions?.length),
+        "字幕条数已变化，请重新打开核对",
+      );
+      const captions = texts.map((value, index) => ({
+        ...clip.captions[index],
+        text: domain.text(
+          typeof value === "string" ? openingCaptionText(value) : value,
+          "开场字幕",
+          100,
+        ),
+      }));
+      const restoreCaptions = clip.captions?.length
+        ? clip.captions
+        : clip.restoreCaptions;
+      this.saveOpeningAsset(owner, state, {
+        ...clip,
+        captions,
+        restoreCaptions: captions.length ? undefined : restoreCaptions,
+      });
+      return captions;
+    }
+    const regroup = input.regroup === true;
+    if (regroup) {
+      domain.ensure(
+        domain.hash(clip.captions ?? null) ===
+          domain.hash(input.previous ?? null),
+        "字幕已更新，请重新打开核对",
+      );
+      if (clip.timedPhrases) return clip.captions;
+    }
+    if (!regroup && clip.captions && !(input.retry && !clip.captions.length))
+      return clip.captions;
+    if (input.retry && clip.restoreCaptions?.length) {
+      const captions = clip.restoreCaptions;
+      this.saveOpeningAsset(owner, state, {
+        ...clip,
+        captions,
+        restoreCaptions: undefined,
+      });
+      return captions;
+    }
+    const pending = this.openingFlights.get(file);
+    if (pending) return pending;
+    const run = (async () => {
+      const signal = AbortSignal.timeout(65000);
+      const cache = path.join(this.directory(owner), "cache");
+      await fsp.mkdir(cache, { recursive: true });
+      const info = await media.probe(file, cache, signal, "mov");
+      let captions = [];
+      let timedPhrases;
+      if (info.streams.some((s) => s.codec_type === "audio")) {
+        const { audio } = await media.openingAudio(
+          file,
+          clip.id,
+          cache,
+          signal,
+        );
+        const wav = await fsp.readFile(path.join(cache, audio));
+        assertCurrent();
+        const response = await this.remote(
+          "opening-asr",
+          { audio: wav.toString("base64"), wordTiming: true },
+          signal,
+        );
+        if (Array.isArray(response)) {
+          domain.ensure(!regroup, "本地服务尚未支持逐词识别，请更新服务后重试");
+          captions = cleanOpeningCaptions(
+            domain.openingCaptions(response, clip.duration),
+          );
+        } else {
+          timedPhrases = response?.phrases;
+          captions = domain.openingCaptions(
+            openingCaptionPages(timedPhrases, clip.duration),
+            clip.duration,
+          );
+        }
+      }
+      assertCurrent();
+      const current = state.openingAssets?.[clip.id] ?? clip;
+      if (current.captions !== clip.captions) {
+        domain.ensure(!regroup, "字幕已更新，请重新打开核对");
+        return current.captions;
+      }
+      domain.ensure(
+        !regroup || captions.length,
+        "未识别到原声，已保留现有字幕",
+      );
+      this.saveOpeningAsset(owner, state, {
+        ...current,
+        captions,
+        timedPhrases,
+      });
+      return captions;
+    })();
+    this.openingFlights.set(file, run);
+    try {
+      return await run;
+    } finally {
+      this.openingFlights.delete(file);
     }
   }
   saveOpeningVideos(owner, state, videos) {
@@ -628,10 +816,23 @@ class PanoramaWorkflow {
         input.saveToLibrary === true,
       );
     if (method === "opening-videos")
-      return (state.openingVideos ?? []).map((clip) => ({
-        ...clip,
-        url: this.openingVideoURL(owner, clip.id),
-      }));
+      return (state.openingVideos ?? []).map((clip) =>
+        this.openingView(owner, state, clip),
+      );
+    if (
+      [
+        "opening-captions",
+        "opening-captions-save",
+        "opening-video-save",
+      ].includes(method)
+    )
+      return this.openingCaptionAction(
+        owner,
+        state,
+        method,
+        input,
+        assertCurrent,
+      );
     if (method === "opening-video-remove") {
       this.saveOpeningVideos(
         owner,
@@ -777,6 +978,8 @@ class PanoramaWorkflow {
       );
       domain.ensure(
         c.openingVideo === draft.config.openingVideo &&
+          domain.hash(c.openingCaptions ?? null) ===
+            domain.hash(draft.config.openingCaptions ?? null) &&
           c.openingClip === draft.config.openingClip &&
           c.openingPhoto === draft.config.openingPhoto &&
           domain.hash(c.openingLocation || null) ===
@@ -1187,6 +1390,7 @@ class PanoramaWorkflow {
                           key !== "backgroundMusic" &&
                           (!c.openingVideo ||
                             (key !== "openingVideo" &&
+                              key !== "openingCaptions" &&
                               key !== "openingTemplate")),
                       ),
                     ),
@@ -1385,7 +1589,7 @@ class PanoramaWorkflow {
           id: "opening",
           kind: "opening",
           sceneId: job.scenes[0].id,
-          captions: [],
+          captions: job.config.openingCaptions ?? [],
         });
       for (const [index, segment] of job.segments.entries()) {
         update("tts", (index / job.segments.length) * 30);

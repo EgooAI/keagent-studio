@@ -19,6 +19,7 @@ import {
   type FactoryDetail,
   type FactoryPhase,
 } from "./factoryClient";
+import { OpeningPreview } from "./OpeningCaptions";
 import { request, stageNames } from "./panoramaClient";
 import {
   FactoryRenderSettings,
@@ -292,12 +293,11 @@ export function FactoryTaskDetail({
       )}
       {!finished && row.openingVideoUrl && (
         <div className="factory-review-segment">
-          <video
-            className="factory-final-video"
-            aria-label="开场视频"
-            src={row.openingVideoUrl}
-            controls
-            preload="metadata"
+          <OpeningPreview
+            url={row.openingVideoUrl}
+            name="开场视频"
+            captions={effectiveConfig?.openingCaptions}
+            landscape={effectiveConfig?.aspectRatio === "16:9"}
           />
         </div>
       )}

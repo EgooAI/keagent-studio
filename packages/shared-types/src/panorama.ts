@@ -3,6 +3,12 @@ export interface BackgroundMusicSelection {
   volume: number;
 }
 
+export interface OpeningCaption {
+  text: string;
+  start: number;
+  end: number;
+}
+
 export interface PanoramaConfig {
   cameraMode?: "panorama" | "spatial";
   materialMode?: "panorama" | "expand";
@@ -18,6 +24,7 @@ export interface PanoramaConfig {
   rate: number;
   backgroundMusic?: BackgroundMusicSelection;
   openingVideo?: string;
+  openingCaptions?: OpeningCaption[];
   openingClip?: string;
   openingPhoto?: string;
   openingLocation?: {

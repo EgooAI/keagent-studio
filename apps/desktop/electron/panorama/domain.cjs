@@ -146,6 +146,27 @@ function backgroundMusic(input) {
   return { id: input.id, volume: input.volume };
 }
 
+function openingCaptions(cues, duration = 30) {
+  ensure(Array.isArray(cues) && cues.length <= 300, "开场字幕格式无效");
+  let previous = 0;
+  return cues.map((cue) => {
+    ensure(
+      cue &&
+        Number.isFinite(cue.start) &&
+        Number.isFinite(cue.end) &&
+        cue.start >= previous &&
+        cue.end > cue.start &&
+        cue.end <= duration + 0.001,
+      "开场字幕时间必须在视频内，且不能重叠",
+    );
+    previous = cue.end;
+    return {
+      start: cue.start,
+      end: cue.end,
+      text: text(cue.text, "开场字幕", 100),
+    };
+  });
+}
 function config(input, personalTemplates = []) {
   ensure(input && typeof input === "object", "缺少制作配置");
   input = currentSpeechConfig(input);
@@ -190,6 +211,8 @@ function config(input, personalTemplates = []) {
       "开场视频引用无效",
     );
     c.openingVideo = input.openingVideo;
+    if (input.openingCaptions !== undefined)
+      c.openingCaptions = openingCaptions(input.openingCaptions);
   }
   if (input.openingClip !== undefined) {
     ensure(
@@ -379,6 +402,7 @@ module.exports = {
   config,
   renderOverrides,
   renderOverrideKeys,
+  openingCaptions,
   ensure,
   text,
   optionalText,

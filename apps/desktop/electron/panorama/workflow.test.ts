@@ -1369,6 +1369,72 @@ describe("production queue", () => {
     expect(item.phase).toBe("review");
   });
 
+  it("upgrades old captions explicitly and reuses timed recognition after restart", async () => {
+    const { workflow, owner } = fixture();
+    const id = domain.hash("old opening");
+    const original = [{ text: "校对过的字幕", start: 0.1, end: 1.2 }];
+    const clip = { id, name: "opening.mp4", duration: 3 };
+    workflow.saveOpeningAsset(owner, workflow.store(owner), {
+      ...clip,
+      captions: original,
+    });
+    workflow.saveOpeningVideos(owner, workflow.store(owner), [clip]);
+    const video = workflow.openingVideoFile(owner, id);
+    fs.mkdirSync(path.dirname(video), { recursive: true });
+    fs.writeFileSync(video, "fixture");
+    vi.spyOn(media, "probe").mockResolvedValue({
+      streams: [{ codec_type: "audio" }],
+    });
+    vi.spyOn(media, "openingAudio").mockImplementation(
+      async (...args: unknown[]) => {
+        fs.writeFileSync(
+          path.join(args[2] as string, "fixture.wav"),
+          "audio fixture",
+        );
+        return { audio: "fixture.wav" };
+      },
+    );
+    const phrases = [
+      [
+        { text: "请", start: 0.22, end: 0.43 },
+        { text: "进。", start: 0.43, end: 1.19 },
+      ],
+    ];
+    workflow.remote = vi
+      .fn()
+      .mockResolvedValueOnce({ phrases: [] })
+      .mockResolvedValue({ phrases });
+    const read = (extra = {}) =>
+      workflow.handle("user-a", "opening-captions", { id, ...extra });
+    const upgrade = { regroup: true, previous: original };
+    expect(await read()).toEqual(original);
+    expect(workflow.remote).not.toHaveBeenCalled();
+    await expect(read(upgrade)).rejects.toThrow("保留现有字幕");
+    expect(await read()).toEqual(original);
+    const [caption, concurrent] = await Promise.all([
+      read(upgrade),
+      read(upgrade),
+    ]);
+    expect(caption).toEqual([{ text: "请进", start: 0.22, end: 1.19 }]);
+    expect(concurrent).toEqual(caption);
+    expect(workflow.remote).toHaveBeenCalledTimes(2);
+    expect(workflow.remote).toHaveBeenCalledWith(
+      "opening-asr",
+      expect.objectContaining({ wordTiming: true }),
+      expect.anything(),
+    );
+    const reopened = new PanoramaWorkflow(workflow.root, "", {});
+    expect(await reopened.handle("user-a", "opening-captions", { id })).toEqual(
+      caption,
+    );
+    expect(reopened.store(owner).openingAssets[id].timedPhrases).toEqual(
+      phrases,
+    );
+    expect(
+      (await reopened.handle("user-a", "opening-videos"))[0].needsWordTiming,
+    ).toBeUndefined();
+  });
+
   it("keeps the local opening library account-scoped and requires an explicit selection for each batch", async () => {
     const { workflow, owner, call, pairs, templates } = batchFixture();
     templates[0].production.config.videoMode = "avatar";
@@ -1390,7 +1456,72 @@ describe("production queue", () => {
     const second = await save("second clip", true);
     const temporary = await save("temporary clip", false);
 
+    expect(
+      await workflow.handle("user-a", "opening-captions", { id: first.id }),
+    ).toEqual([]);
+    const original = [{ start: 0.8, end: 2, text: "欢迎看访" }];
+    workflow.store(owner).openingAssets[first.id].captions = original;
+    const cues = [{ ...original[0], text: "欢迎看房" }];
+    expect(
+      await workflow.handle("user-a", "opening-captions-save", {
+        id: first.id,
+        previous: original,
+        texts: ["“欢迎，看房！”"],
+      }),
+    ).toEqual(cues);
+    await expect(
+      workflow.handle("user-a", "opening-captions-save", {
+        id: first.id,
+        previous: cues,
+        texts: ["欢迎", "看房"],
+      }),
+    ).rejects.toThrow("字幕条数");
+    await expect(
+      workflow.handle("user-a", "opening-captions-save", {
+        id: first.id,
+        previous: [],
+        texts: [],
+      }),
+    ).rejects.toThrow("字幕已更新");
+    const previousAsset = workflow.store(owner).openingAssets[second.id];
+    const lastVersion = workflow.store(owner).openingAssets[temporary.id];
+    lastVersion.captionLayout = 2;
+    lastVersion.captions = [
+      { start: 0.2, end: 2.4, text: "建面89.5平方米，得房率80%！" },
+    ];
+    delete previousAsset.captionLayout;
+    previousAsset.captions = [
+      { start: 0, end: 1.4, text: "今天带大家看一套朝南的三" },
+      { start: 1.4, end: 2, text: "居室，" },
+      { start: 2.5, end: 3, text: "请进。" },
+    ];
+    workflow.persist(owner);
     const restarted = new PanoramaWorkflow(workflow.root, "", {});
+    expect(
+      await restarted.handle("user-a", "opening-captions", { id: second.id }),
+    ).toEqual([
+      { start: 0, end: 2, text: "今天带大家看一套朝南的三居室" },
+      { start: 2.5, end: 3, text: "请进" },
+    ]);
+    expect(
+      await restarted.handle("user-a", "opening-captions", { id: first.id }),
+    ).toEqual(cues);
+    expect(
+      await restarted.handle("user-a", "opening-captions", {
+        id: temporary.id,
+      }),
+    ).toEqual([{ start: 0.2, end: 2.4, text: "建面89.5平方米得房率80%" }]);
+    await restarted.handle("user-a", "opening-captions-save", {
+      id: first.id,
+      previous: cues,
+      texts: [],
+    });
+    expect(
+      await restarted.handle("user-a", "opening-captions", {
+        id: first.id,
+        retry: true,
+      }),
+    ).toEqual(cues);
     expect(await restarted.handle("user-a", "opening-videos")).toMatchObject([
       first,
       second,

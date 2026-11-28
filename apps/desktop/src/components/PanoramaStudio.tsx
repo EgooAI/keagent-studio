@@ -52,6 +52,7 @@ import { creditPricingQuery } from "../lib/creditSummary";
 import { useVoiceLibrary } from "../lib/voiceLibrary";
 import { useWorkspace } from "../lib/workspace";
 import { PageHeader, formatDate } from "./common";
+import { OpeningCaptions, openingCaptionQuery } from "./OpeningCaptions";
 import { FactoryPicker } from "./FactoryPicker";
 import { FactoryImagePicker } from "./FactoryImagePicker";
 import coverReasons from "../../electron/production/cover-reasons.json";
@@ -221,6 +222,7 @@ export function PanoramaStudio() {
   const backgroundMusic = musicId
     ? { id: musicId, volume: musicVolume }
     : undefined;
+  const [openingDirty, setOpeningDirty] = useState(false);
   const [savedOpeningId, setSavedOpeningId] = useState<string>();
   const [temporaryOpening, setTemporaryOpening] =
     useState<FactoryOpeningClip>();
@@ -284,7 +286,7 @@ export function PanoramaStudio() {
           (edits.renderSettings[key]?.trim() === "" ||
             Number(edits.renderSettings[key]) !== edits.draft.config[key]),
       ));
-  const blocker = useBlocker(dirty);
+  const blocker = useBlocker(dirty || openingDirty);
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1400px)");
     const update = () => setWide(media.matches);
@@ -752,6 +754,13 @@ export function PanoramaStudio() {
       imageProperties.map(({ id }) => [id, sceneIdsByProperty[id]]),
     );
     const openingClipId = needsOpeningForBatch ? openingClip?.id : undefined;
+    let openingCaptions;
+    if (openingClipId && openingClip) {
+      const options = openingCaptionQuery(openingClip);
+      if (client.getQueryState(options.queryKey)?.status === "error")
+        throw new Error("请重试开场字幕识别，或选择使用原片字幕");
+      openingCaptions = await client.fetchQuery(options);
+    }
     const mixes = library
       ? selectedMixes
           .filter((mix) => activeTemplateKeys.has(templateKey(mix)))
@@ -766,6 +775,7 @@ export function PanoramaStudio() {
       selectedImages,
       voiceId,
       openingClipId,
+      openingCaptions,
       backgroundMusic,
       overrides,
       mixes,
@@ -782,6 +792,7 @@ export function PanoramaStudio() {
       sceneIdsByProperty: selectedImages,
       voiceId,
       openingVideo: openingClipId,
+      openingCaptions,
       ...(backgroundMusic ? { backgroundMusic } : {}),
       ...(costEstimate && pricing.data
         ? {
@@ -1431,7 +1442,7 @@ export function PanoramaStudio() {
                     }))}
                     loading={openingVideos.isPending}
                     notFoundContent="视频库暂无视频"
-                    disabled={busy}
+                    disabled={busy || openingDirty}
                     onChange={(id) => {
                       setSavedOpeningId(id);
                       setTemporaryOpening(undefined);
@@ -1439,7 +1450,7 @@ export function PanoramaStudio() {
                     }}
                   />
                   <Button
-                    disabled={busy}
+                    disabled={busy || openingDirty}
                     onClick={() => void run(importOpening)}
                   >
                     {temporaryOpening ? "更换临时视频" : "临时上传"}
@@ -1453,8 +1464,35 @@ export function PanoramaStudio() {
                   </div>
                 ) : (
                   <div>
-                    支持 2–30 秒、50 MB 以内的 MP4。临时上传仅用于本次制作。
+                    支持 2–30 秒、50 MB 以内的
+                    MP4。临时上传仅用于本次制作，识别时仅将原声音轨发送至阿里云百炼。
                   </div>
+                )}
+                {openingClip && (
+                  <OpeningCaptions
+                    key={openingClip.id}
+                    onDirtyChange={setOpeningDirty}
+                    clip={openingClip}
+                    auto
+                    disabled={busy}
+                    landscape={
+                      selectedTemplates.find(
+                        (t) => t.config.videoMode === "avatar",
+                      )?.config.aspectRatio === "16:9"
+                    }
+                    onStore={
+                      temporaryOpening &&
+                      !openingVideos.data?.some((v) => v.id === openingClip.id)
+                        ? async () => {
+                            await request("opening-video-save", {
+                              id: openingClip.id,
+                            });
+                            await openingVideos.refetch();
+                            void message.success("已存入开场视频库");
+                          }
+                        : undefined
+                    }
+                  />
                 )}
                 {openingVideos.isError && (
                   <Alert
@@ -1685,7 +1723,7 @@ export function PanoramaStudio() {
                   (!!musicId && !selectedMusic) ||
                   pairs.length > 200 ||
                   selectedPropertyCount !== imageProperties.length ||
-                  (needsOpeningForBatch && !openingClip) ||
+                  (needsOpeningForBatch && (!openingClip || openingDirty)) ||
                   !catalog.data
                 }
                 onClick={() => void run(create)}

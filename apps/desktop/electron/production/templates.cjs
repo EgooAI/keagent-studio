@@ -6,6 +6,7 @@ const runtimeFields = new Set([
   "voice",
   "avatarId",
   "openingVideo",
+  "openingCaptions",
   "openingClip",
   "openingPhoto",
   "openingLocation",

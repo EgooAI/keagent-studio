@@ -3,6 +3,10 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { ensure, hash, sentences, motion, audioKey } = require("./domain.cjs");
 const presentation = require("../production/presentation.cjs");
+const {
+  openingCaptionLines,
+} = require("../production/opening-caption-lines.mjs");
+const openingStyle = require("../production/opening-caption-style.json");
 const ffmpeg = () => process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobe = () => process.env.FFPROBE_PATH || "ffprobe";
 function run(command, args, cwd, signal, onTime, encoding = "utf8") {
@@ -204,7 +208,8 @@ async function openingAudio(file, id, cwd, signal) {
   const audio = `opening-${id}.wav`;
   const target = path.join(cwd, audio);
   if (!(await exists(target))) {
-    const temp = target + ".part.wav";
+    const temp =
+      target + "." + require("node:crypto").randomUUID() + ".part.wav";
     const hasAudio = info.streams.some(
       (stream) => stream.codec_type === "audio",
     );
@@ -384,6 +389,20 @@ const escapeASS = (value) =>
     .replaceAll("{", "｛")
     .replaceAll("}", "｝")
     .replace(/\r?\n/g, "\\N");
+function openingSubtitles(segment, width, height) {
+  const scale = Math.min(width, height) / openingStyle.reference;
+  const captions = segment.captions.map((cue) => ({
+    ...cue,
+    text: openingCaptionLines(cue.text, width / height),
+  }));
+  return subtitles({ ...segment, captions }, width, height, "", 0)
+    .replace("WrapStyle: 0", "WrapStyle: 0\nScaledBorderAndShadow: yes")
+    .replace(
+      /^Style: Caption,.*$/m,
+      `Style: Caption,${presentation.subtitleFont},${Math.round(openingStyle.fontSize * scale)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${openingStyle.outline * scale},0,2,${Math.round(width * 0.037)},${Math.round(width * 0.037)},${Math.round(height * openingStyle.bottom)},1`,
+    )
+    .replace(/^Dialogue: .*?,Label,,.*\n/m, "");
+}
 function subtitles(segment, width, height, label, offset) {
   const size = Math.round(width / (width < height ? 22 : 38));
   return `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Caption,${presentation.subtitleFont},${size},&H00FFFFFF,&H00FFFFFF,&H00202020,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,${Math.round(height * 0.08)},1\nStyle: Label,${presentation.subtitleFont},${Math.round(size * 0.8)},&H00FFFFFF,&H00FFFFFF,&H00202020,&H80000000,0,0,0,0,100,100,0,0,1,2,1,8,35,35,45,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,${assTime(segment.duration)},Label,,0,0,0,,${escapeASS(label)}\n${segment.captions.map((s) => `Dialogue: 0,${assTime(s.start + offset)},${assTime(s.end + offset)},Caption,,0,0,0,,${escapeASS(s.text)}`).join("\n")}\n`;
@@ -609,7 +628,7 @@ async function render(
       c.subtitles,
       label,
       localOpening || null,
-      ...(uploadedOpening ? ["uploaded-opening"] : []),
+      ...(uploadedOpening ? ["uploaded-opening-semantic-lines-v4"] : []),
       ...(listingFrame && index === 0 ? ["clean-first-frame"] : []),
       presentation.card(job, segment.kind),
       ...(shortTour ? [camera, hFov, vFov] : []),
@@ -637,19 +656,21 @@ async function render(
             )
           : "",
       );
-      const overlay = presentation.decorate(
-        subtitles(
-          c.subtitles ? segment : { ...segment, captions: [] },
-          width,
-          height,
-          label,
-          elapsed - frame / fps,
-        ),
-        segment,
-        width,
-        height,
-        presentation.card(job, segment.kind),
-      );
+      const overlay = uploadedOpening
+        ? openingSubtitles(segment, width, height)
+        : presentation.decorate(
+            subtitles(
+              c.subtitles ? segment : { ...segment, captions: [] },
+              width,
+              height,
+              label,
+              elapsed - frame / fps,
+            ),
+            segment,
+            width,
+            height,
+            presentation.card(job, segment.kind),
+          );
       // Reserve frame zero for the cover so the movie's opening titles do not appear twice.
       await fs.writeFile(
         path.join(cache, ass),
@@ -680,8 +701,14 @@ async function render(
           ...(localOpening ? ["-map", "0:V:0"] : []),
           "-vf",
           base +
-            (!uploadedOpening &&
-            (c.subtitles || job.sample || c.design === "standard" || shortTour)
+            ((
+              uploadedOpening
+                ? segment.captions.length > 0
+                : c.subtitles ||
+                  job.sample ||
+                  c.design === "standard" ||
+                  shortTour
+            )
               ? `,ass=${ass}`
               : ""),
           "-an",
@@ -928,5 +955,6 @@ module.exports = {
   spatialRuns,
   exists,
   subtitles,
+  openingSubtitles,
   escapeASS,
 };

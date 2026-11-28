@@ -513,6 +513,7 @@ class ProductionQueue {
       input.sceneIdsByProperty,
       input.voiceId,
       input.openingVideo,
+      ...(input.openingCaptions ? [input.openingCaptions] : []),
       ...(music ? [{ backgroundMusic: music }] : []),
       ...(overrides ? [{ renderOverrides: overrides }] : []),
       ...(mixes ? [{ mixes }] : []),
@@ -706,6 +707,8 @@ class ProductionQueue {
               : (personal || publicVoice).id,
           openingVideo:
             recipe.videoMode === "avatar" ? openingVideo : undefined,
+          openingCaptions:
+            recipe.videoMode === "avatar" ? input.openingCaptions : undefined,
           backgroundMusic: music,
         },
         [template],

@@ -189,6 +189,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/admin/resources/preview" {
 		limit = 2 << 20
 	}
+	if r.URL.Path == "/v1/panorama/opening-asr" {
+		limit = 2 << 20
+	}
 	if r.URL.Path == "/v1/voices/create" {
 		limit = 14 << 20
 	}
