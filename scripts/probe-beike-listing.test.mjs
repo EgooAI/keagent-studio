@@ -6,6 +6,52 @@ import test from "node:test";
 import browser from "../apps/desktop/electron/beike/browser.cjs";
 import { launch, listingURL, probe } from "./probe-beike-listing.mjs";
 
+test("贝壳账号只在手动操作时检查，按用户保留上次结果", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "beike-accounts-"));
+  let signedIn = true;
+  const create = () =>
+    browser.beikeBrowser("", dir, async (_, profile) => {
+      const context = await launch(profile, true);
+      await context.route("https://m.ke.com/**", (route) =>
+        route.fulfill({
+          contentType: "text/html; charset=utf-8",
+          body:
+            new URL(route.request().url()).pathname === "/"
+              ? '<a href="/bj/ershoufang/">北京二手房</a>'
+              : signedIn
+                ? '<div class="user_comp"><span class="user_info">欢迎您，13812345678</span></div><a class="logout">退出</a>'
+                : '<a href="/login">登录</a>',
+        }),
+      );
+      return context;
+    });
+  try {
+    const initial = create();
+    assert.equal(await initial.run("record", {}, "A"), null);
+    const checked = await initial.run("check", {}, "A");
+    assert.equal(checked.accountName, "138****5678");
+    assert.equal(checked.loggedIn, true);
+    assert.ok(Number.isFinite(Date.parse(checked.checkedAt)));
+    let launches = 0;
+    const restarted = browser.beikeBrowser("", dir, async () => {
+      launches++;
+      throw new Error("offline");
+    });
+    assert.deepEqual(await restarted.run("record", {}, "A"), checked);
+    assert.equal(await restarted.run("record", {}, "B"), null);
+    assert.equal(launches, 0);
+    assert.equal((await restarted.run("check", {}, "B")).loggedIn, null);
+    assert.equal((await initial.run("record", {}, "B")).loggedIn, null);
+    signedIn = false;
+    const loggedOut = await initial.run("check", {}, "A");
+    assert.equal(loggedOut.loggedIn, false);
+    assert.equal(loggedOut.accountName, undefined);
+    assert.deepEqual(await restarted.run("record", {}, "A"), loggedOut);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("每次先进入首页，等待人工验证，复用登录后仍先进入首页", async () => {
   const profile = await mkdtemp(path.join(os.tmpdir(), "beike-flow-"));
   const id = "101141001564";

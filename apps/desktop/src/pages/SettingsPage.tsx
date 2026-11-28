@@ -35,7 +35,7 @@ import {
   isLive,
   type SessionUser,
 } from "@keagent/api-client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { VoiceLibraryPanel } from "../components/VoiceLibrary";
 import { ProductionServiceStatus } from "../components/ProductionServiceStatus";
 import { CreditsPanel } from "../components/CreditsPanel";
@@ -60,19 +60,47 @@ function systemPreview() {
   window.speechSynthesis.speak(sample);
 }
 
+type BeikeAccountRecord = {
+  loggedIn: boolean | null;
+  accountName?: string | null;
+  checkedAt: string;
+};
+
 function BeikeAccount() {
   const [busy, setBusy] = useState<"login" | "check">();
-  const [loggedIn, setLoggedIn] = useState<boolean>();
+  const client = useQueryClient();
+  const queryKey = ["beike-account-record"];
+  const {
+    data: record,
+    isPending,
+    isError,
+  } = useQuery({
+    queryKey,
+    queryFn: () =>
+      window.desktop!.request(
+        "beikeBrowser.record",
+      ) as Promise<BeikeAccountRecord | null>,
+    gcTime: 0,
+    networkMode: "always",
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  let status = "待检查";
+  if (isPending) status = "读取中";
+  else if (isError) status = "记录读取失败";
+  else if (record?.loggedIn === null) status = "检查失败";
+  else if (record) status = record.loggedIn ? "已登录" : "未登录";
   async function run(action: "login" | "check") {
     if (!window.desktop || busy) return;
     setBusy(action);
     try {
       const result = (await window.desktop.request(
         `beikeBrowser.${action}`,
-      )) as { loggedIn: boolean };
-      setLoggedIn(result.loggedIn);
+      )) as BeikeAccountRecord & { error?: string };
+      await client.invalidateQueries({ queryKey });
+      if (result.loggedIn === null)
+        message.error(result.error || "未能确认贝壳登录状态，请重试");
     } catch (error) {
-      setLoggedIn(undefined);
       message.error(
         error instanceof Error ? error.message : "贝壳账号操作失败",
       );
@@ -85,10 +113,29 @@ function BeikeAccount() {
       <div>
         <h3>
           贝壳找房{" "}
-          <Tag color={loggedIn ? "green" : undefined}>
-            {loggedIn === undefined ? "待检查" : loggedIn ? "已登录" : "未登录"}
+          {record?.loggedIn && (record.accountName || "账号标识未显示")}{" "}
+          <Tag
+            color={
+              record?.loggedIn
+                ? "green"
+                : isError || record?.loggedIn === null
+                  ? "red"
+                  : undefined
+            }
+          >
+            {status}
           </Tag>
         </h3>
+        {record && (
+          <p>
+            最近检查：
+            <time dateTime={record.checkedAt}>
+              {new Date(record.checkedAt).toLocaleString("zh-CN", {
+                hour12: false,
+              })}
+            </time>
+          </p>
+        )}
         <p role="status">
           {busy
             ? "请在贝壳窗口完成提示，关闭窗口可取消。"
@@ -98,14 +145,14 @@ function BeikeAccount() {
       <Space wrap>
         <Button
           loading={busy === "login"}
-          disabled={!!busy}
+          disabled={!!busy || isPending}
           onClick={() => void run("login")}
         >
           登录贝壳账号
         </Button>
         <Button
           loading={busy === "check"}
-          disabled={!!busy}
+          disabled={!!busy || isPending}
           onClick={() => void run("check")}
         >
           检查贝壳登录状态

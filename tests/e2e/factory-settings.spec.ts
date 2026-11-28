@@ -296,12 +296,26 @@ async function fixture(
             }
             if (method === "beikeBrowser.detail")
               return state.beikeBrowserDetail;
+            if (method === "beikeBrowser.record")
+              return JSON.parse(
+                sessionStorage.getItem("test-beike-record") || "null",
+              );
             if (method === "beikeBrowser.login") state.beikeLoggedIn = true;
             if (
               method === "beikeBrowser.login" ||
               method === "beikeBrowser.check"
-            )
-              return { loggedIn: state.beikeLoggedIn };
+            ) {
+              const record = {
+                loggedIn: state.beikeLoggedIn,
+                accountName: state.beikeLoggedIn ? "13****89" : null,
+                checkedAt: "2026-11-28T09:00:00.000Z",
+              };
+              sessionStorage.setItem(
+                "test-beike-record",
+                JSON.stringify(record),
+              );
+              return record;
+            }
             const input = args[0] || {};
             if (method === "createProperty") {
               if (
@@ -2019,10 +2033,24 @@ test("贝壳浏览器从平台账号检查登录，CLI 未配置时也能按房�
   await fixture(page);
   await page.goto("/#/settings/platforms");
   const account = page.getByRole("region", { name: "贝壳账号" });
+  await expect(account.getByText("待检查")).toBeVisible();
   await account.getByRole("button", { name: "检查贝壳登录状态" }).click();
   await expect(account.getByText("未登录", { exact: true })).toBeVisible();
   await account.getByRole("button", { name: "登录贝壳账号" }).click();
   await expect(account.getByText("已登录", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(account.getByRole("heading")).toContainText("13****89");
+  await expect(account.getByText("已登录", { exact: true })).toBeVisible();
+  await expect(account.locator("time")).toHaveAttribute(
+    "datetime",
+    "2026-11-28T09:00:00.000Z",
+  );
+  const reopenedCalls = await page.evaluate(() =>
+    (window as any).factorySettingsTest.calls
+      .map((entry: { method: string }) => entry.method)
+      .filter((method: string) => method.startsWith("beikeBrowser.")),
+  );
+  expect(new Set(reopenedCalls)).toEqual(new Set(["beikeBrowser.record"]));
   await page.goto("/#/properties?import=1");
   const id = "101141001564";
   const links = {

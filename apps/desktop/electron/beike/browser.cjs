@@ -1,4 +1,6 @@
 const path = require("node:path");
+const fs = require("node:fs");
+const { createHash } = require("node:crypto");
 const cities = require("./cities.json");
 const spatial = require("../production/spatial-source.cjs");
 const { setTimeout: delay } = require("node:timers/promises");
@@ -289,8 +291,18 @@ async function runPage(page, action, input = {}) {
           return { city, returned: 1, houses: [house] };
         }
       } else {
-        if (await page.locator("a.logout").isVisible())
-          return { loggedIn: true };
+        if (await page.locator("a.logout").isVisible()) {
+          const greeting = await page
+            .locator(".user_comp .user_info:visible")
+            .first()
+            .innerText({ timeout: 1500 })
+            .catch(() => "");
+          const accountName = greeting
+            .trim()
+            .replace(/^欢迎[^，,：:]{0,3}[，,：:]\s*/u, "")
+            .replace(/^(1\d{2})\d{4}(\d{4})$/, "$1****$2");
+          return { loggedIn: true, accountName: accountName || null };
+        }
         const login = page.getByRole("link", { name: "登录", exact: true });
         if (await login.isVisible()) {
           if (action === "check") return { loggedIn: false };
@@ -312,12 +324,30 @@ async function runPage(page, action, input = {}) {
   throw new Error("贝壳浏览器窗口已关闭");
 }
 
-function beikeBrowser(resources, userData) {
+function beikeBrowser(resources, userData, launchBrowser = launch) {
   let active;
   function stop() {
     active?.abort();
   }
   async function run(action, input, owner) {
+    const key = createHash("sha256").update(owner).digest("hex");
+    const profile = path.join(userData, "beike", key);
+    const file = path.join(profile, "account-check.json");
+    if (action === "record") {
+      try {
+        const record = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (
+          ![true, false, null].includes(record.loggedIn) ||
+          !Number.isFinite(Date.parse(record.checkedAt)) ||
+          (record.accountName != null && typeof record.accountName !== "string")
+        )
+          throw new Error("Invalid account record");
+        return record;
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw new Error("无法读取贝壳账号记录，请重新检查");
+      }
+    }
     if (active)
       throw new Error("已有贝壳窗口正在使用，请先完成操作或关闭该窗口");
     if (action === "detail" || action === "vr")
@@ -328,13 +358,12 @@ function beikeBrowser(resources, userData) {
     const close = () => {
       void context?.close().catch(() => {});
     };
+    const checkingAccount = action === "check" || action === "login";
+    let result;
+    let checkError;
     try {
-      const key = require("node:crypto")
-        .createHash("sha256")
-        .update(owner)
-        .digest("hex");
       try {
-        context = await launch(resources, path.join(userData, "beike", key));
+        context = await launchBrowser(resources, profile);
       } catch {
         throw new Error(
           "贝壳专用浏览器启动失败，请关闭正在使用该资料的窗口并检查安装包",
@@ -342,17 +371,19 @@ function beikeBrowser(resources, userData) {
       }
       operation.signal.addEventListener("abort", close, { once: true });
       operation.signal.throwIfAborted();
-      const result = await runPage(
+      result = await runPage(
         context.pages()[0] ?? (await context.newPage()),
         action,
         input,
       );
       operation.signal.throwIfAborted();
-      return result;
+      if (!checkingAccount) return result;
     } catch (error) {
       if (operation.signal.aborted || (context && !context.pages().length))
         throw new Error("贝壳浏览器操作已结束");
-      throw error;
+      if (!checkingAccount) throw error;
+      result = { loggedIn: null };
+      checkError = error.message;
     } finally {
       operation.signal.removeEventListener("abort", close);
       try {
@@ -361,6 +392,15 @@ function beikeBrowser(resources, userData) {
         active = undefined;
       }
     }
+    const record = { ...result, checkedAt: new Date().toISOString() };
+    try {
+      fs.mkdirSync(profile, { recursive: true });
+      fs.writeFileSync(file + ".tmp", JSON.stringify(record), { mode: 0o600 });
+      fs.renameSync(file + ".tmp", file);
+    } catch {
+      throw new Error("无法保存贝壳账号检查记录，请检查本机存储后重试");
+    }
+    return checkError ? { ...record, error: checkError } : record;
   }
   return {
     run,

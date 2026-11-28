@@ -338,15 +338,19 @@ function registerAuth(
         "beikeBrowser.vr",
         "beikeBrowser.login",
         "beikeBrowser.check",
+        "beikeBrowser.record",
       ].includes(method)
     ) {
       const generation = identityGeneration;
-      const { data: session } = await request("/v1/session");
+      const owner =
+        method === "beikeBrowser.record" && verifiedUserId
+          ? verifiedUserId
+          : (await request("/v1/session")).data.userId;
       if (generation !== identityGeneration) throw new Error("请重新登录");
       const result = await beike.run(
         method.slice("beikeBrowser.".length),
         args[0],
-        session.userId,
+        owner,
       );
       if (generation !== identityGeneration) throw new Error("请重新登录");
       return result;
