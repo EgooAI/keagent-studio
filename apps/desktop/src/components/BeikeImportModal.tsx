@@ -23,8 +23,12 @@ import type {
   BeikeDetailResult,
   BeikeHouse,
   BeikeSearchResult,
+  Property,
 } from "@keagent/shared-types";
-import { beikeHouseToPropertyInput } from "../lib/beike";
+import {
+  beikeHouseToPropertyInput,
+  supplementBeikeProperty,
+} from "../lib/beike";
 import "./beike-import.css";
 
 type BeikeCliStatus = {
@@ -62,10 +66,12 @@ const layoutOptions = [
 
 export function BeikeImportModal({
   open,
+  properties,
   onClose,
   onManual,
 }: {
   open: boolean;
+  properties: Property[];
   onClose: () => void;
   onManual: () => void;
 }) {
@@ -73,6 +79,7 @@ export function BeikeImportModal({
   const queryClient = useQueryClient();
   const formId = useId();
   const [mode, setMode] = useState<"conditions" | "number">("conditions");
+  const [source, setSource] = useState<"cli" | "browser">("cli");
   const [city, setCity] = useState("北京");
   const [propertyNumber, setPropertyNumber] = useState("");
   const [location, setLocation] = useState("");
@@ -82,10 +89,18 @@ export function BeikeImportModal({
   const [selected, setSelected] = useState<string[]>([]);
   const [pending, setPending] = useState<"search" | "import" | null>(null);
   const byNumber = mode === "number";
+  const browserQuery = byNumber && source === "browser" && !!window.desktop;
+  const waitingForBrowser = browserQuery && pending === "search";
   const searchResult = result && "overBudget" in result ? result : undefined;
   const overBudget = searchResult?.overBudget ?? [];
   const hasHouses = !!(result?.houses.length || overBudget.length);
   const matchedHouse = byNumber ? result?.houses[0] : undefined;
+  const existing =
+    browserQuery && matchedHouse
+      ? properties.find(
+          (p) => !p.sample && p.propertyNumber === matchedHouse.id,
+        )
+      : undefined;
   const status = useQuery({
     queryKey: ["beike-cli-status"],
     enabled: open,
@@ -137,7 +152,11 @@ export function BeikeImportModal({
     if (byNumber) clearResults();
     try {
       if (byNumber) {
-        const next = await getBeikeHouseDetail(searchCity, [id]);
+        const next = browserQuery
+          ? ((await window.desktop!.request("beikeBrowser.detail", [
+              { city: searchCity, number: id },
+            ])) as BeikeDetailResult)
+          : await getBeikeHouseDetail(searchCity, [id]);
         const match = next.houses.find((house) => house.id === id);
         const houses = match ? [match] : [];
         setResult({ ...next, houses, returned: houses.length });
@@ -170,9 +189,20 @@ export function BeikeImportModal({
       const failedIds: string[] = [];
       for (const house of chosen) {
         try {
-          await demoApi.createProperty(
-            beikeHouseToPropertyInput(house, result.city),
-          );
+          const input = beikeHouseToPropertyInput(house, result.city);
+          if (existing && existing.propertyNumber === house.id) {
+            const workspace = await demoApi.getWorkspace();
+            const current = workspace.properties.find(
+              (p) => p.id === existing.id && p.propertyNumber === house.id,
+            );
+            if (!current) throw new Error("原房源已变更，请重新查询");
+            await demoApi.updateProperty(
+              current.id,
+              supplementBeikeProperty(current, input),
+            );
+          } else {
+            await demoApi.createProperty(input);
+          }
         } catch {
           failedIds.push(house.id);
         }
@@ -181,9 +211,15 @@ export function BeikeImportModal({
       setSelected(failedIds);
       if (!failedIds.length) setResult(undefined);
       if (failedIds.length)
-        message.warning(`${failedIds.length} 套未导入（可能已存在）`);
+        message.warning(
+          existing
+            ? "房源资料补全失败，请重新查询后重试。"
+            : `${failedIds.length} 套未导入（可能已存在）`,
+        );
       if (imported) {
-        message.success(`已导入 ${imported} 套贝壳房源`);
+        message.success(
+          existing ? "已补全房源资料" : `已导入 ${imported} 套贝壳房源`,
+        );
         await queryClient.invalidateQueries(
           { queryKey: ["workspace"] },
           { cancelRefetch: false },
@@ -194,7 +230,7 @@ export function BeikeImportModal({
     }
   }
 
-  if (status.data?.reason !== "ready") {
+  if (status.data?.reason !== "ready" && !browserQuery) {
     return (
       <Modal
         className="beike-import-modal"
@@ -211,8 +247,19 @@ export function BeikeImportModal({
             ? "正在检查贝壳 CLI 状态…"
             : status.isError
               ? "暂时无法连接贝壳找房，请重试。"
-              : "云端尚未配置贝壳 CLI，暂不能自动找房。"}
+              : "云端尚未配置贝壳 CLI。"}
         </p>
+        {window.desktop && (
+          <Button
+            onClick={() => {
+              setMode("number");
+              setSource("browser");
+              clearResults();
+            }}
+          >
+            使用浏览器按房源号查询
+          </Button>
+        )}
         {status.isError && (
           <Button
             loading={status.isFetching}
@@ -232,10 +279,15 @@ export function BeikeImportModal({
       title="从贝壳找房"
       open={open}
       width={820}
+      closable={!waitingForBrowser}
+      keyboard={!waitingForBrowser}
+      mask={{ closable: !waitingForBrowser }}
       onCancel={onClose}
       footer={
         <>
-          <Button onClick={onClose}>关闭</Button>
+          <Button disabled={waitingForBrowser} onClick={onClose}>
+            关闭
+          </Button>
           <Button
             type={selected.length ? "default" : "primary"}
             htmlType="submit"
@@ -253,7 +305,11 @@ export function BeikeImportModal({
               disabled={!selected.length || pending === "search"}
               onClick={importSelected}
             >
-              {byNumber ? "导入这套房源" : `导入选中（${selected.length}）`}
+              {existing
+                ? "补全已有房源"
+                : byNumber
+                  ? "导入这套房源"
+                  : `导入选中（${selected.length}）`}
             </Button>
           )}
         </>
@@ -274,6 +330,32 @@ export function BeikeImportModal({
           clearResults();
         }}
       />
+      {byNumber && window.desktop && (
+        <div className="beike-search-mode">
+          <Segmented<"cli" | "browser">
+            aria-label="房源号查询来源"
+            value={source}
+            disabled={!!pending}
+            options={[
+              {
+                value: "cli",
+                label: "贝壳 CLI",
+                disabled: status.data?.reason !== "ready",
+              },
+              { value: "browser", label: "贝壳浏览器" },
+            ]}
+            onChange={(value) => {
+              setSource(value);
+              clearResults();
+            }}
+          />
+        </div>
+      )}
+      {waitingForBrowser && (
+        <p role="status">
+          请在贝壳浏览器完成登录或人机验证。读取成功后会自动返回，关闭浏览器可取消查询。
+        </p>
+      )}
       <form
         id={formId}
         className="beike-search-form"
@@ -396,7 +478,13 @@ export function BeikeImportModal({
           {matchedHouse && (
             <p className="beike-summary" role="status">
               房源号 {matchedHouse.id}
+              {browserQuery &&
+                ` · ${result.city} ${matchedHouse.district || ""}`}
               {matchedHouse.status && ` · ${matchedHouse.status}`}
+              {browserQuery &&
+                ("vrUrl" in matchedHouse && matchedHouse.vrUrl
+                  ? " · 含 VR 看房链接"
+                  : " · 未提供可导入的 VR 链接")}
             </p>
           )}
           {hasHouses ? (

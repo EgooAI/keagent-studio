@@ -104,6 +104,14 @@ function registerAuth(
   let identityGeneration = 0;
   let verifiedUserId;
   const identityListeners = new Set();
+  const beike = require("./beike/browser.cjs").beikeBrowser(
+    app.isPackaged
+      ? process.resourcesPath
+      : path.resolve(__dirname, "../../../output"),
+    app.getPath("userData"),
+  );
+  identityListeners.add(beike.stop);
+  app.on("before-quit", beike.stop);
   const installationFile = path.join(
     app.getPath("userData"),
     "installation-id",
@@ -324,6 +332,24 @@ function registerAuth(
       }
     }
     if (!token) throw new Error("请重新登录");
+    if (
+      [
+        "beikeBrowser.detail",
+        "beikeBrowser.login",
+        "beikeBrowser.check",
+      ].includes(method)
+    ) {
+      const generation = identityGeneration;
+      const { data: session } = await request("/v1/session");
+      if (generation !== identityGeneration) throw new Error("请重新登录");
+      const result = await beike.run(
+        method.slice("beikeBrowser.".length),
+        args[0],
+        session.userId,
+      );
+      if (generation !== identityGeneration) throw new Error("请重新登录");
+      return result;
+    }
     if (method === "beikeCli.status")
       return (await request("/v1/beike-cli/status", {})).data;
     if (method === "beikeCli.search")
@@ -558,6 +584,7 @@ function registerAuth(
   return {
     get updateBusy() {
       return (
+        beike.busy ||
         workflow.sourceFlight.size > 0 ||
         workflow.active.size > 0 ||
         workflow.previews.size > 0 ||

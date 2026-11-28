@@ -32,6 +32,9 @@ export interface ResourceRef {
   version: string;
 }
 export interface PropertyDetails {
+  sourceFacts?: string;
+  sourceUnitPrice?: string;
+  floorPlanUrl?: string;
   floor?: string;
   orientation?: string;
   elevator?: "有" | "无";

@@ -60,6 +60,61 @@ function systemPreview() {
   window.speechSynthesis.speak(sample);
 }
 
+function BeikeAccount() {
+  const [busy, setBusy] = useState<"login" | "check">();
+  const [loggedIn, setLoggedIn] = useState<boolean>();
+  async function run(action: "login" | "check") {
+    if (!window.desktop || busy) return;
+    setBusy(action);
+    try {
+      const result = (await window.desktop.request(
+        `beikeBrowser.${action}`,
+      )) as { loggedIn: boolean };
+      setLoggedIn(result.loggedIn);
+    } catch (error) {
+      setLoggedIn(undefined);
+      message.error(
+        error instanceof Error ? error.message : "贝壳账号操作失败",
+      );
+    } finally {
+      setBusy(undefined);
+    }
+  }
+  return (
+    <section className="settings-row" aria-label="贝壳账号">
+      <div>
+        <h3>
+          贝壳找房{" "}
+          <Tag color={loggedIn ? "green" : undefined}>
+            {loggedIn === undefined ? "待检查" : loggedIn ? "已登录" : "未登录"}
+          </Tag>
+        </h3>
+        <p role="status">
+          {busy
+            ? "请在贝壳窗口完成提示，关闭窗口可取消。"
+            : "房源号查询会复用此账号在本机 Chromium 中的登录状态。"}
+        </p>
+      </div>
+      <Space wrap>
+        <Button
+          loading={busy === "login"}
+          disabled={!!busy}
+          onClick={() => void run("login")}
+        >
+          登录贝壳账号
+        </Button>
+        <Button
+          loading={busy === "check"}
+          disabled={!!busy}
+          onClick={() => void run("check")}
+        >
+          检查贝壳登录状态
+        </Button>
+      </Space>
+    </section>
+  );
+}
+
 export default function SettingsPage() {
   const { section = "account" } = useParams();
   const navigate = useNavigate();
@@ -467,7 +522,14 @@ export default function SettingsPage() {
     {
       key: "platforms",
       label: "平台账号",
-      children: isLive ? <DouyinAccounts /> : demoConnections,
+      children: isLive ? (
+        <>
+          <DouyinAccounts />
+          {window.desktop && <BeikeAccount />}
+        </>
+      ) : (
+        demoConnections
+      ),
     },
     {
       key: "service-status",

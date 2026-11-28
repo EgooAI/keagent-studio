@@ -103,6 +103,8 @@ async function fixture(
         aiConfigured: false,
         beikeResult: undefined as BeikeSearchResult | undefined,
         beikeDetail: undefined as BeikeDetailResult | undefined,
+        beikeBrowserDetail: undefined as BeikeDetailResult | undefined,
+        beikeLoggedIn: false,
         failNextPropertyNumber: "",
         failNextVrImport: false,
         spatialImports: new Set<string>(),
@@ -282,6 +284,14 @@ async function fixture(
               };
             if (method === "beikeCli.search") return state.beikeResult;
             if (method === "beikeCli.detail") return state.beikeDetail;
+            if (method === "beikeBrowser.detail")
+              return state.beikeBrowserDetail;
+            if (method === "beikeBrowser.login") state.beikeLoggedIn = true;
+            if (
+              method === "beikeBrowser.login" ||
+              method === "beikeBrowser.check"
+            )
+              return { loggedIn: state.beikeLoggedIn };
             const input = args[0] || {};
             if (method === "createProperty") {
               if (
@@ -1657,9 +1667,7 @@ test("贝壳未配置时可从正式房源导入切换到手动添加", async ({
   await fixture(page);
   await page.goto("/#/properties?import=1");
   const dialog = page.getByRole("dialog", { name: "从贝壳找房", exact: true });
-  await expect(dialog.getByRole("status")).toHaveText(
-    "云端尚未配置贝壳 CLI，暂不能自动找房。",
-  );
+  await expect(dialog.getByRole("status")).toHaveText("云端尚未配置贝壳 CLI。");
   await expect(
     dialog.getByRole("button", { name: "开始模拟导入" }),
   ).toHaveCount(0);
@@ -1857,6 +1865,180 @@ test("贝壳按房源号查询并确认导入精确匹配的房源", async ({ pa
     .last()
     .click();
   await expect(page.getByText(house.title, { exact: true })).toBeVisible();
+});
+
+test("贝壳同一房源经两种方式导入后共用详情展示", async ({ page }) => {
+  await fixture(page);
+  const house = {
+    id: "108403741204",
+    title: "新燕花园",
+    community: "新燕花园",
+    district: "天河区",
+    totalPriceWan: 238,
+    areaSqm: 73,
+    layout: "2室2厅1卫",
+    orientation: "西南",
+    transaction: "满五年",
+  };
+  const cli = {
+    city: "广州",
+    returned: 1,
+    houses: [{ ...house, highlights: "满五年/地铁" }],
+  };
+  const browser = {
+    city: "广州",
+    returned: 1,
+    houses: [
+      {
+        ...house,
+        description: house.transaction,
+        sellingPoints: ["满五年", "地铁"],
+        vrUrl: "https://open.realsee.com/ke/demo/",
+      },
+    ],
+  };
+  const summaries: string[] = [];
+  for (const source of ["贝壳 CLI", "贝壳浏览器"]) {
+    await page.goto("/#/properties");
+    await page.evaluate(
+      ({ cli, browser }) => {
+        Object.assign((window as any).factorySettingsTest, {
+          beikeDetail: cli,
+          beikeBrowserDetail: browser,
+        });
+      },
+      { cli, browser },
+    );
+    await page.getByRole("button", { name: "导入房源" }).click();
+    const dialog = page.getByRole("dialog", { name: "从贝壳找房" });
+    await dialog.getByText("按房源号查询", { exact: true }).click();
+    await dialog.getByText(source, { exact: true }).click();
+    await dialog.getByLabel("城市", { exact: true }).fill("广州");
+    await dialog.getByLabel("贝壳房源号", { exact: true }).fill(house.id);
+    await dialog.getByRole("button", { name: "查询房源", exact: true }).click();
+    await dialog.getByRole("button", { name: "导入这套房源" }).click();
+    await expect(page.getByText("已导入 1 套贝壳房源")).toBeVisible();
+    await dialog
+      .getByRole("button", { name: "关闭", exact: true })
+      .last()
+      .click();
+    await page
+      .locator('a[href="#/properties/beike-' + house.id + '"]')
+      .first()
+      .click();
+    const sheet = page.locator(".property-info-sheet");
+    await expect(sheet).toContainText("新燕花园");
+    await expect(sheet.getByText("VR 看房链接", { exact: true })).toHaveCount(
+      source === "贝壳浏览器" ? 1 : 0,
+    );
+    summaries.push(
+      (await sheet.innerText())
+        .replace("VR 看房链接", "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    );
+    await page.reload();
+  }
+  expect(summaries[1]).toEqual(summaries[0]);
+});
+
+test("贝壳浏览器从平台账号检查登录，CLI 未配置时也能按房源号导入 VR", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/#/settings/platforms");
+  const account = page.getByRole("region", { name: "贝壳账号" });
+  await account.getByRole("button", { name: "检查贝壳登录状态" }).click();
+  await expect(account.getByText("未登录", { exact: true })).toBeVisible();
+  await account.getByRole("button", { name: "登录贝壳账号" }).click();
+  await expect(account.getByText("已登录", { exact: true })).toBeVisible();
+  await page.goto("/#/properties?import=1");
+  const id = "101141001564";
+  const links = {
+    vrUrl: "https://open.realsee.com/ke/demo/",
+    listingUrl: `https://m.ke.com/bj/ershoufang/${id}.html`,
+  };
+  await page.evaluate(
+    ({ id, links }) => {
+      (window as any).factorySettingsTest.beikeBrowserDetail = {
+        city: "北京",
+        returned: 1,
+        houses: [
+          {
+            id,
+            title: "浏览器测试房源",
+            description: "网页核心卖点",
+            sellingPoints: ["满五年", "精装修"],
+            transaction: "抵押信息：无抵押",
+            community: "测试小区",
+            totalPriceWan: 480,
+            areaSqm: 59.48,
+            layout: "3室1厅",
+            ...links,
+          },
+        ],
+      };
+    },
+    { id, links },
+  );
+  const dialog = page.getByRole("dialog", { name: "从贝壳找房" });
+  await dialog.getByRole("button", { name: "使用浏览器按房源号查询" }).click();
+  await dialog.getByLabel("贝壳房源号", { exact: true }).fill(id);
+  await dialog.getByRole("button", { name: "查询房源", exact: true }).click();
+  await expect(dialog.getByText(/含 VR 看房链接/)).toBeVisible();
+  await dialog.getByRole("button", { name: "导入这套房源" }).click();
+  const calls = await page.evaluate(
+    () => (window as any).factorySettingsTest.calls,
+  );
+  expect(calls).toContainEqual({
+    method: "beikeBrowser.detail",
+    input: { city: "北京", number: id },
+  });
+  expect(calls).toContainEqual({
+    method: "createProperty",
+    input: expect.objectContaining({
+      propertyNumber: id,
+      description: "网页核心卖点",
+      sellingPoints: ["满五年", "精装修"],
+      details: expect.objectContaining({
+        ...links,
+        transactionAttributes: "抵押信息：无抵押",
+      }),
+    }),
+  });
+  await page.evaluate(() => {
+    const state = (window as any).factorySettingsTest;
+    const saved = state.workspace.properties.find(
+      (item: { id: string }) => item.id === "new-property",
+    );
+    saved.description = "手动填写的说明";
+    saved.sellingPoints = ["自定义卖点"];
+    delete saved.details.transactionAttributes;
+  });
+  await dialog.getByRole("button", { name: "查询房源", exact: true }).click();
+  await dialog.getByRole("button", { name: "补全已有房源" }).click();
+  await expect(page.getByText("已补全房源资料")).toBeVisible();
+  const saved = await page.evaluate(() =>
+    (window as any).factorySettingsTest.workspace.properties.find(
+      (item: { id: string }) => item.id === "new-property",
+    ),
+  );
+  expect(saved.description).toBe("手动填写的说明");
+  expect(saved.sellingPoints).toEqual(["自定义卖点", "满五年", "精装修"]);
+  expect(saved.details.transactionAttributes).toBe("抵押信息：无抵押");
+  await dialog
+    .getByRole("button", { name: "关闭", exact: true })
+    .last()
+    .click();
+  await page.locator('a[href="#/properties/new-property"]').first().click();
+  await expect(page.locator(".property-unit-price")).toHaveText(
+    "单价约 80,699 元／平方米",
+  );
+  await expect(
+    page.getByText("抵押信息：无抵押", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("VR 看房链接", { exact: true })).toBeVisible();
+  await expect(page.getByText("查看贝壳页面资料")).toHaveCount(0);
 });
 
 test("新视频继续使用已保存的制作偏好", async ({ page }) => {

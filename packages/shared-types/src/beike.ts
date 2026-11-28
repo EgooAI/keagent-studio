@@ -8,7 +8,7 @@ export interface BeikeHouse {
   id: string;
   title: string;
   totalPriceWan: number;
-  unitPrice: number;
+  unitPrice?: number;
   areaSqm: number;
   layout: string;
   orientation: string;
@@ -49,6 +49,11 @@ export interface BeikeCommunityInfo {
 }
 
 export interface BeikeHouseDetail extends BeikeHouse {
+  description?: string;
+  sellingPoints?: string[];
+  elevator?: "有" | "无";
+  listingUrl?: string;
+  vrUrl?: string;
   totalFloors?: string;
   buildingAge?: string;
   builtYear?: string;

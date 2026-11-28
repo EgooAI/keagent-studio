@@ -1,11 +1,38 @@
 import type { BeikeHouseDetail, Property } from "@keagent/shared-types";
-import beikeCityPaths from "./beike-city-paths.json";
+import beikeCityPaths from "../../electron/beike/cities.json";
 
 export type BeikePropertyInput = Pick<
   Property,
   "title" | "community" | "propertyNumber"
 > &
   Partial<Property>;
+
+export function supplementBeikeProperty(
+  current: Property,
+  input: BeikePropertyInput,
+): Partial<Property> {
+  const details = {
+    ...input.details,
+    ...current.details,
+    listingUrl: input.details?.listingUrl || current.details?.listingUrl,
+    vrUrl: current.details?.vrUrl || input.details?.vrUrl,
+  };
+  return {
+    city: input.city,
+    district: input.district || current.district,
+    details,
+    ...(!current.layout || input.layout?.startsWith(current.layout)
+      ? { layout: input.layout || current.layout }
+      : {}),
+    ...(input.description &&
+    (!current.description || current.description === current.title)
+      ? { description: input.description }
+      : {}),
+    sellingPoints: [
+      ...new Set([...current.sellingPoints, ...(input.sellingPoints ?? [])]),
+    ],
+  };
+}
 
 export function propertyListingUrl(property: Property) {
   const savedUrl = property.details?.listingUrl?.trim();
@@ -35,10 +62,15 @@ export function beikeHouseToPropertyInput(
     priceCents: Math.round(house.totalPriceWan * 1_000_000),
     areaSqm: house.areaSqm,
     layout: house.layout,
-    description: house.transaction || house.title,
-    sellingPoints: (house.highlights || "").split("/").filter(Boolean),
+    description: house.description ?? (house.transaction || house.title),
+    sellingPoints:
+      house.sellingPoints ??
+      (house.highlights || "").split("/").filter(Boolean),
     details: {
+      listingUrl: house.listingUrl,
+      vrUrl: house.vrUrl,
       floor: house.floor,
+      elevator: house.elevator,
       orientation: house.orientation,
       buildingAge: house.builtYear || house.buildingAge,
       transactionAttributes: house.transaction,

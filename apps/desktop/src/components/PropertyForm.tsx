@@ -94,11 +94,16 @@ export function PropertyForm({
           .split(/\r?\n/)
           .map((point) => point.trim())
           .filter(Boolean),
-        details: Object.fromEntries(
-          Object.entries(details ?? {})
-            .map(([key, value]) => [key, value?.trim() ?? ""])
-            .filter(([, value]) => value !== ""),
-        ),
+        details: {
+          ...Object.fromEntries(
+            Object.entries(details ?? {})
+              .map(([key, value]) => [key, value?.trim() ?? ""])
+              .filter(([, value]) => value !== ""),
+          ),
+          sourceFacts: property?.details?.sourceFacts,
+          sourceUnitPrice: property?.details?.sourceUnitPrice,
+          floorPlanUrl: property?.details?.floorPlanUrl,
+        },
       };
       const previousLink = property?.details?.vrUrl;
       const saved = property

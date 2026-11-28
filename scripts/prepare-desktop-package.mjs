@@ -28,6 +28,7 @@ const files = [
   "apps/desktop/dist",
   "apps/desktop/electron/main.cjs",
   "apps/desktop/electron/auth.cjs",
+  "apps/desktop/electron/beike",
   "apps/desktop/electron/updates.cjs",
   "apps/desktop/electron/preload.cjs",
   "apps/desktop/electron/panorama",

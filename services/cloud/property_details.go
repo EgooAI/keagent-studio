@@ -14,7 +14,7 @@ func normalizePropertyDetails(raw any) (object, error) {
 		return nil, fail(422, "房源补充资料无效")
 	}
 	details := object{}
-	for _, key := range propertyDetailFacts {
+	for _, key := range append(propertyDetailFacts, "sourceFacts", "sourceUnitPrice") {
 		value, exists := input[key]
 		if !exists {
 			continue
@@ -24,6 +24,9 @@ func normalizePropertyDetails(raw any) (object, error) {
 		limit := 160
 		if key == "transactionAttributes" {
 			limit = 800
+		}
+		if key == "sourceFacts" {
+			limit = 32000
 		}
 		if !ok || utf8.RuneCountInString(text) > limit {
 			return nil, fail(422, "房源补充资料格式或长度无效")
@@ -37,7 +40,7 @@ func normalizePropertyDetails(raw any) (object, error) {
 		}
 		details[key] = text
 	}
-	for _, key := range []string{"listingUrl", "vrUrl"} {
+	for _, key := range []string{"listingUrl", "vrUrl", "floorPlanUrl"} {
 		value, exists := input[key]
 		if !exists {
 			continue
@@ -50,6 +53,9 @@ func normalizePropertyDetails(raw any) (object, error) {
 		link, err := url.Parse(text)
 		if !ok || len(text) > 2048 || err != nil || link.Scheme != "https" || link.Hostname() == "" || link.User != nil {
 			return nil, fail(422, "房源详情和 VR 看房链接必须为有效的 HTTPS 链接")
+		}
+		if key == "floorPlanUrl" && (!strings.HasSuffix(strings.ToLower(link.Hostname()), ".ljcdn.com") || link.Port() != "") {
+			return nil, fail(422, "贝壳户型图地址无效")
 		}
 		details[key] = text
 	}

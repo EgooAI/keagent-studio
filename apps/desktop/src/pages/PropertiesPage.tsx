@@ -368,6 +368,7 @@ export default function PropertiesPage() {
       )}
       {isLive ? (
         <BeikeImportModal
+          properties={data.properties}
           open={importOpen}
           onClose={() => setImportOpen(false)}
           onManual={() => {
